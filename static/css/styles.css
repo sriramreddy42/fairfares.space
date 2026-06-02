@@ -2771,8 +2771,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     color: var(--navy);
     display: flex;
     flex: 1 1 auto;
+    gap: 8px;
     font-weight: 900;
-    justify-content: space-between;
+    justify-content: flex-start;
     min-height: 38px;
     padding: 8px 10px;
     text-align: left;
@@ -2786,6 +2787,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     display: grid;
     gap: 3px;
     justify-items: center;
+    flex: 0 0 20px;
     width: 20px;
   }
 
