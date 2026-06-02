@@ -115,7 +115,12 @@ input, select, textarea, button {
   padding: 6px;
   width: 34px;
 }
-.menu-button span { background: var(--navy); display: block; height: 2px; }
+.menu-button span {
+  background: var(--navy);
+  display: block;
+  height: 2px;
+  width: 18px;
+}
 
 .booking-hero {
   display: grid;
@@ -2434,12 +2439,20 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
 
   .menu-button {
+    align-items: center;
     flex-direction: column;
     grid-column: 3;
-    gap: 6px;
+    gap: 4px;
     height: 40px;
     justify-self: end;
+    justify-content: center;
     width: 40px;
+  }
+
+  .menu-button span {
+    flex: 0 0 auto;
+    height: 2px;
+    width: 18px;
   }
 
   .mobile-menu {
@@ -2770,8 +2783,17 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
 
   .filter-toggle b {
-    color: var(--red);
-    font-size: 0.76rem;
+    display: grid;
+    gap: 3px;
+    justify-items: center;
+    width: 20px;
+  }
+
+  .filter-toggle b i {
+    background: var(--navy);
+    display: block;
+    height: 2px;
+    width: 18px;
   }
 
   .filter-head > button:not(.filter-toggle) {

@@ -41,7 +41,6 @@ function setFilterOptions(open) {
   if (!filterToggle || !filterOptions) return;
   filterOptions.hidden = !open;
   filterToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  filterToggle.querySelector("b").textContent = open ? "Hide" : "Show";
 }
 
 function syncFilterOptions() {
