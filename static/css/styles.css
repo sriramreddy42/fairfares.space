@@ -2472,3 +2472,149 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     font-size: 0.78rem;
   }
 }
+
+@media (max-width: 760px) {
+  .booking-hero {
+    background: #f6f8fb;
+    display: block;
+  }
+
+  .booking-hero .hero-poster {
+    display: none;
+  }
+
+  .search-panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: none;
+    gap: 13px;
+    margin: 12px;
+    padding: 18px;
+  }
+
+  .search-panel h1 {
+    font-size: 1.45rem;
+    line-height: 1.15;
+    margin-bottom: 2px;
+  }
+
+  .search-panel label {
+    gap: 6px;
+  }
+
+  .search-panel label span,
+  .search-panel label > span:first-child {
+    font-size: 0.72rem;
+    letter-spacing: 0;
+  }
+
+  .input-shell,
+  .split-input {
+    align-items: stretch;
+    border-radius: 6px;
+    display: grid;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  .input-shell {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .input-shell span {
+    align-items: center;
+    background: #f7f9fc;
+    border-right: 1px solid var(--line);
+    display: flex;
+    font-size: 0.74rem;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .split-input {
+    grid-template-columns: minmax(0, 1fr) minmax(106px, 38%);
+  }
+
+  .input-shell input,
+  .split-input input,
+  .split-input select,
+  .search-panel input,
+  .search-panel select {
+    color: var(--ink);
+    font-size: 0.95rem;
+    font-weight: 750;
+    min-height: 42px;
+    padding: 9px 12px;
+  }
+
+  .input-shell input {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .split-input input {
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .split-input select {
+    text-align: left;
+  }
+
+  .check-field {
+    align-items: center;
+    background: #f7f9fc;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .check-field input {
+    accent-color: var(--red);
+    flex: 0 0 22px;
+    height: 22px;
+    min-height: 22px;
+    width: 22px;
+  }
+
+  .check-field span {
+    font-size: 0.86rem;
+    line-height: 1.25;
+    text-transform: none;
+  }
+
+  .search-panel button {
+    border-radius: 6px;
+    font-size: 1rem;
+    min-height: 48px;
+    margin-top: 2px;
+  }
+}
+
+@media (max-width: 420px) {
+  .search-panel {
+    margin: 10px;
+    padding: 16px;
+  }
+
+  .search-panel h1 {
+    font-size: 1.32rem;
+  }
+
+  .split-input {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, 36%);
+  }
+
+  .input-shell input,
+  .split-input input,
+  .split-input select,
+  .search-panel input,
+  .search-panel select {
+    font-size: 0.88rem;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
