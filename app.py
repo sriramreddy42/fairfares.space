@@ -865,6 +865,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
             for car in get_cars()
         )
+        upgrade_select_options = "\n".join(
+            f'<option value="{escape(car["name"])}" data-price="{car["total_price"]:.2f}" {"selected" if car["name"] == current_car_name else ""}>{escape(car["name"])} - {escape(car["category"])} - ${car["total_price"]:.2f}</option>'
+            for car in get_cars()
+        )
         editable = ["hero_kicker", "hero_title", "hero_body", "primary_cta", "secondary_cta", "poster_image", "poster_caption", "offer_title", "offer_body", "contact_email"]
         fields = "\n".join(
             f"""
@@ -916,6 +920,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             price_text=f"${float(booking['total_price'] if booking else 209.93):.2f}",
             status=escape(booking["status"] if booking else "CONFIRMED"),
             upgrade_options=upgrade_options,
+            upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),
         )
         self.send_html(body)

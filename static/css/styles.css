@@ -875,6 +875,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   display: grid;
   gap: 10px;
 }
+.upgrade-select {
+  display: none !important;
+}
 .upgrade-options label {
   align-items: center;
   border: 1px solid var(--line);
@@ -2986,6 +2989,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .manage-screen .upgrade-options label {
     gap: 9px;
     padding: 10px;
+  }
+
+  .manage-screen .upgrade-select {
+    display: grid !important;
+  }
+
+  .manage-screen .upgrade-options {
+    display: none;
   }
 
   .manage-screen .modify-summary {

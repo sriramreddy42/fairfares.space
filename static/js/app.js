@@ -159,6 +159,7 @@ const modifyForm = document.getElementById("modifyForm");
 const addDriverToggle = document.getElementById("addDriverToggle");
 const driverFields = [...document.querySelectorAll(".driver-fields input, .driver-fields select")];
 const driverFieldGroup = document.querySelector(".driver-fields");
+const vehicleSelect = document.getElementById("vehicleSelect");
 const summaryVehicle = document.getElementById("summaryVehicle");
 const summaryPrice = document.getElementById("summaryPrice");
 const summaryPickup = document.getElementById("summaryPickup");
@@ -182,6 +183,20 @@ function updateModifySummary() {
   summaryPickup.textContent = pickup;
   summaryReturn.textContent = `${formatDate(returnDate)} | ${returnTime}`;
 }
+
+vehicleSelect?.addEventListener("change", () => {
+  const matchingVehicle = [...(modifyForm?.querySelectorAll('input[name="vehicle"]') || [])]
+    .find((vehicle) => vehicle.value === vehicleSelect.value);
+  if (matchingVehicle) matchingVehicle.checked = true;
+  modifyStatus.textContent = "";
+  updateModifySummary();
+});
+
+modifyForm?.querySelectorAll('input[name="vehicle"]').forEach((vehicle) => {
+  vehicle.addEventListener("change", () => {
+    if (vehicle.checked && vehicleSelect) vehicleSelect.value = vehicle.value;
+  });
+});
 
 addDriverToggle?.addEventListener("change", () => {
   const enabled = addDriverToggle.checked;
