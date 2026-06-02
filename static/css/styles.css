@@ -2926,6 +2926,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .manage-screen .modify-grid.two {
     gap: 10px;
     grid-template-columns: 1fr;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .manage-screen .modify-form label,
@@ -2949,11 +2951,36 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .manage-screen .workflow-form select,
   .manage-screen .workflow-form textarea,
   .manage-screen .document-tools input {
+    appearance: auto;
+    border-color: #dfe4ee;
+    border-radius: 6px;
     color: var(--ink);
-    font-size: 0.88rem;
+    font-size: 0.84rem;
     font-weight: 650;
-    min-height: 38px;
+    line-height: 1.2;
+    max-width: 100%;
+    min-height: 36px;
+    min-width: 0;
     padding: 8px 10px;
+    text-align: left;
+    width: 100%;
+  }
+
+  .manage-screen .modify-form input[type="date"] {
+    font-size: 0.82rem;
+    padding-right: 8px;
+  }
+
+  .manage-screen .modify-form input[type="date"]::-webkit-date-and-time-value {
+    text-align: left;
+  }
+
+  .manage-screen .modify-form select,
+  .manage-screen .workflow-form select {
+    overflow: hidden;
+    padding-right: 30px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .manage-screen .upgrade-options label {
