@@ -4,6 +4,9 @@ const resultCount = document.getElementById("resultCount");
 const typeFilters = [...document.querySelectorAll(".type-filter")];
 const clearFilters = document.getElementById("clearFilters");
 const searchForm = document.getElementById("searchForm");
+const filterToggle = document.getElementById("filterToggle");
+const filterOptions = document.getElementById("filterOptions");
+const mobileQuery = window.matchMedia("(max-width: 760px)");
 
 function updateCars() {
   if (!carList) return;
@@ -33,6 +36,25 @@ clearFilters?.addEventListener("click", () => {
   });
   updateCars();
 });
+
+function setFilterOptions(open) {
+  if (!filterToggle || !filterOptions) return;
+  filterOptions.hidden = !open;
+  filterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  filterToggle.querySelector("b").textContent = open ? "Hide" : "Show";
+}
+
+function syncFilterOptions() {
+  if (!filterToggle || !filterOptions) return;
+  setFilterOptions(!mobileQuery.matches);
+}
+
+filterToggle?.addEventListener("click", () => {
+  setFilterOptions(filterOptions.hidden);
+});
+
+mobileQuery.addEventListener?.("change", syncFilterOptions);
+syncFilterOptions();
 
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();

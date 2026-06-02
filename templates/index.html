@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-9">
-  <script defer src="/static/js/app.js?v=12"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-10">
+  <script defer src="/static/js/app.js?v=13"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -64,7 +64,14 @@
 
     <section class="results-layout" id="results">
       <aside class="filters">
-        <div class="filter-head"><h2>Filter Results</h2><button id="clearFilters" type="button">Clear All</button></div>
+        <div class="filter-head">
+          <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterOptions">
+            <span>Filter Results</span>
+            <b>Show</b>
+          </button>
+          <button id="clearFilters" type="button">Clear All</button>
+        </div>
+        <div class="filter-options" id="filterOptions">
         <fieldset>
           <legend>Car Type</legend>
           <label><input type="checkbox" value="Economy" class="type-filter"> Economy (23)</label>
@@ -78,6 +85,7 @@
           <label><input type="checkbox"> Fuel Efficient</label>
           <label><input type="checkbox"> Electric Options</label>
         </fieldset>
+        </div>
       </aside>
 
       <section class="cars-panel">

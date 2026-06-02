@@ -2723,23 +2723,56 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 @media (max-width: 760px) {
   .filters {
     display: grid !important;
-    gap: 8px !important;
+    gap: 0 !important;
     padding: 10px !important;
   }
 
   .filter-head {
     align-items: center;
     display: flex;
+    gap: 10px;
+    justify-content: space-between;
     min-height: 30px;
   }
 
-  .filter-head h2 {
-    font-size: 0.92rem !important;
+  .filter-toggle {
+    align-items: center;
+    background: #f7f9fc;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--navy);
+    display: flex;
+    flex: 1 1 auto;
+    font-weight: 900;
+    justify-content: space-between;
+    min-height: 38px;
+    padding: 8px 10px;
+    text-align: left;
   }
 
-  .filter-head button {
+  .filter-toggle span {
+    font-size: 0.9rem;
+  }
+
+  .filter-toggle b {
+    color: var(--red);
+    font-size: 0.76rem;
+  }
+
+  .filter-head > button:not(.filter-toggle) {
     font-size: 0.82rem !important;
+    flex: 0 0 auto;
     padding: 0;
+  }
+
+  .filter-options[hidden] {
+    display: none !important;
+  }
+
+  .filter-options {
+    display: grid;
+    gap: 8px;
+    padding-top: 8px;
   }
 
   .filters fieldset {
