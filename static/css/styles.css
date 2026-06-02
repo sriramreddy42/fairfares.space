@@ -25,6 +25,12 @@ body {
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
+img, svg, video, canvas {
+  max-width: 100%;
+}
+input, select, textarea, button {
+  min-width: 0;
+}
 
 .top-brand {
   align-items: center;
@@ -1703,6 +1709,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     justify-content: space-between;
   }
 
+  .nav-actions > * {
+    flex: 0 0 auto;
+  }
+
   .user-chip {
     grid-template-columns: 24px auto;
   }
@@ -1736,6 +1746,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     margin: 14px 16px;
     order: 1;
     padding: 18px;
+    width: auto;
   }
 
   .search-panel h1 {
@@ -1779,6 +1790,13 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     border-radius: 8px;
     gap: 0;
     overflow: hidden;
+    padding: 0;
+  }
+
+  .car-art {
+    align-items: center;
+    justify-content: center;
+    width: 100%;
   }
 
   .car-info,
@@ -1857,6 +1875,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     gap: 8px;
     grid-auto-columns: minmax(145px, max-content);
     grid-auto-flow: column;
+    grid-template-columns: none;
     overflow-x: auto;
     padding: 10px;
   }
@@ -1904,6 +1923,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
   .trip-card {
     gap: 14px;
+    grid-template-columns: 1fr;
     padding: 16px;
   }
 
@@ -1937,17 +1957,31 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
   .trip-actions {
     display: grid;
-    gap: 8px;
-    grid-auto-columns: minmax(142px, 1fr);
+    gap: 12px;
+    grid-auto-columns: minmax(190px, 72%);
     grid-auto-flow: column;
     grid-template-columns: none;
     overflow-x: auto;
-    padding-bottom: 2px;
+    padding: 4px 50% 6px;
+    scroll-padding-inline: 50%;
+    scroll-snap-type: x mandatory;
   }
 
   .trip-actions button {
-    min-height: 44px;
-    padding: 10px 12px;
+    filter: blur(1.5px);
+    min-height: 84px;
+    opacity: 0.42;
+    padding: 12px 14px;
+    scroll-snap-align: center;
+    transform: scale(0.92);
+    transition: filter 180ms ease, opacity 180ms ease, transform 180ms ease;
+    white-space: normal;
+  }
+
+  .trip-actions button.active {
+    filter: none;
+    opacity: 1;
+    transform: scale(1);
   }
 
   .manage-card,
@@ -1995,6 +2029,121 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
 }
 
+@media (max-width: 600px) {
+  .top-brand,
+  .main-nav,
+  .results-layout,
+  .login-main,
+  .manage-layout {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .nav-links,
+  .nav-actions,
+  .top-benefits,
+  .login-benefits,
+  .manage-sidebar,
+  .trip-actions {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .search-panel,
+  .results-toolbar,
+  .filters,
+  .car-card,
+  .auth-card,
+  .page-heading,
+  .trip-card,
+  .manage-card,
+  .savings-band {
+    box-shadow: none;
+  }
+
+  .search-panel label,
+  .auth-card label,
+  .modify-form label,
+  .workflow-form label,
+  .document-tools label {
+    min-width: 0;
+  }
+
+  .split-input,
+  .input-shell {
+    width: 100%;
+  }
+
+  .results-toolbar h2,
+  .filter-head h2,
+  .page-heading h1,
+  .car-info h3,
+  .manage-card h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .filter-head {
+    gap: 10px;
+  }
+
+  .filter-head button {
+    flex: 0 0 auto;
+  }
+
+  .filters label,
+  .toggle-row {
+    line-height: 1.35;
+  }
+
+  .select-button,
+  .auth-card button,
+  .social-button,
+  .signup-box a,
+  .page-heading button,
+  .manage-card button,
+  .student-promo button {
+    width: 100%;
+  }
+
+  .price-box {
+    justify-items: stretch;
+  }
+
+  .manage-content,
+  .manage-panels,
+  .manage-panel,
+  .document-tools,
+  .workflow-form,
+  .modify-form {
+    min-width: 0;
+  }
+
+  .doc-actions,
+  .detail-tabs,
+  .support-options,
+  .tabs {
+    display: grid;
+    grid-auto-columns: minmax(150px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    overflow-x: auto;
+  }
+
+  .doc-actions button,
+  .detail-tabs button,
+  .support-options button,
+  .tabs button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .modify-summary b,
+  .document-preview p,
+  .support-summary span,
+  .mini-trip span {
+    overflow-wrap: anywhere;
+  }
+}
+
 @media (max-width: 420px) {
   .logo-lockup img,
   .login-logo img {
@@ -2016,6 +2165,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     padding: 16px;
   }
 
+  .search-panel h1 {
+    font-size: 1.32rem;
+  }
+
   .hero-poster {
     min-height: 180px;
   }
@@ -2031,6 +2184,20 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .manage-card,
   .trip-card {
     padding: 14px;
+  }
+
+  .car-card .car-info,
+  .car-card .price-box {
+    padding: 14px;
+  }
+
+  .car-shape {
+    max-width: 82vw;
+  }
+
+  .deal-badge {
+    left: 10px;
+    top: 10px;
   }
 
   .specs span {

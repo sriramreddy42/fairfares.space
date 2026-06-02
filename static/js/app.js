@@ -43,6 +43,13 @@ updateCars();
 
 const manageTabs = [...document.querySelectorAll("[data-manage-tab]")];
 const managePanels = [...document.querySelectorAll("[data-manage-panel]")];
+const tripActions = document.querySelector(".trip-actions");
+
+function centerActiveTripAction(panelName) {
+  const activeAction = tripActions?.querySelector(`[data-manage-tab="${panelName}"]`);
+  if (!activeAction) return;
+  activeAction.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+}
 
 function showManagePanel(panelName) {
   manageTabs.forEach((tab) => {
@@ -56,6 +63,7 @@ function showManagePanel(panelName) {
     panel.classList.toggle("is-hidden", !visible);
     panel.classList.toggle("active", visible);
   });
+  centerActiveTripAction(panelName);
 }
 
 document.addEventListener("click", (event) => {
