@@ -1591,3 +1591,461 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     border-right: 0;
   }
 }
+
+@media (max-width: 760px) {
+  body {
+    background: #f6f8fb;
+  }
+
+  .top-brand {
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px 12px;
+  }
+
+  .logo-lockup img,
+  .login-logo img {
+    max-height: 56px;
+    max-width: 300px;
+  }
+
+  .top-benefits,
+  .login-benefits {
+    background: rgba(255, 255, 255, 0.06);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    display: grid;
+    gap: 8px;
+    grid-auto-columns: minmax(142px, 1fr);
+    grid-auto-flow: column;
+    margin: 0;
+    overflow-x: auto;
+    padding: 10px 0 0;
+    scrollbar-width: none;
+    width: 100%;
+  }
+
+  .top-benefits::-webkit-scrollbar,
+  .login-benefits::-webkit-scrollbar,
+  .nav-links::-webkit-scrollbar,
+  .trip-actions::-webkit-scrollbar,
+  .manage-sidebar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .benefit-pill {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    gap: 2px 8px;
+    grid-template-columns: 36px minmax(0, 1fr);
+    min-width: 0;
+    padding: 8px;
+  }
+
+  .circle-icon {
+    border-width: 2px;
+    font-size: 0.58rem;
+    height: 36px;
+    width: 36px;
+  }
+
+  .benefit-pill strong {
+    font-size: 0.82rem;
+  }
+
+  .benefit-pill span:last-child {
+    font-size: 0.75rem;
+  }
+
+  .main-nav {
+    align-items: stretch;
+    gap: 10px;
+    min-height: auto;
+    padding: 10px 16px;
+  }
+
+  .nav-links,
+  .nav-actions {
+    align-items: center;
+    flex-direction: row;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .nav-links a,
+  .nav-actions a,
+  .nav-actions span,
+  .user-chip {
+    background: #f5f7fb;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    display: inline-flex;
+    min-height: 38px;
+    padding: 9px 13px;
+  }
+
+  .nav-links a {
+    align-items: center;
+  }
+
+  .nav-links .active {
+    background: #fff1f2;
+    border-color: #ffc7cd;
+  }
+
+  .nav-links .active::after {
+    display: none;
+  }
+
+  .nav-actions {
+    justify-content: space-between;
+  }
+
+  .user-chip {
+    grid-template-columns: 24px auto;
+  }
+
+  .user-chip span {
+    height: 24px;
+    width: 24px;
+  }
+
+  .user-chip small {
+    display: none;
+  }
+
+  .menu-button {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    flex: 0 0 38px;
+    height: 38px;
+    place-content: center;
+  }
+
+  .booking-hero {
+    display: flex;
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .search-panel {
+    border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(7, 19, 56, 0.14);
+    margin: 14px 16px;
+    order: 1;
+    padding: 18px;
+  }
+
+  .search-panel h1 {
+    font-size: 1.45rem;
+    line-height: 1.15;
+  }
+
+  .hero-poster {
+    background-position: center;
+    border-top: 3px solid var(--red);
+    min-height: 210px;
+    order: 2;
+  }
+
+  .results-layout {
+    gap: 14px;
+    padding: 14px 16px 30px;
+  }
+
+  .filters {
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .filters fieldset {
+    display: grid;
+    gap: 8px;
+  }
+
+  .results-toolbar {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .car-card {
+    border-radius: 8px;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .car-info,
+  .price-box {
+    padding: 16px;
+  }
+
+  .price-box {
+    align-items: stretch;
+    background: #fbfcfe;
+    display: grid;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .price-box strong {
+    font-size: 1.7rem;
+  }
+
+  .details-link {
+    text-align: center;
+  }
+
+  .login-top {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .login-logo {
+    padding: 18px;
+  }
+
+  .login-benefits {
+    background: linear-gradient(100deg, #061b44, #031533);
+    grid-auto-columns: minmax(150px, 1fr);
+    padding: 12px 18px;
+  }
+
+  .login-benefits span {
+    border: 0;
+    padding-left: 0;
+  }
+
+  .login-main {
+    background: linear-gradient(rgba(255,255,255,0.82), rgba(255,255,255,0.9)), url("/static/img/login-road.png") center bottom / cover no-repeat;
+    padding: 18px 16px 34px;
+  }
+
+  .auth-card {
+    border-radius: 8px;
+    padding: 24px 18px;
+  }
+
+  .auth-card h2 {
+    font-size: 1.75rem;
+  }
+
+  .auth-card p {
+    font-size: 1rem;
+    margin-bottom: 16px;
+  }
+
+  .activation-panel {
+    padding: 14px;
+  }
+
+  .manage-layout {
+    gap: 14px;
+    padding: 14px 16px 30px;
+  }
+
+  .manage-sidebar {
+    align-items: stretch;
+    display: grid;
+    gap: 8px;
+    grid-auto-columns: minmax(145px, max-content);
+    grid-auto-flow: column;
+    overflow-x: auto;
+    padding: 10px;
+  }
+
+  .manage-sidebar h2,
+  .student-promo {
+    display: none;
+  }
+
+  .manage-sidebar a {
+    align-content: center;
+    background: #f7f9fc;
+    border-color: var(--line);
+    min-height: 52px;
+    padding: 10px 12px;
+  }
+
+  .manage-sidebar a span {
+    display: none;
+  }
+
+  .manage-sidebar a b {
+    font-size: 0.82rem;
+  }
+
+  .page-heading {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .page-heading h1 {
+    font-size: 1.35rem;
+  }
+
+  .page-heading p {
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .page-heading button {
+    width: 100%;
+  }
+
+  .trip-card {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .trip-car .car-art {
+    height: 100px;
+  }
+
+  .trip-car p {
+    justify-content: space-between;
+  }
+
+  .trip-details h2 {
+    margin-bottom: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .trip-route {
+    gap: 5px;
+  }
+
+  .price-summary {
+    align-items: center;
+    grid-template-columns: 1fr 1fr;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .price-summary a {
+    justify-self: end;
+  }
+
+  .trip-actions {
+    display: grid;
+    gap: 8px;
+    grid-auto-columns: minmax(142px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .trip-actions button {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .manage-card,
+  .savings-band {
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .manage-card h2,
+  .savings-band h2 {
+    font-size: 0.95rem;
+  }
+
+  .upgrade-options label {
+    align-items: start;
+    grid-template-columns: auto 1fr;
+  }
+
+  .upgrade-options strong {
+    grid-column: 2;
+  }
+
+  .toggle-row {
+    align-items: flex-start;
+  }
+
+  .doc-actions button,
+  .detail-tabs button,
+  .support-options button,
+  .tabs button {
+    min-height: 44px;
+  }
+
+  .tabs {
+    gap: 8px;
+    overflow-x: auto;
+  }
+
+  .tabs button {
+    flex: 0 0 auto;
+  }
+
+  .wide-panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .logo-lockup img,
+  .login-logo img {
+    max-height: 48px;
+    max-width: 260px;
+  }
+
+  .top-brand,
+  .main-nav,
+  .results-layout,
+  .manage-layout {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .search-panel {
+    margin-left: 12px;
+    margin-right: 12px;
+    padding: 16px;
+  }
+
+  .hero-poster {
+    min-height: 180px;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 42px;
+  }
+
+  .car-info,
+  .price-box,
+  .manage-card,
+  .trip-card {
+    padding: 14px;
+  }
+
+  .specs span {
+    font-size: 0.78rem;
+  }
+
+  .price-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .price-summary a {
+    justify-self: start;
+  }
+
+  .countdown b {
+    font-size: 1.1rem;
+  }
+}
