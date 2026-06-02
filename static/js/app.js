@@ -44,6 +44,7 @@ updateCars();
 const manageTabs = [...document.querySelectorAll("[data-manage-tab]")];
 const managePanels = [...document.querySelectorAll("[data-manage-panel]")];
 const tripActions = document.querySelector(".trip-actions");
+let tripActionScrollTimer;
 
 function centerActiveTripAction(panelName) {
   const activeAction = tripActions?.querySelector(`[data-manage-tab="${panelName}"]`);
@@ -51,7 +52,8 @@ function centerActiveTripAction(panelName) {
   activeAction.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
 }
 
-function showManagePanel(panelName) {
+function showManagePanel(panelName, options = {}) {
+  const { centerAction = true } = options;
   manageTabs.forEach((tab) => {
     const active = tab.dataset.manageTab === panelName;
     tab.classList.toggle("active", active);
@@ -63,7 +65,22 @@ function showManagePanel(panelName) {
     panel.classList.toggle("is-hidden", !visible);
     panel.classList.toggle("active", visible);
   });
-  centerActiveTripAction(panelName);
+  if (centerAction) centerActiveTripAction(panelName);
+}
+
+function selectCenteredTripAction() {
+  if (!tripActions) return;
+  const actionButtons = [...tripActions.querySelectorAll("[data-manage-tab]")];
+  const stripCenter = tripActions.getBoundingClientRect().left + tripActions.clientWidth / 2;
+  const centeredAction = actionButtons.reduce((closest, action) => {
+    const box = action.getBoundingClientRect();
+    const distance = Math.abs(box.left + box.width / 2 - stripCenter);
+    return !closest || distance < closest.distance ? { action, distance } : closest;
+  }, null)?.action;
+
+  if (centeredAction && !centeredAction.classList.contains("active")) {
+    showManagePanel(centeredAction.dataset.manageTab, { centerAction: false });
+  }
 }
 
 document.addEventListener("click", (event) => {
@@ -76,6 +93,11 @@ document.addEventListener("click", (event) => {
 if (manageTabs.length) {
   showManagePanel(manageTabs.find((tab) => tab.classList.contains("active"))?.dataset.manageTab || "modify");
 }
+
+tripActions?.addEventListener("scroll", () => {
+  window.clearTimeout(tripActionScrollTimer);
+  tripActionScrollTimer = window.setTimeout(selectCenteredTripAction, 90);
+});
 
 const modifyForm = document.getElementById("modifyForm");
 const addDriverToggle = document.getElementById("addDriverToggle");

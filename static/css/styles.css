@@ -1962,8 +1962,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     grid-auto-flow: column;
     grid-template-columns: none;
     overflow-x: auto;
-    padding: 4px 50% 6px;
-    scroll-padding-inline: 50%;
+    padding: 4px 14% 6px;
+    scroll-padding-inline: 14%;
     scroll-snap-type: x mandatory;
   }
 
