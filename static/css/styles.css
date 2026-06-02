@@ -2999,8 +2999,333 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     display: none;
   }
 
+  .manage-screen .toggle-row {
+    align-items: center;
+    background: #f7f9fc;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: flex !important;
+    gap: 10px;
+    min-height: 40px;
+    padding: 9px 10px;
+  }
+
+  .manage-screen .toggle-row input {
+    flex: 0 0 20px;
+    height: 20px;
+    min-height: 20px;
+    width: 20px;
+  }
+
+  .manage-screen .toggle-row span {
+    color: var(--ink);
+    font-size: 0.86rem;
+    line-height: 1.2;
+  }
+
+  .manage-screen .driver-fields {
+    margin-top: 0;
+  }
+
   .manage-screen .modify-summary {
     gap: 8px;
     padding: 10px;
+  }
+}
+
+@media (max-width: 760px) {
+  .top-brand {
+    align-items: center !important;
+    display: flex !important;
+    justify-content: center;
+    min-height: 76px !important;
+    padding: 14px 18px !important;
+  }
+
+  .top-brand .top-benefits,
+  .login-screen .login-benefits {
+    display: none !important;
+  }
+
+  .logo-lockup,
+  .login-logo {
+    justify-content: center;
+    padding: 0 !important;
+  }
+
+  .logo-lockup img,
+  .login-logo img {
+    max-height: 54px !important;
+    max-width: min(310px, 86vw) !important;
+  }
+
+  .main-nav {
+    align-items: center !important;
+    background: #fff;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 10px !important;
+    padding: 10px 14px !important;
+  }
+
+  .main-nav .nav-links,
+  .main-nav .nav-actions {
+    display: contents !important;
+  }
+
+  .main-nav .nav-links a,
+  .main-nav .nav-actions > span {
+    display: none !important;
+  }
+
+  .main-nav .nav-actions > a,
+  .main-nav .nav-actions > .user-chip {
+    align-items: center;
+    background: var(--red);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    color: #fff;
+    display: inline-flex !important;
+    font-size: 0.9rem;
+    font-weight: 900;
+    grid-column: 1;
+    justify-self: start;
+    min-height: 40px;
+    padding: 10px 13px;
+  }
+
+  .main-nav .nav-actions > .user-chip {
+    background: #f7f9fc;
+    border-color: var(--line);
+    color: var(--navy);
+  }
+
+  .main-nav .menu-button {
+    align-items: center;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: inline-flex !important;
+    flex-direction: column;
+    gap: 5px;
+    grid-column: 2;
+    height: 40px;
+    justify-content: center;
+    justify-self: end;
+    width: 44px;
+  }
+
+  .main-nav .menu-button span {
+    background: var(--navy);
+    border-radius: 999px;
+    display: block;
+    height: 2px;
+    width: 20px;
+  }
+
+  .mobile-menu {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 16px 28px rgba(7, 19, 56, 0.16);
+    display: grid;
+    gap: 8px;
+    grid-column: 1 / -1;
+    margin-top: 2px;
+    padding: 10px;
+  }
+
+  .mobile-menu[hidden] {
+    display: none !important;
+  }
+
+  .mobile-menu a {
+    background: #f6f8fb;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--navy);
+    display: block;
+    font-size: 0.92rem;
+    font-weight: 900;
+    padding: 12px 14px;
+  }
+
+  .booking-hero {
+    background: #f3f5f9;
+  }
+
+  .hero-poster {
+    min-height: 150px !important;
+  }
+
+  .search-panel {
+    gap: 12px !important;
+    margin: 12px !important;
+    padding: 16px !important;
+  }
+
+  .search-panel h1 {
+    font-size: 1.28rem !important;
+  }
+
+  .search-panel label span,
+  .auth-card label span {
+    font-size: 0.72rem !important;
+  }
+
+  .input-shell,
+  .split-input {
+    border-radius: 6px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 0.88rem;
+    min-height: 40px;
+  }
+
+  .filters {
+    padding: 12px !important;
+  }
+
+  .filter-options {
+    grid-template-columns: 1fr 1fr;
+    gap: 14px !important;
+  }
+
+  .filters fieldset {
+    align-content: start;
+    border-top: 1px solid var(--line);
+    grid-template-columns: 1fr !important;
+  }
+
+  .filters label {
+    font-size: 0.78rem !important;
+    min-height: 34px !important;
+  }
+
+  .cars-panel {
+    display: grid;
+    gap: 10px;
+  }
+
+  .car-card {
+    display: grid !important;
+    grid-template-columns: 108px minmax(0, 1fr) !important;
+    min-height: 0;
+  }
+
+  .car-card .car-art {
+    align-content: end;
+    border-right: 1px solid var(--line);
+    height: 100%;
+    min-height: 116px;
+    padding: 8px;
+  }
+
+  .car-card .deal-badge {
+    font-size: 0.62rem;
+    padding: 5px 7px;
+  }
+
+  .car-card .car-shape {
+    transform: scale(0.5);
+    transform-origin: left bottom;
+  }
+
+  .car-info {
+    padding: 12px !important;
+  }
+
+  .car-info h3 {
+    font-size: 1rem;
+    margin-bottom: 2px;
+  }
+
+  .car-info p {
+    font-size: 0.76rem;
+    margin: 0 0 8px;
+  }
+
+  .car-info ul {
+    display: none;
+  }
+
+  .specs {
+    gap: 6px;
+  }
+
+  .specs span {
+    font-size: 0.68rem !important;
+    padding: 5px 7px !important;
+  }
+
+  .price-box {
+    align-items: center;
+    border-top: 1px solid var(--line);
+    display: grid !important;
+    gap: 8px !important;
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr auto auto;
+    padding: 10px 12px !important;
+  }
+
+  .price-box strong {
+    font-size: 1.35rem !important;
+  }
+
+  .price-box small,
+  .details-link {
+    display: none;
+  }
+
+  .select-button {
+    min-height: 38px;
+    min-width: 112px;
+    padding: 9px 12px;
+  }
+
+  .manage-screen .toggle-row {
+    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: 22px minmax(0, 1fr);
+    min-height: auto !important;
+    padding: 10px 12px !important;
+  }
+
+  .manage-screen .toggle-row input[type="checkbox"] {
+    appearance: auto;
+    align-self: center;
+    flex: none;
+    height: 20px !important;
+    justify-self: start;
+    min-height: 20px !important;
+    width: 20px !important;
+  }
+
+  .manage-screen .toggle-row {
+    color: var(--navy);
+    font-size: 0.9rem;
+    font-weight: 900;
+    line-height: 1.2;
+  }
+}
+
+@media (max-width: 390px) {
+  .filter-options {
+    grid-template-columns: 1fr;
+  }
+
+  .car-card {
+    grid-template-columns: 92px minmax(0, 1fr) !important;
+  }
+
+  .price-box {
+    grid-template-columns: 1fr auto;
+  }
+
+  .price-box span {
+    display: none;
   }
 }

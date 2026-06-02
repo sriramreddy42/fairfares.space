@@ -71,8 +71,7 @@ if (mainNav && menuButton) {
   mobileMenu.hidden = true;
 
   const hiddenNavItems = [
-    ...document.querySelectorAll(".nav-links a:not(:first-child)"),
-    ...document.querySelectorAll(".nav-actions > span:not(.user-chip)"),
+    ...document.querySelectorAll(".nav-links a"),
   ];
 
   hiddenNavItems.forEach((item) => {
