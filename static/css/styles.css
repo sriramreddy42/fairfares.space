@@ -191,6 +191,13 @@ input, select, textarea {
   border: 0;
   border-radius: 0;
 }
+.input-shell select {
+  color: var(--ink);
+  font-weight: 800;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .split-input input { border-right: 1px solid var(--line); }
 .search-panel button, .auth-card button[type="submit"], .select-button {
   background: var(--red);
