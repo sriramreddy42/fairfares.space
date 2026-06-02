@@ -2876,3 +2876,93 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 760px) {
+  .manage-screen .manage-card {
+    padding: 14px;
+  }
+
+  .manage-screen .manage-card h2 {
+    font-size: 0.9rem;
+    letter-spacing: 0;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+
+  .manage-screen .manage-card p {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-bottom: 10px;
+  }
+
+  .manage-screen .modify-form,
+  .manage-screen .workflow-form,
+  .manage-screen .document-tools {
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .manage-screen .modify-section {
+    gap: 10px;
+    padding-top: 12px;
+  }
+
+  .manage-screen .section-heading {
+    gap: 2px;
+  }
+
+  .manage-screen .section-heading b {
+    font-size: 1rem;
+    line-height: 1.2;
+  }
+
+  .manage-screen .section-heading span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.25;
+  }
+
+  .manage-screen .modify-grid,
+  .manage-screen .modify-grid.two {
+    gap: 10px;
+    grid-template-columns: 1fr;
+  }
+
+  .manage-screen .modify-form label,
+  .manage-screen .workflow-form label,
+  .manage-screen .document-tools label {
+    gap: 5px;
+    font-weight: 800;
+  }
+
+  .manage-screen .modify-form label span,
+  .manage-screen .workflow-form label span,
+  .manage-screen .document-tools label span {
+    color: var(--ink);
+    font-size: 0.74rem;
+    line-height: 1.1;
+  }
+
+  .manage-screen .modify-form input,
+  .manage-screen .modify-form select,
+  .manage-screen .workflow-form input,
+  .manage-screen .workflow-form select,
+  .manage-screen .workflow-form textarea,
+  .manage-screen .document-tools input {
+    color: var(--ink);
+    font-size: 0.88rem;
+    font-weight: 650;
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .manage-screen .upgrade-options label {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .manage-screen .modify-summary {
+    gap: 8px;
+    padding: 10px;
+  }
+}
