@@ -2360,3 +2360,115 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     padding: 12px 14px;
   }
 }
+
+@media (max-width: 760px) {
+  .login-screen {
+    background: #f6f8fb;
+  }
+
+  .login-screen .login-top {
+    background: #fff;
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .login-screen .login-logo {
+    justify-content: center;
+    padding: 14px 16px;
+  }
+
+  .login-screen .login-logo img {
+    max-height: 64px;
+    max-width: 280px;
+    width: 100%;
+  }
+
+  .login-screen .login-benefits {
+    background: linear-gradient(100deg, #061b44, #031533);
+    border-top: 0;
+    display: grid !important;
+    gap: 0;
+    grid-auto-flow: row !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: hidden;
+    padding: 10px 8px;
+    width: 100%;
+  }
+
+  .login-screen .login-benefits span {
+    border: 0;
+    color: #fff;
+    display: block;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    min-width: 0;
+    padding: 0 5px;
+    text-align: center;
+  }
+
+  .login-screen .login-benefits b {
+    display: block;
+    font-size: 0.78rem;
+    line-height: 1.1;
+    margin-bottom: 2px;
+    overflow-wrap: anywhere;
+  }
+
+  .login-screen .login-main {
+    background: #f6f8fb;
+    display: block;
+    min-height: auto;
+    padding: 16px;
+  }
+
+  .login-screen .login-poster {
+    display: none;
+  }
+
+  .login-screen .auth-card {
+    border-radius: 8px;
+    box-shadow: none;
+    margin: 0 auto;
+    max-width: 430px;
+    padding: 24px 18px;
+    width: 100%;
+  }
+
+  .login-screen .auth-card h2 {
+    font-size: 1.65rem;
+    line-height: 1.15;
+  }
+
+  .login-screen .auth-card p {
+    font-size: 0.96rem;
+    margin-bottom: 14px;
+  }
+
+  .login-screen .auth-card form {
+    gap: 14px;
+  }
+
+  .login-screen .divider {
+    margin: 20px 0;
+  }
+
+  .login-screen .signup-box {
+    margin-top: 20px;
+    padding: 18px;
+  }
+
+  .login-screen .login-footer {
+    background: #fff;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-height: auto;
+    padding: 14px 12px;
+    text-align: center;
+  }
+
+  .login-screen .login-footer span {
+    font-size: 0.78rem;
+  }
+}
