@@ -2242,3 +2242,121 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     font-size: 1.1rem;
   }
 }
+
+@media (max-width: 760px) {
+  .top-brand .top-benefits {
+    display: grid !important;
+    gap: 6px !important;
+    grid-auto-flow: row !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    padding: 10px 0 0 !important;
+    width: 100% !important;
+  }
+
+  .top-brand .benefit-pill {
+    align-content: center;
+    display: grid;
+    gap: 5px;
+    grid-template-columns: 1fr !important;
+    justify-items: center;
+    min-height: 78px;
+    min-width: 0 !important;
+    padding: 7px 4px;
+    text-align: center;
+  }
+
+  .top-brand .circle-icon {
+    font-size: 0.48rem;
+    height: 32px;
+    width: 32px;
+  }
+
+  .top-brand .benefit-pill strong {
+    font-size: 0.72rem;
+    line-height: 1.05;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .top-brand .benefit-pill span:last-child {
+    font-size: 0.62rem;
+    grid-column: auto;
+    line-height: 1.1;
+    max-width: 100%;
+  }
+
+  .main-nav {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .nav-links,
+  .nav-actions {
+    display: contents;
+  }
+
+  .nav-links a {
+    display: none;
+  }
+
+  .nav-links a:first-child,
+  .nav-actions > a,
+  .menu-button {
+    align-self: center;
+    display: inline-flex;
+  }
+
+  .nav-links a:first-child {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .nav-actions > a {
+    grid-column: 2;
+    justify-self: end;
+    max-width: 170px;
+  }
+
+  .nav-actions > span,
+  .user-chip {
+    display: none !important;
+  }
+
+  .menu-button {
+    flex-direction: column;
+    grid-column: 3;
+    gap: 6px;
+    height: 40px;
+    justify-self: end;
+    width: 40px;
+  }
+
+  .mobile-menu {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 14px 26px rgba(7, 19, 56, 0.16);
+    display: grid;
+    gap: 6px;
+    grid-column: 1 / -1;
+    padding: 10px;
+  }
+
+  .mobile-menu[hidden] {
+    display: none !important;
+  }
+
+  .mobile-menu a,
+  .mobile-menu span {
+    background: #f5f7fb;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--navy);
+    display: block;
+    font-weight: 900;
+    padding: 12px 14px;
+  }
+}

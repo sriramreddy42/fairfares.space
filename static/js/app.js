@@ -41,6 +41,41 @@ searchForm?.addEventListener("submit", (event) => {
 
 updateCars();
 
+const mainNav = document.querySelector(".main-nav");
+const menuButton = document.querySelector(".menu-button");
+const mobileMenu = document.createElement("div");
+
+if (mainNav && menuButton) {
+  mobileMenu.className = "mobile-menu";
+  mobileMenu.hidden = true;
+
+  const hiddenNavItems = [
+    ...document.querySelectorAll(".nav-links a:not(:first-child)"),
+    ...document.querySelectorAll(".nav-actions > span:not(.user-chip)"),
+  ];
+
+  hiddenNavItems.forEach((item) => {
+    const clone = item.cloneNode(true);
+    clone.classList.remove("active");
+    mobileMenu.appendChild(clone);
+  });
+
+  mainNav.appendChild(mobileMenu);
+  menuButton.setAttribute("aria-expanded", "false");
+
+  menuButton.addEventListener("click", () => {
+    const isOpen = !mobileMenu.hidden;
+    mobileMenu.hidden = isOpen;
+    menuButton.setAttribute("aria-expanded", isOpen ? "false" : "true");
+  });
+
+  mobileMenu.addEventListener("click", (event) => {
+    if (!event.target.closest("a")) return;
+    mobileMenu.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+  });
+}
+
 const manageTabs = [...document.querySelectorAll("[data-manage-tab]")];
 const managePanels = [...document.querySelectorAll("[data-manage-panel]")];
 const tripActions = document.querySelector(".trip-actions");
