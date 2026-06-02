@@ -2719,3 +2719,88 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     padding-right: 10px;
   }
 }
+
+@media (max-width: 760px) {
+  .filters {
+    display: grid !important;
+    gap: 8px !important;
+    padding: 10px !important;
+  }
+
+  .filter-head {
+    align-items: center;
+    display: flex;
+    min-height: 30px;
+  }
+
+  .filter-head h2 {
+    font-size: 0.92rem !important;
+  }
+
+  .filter-head button {
+    font-size: 0.82rem !important;
+    padding: 0;
+  }
+
+  .filters fieldset {
+    border-top: 1px solid var(--line);
+    display: grid !important;
+    gap: 6px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 4px 0 0 !important;
+    padding: 8px 0 0 !important;
+  }
+
+  .filters legend {
+    font-size: 0.68rem !important;
+    grid-column: 1 / -1;
+    line-height: 1;
+    padding-right: 8px;
+  }
+
+  .filters label {
+    align-items: center;
+    background: #f7f9fc;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: flex !important;
+    font-size: 0.78rem;
+    gap: 7px;
+    line-height: 1.15;
+    min-height: 32px;
+    padding: 6px 8px;
+  }
+
+  .filters input {
+    flex: 0 0 15px;
+    height: 15px;
+    min-height: 15px;
+    width: 15px;
+  }
+
+  .results-toolbar {
+    gap: 8px !important;
+    padding: 10px !important;
+  }
+
+  .results-toolbar h2 {
+    font-size: 0.92rem !important;
+  }
+
+  .results-toolbar label {
+    font-size: 0.78rem;
+    gap: 6px;
+  }
+
+  .results-toolbar select {
+    font-size: 0.82rem;
+    min-height: 34px;
+    padding: 7px 9px;
+  }
+}
+
+@media (max-width: 380px) {
+  .filters fieldset {
+    grid-template-columns: 1fr;
+  }
+}
