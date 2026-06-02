@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$mode | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body class="login-screen">
+  <header class="login-top">
+    <a class="login-logo" href="/"><img src="/static/img/logo-light-header.png" alt="FairFares logo"></a>
+    <div class="login-benefits">
+      <span><b>Hybrid</b> Sedans & SUVs</span>
+      <span><b>Fuel-Efficient</b> Rentals</span>
+      <span><b>Electric</b> Vehicle Options</span>
+    </div>
+  </header>
+  <main class="login-main">
+    <section class="login-poster">
+      <h1>Fair prices.<br>Better rides.<br><span>For students.</span></h1>
+      <p>Affordable car rentals made for students. Wherever you go, we've got you covered.</p>
+    </section>
+    <section class="auth-card">
+      <h2>$mode</h2>
+      <p>Sign in to continue your journey.</p>
+      <p class="form-error">$error</p>
+      <form method="post" action="$action">
+        $name_field
+        <label>
+          <span>Email Address</span>
+          <input name="email" type="email" autocomplete="email" placeholder="Enter your email" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="$password_autocomplete" placeholder="Enter your password" minlength="8" required>
+        </label>
+        <a class="forgot-link" href="/login">Forgot Password?</a>
+        <button type="submit">$submit_label</button>
+      </form>
+      <div class="divider"><span>or</span></div>
+      <button class="social-button" type="button">G Continue with Google</button>
+      <button class="social-button" type="button">Apple Continue with Apple</button>
+      <button class="social-button" type="button">f Continue with Facebook</button>
+      <div class="signup-box">
+        <strong>New to FairFares?</strong>
+        <span>Create an account to get started.</span>
+        <a href="$switch_url">$switch_label</a>
+      </div>
+      <small class="secure-note">Your information is secure with us.</small>
+    </section>
+  </main>
+  <footer class="login-footer">
+    <span>No Hidden Fees</span>
+    <span>Free Cancellation</span>
+    <span>Exclusive Offers</span>
+  </footer>
+</body>
+</html>

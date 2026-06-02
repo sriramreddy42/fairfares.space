@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: fairfares
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "HOST=0.0.0.0 python3 app.py"
+    envVars:
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "FairFares <hello@fairfare.space>"
+      - key: PUBLIC_BASE_URL
+        sync: false

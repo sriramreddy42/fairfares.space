@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" role="img" aria-label="FairFares travel poster">
+  <rect width="800" height="1000" fill="#f7f4ed"/>
+  <path d="M0 650 C160 570 278 590 420 650 C545 702 664 692 800 615 L800 1000 L0 1000 Z" fill="#2f8f78"/>
+  <path d="M0 740 C150 680 305 694 462 748 C570 785 685 770 800 710 L800 1000 L0 1000 Z" fill="#176553"/>
+  <circle cx="612" cy="180" r="86" fill="#f2bd4b"/>
+  <path d="M108 255 L690 145 L628 218 L380 325 L548 411 L493 463 L310 364 L190 440 L154 408 L238 330 Z" fill="#17201d"/>
+  <path d="M124 520 H676" stroke="#e55f42" stroke-width="22" stroke-linecap="round"/>
+  <text x="96" y="122" fill="#17201d" font-family="Arial, sans-serif" font-size="82" font-weight="900">FAIR</text>
+  <text x="96" y="206" fill="#17201d" font-family="Arial, sans-serif" font-size="82" font-weight="900">FARES</text>
+  <text x="100" y="575" fill="#17201d" font-family="Arial, sans-serif" font-size="39" font-weight="700">Book smarter routes</text>
+  <text x="100" y="632" fill="#17201d" font-family="Arial, sans-serif" font-size="31">Transparent prices. Member trips.</text>
+</svg>

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manage Booking | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script defer src="/static/js/app.js?v=9"></script>
+</head>
+<body class="manage-screen">
+  <header class="top-brand">
+    <a class="logo-lockup" href="/"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">car</span><strong>Hybrid</strong><span>Sedans & SUVs</span></div>
+      <div class="benefit-pill"><span class="circle-icon">fuel</span><strong>Fuel-Efficient</strong><span>Rentals</span></div>
+      <div class="benefit-pill"><span class="circle-icon">bolt</span><strong>Electric</strong><span>Vehicle Options</span></div>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Book</a>
+      <a class="active" href="/manage-booking">Manage Booking</a>
+      <a href="/#results">Buy Cars</a>
+      <a href="/#results">Deals</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $manage_auth
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="manage-layout">
+    <aside class="manage-sidebar">
+      <h2>Manage Booking</h2>
+      <a class="side-active" href="#upcoming"><b>Upcoming Trips</b><span>View and manage your upcoming bookings</span></a>
+      <a href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
+      <a href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
+      <a href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
+      <a href="#student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
+      <a href="#saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
+      <a href="#support"><b>Support</b><span>Chat, help center & emergency support</span></a>
+      <div class="student-promo">
+        <strong>Exclusive for Students</strong>
+        <span>Verified students get up to</span>
+        <b>15% OFF</b>
+        <button type="button">Verify Now</button>
+      </div>
+    </aside>
+
+    <section class="manage-content">
+      <div class="page-heading">
+        <div><h1>Upcoming Trip</h1><p>Your next adventure is all set! We're excited to have you on the road.</p></div>
+        <button type="button">View All Bookings</button>
+      </div>
+
+      <section class="trip-card" id="upcoming">
+        <div class="trip-car">
+          <span class="status-badge">$status</span>
+          <div class="car-art car-charcoal"><div class="car-shape"></div></div>
+          <p>Rental Provider <b>$provider</b></p>
+        </div>
+        <div class="trip-details">
+          <small>Booking ID</small>
+          <h2>$booking_id</h2>
+          <p><b>$category</b> | $car_name<br>or similar</p>
+          <div class="specs"><span>$seats Seats</span><span>$bags Bags</span><span>$transmission</span><span>AC</span></div>
+        </div>
+        <div class="trip-route">
+          <small>Pickup</small>
+          <h3>$pickup_location</h3>
+          <p>$pickup_date <span>|</span> $pickup_time</p>
+          <small>Drop-off</small>
+          <h3>$dropoff_location</h3>
+          <p>$dropoff_date <span>|</span> $dropoff_time</p>
+        </div>
+        <aside class="price-summary">
+          <small>Total Price</small>
+          <strong>$price_text</strong>
+          <span>$days Days</span>
+          <a href="#documents">Price Details</a>
+        </aside>
+        <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
+          <button class="active" type="button" data-manage-tab="modify">Modify Reservation</button>
+          <button type="button" data-manage-tab="cancel">Cancel Reservation</button>
+          <button type="button" data-manage-tab="documents">Download Invoice</button>
+          <button type="button" data-manage-tab="details">View Details</button>
+          <button type="button" data-manage-tab="support">Support Center</button>
+        </div>
+      </section>
+
+      <section class="manage-panels">
+        <article class="manage-card manage-panel active" id="modify" data-manage-panel="modify">
+          <h2>1. Modify Your Booking</h2>
+          <p>Make changes to fit your plans</p>
+          <form class="modify-form" id="modifyForm">
+            <section class="modify-section">
+              <div class="section-heading"><b>Change Dates</b><span>Update pickup or drop-off dates</span></div>
+              <div class="modify-grid">
+                <label><span>Pickup Date</span><input id="modifyPickupDate" name="pickup_date" type="date" value="2025-06-10"></label>
+                <label><span>Pickup Time</span><select id="modifyPickupTime" name="pickup_time"><option selected>10:00 AM</option><option>12:00 PM</option><option>02:00 PM</option><option>06:00 PM</option></select></label>
+                <label><span>Return Date</span><input id="modifyReturnDate" name="return_date" type="date" value="2025-06-20"></label>
+                <label><span>Return Time</span><select id="modifyReturnTime" name="return_time"><option selected>10:00 AM</option><option>12:00 PM</option><option>02:00 PM</option><option>06:00 PM</option></select></label>
+              </div>
+            </section>
+
+            <section class="modify-section">
+              <div class="section-heading"><b>Change Pickup Location</b><span>Choose a different pickup or return location</span></div>
+              <div class="modify-grid two">
+                <label><span>Pickup Location</span><select id="modifyPickupLocation" name="pickup_location"><option selected>Denver International Airport (DEN)</option><option>Denver Union Station</option><option>Boulder Campus Center</option><option>Colorado Springs Airport</option></select></label>
+                <label><span>Drop-off Location</span><select id="modifyDropoffLocation" name="dropoff_location"><option selected>Denver International Airport (DEN)</option><option>Denver Union Station</option><option>Boulder Campus Center</option><option>Colorado Springs Airport</option></select></label>
+              </div>
+            </section>
+
+            <section class="modify-section">
+              <div class="section-heading"><b>Upgrade Vehicle</b><span>Pick a better match for this trip</span></div>
+              <div class="upgrade-options">$upgrade_options</div>
+            </section>
+
+            <section class="modify-section">
+              <div class="section-heading"><b>Add Additional Driver</b><span>Add another driver to your booking</span></div>
+              <label class="toggle-row"><input id="addDriverToggle" type="checkbox"> Add an additional driver</label>
+              <div class="modify-grid two driver-fields is-disabled">
+                <label><span>Driver Name</span><input id="driverName" name="driver_name" placeholder="Enter full name" disabled></label>
+                <label><span>Driver Age</span><select id="driverAge" name="driver_age" disabled><option>21-24</option><option>25+</option></select></label>
+              </div>
+            </section>
+
+            <aside class="modify-summary">
+              <div><span>Selected Vehicle</span><b id="summaryVehicle">$current_vehicle</b></div>
+              <div><span>Estimated Total</span><b id="summaryPrice">$209.93</b></div>
+              <div><span>Pickup</span><b id="summaryPickup">Denver International Airport (DEN)</b></div>
+              <div><span>Return</span><b id="summaryReturn">Jun 20, 2025 | 10:00 AM</b></div>
+            </aside>
+
+            <div class="modify-actions">
+              <button type="reset" class="light-button">Reset Changes</button>
+              <button type="submit">Save Changes</button>
+            </div>
+            <p class="modify-status" id="modifyStatus" aria-live="polite"></p>
+          </form>
+        </article>
+
+        <article class="manage-card manage-panel is-hidden" id="cancel" data-manage-panel="cancel">
+          <h2>2. Cancel Booking</h2>
+          <p>Check eligibility and cancel easily</p>
+          <form class="workflow-form" id="cancelForm">
+            <div class="green-note"><b>Free cancellation available</b><br>Cancel before Jun 8, 2025, 10:00 AM and receive your estimated refund.</div>
+            <div class="modify-grid two">
+              <label><span>Cancellation Reason</span><select id="cancelReason" required><option value="">Choose reason</option><option>Plans changed</option><option>Found a better price</option><option>Need a different vehicle</option><option>Booked by mistake</option></select></label>
+              <label><span>Refund Method</span><select id="refundMethod"><option>Original payment method</option><option>FairFares travel credit</option></select></label>
+            </div>
+            <label><span>Optional Note</span><textarea id="cancelNote" rows="3" placeholder="Add details for support"></textarea></label>
+            <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$price_text</strong><small id="refundTimeline">Refund arrives in 3-5 business days.</small></div>
+            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this will cancel booking $booking_id.</label>
+            <div class="modify-actions">
+              <button type="reset" class="light-button">Keep Booking</button>
+              <button type="submit">Cancel Booking</button>
+            </div>
+            <p class="modify-status" id="cancelStatus" aria-live="polite"></p>
+          </form>
+        </article>
+
+        <article class="manage-card manage-panel is-hidden" id="documents" data-manage-panel="documents">
+          <h2>3. Download Documents</h2>
+          <p>Access your important documents</p>
+          <div class="document-tools">
+            <label><span>Send documents to</span><input id="documentEmail" type="email" value="alex@student.edu"></label>
+            <div class="doc-actions">
+              <button type="button" data-doc-name="Invoice / Receipt">Download Invoice / Receipt</button>
+              <button type="button" data-doc-name="Rental Agreement">Download Rental Agreement</button>
+              <button type="button" data-doc-name="Taxes & Fees Breakdown">Download Taxes & Fees</button>
+            </div>
+            <div class="document-preview" id="documentPreview">
+              <h3>Invoice / Receipt</h3>
+              <p>Booking $booking_id | $provider | $price_text total | $days days</p>
+              <small>Select a document to preview or download.</small>
+            </div>
+            <div class="modify-actions">
+              <button type="button" class="light-button" id="emailDocuments">Email All Documents</button>
+              <button type="button" id="downloadAllDocuments">Download All</button>
+            </div>
+            <p class="modify-status" id="documentStatus" aria-live="polite"></p>
+          </div>
+        </article>
+
+        <article class="manage-panel details-panel is-hidden" id="details" data-manage-panel="details">
+          <div class="detail-tabs">
+            <button class="active" type="button" data-detail-tab="student">Student Verification</button>
+            <button type="button" data-detail-tab="saved">Saved Trips</button>
+            <button type="button" data-detail-tab="status">Live Status</button>
+          </div>
+          <div class="manage-grid">
+            <article class="manage-card detail-card active" id="student" data-detail-panel="student">
+              <h2>Student Verification</h2>
+              <p>Verify to unlock exclusive student benefits</p>
+              <div class="verified-box"><strong>Verified Student</strong><span>15% discount applied</span></div>
+              <form class="workflow-form" id="studentForm">
+                <div class="modify-grid two">
+                  <label><span>University Email</span><input type="email" value="alex@student.edu"></label>
+                  <label><span>Student ID</span><input value="STU-2025-1042"></label>
+                </div>
+                <ul class="check-list"><li>Student ID Verified</li><li>University Email Verified</li><li>Discount Applied <b>15% OFF</b></li></ul>
+                <button class="light-button" type="submit">Update Verification</button>
+                <p class="modify-status" id="studentStatus" aria-live="polite"></p>
+              </form>
+            </article>
+
+            <article class="manage-card detail-card is-hidden" id="saved" data-detail-panel="saved">
+              <h2>Saved Trips</h2>
+              <p>View upcoming, past and saved trips</p>
+              <div class="tabs"><button class="active" type="button" data-trip-filter="upcoming">Upcoming (2)</button><button type="button" data-trip-filter="past">Past (4)</button><button type="button" data-trip-filter="favorites">Favorites (3)</button></div>
+              <div class="trip-list">
+                <div class="mini-trip" data-trip-type="upcoming favorites"><div class="mini-car"></div><span>Denver, CO<br><small>Jun 10 - Jun 20, 2025</small></span><b>$price_text</b></div>
+                <div class="mini-trip" data-trip-type="upcoming"><div class="mini-car"></div><span>Orlando, FL<br><small>Jul 05 - Jul 12, 2025</small></span><b>$189.50</b></div>
+                <div class="mini-trip is-hidden" data-trip-type="past"><div class="mini-car"></div><span>Austin, TX<br><small>Mar 12 - Mar 16, 2025</small></span><b>$156.20</b></div>
+              </div>
+              <button class="light-button" type="button" id="saveCurrentTrip">Save Current Trip</button>
+            </article>
+
+            <article class="manage-card detail-card is-hidden" id="status" data-detail-panel="status">
+              <h2>Live Rental Status</h2>
+              <p>Stay updated in real-time</p>
+              <div class="green-note" id="liveStatusText"><b>Car is Ready for Pickup!</b><br>Your car will be ready at 10:00 AM on Jun 10, 2025.</div>
+              <div class="countdown"><b>02<span>Days</span></b><b>14<span>Hours</span></b><b>37<span>Mins</span></b><b>52<span>Secs</span></b></div>
+              <div class="pickup-note"><b>Pickup Instructions</b><br>Please proceed to Avis counter at Door A, Level 5, Island 3.</div>
+              <div class="modify-actions">
+                <button type="button" class="light-button" id="refreshStatus">Refresh Status</button>
+                <button type="button" id="textStatus">Text Me Updates</button>
+              </div>
+              <p class="modify-status" id="statusMessage" aria-live="polite"></p>
+            </article>
+          </div>
+        </article>
+
+        <article class="manage-card manage-panel is-hidden" id="support" data-manage-panel="support">
+          <h2>Support Center</h2>
+          <p>Tell us what you need and choose how you want help.</p>
+          <form class="workflow-form" id="supportForm">
+            <div class="support-options">
+              <button class="active" type="button" data-support-method="chat">Chat</button>
+              <button type="button" data-support-method="roadside">Emergency Roadside</button>
+              <button type="button" data-support-method="provider">Contact Provider</button>
+            </div>
+            <div class="modify-grid two">
+              <label><span>Help Topic</span><select id="supportTopic"><option>Pickup help</option><option>Billing question</option><option>Vehicle issue</option><option>Modify/cancel help</option><option>Student discount help</option></select></label>
+              <label><span>Preferred Contact</span><select id="supportContact"><option>Chat in browser</option><option>Text message</option><option>Phone call</option><option>Email</option></select></label>
+            </div>
+            <label><span>Message</span><textarea id="supportMessage" rows="4" placeholder="Describe what is happening"></textarea></label>
+            <label class="toggle-row"><input id="urgentSupport" type="checkbox"> This is urgent and I need immediate help</label>
+            <div class="support-summary" id="supportSummary">
+              <b>Chat support selected</b>
+              <span>Average response time: under 2 minutes.</span>
+            </div>
+            <div class="modify-actions">
+              <button type="button" class="light-button" id="providerContact">View Provider Contact</button>
+              <button type="submit">Create Support Ticket</button>
+            </div>
+            <p class="modify-status" id="supportStatus" aria-live="polite"></p>
+          </form>
+        </article>
+      </section>
+
+      <section class="wide-panels">
+        <article class="manage-card why-card">
+          <h2>Why Book With FairFares?</h2>
+          <div class="why-options">
+            <button class="active" type="button" data-why="prices">Best Student Prices</button>
+            <button type="button" data-why="fees">No Hidden Fees</button>
+            <button type="button" data-why="cancel">Free Cancellation</button>
+            <button type="button" data-why="support">24/7 Support</button>
+          </div>
+          <div class="why-detail" id="whyDetail">
+            <b>Best Student Prices</b>
+            <span>Verified students get exclusive rates and discounts applied before checkout.</span>
+            <small>Current booking savings: 15% student discount applied.</small>
+          </div>
+          <div class="why-actions">
+            <button type="button" id="applyStudentSavings">Apply Student Savings</button>
+            <button class="light-button" type="button" data-manage-tab="support">Ask Support</button>
+          </div>
+          <p class="modify-status" id="whyStatus" aria-live="polite"></p>
+        </article>
+      </section>
+
+      <section class="savings-band">
+        <h2>Smarter Booking. More Savings.</h2>
+        <div class="savings-options">
+          <button class="active" type="button" data-saving="dates">AI Cheapest Date Suggestions</button>
+          <button type="button" data-saving="alerts">Price Drop Alerts</button>
+        </div>
+        <div class="savings-detail" id="savingsDetail">
+          <b>AI Cheapest Date Suggestions</b>
+          <span>Shift your pickup or return dates to compare lower student rates.</span>
+          <small>Potential savings: $18.40 if pickup moves by one day.</small>
+        </div>
+        <div class="savings-actions">
+          <button type="button" id="activateSavingsTool">Activate Tool</button>
+          <button class="light-button" type="button" data-manage-tab="modify">Edit Trip Dates</button>
+        </div>
+        <p class="modify-status" id="savingsStatus" aria-live="polite"></p>
+      </section>
+
+      $admin_panel
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$brand | Student Car Rentals</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script defer src="/static/js/app.js"></script>
+</head>
+<body>
+  <header class="top-brand">
+    <a class="logo-lockup" href="/">
+      <img src="/static/img/logo-dark-header.png" alt="$brand logo">
+    </a>
+    <div class="top-benefits">$services</div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a class="active" href="/">Book</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="#results">Buy Cars</a>
+      <a href="#results">Deals</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main>
+    <section class="booking-hero">
+      <form class="search-panel" id="searchForm">
+        <h1>Let's find your perfect car</h1>
+        <label class="wide-field">
+          <span>Pick-up location</span>
+          <div class="input-shell"><span>pin</span><input id="location" value="Denver International Airport (DEN)"></div>
+        </label>
+        <label class="check-field">
+          <input type="checkbox" id="differentReturn">
+          <span>Return to a different location</span>
+        </label>
+        <label>
+          <span>Pick-up date & time</span>
+          <div class="split-input"><input id="pickupDate" type="date" value="2025-06-10"><select><option>10:00 AM</option><option>12:00 PM</option></select></div>
+        </label>
+        <label>
+          <span>Return date & time</span>
+          <div class="split-input"><input id="returnDate" type="date" value="2025-06-20"><select><option>10:00 AM</option><option>12:00 PM</option></select></div>
+        </label>
+        <label>
+          <span>Renter age</span>
+          <select id="renterAge"><option>21-24</option><option>25+</option></select>
+        </label>
+        <label>
+          <span>Discount code <em>(Optional)</em></span>
+          <input id="discountCode" placeholder="Enter code">
+        </label>
+        <button type="submit">Search Cars</button>
+      </form>
+      <div class="hero-poster" role="img" aria-label="FairFares car rental campaign"></div>
+    </section>
+
+    <section class="results-layout" id="results">
+      <aside class="filters">
+        <div class="filter-head"><h2>Filter Results</h2><button id="clearFilters" type="button">Clear All</button></div>
+        <fieldset>
+          <legend>Car Type</legend>
+          <label><input type="checkbox" value="Economy" class="type-filter"> Economy (23)</label>
+          <label><input type="checkbox" value="Compact" class="type-filter"> Compact (35)</label>
+          <label><input type="checkbox" value="Midsize" class="type-filter"> Midsize (28)</label>
+          <label><input type="checkbox" value="SUV" class="type-filter"> SUV (42)</label>
+        </fieldset>
+        <fieldset>
+          <legend>Features</legend>
+          <label><input type="checkbox"> Unlimited Mileage</label>
+          <label><input type="checkbox"> Fuel Efficient</label>
+          <label><input type="checkbox"> Electric Options</label>
+        </fieldset>
+      </aside>
+
+      <section class="cars-panel">
+        <div class="results-toolbar">
+          <h2><span id="resultCount">$car_count</span> cars available</h2>
+          <label>Sort by:
+            <select id="sortCars">
+              <option value="low">Price (Low to High)</option>
+              <option value="high">Price (High to Low)</option>
+            </select>
+          </label>
+        </div>
+        <div class="car-list" id="carList">$cars</div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
