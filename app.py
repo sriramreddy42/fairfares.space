@@ -346,6 +346,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_id INTEGER NOT NULL,
                 agreement_text TEXT NOT NULL,
+                agreement_data TEXT NOT NULL DEFAULT '{}',
                 signer_name TEXT NOT NULL DEFAULT '',
                 signature_text TEXT NOT NULL DEFAULT '',
                 signed_at TEXT,
@@ -403,6 +404,7 @@ def init_db() -> None:
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "discounts", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
@@ -728,7 +730,9 @@ def get_admin_bookings() -> list[sqlite3.Row]:
             """
             SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
                    users.address, users.date_of_birth,
-                   cars.name AS car_name, cars.license_plate, cars.status AS car_status
+                   cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
+                   cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
+                   cars.color AS car_color, cars.license_plate, cars.vin_number, cars.status AS car_status
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
@@ -973,27 +977,233 @@ def ensure_booking_for_user(user_id: int, car_id: int | None = None) -> sqlite3.
     return create_booking_for_user(user_id, cars[0]["id"])
 
 
+AGREEMENT_FIELD_GROUPS = (
+    (
+        "Customer",
+        "customer",
+        (
+            ("lessee_name", "Lessee name"),
+            ("lessee_address", "Lessee address"),
+            ("license_state", "DL state"),
+            ("license_number", "DL number"),
+            ("license_expiry", "DL expiration"),
+            ("insurance_company", "Insurance company"),
+            ("insurance_policy", "Policy number"),
+            ("customer_signature", "Customer signature"),
+        ),
+    ),
+    (
+        "Issuer",
+        "issuer",
+        (
+            ("agreement_date", "Agreement date"),
+            ("lessor_name", "Lessor name"),
+            ("lessor_address", "Lessor address"),
+            ("lessor_email", "Lessor email"),
+            ("lessor_phone", "Lessor phone"),
+            ("vehicle_mileage", "Vehicle mileage"),
+            ("security_deposit", "Security deposit"),
+            ("monthly_payment", "Monthly payment"),
+            ("payment_due_day", "Payment due day"),
+            ("mileage_allowed", "Mileage allowed"),
+            ("extra_mile_rate", "Extra mile rate"),
+            ("issuer_name", "Issuer name"),
+            ("issuer_signature", "Issuer signature"),
+        ),
+    ),
+)
+AGREEMENT_FIELD_KEYS = tuple(field for _, _, fields in AGREEMENT_FIELD_GROUPS for field, _ in fields)
+
+
+def row_value(row: sqlite3.Row, key: str, default: str = "") -> str:
+    return str(row[key] if key in row.keys() and row[key] is not None else default)
+
+
+def saved_agreement_data(agreement: sqlite3.Row | None) -> dict[str, str]:
+    if not agreement:
+        return {}
+    try:
+        data = json.loads(agreement["agreement_data"] or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return {key: str(value) for key, value in data.items() if key in AGREEMENT_FIELD_KEYS}
+
+
+def agreement_default_values(
+    row: sqlite3.Row,
+    license_row: sqlite3.Row | None = None,
+    insurance: sqlite3.Row | None = None,
+    agreement: sqlite3.Row | None = None,
+) -> dict[str, str]:
+    values = {
+        "agreement_date": datetime.now().strftime("%Y-%m-%d"),
+        "lessor_name": "FairFares",
+        "lessor_address": "",
+        "lessor_email": "fairfars@gmail.com",
+        "lessor_phone": "9372518688",
+        "lessee_name": row_value(row, "user_name"),
+        "lessee_address": row_value(row, "address"),
+        "license_state": row_value(license_row, "state", "CO") if license_row else "CO",
+        "license_number": row_value(license_row, "license_number") if license_row else "",
+        "license_expiry": row_value(license_row, "expiry_date") if license_row else "",
+        "vehicle_mileage": "",
+        "insurance_company": row_value(insurance, "insurance_provider") if insurance else "",
+        "insurance_policy": "",
+        "security_deposit": "250.00",
+        "monthly_payment": f"{float(row['total_price']):.2f}",
+        "payment_due_day": "5th",
+        "mileage_allowed": "3500",
+        "extra_mile_rate": "0.15",
+        "customer_signature": row_value(agreement, "signature_text") if agreement else "",
+        "issuer_name": "FairFares Representative",
+        "issuer_signature": "",
+    }
+    values.update(saved_agreement_data(agreement))
+    return values
+
+
+def vehicle_make(row: sqlite3.Row) -> str:
+    return row_value(row, "car_brand") or row_value(row, "car_name").split(" ")[0]
+
+
+def vehicle_model(row: sqlite3.Row) -> str:
+    if row_value(row, "car_model"):
+        return row_value(row, "car_model")
+    name_parts = row_value(row, "car_name").split(" ", 1)
+    return name_parts[1] if len(name_parts) > 1 else row_value(row, "car_name")
+
+
+def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str:
+    return f"""SHORT TERM VEHICLE RENTAL AGREEMENT
+
+This agreement is entered into this day, {values.get('agreement_date', '')} between
+
+Lessor:
+Name: {values.get('lessor_name', '')}
+Address: {values.get('lessor_address', '')}
+Email: {values.get('lessor_email', '')}
+Phone: {values.get('lessor_phone', '')}
+
+Lessee:
+Name: {values.get('lessee_name', '')}
+Address: {values.get('lessee_address', '')}
+Driving License Information: State: {values.get('license_state', '')} Number: {values.get('license_number', '')} Expiration Date: {values.get('license_expiry', '')}
+Email: {row_value(row, 'user_email')}
+Phone: {row_value(row, 'phone')}
+
+1. RECITALS.
+WHEREAS, the Lessor is authorized to lease the Vehicle, and the Lessee is desirous of leasing the Vehicle from the Lessor on the terms set out in this Vehicle Lease Agreement. This Agreement is a lease only and Lessee will have no right, title, or interest in or to the Vehicle except for use of the Vehicle as described in this Agreement.
+
+2. DESCRIPTION OF RENTED VEHICLE.
+Make: {vehicle_make(row)}
+Model: {vehicle_model(row)}
+Color: {row_value(row, 'car_color')}
+Year: {row_value(row, 'car_year')}
+Body: {row_value(row, 'car_type') or row_value(row, 'car_category')}
+Mileage: {values.get('vehicle_mileage', '')}
+License Plate: {row_value(row, 'license_plate')}
+VIN: {row_value(row, 'vin_number')}
+Insurance Company: {values.get('insurance_company', '')}
+Policy#: {values.get('insurance_policy', '')}
+Purpose: Personal Use Only
+
+3. AMOUNT DUE AT LEASE SIGNING.
+A refundable security deposit shall be paid in the amount of ${values.get('security_deposit', '250.00')}.
+
+4. LEASE PAYMENT.
+As consideration of this lease, Lessee shall pay ${values.get('monthly_payment', '')} monthly on a month-to-month basis.
+
+5. TERM.
+This is a month-to-month rental agreement. Either party may end the lease with 15 days of advanced written notice by email or personal text message. Returning in advance of the agreed date will not automatically entitle Lessee to prorated lease payment.
+
+6. FORM OF PAYMENT.
+Monthly payments are to be made on the {values.get('payment_due_day', '')} day of each month. Payments may be made by cashier's check, money order, certified check, Zelle, cash, or any other means agreed upon by the Lessor and Lessee.
+
+7. SECURITY DEPOSIT.
+The security deposit will be returned at termination, subject to the Lessor applying it against lease charges, tolls, damages, cleaning, smoking, or other amounts due.
+
+8. LATE PAYMENT FEES.
+A late fee of $50.00 per day will be charged on payments made after the due date.
+
+9. MILEAGE PERMITTED.
+Lessee may drive the Vehicle for a maximum of {values.get('mileage_allowed', '')} miles per month and will be charged ${values.get('extra_mile_rate', '')} per extra mile.
+
+10. USAGE OF THE VEHICLE.
+The vehicle may be used for personal purposes only, such as commuting to work or school. Commercial use including Uber, Lyft, DoorDash, or similar applications is not permitted and is a material breach of this Agreement.
+
+11. GAP LIABILITY NOTICE.
+In the event of theft or total loss, Lessee is liable for any gap between the amount due and insurance settlement proceeds or deductible.
+
+12. INSURANCE.
+Lessee must maintain automobile liability insurance, collision, and comprehensive coverage as required by applicable law, with deductible no greater than $500.00 per claim. Proof of insurance must be provided to Lessor upon request. Driving without insurance coverage is a material breach.
+
+13. EXCESSIVE WEAR AND USE.
+Lessee may be charged for excessive wear including damaged glass, body panels, lights, paint, smoking, interior damage, worn tires, or mechanical damage that interferes with safe operation.
+
+14. NOTICE.
+All notices required under this Lease are deemed delivered when delivered in person, by email, or by mail to the appropriate party.
+
+15. ASSIGNMENT.
+Lessee may not assign, transfer, or sublet obligations, rights, or interest under this Agreement without Lessor's prior written consent.
+
+16. TERMINATION AND DEFAULT.
+Lessor may terminate immediately if Lessee fails to pay, misrepresents information, damages the vehicle, fails to maintain insurance, fails to return the vehicle, or breaches this Agreement. If Lessee terminates without prior notice, a $100.00 fee may be charged and deposit may not be returned.
+
+17. VEHICLE RETURN.
+Vehicle must be returned clean, with the same fuel level, and in the care of Lessor. Dirty vehicles may incur a $50.00 cleaning fee and smoking inside the vehicle may incur a $200.00 charge.
+
+18. COSTS, EXPENSES, FEES, AND CHARGES.
+Lessee agrees to pay all fines, tickets, toll charges, penalties, and expenses incurred in connection with operation of the vehicle during the term.
+
+19. MAINTENANCE.
+Lessor will maintain the vehicle for normal wear and tear. Lessee must bring the vehicle for scheduled maintenance when requested and may not conduct maintenance without permission.
+
+20. ACCEPTABLE DRIVERS AND LIMITATIONS.
+Only Lessee may operate the vehicle. Car sharing is not allowed under any circumstances. Lessee may not modify the vehicle without prior written consent.
+
+21. WARRANTIES.
+The Vehicle is provided in "as is" condition and Lessor makes no express or implied warranties regarding condition, quality, durability, capability, or suitability.
+
+22. GOVERNING LAW.
+This Lease shall be construed in accordance with the laws of Texas.
+
+23. SIGNATORIES.
+LESSEE:
+By: {values.get('customer_signature', '') or '_________________'}
+Date: {values.get('agreement_date', '')}
+
+LESSOR:
+By: {values.get('issuer_signature', '') or '_________________'}
+Name: {values.get('issuer_name', '')}
+Date: {values.get('agreement_date', '')}
+"""
+
+
 def default_agreement_text(row: sqlite3.Row) -> str:
-    return (
-        "VEHICLE RENTAL AGREEMENT\n\n"
-        f"Agreement / Booking ID: {row['booking_id']}\n"
-        f"Customer: {row['user_name']}\n"
-        f"Email: {row['user_email']}\n"
-        f"Phone: {row['phone'] or ''}\n"
-        f"Address: {row['address'] or ''}\n\n"
-        f"Vehicle: {row['car_name']}\n"
-        f"License Plate: {row['license_plate'] or ''}\n"
-        f"Pickup Location: {row['pickup_location']}\n"
-        f"Return Location: {row['dropoff_location']}\n"
-        f"Pickup Date/Time: {row['pickup_date']} {row['pickup_time']}\n"
-        f"Return Date/Time: {row['dropoff_date']} {row['dropoff_time']}\n"
-        f"Total Amount: ${float(row['total_price']):.2f}\n\n"
-        "Customer confirms the vehicle condition, rental dates, payment responsibility, "
-        "driver license information, insurance details, and return obligations. Final legal "
-        "agreement wording will be replaced with the provided FairFares rental agreement template.\n\n"
-        "Customer Signature: ______________________________\n"
-        "FairFares Representative: ________________________\n"
-    )
+    return build_rental_agreement_text(row, agreement_default_values(row))
+
+
+def render_agreement_fields(values: dict[str, str]) -> str:
+    groups = []
+    input_types = {
+        "agreement_date": "date",
+        "license_expiry": "date",
+        "security_deposit": "number",
+        "monthly_payment": "number",
+        "mileage_allowed": "number",
+        "extra_mile_rate": "number",
+        "vehicle_mileage": "number",
+    }
+    for title, role, fields in AGREEMENT_FIELD_GROUPS:
+        field_html = []
+        for key, label in fields:
+            step = ' step="0.01"' if input_types.get(key) == "number" else ""
+            field_html.append(
+                f'<label class="agreement-field agreement-{role}"><span>{escape(label)} <b>{escape(title)}</b></span>'
+                f'<input name="agreement_{key}" type="{input_types.get(key, "text")}"{step} value="{escape(values.get(key, ""))}"></label>'
+            )
+        groups.append(f'<div class="agreement-group agreement-group-{role}"><h3>{escape(title)} fields</h3>{"".join(field_html)}</div>')
+    return "".join(groups)
 
 
 def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
@@ -1003,7 +1213,9 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
         booking = con.execute(
             """
             SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
-                   users.address, cars.name AS car_name, cars.license_plate
+                   users.address, cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
+                   cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
+                   cars.color AS car_color, cars.license_plate, cars.vin_number
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
@@ -1837,7 +2049,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "SELECT * FROM rental_agreements WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
                 (row["id"],),
             ).fetchone()
-        agreement_text = agreement["agreement_text"] if agreement else default_agreement_text(row)
+        agreement_values = agreement_default_values(row, license_row, insurance, agreement)
+        agreement_text = agreement["agreement_text"] if agreement else build_rental_agreement_text(row, agreement_values)
+        agreement_fields = render_agreement_fields(agreement_values)
         return f"""
         <article class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
             <div class="pickup-record-head">
@@ -1871,7 +2085,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <label><span>Insurance Scan URL/Path</span><input name="insurance_document_url" value="{escape(insurance["document_url"] if insurance else "")}" placeholder="Insurance file URL or scan path"></label>
                 <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
                 <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
-                <label class="wide-field"><span>Agreement Text</span><textarea name="agreement_text" rows="7">{escape(agreement_text)}</textarea></label>
+                <div class="agreement-builder wide-field">
+                    <div class="agreement-builder-head">
+                        <div>
+                            <b>Rental Agreement Builder</b>
+                            <span>Red fields are customer-provided. Blue fields are issuer/admin-provided.</span>
+                        </div>
+                    </div>
+                    <div class="agreement-field-grid">{agreement_fields}</div>
+                </div>
+                <label class="wide-field"><span>Generated Agreement Text</span><textarea name="agreement_text" rows="12">{escape(agreement_text)}</textarea></label>
                 <label><span>Signer Name</span><input name="signer_name" value="{escape(agreement["signer_name"] if agreement else row["user_name"])}"></label>
                 <label><span>Signature</span><input name="signature_text" value="{escape(agreement["signature_text"] if agreement else "")}" placeholder="Typed signature"></label>
                 <button type="submit">Save User Pickup Data</button>
@@ -2241,16 +2464,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (booking_id, form.get("payment_method"), float(amount["total_price"] if amount else 0), invoice_number),
                 )
-            if form.get("agreement_text") or form.get("signature_text"):
+            agreement_data = {key: form.get(f"agreement_{key}", "").strip() for key in AGREEMENT_FIELD_KEYS}
+            if form.get("signature_text") and not agreement_data.get("customer_signature"):
+                agreement_data["customer_signature"] = form.get("signature_text", "").strip()
+            booking_row = con.execute(
+                """
+                SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
+                       users.address, users.date_of_birth,
+                       cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
+                       cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
+                       cars.color AS car_color, cars.license_plate, cars.vin_number
+                FROM bookings
+                JOIN users ON users.id = bookings.user_id
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (booking_id,),
+            ).fetchone()
+            generated_agreement_text = build_rental_agreement_text(booking_row, agreement_data) if booking_row else form.get("agreement_text", "")
+            if any(agreement_data.values()) or form.get("agreement_text") or form.get("signature_text"):
                 con.execute(
                     """
                     INSERT INTO rental_agreements
-                    (booking_id, agreement_text, signer_name, signature_text, signed_at)
-                    VALUES (?, ?, ?, ?, CASE WHEN ? != '' THEN CURRENT_TIMESTAMP ELSE NULL END)
+                    (booking_id, agreement_text, agreement_data, signer_name, signature_text, signed_at)
+                    VALUES (?, ?, ?, ?, ?, CASE WHEN ? != '' THEN CURRENT_TIMESTAMP ELSE NULL END)
                     """,
                     (
                         booking_id,
-                        form.get("agreement_text", ""),
+                        generated_agreement_text,
+                        json.dumps(agreement_data),
                         form.get("signer_name", ""),
                         form.get("signature_text", ""),
                         form.get("signature_text", ""),

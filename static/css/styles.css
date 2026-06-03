@@ -1168,6 +1168,82 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .pickup-form .wide-field {
   grid-column: 1 / -1;
 }
+.agreement-builder {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+.agreement-builder-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+.agreement-builder-head b {
+  color: var(--navy);
+  display: block;
+  font-size: 1.05rem;
+}
+.agreement-builder-head span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.agreement-field-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.agreement-group {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.agreement-group h3 {
+  margin: 0;
+}
+.agreement-field {
+  border-radius: 6px;
+  padding: 10px;
+}
+.agreement-field span {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agreement-field span b {
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.66rem;
+  padding: 3px 8px;
+}
+.agreement-customer {
+  background: #fff5f5;
+  border: 1px solid #f2b8b8;
+}
+.agreement-customer span,
+.agreement-group-customer h3 {
+  color: #d9272e;
+}
+.agreement-customer span b {
+  background: #d9272e;
+}
+.agreement-issuer {
+  background: #f1f6ff;
+  border: 1px solid #b9cdf6;
+}
+.agreement-issuer span,
+.agreement-group-issuer h3 {
+  color: #0b4aa0;
+}
+.agreement-issuer span b {
+  background: #0b4aa0;
+}
 .pickup-form button {
   background: var(--red);
   border: 0;
@@ -2294,6 +2370,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .pickup-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .agreement-field-grid {
+    grid-template-columns: 1fr;
+  }
   .logo-lockup img,
   .login-logo img {
     max-height: 70px;
@@ -3098,6 +3177,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
   .pickup-form {
     grid-template-columns: 1fr;
+  }
+  .agreement-builder {
+    padding: 10px;
   }
   .admin-table {
     min-width: 680px;

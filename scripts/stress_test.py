@@ -160,6 +160,8 @@ def main() -> None:
     assert_true('data-manage-tab="details" data-detail-jump="saved"' in dashboard_template, "saved trips link should open details/saved")
     assert_true('data-manage-tab="support"' in dashboard_template, "support link should open support panel")
     assert_true('data-manage-tab="documents"' in dashboard_template, "price details should open documents panel")
+    css_text = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+    assert_true(".agreement-customer" in css_text and ".agreement-issuer" in css_text, "agreement fields should mark customer and issuer ownership")
     app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
@@ -282,6 +284,37 @@ def main() -> None:
     admin_row_html = app.FairFaresHandler.render_admin_booking_row(None, admin_bookings[0])
     assert_true('value="PAY_AT_PICKUP"' in admin_row_html, "admin booking row should keep pay at pickup")
     assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")), "admin payment dropdown should not show old payment options")
+    pickup_html = app.FairFaresHandler.render_pickup_record(None, admin_bookings[0])
+    assert_true("Rental Agreement Builder" in pickup_html, "admin pickup should include agreement builder")
+    assert_true('name="agreement_license_number"' in pickup_html and 'name="agreement_vehicle_mileage"' in pickup_html, "agreement builder should expose customer and issuer fields")
+    agreement_values = app.agreement_default_values(admin_bookings[0])
+    agreement_values.update(
+        {
+            "vehicle_mileage": "42150",
+            "insurance_company": "Stress Insurance",
+            "insurance_policy": "POL-STRESS-123",
+            "customer_signature": "Stress User Signature",
+            "issuer_signature": "FairFares Issuer Signature",
+        }
+    )
+    agreement_text = app.build_rental_agreement_text(admin_bookings[0], agreement_values)
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO rental_agreements
+            (booking_id, agreement_text, agreement_data, signer_name, signature_text, signed_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                admin_bookings[0]["id"],
+                agreement_text,
+                app.json.dumps(agreement_values),
+                agreement_values["lessee_name"],
+                agreement_values["customer_signature"],
+            ),
+        )
+    docs = app.get_booking_documents(admin_bookings[0]["id"])
+    assert_true("42150" in docs["Rental Agreement"]["content"] and "POL-STRESS-123" in docs["Rental Agreement"]["content"], "user rental agreement document should use saved dynamic agreement data")
 
     for booking_id in booked_ids[:8]:
         admin_approve_cancel(booking_id)
