@@ -609,7 +609,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   align-items: center;
   display: grid;
   gap: 0 9px;
-  grid-template-columns: 34px auto;
+  grid-template-columns: 34px minmax(0, auto);
+  min-width: 0;
 }
 .user-chip span {
   background: linear-gradient(160deg, #f5d5c4, #071338);
@@ -621,6 +622,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .user-chip small {
   color: var(--muted);
   font-weight: 700;
+}
+.user-chip b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .manage-layout {
   display: grid;
@@ -3098,6 +3105,20 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     background: #f7f9fc;
     border-color: var(--line);
     color: var(--navy);
+    display: grid !important;
+    gap: 0 9px;
+    grid-template-columns: 28px minmax(0, 1fr);
+    max-width: min(190px, calc(100vw - 86px));
+    overflow: hidden;
+  }
+
+  .main-nav .nav-actions > .user-chip span {
+    height: 28px;
+    width: 28px;
+  }
+
+  .main-nav .nav-actions > .user-chip b {
+    font-size: clamp(0.82rem, 4vw, 0.98rem);
   }
 
   .main-nav .menu-button {
@@ -3327,5 +3348,74 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
   .price-box span {
     display: none;
+  }
+}
+
+/* Keep panel button groups visible without changing the main trip action carousel. */
+.manage-screen .doc-actions button,
+.manage-screen .detail-tabs button,
+.manage-screen .tabs button {
+  line-height: 1.2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
+}
+
+@media (max-width: 600px) {
+  .manage-screen .doc-actions,
+  .manage-screen .detail-tabs,
+  .manage-screen .tabs {
+    display: grid;
+    gap: 10px;
+    grid-auto-columns: initial;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .manage-screen .doc-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .manage-screen .doc-actions button,
+  .manage-screen .detail-tabs button,
+  .manage-screen .tabs button {
+    min-height: 58px;
+    padding: 9px 8px;
+    width: 100%;
+  }
+
+  .manage-screen .doc-actions button {
+    font-size: clamp(0.72rem, 3.15vw, 0.86rem);
+    min-height: 54px;
+    padding: 8px 5px;
+  }
+}
+
+@media (max-width: 360px) {
+  .manage-screen .doc-actions,
+  .manage-screen .detail-tabs,
+  .manage-screen .tabs {
+    gap: 8px;
+  }
+
+  .manage-screen .doc-actions button,
+  .manage-screen .detail-tabs button,
+  .manage-screen .tabs button {
+    font-size: 0.78rem;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .manage-screen .doc-actions {
+    gap: 6px;
+  }
+
+  .manage-screen .doc-actions button {
+    font-size: 0.68rem;
+    min-height: 50px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 }

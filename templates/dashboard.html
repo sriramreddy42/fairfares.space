@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-20">
-  <script defer src="/static/js/app.js?v=16"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-23">
+  <script defer src="/static/js/app.js?v=18"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -169,9 +169,9 @@
           <div class="document-tools">
             <label><span>Send documents to</span><input id="documentEmail" type="email" value="alex@student.edu"></label>
             <div class="doc-actions">
-              <button type="button" data-doc-name="Invoice / Receipt">Download Invoice / Receipt</button>
-              <button type="button" data-doc-name="Rental Agreement">Download Rental Agreement</button>
-              <button type="button" data-doc-name="Taxes & Fees Breakdown">Download Taxes & Fees</button>
+              <button type="button" data-doc-name="Invoice / Receipt">Invoice / Receipt</button>
+              <button type="button" data-doc-name="Rental Agreement">Rental Agreement</button>
+              <button type="button" data-doc-name="Taxes & Fees Breakdown">Taxes & Fees</button>
             </div>
             <div class="document-preview" id="documentPreview">
               <h3>Invoice / Receipt</h3>
@@ -239,20 +239,15 @@
           <h2>Support Center</h2>
           <p>Tell us what you need and choose how you want help.</p>
           <form class="workflow-form" id="supportForm">
-            <div class="support-options">
-              <button class="active" type="button" data-support-method="chat">Chat</button>
-              <button type="button" data-support-method="roadside">Emergency Roadside</button>
-              <button type="button" data-support-method="provider">Contact Provider</button>
-            </div>
             <div class="modify-grid two">
-              <label><span>Help Topic</span><select id="supportTopic"><option>Pickup help</option><option>Billing question</option><option>Vehicle issue</option><option>Modify/cancel help</option><option>Student discount help</option></select></label>
+              <label><span>Help Topic</span><select id="supportTopic"><option>Pickup help</option><option>Chat support help</option><option>Emergency roadside help</option><option>Provider contact help</option><option>Billing question</option><option>Vehicle issue</option><option>Modify/cancel help</option><option>Student discount help</option></select></label>
               <label><span>Preferred Contact</span><select id="supportContact"><option>Chat in browser</option><option>Text message</option><option>Phone call</option><option>Email</option></select></label>
             </div>
             <label><span>Message</span><textarea id="supportMessage" rows="4" placeholder="Describe what is happening"></textarea></label>
             <label class="toggle-row"><input id="urgentSupport" type="checkbox"> This is urgent and I need immediate help</label>
             <div class="support-summary" id="supportSummary">
-              <b>Chat support selected</b>
-              <span>Average response time: under 2 minutes.</span>
+              <b>Pickup help selected</b>
+              <span>We can help with counter location, pickup timing, and rental readiness.</span>
             </div>
             <div class="modify-actions">
               <button type="button" class="light-button" id="providerContact">View Provider Contact</button>

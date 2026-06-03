@@ -351,32 +351,38 @@ document.getElementById("textStatus")?.addEventListener("click", () => {
 if (detailTabs.length) showDetailPanel("student");
 if (tripFilterButtons.length) filterTrips("upcoming");
 
-const supportMethods = [...document.querySelectorAll("[data-support-method]")];
 const supportSummary = document.getElementById("supportSummary");
 const supportStatus = document.getElementById("supportStatus");
 const urgentSupport = document.getElementById("urgentSupport");
-const supportMethodCopy = {
-  chat: ["Chat support selected", "Average response time: under 2 minutes."],
-  roadside: ["Emergency roadside selected", "24/7 roadside assistance can call or text you immediately."],
-  provider: ["Provider contact selected", "Avis counter details and direct contact options are ready."],
+const supportTopic = document.getElementById("supportTopic");
+const supportContact = document.getElementById("supportContact");
+const supportTopicCopy = {
+  "Pickup help": ["Pickup help selected", "We can help with counter location, pickup timing, and rental readiness.", "Chat in browser"],
+  "Chat support help": ["Chat support selected", "Average response time: under 2 minutes.", "Chat in browser"],
+  "Emergency roadside help": ["Emergency roadside selected", "24/7 roadside assistance can call or text you immediately.", "Phone call"],
+  "Provider contact help": ["Provider contact selected", "Avis counter details and direct contact options are ready.", "Phone call"],
+  "Billing question": ["Billing help selected", "Support can review receipts, charges, taxes, and fees.", "Email"],
+  "Vehicle issue": ["Vehicle issue selected", "We can help with vehicle problems, swaps, and provider escalation.", "Phone call"],
+  "Modify/cancel help": ["Modify or cancel help selected", "Support can help review trip changes, cancellation, and refund options.", "Chat in browser"],
+  "Student discount help": ["Student discount help selected", "We can review verification and student savings for this booking.", "Email"],
 };
 
-function setSupportMethod(method) {
-  supportMethods.forEach((button) => {
-    button.classList.toggle("active", button.dataset.supportMethod === method);
-  });
-  const copy = supportMethodCopy[method] || supportMethodCopy.chat;
+function syncSupportTopic() {
+  if (!supportSummary || !supportTopic) return;
+  const copy = supportTopicCopy[supportTopic.value] || supportTopicCopy["Pickup help"];
   supportSummary.innerHTML = `<b>${copy[0]}</b><span>${copy[1]}</span>`;
+  if (supportContact) {
+    supportContact.value = copy[2];
+  }
   supportStatus.textContent = "";
 }
 
-supportMethods.forEach((button) => {
-  button.addEventListener("click", () => setSupportMethod(button.dataset.supportMethod));
-});
+supportTopic?.addEventListener("change", syncSupportTopic);
 
 urgentSupport?.addEventListener("change", () => {
   if (urgentSupport.checked) {
-    setSupportMethod("roadside");
+    if (supportTopic) supportTopic.value = "Emergency roadside help";
+    syncSupportTopic();
     supportStatus.textContent = "Urgent support enabled. Roadside assistance prioritized.";
   } else {
     supportStatus.textContent = "";
@@ -384,18 +390,19 @@ urgentSupport?.addEventListener("change", () => {
 });
 
 document.getElementById("providerContact")?.addEventListener("click", () => {
-  setSupportMethod("provider");
+  if (supportTopic) supportTopic.value = "Provider contact help";
+  syncSupportTopic();
   supportStatus.textContent = "Avis provider contact: Door A, Level 5, Island 3.";
 });
 
 document.getElementById("supportForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const method = document.querySelector("[data-support-method].active")?.textContent.trim() || "Support";
-  const topic = document.getElementById("supportTopic")?.value || "Pickup help";
-  supportStatus.textContent = `${method} ticket created for ${topic}. Reference: FF-SUP-2048.`;
+  const topic = supportTopic?.value || "Pickup help";
+  const contact = supportContact?.value || "Chat in browser";
+  supportStatus.textContent = `Support ticket created for ${topic} by ${contact}. Reference: FF-SUP-2048.`;
 });
 
-if (supportMethods.length) setSupportMethod("chat");
+syncSupportTopic();
 
 const whyButtons = [...document.querySelectorAll("[data-why]")];
 const whyDetail = document.getElementById("whyDetail");
