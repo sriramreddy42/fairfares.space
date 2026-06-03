@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-30">
-  <script defer src="/static/js/app.js?v=32"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-31">
+  <script defer src="/static/js/app.js?v=33"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -45,11 +45,11 @@
         </label>
         <label>
           <span>Pick-up date & time</span>
-          <div class="split-input"><input id="pickupDate" type="date" value="2025-06-10"><select><option>10:00 AM</option><option>12:00 PM</option></select></div>
+          <div class="split-input"><input id="pickupDate" type="date" value="2025-06-10"><select id="pickupTime"><option>10:00 AM</option><option>12:00 PM</option></select></div>
         </label>
         <label>
           <span>Return date & time</span>
-          <div class="split-input"><input id="returnDate" type="date" value="2025-06-20"><select><option>10:00 AM</option><option>12:00 PM</option></select></div>
+          <div class="split-input"><input id="returnDate" type="date" value="2025-06-20"><select id="returnTime"><option>10:00 AM</option><option>12:00 PM</option></select></div>
         </label>
         <label>
           <span>Renter age</span>
@@ -60,6 +60,11 @@
           <input id="discountCode" placeholder="Enter code">
           <small class="discount-message" id="discountMessage" aria-live="polite"></small>
         </label>
+        <div class="rental-estimate" aria-live="polite">
+          <span>Rental length</span>
+          <b id="rentalLengthLabel">10 days</b>
+          <small id="quoteMatchLabel">Bring us an Avis, Enterprise, Budget, or Hertz quote. We will match it and add 10% extra discount.</small>
+        </div>
         <button type="submit">Search Cars</button>
       </form>
       <div class="hero-poster hero-fold-media" data-hero-fold aria-label="FairFares car rental campaign">

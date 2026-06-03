@@ -336,6 +336,30 @@ input, select, textarea {
 .discount-message.is-error {
   color: var(--red);
 }
+.rental-estimate {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+}
+.rental-estimate span {
+  color: var(--red);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.rental-estimate b {
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+.rental-estimate small {
+  color: var(--muted);
+  font-weight: 750;
+  line-height: 1.35;
+}
 .compact-top {
   padding-bottom: 18px;
 }
@@ -664,6 +688,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .price-box strong { color: var(--red); font-size: 1.9rem; }
 .price-box small { color: #111; }
+.price-box em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.25;
+  max-width: 210px;
+}
 .select-button {
   align-items: center;
   display: flex;

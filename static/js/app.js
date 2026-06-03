@@ -10,6 +10,12 @@ const searchForm = document.getElementById("searchForm");
 const locationSelect = document.getElementById("location");
 const discountCode = document.getElementById("discountCode");
 const discountMessage = document.getElementById("discountMessage");
+const pickupDate = document.getElementById("pickupDate");
+const returnDate = document.getElementById("returnDate");
+const pickupTime = document.getElementById("pickupTime");
+const returnTime = document.getElementById("returnTime");
+const rentalLengthLabel = document.getElementById("rentalLengthLabel");
+const quoteMatchLabel = document.getElementById("quoteMatchLabel");
 const filterToggle = document.getElementById("filterToggle");
 const filterOptions = document.getElementById("filterOptions");
 const mobileQuery = window.matchMedia("(max-width: 760px)");
@@ -31,6 +37,48 @@ function parseJsonData(node, fallback = []) {
 }
 
 const activeDiscounts = parseJsonData(discountDataNode);
+
+function moneyRange(low, high) {
+  return `$${Math.round(low)}-${Math.round(high)}`;
+}
+
+function getRentalDays() {
+  if (!pickupDate?.value || !returnDate?.value) return 10;
+  const pickup = new Date(`${pickupDate.value}T00:00:00`);
+  const dropoff = new Date(`${returnDate.value}T00:00:00`);
+  const diff = Math.ceil((dropoff - pickup) / 86400000);
+  return Number.isFinite(diff) && diff > 0 ? diff : 1;
+}
+
+function rentalLengthText(days) {
+  if (days >= 30) {
+    const months = days / 30;
+    const rounded = Number.isInteger(months) ? String(months) : months.toFixed(1);
+    return `${days} days · about ${rounded} months`;
+  }
+  return `${days} days`;
+}
+
+function updateRentalRanges() {
+  const days = getRentalDays();
+  if (rentalLengthLabel) rentalLengthLabel.textContent = rentalLengthText(days);
+  if (quoteMatchLabel) {
+    quoteMatchLabel.textContent = "Bring a written Avis, Enterprise, Budget, Hertz, or similar quote. FairFares will match it and add 10% extra discount.";
+  }
+  document.querySelectorAll(".car-card").forEach((card) => {
+    const daily = Number(card.dataset.price || 0);
+    const dailyLow = daily * 0.9;
+    const dailyHigh = daily * 1.1;
+    const totalLow = dailyLow * days;
+    const totalHigh = dailyHigh * days;
+    const dailyTarget = card.querySelector("[data-price-range]");
+    const totalTarget = card.querySelector("[data-total-range]");
+    const daysTarget = card.querySelector("[data-range-days]");
+    if (dailyTarget) dailyTarget.textContent = moneyRange(dailyLow, dailyHigh);
+    if (totalTarget) totalTarget.textContent = moneyRange(totalLow, totalHigh);
+    if (daysTarget) daysTarget.textContent = rentalLengthText(days);
+  });
+}
 
 function updateCars() {
   if (!carList) return;
@@ -71,6 +119,8 @@ typeFilters.forEach((input) => input.addEventListener("change", updateCars));
 fuelFilters.forEach((input) => input.addEventListener("change", updateCars));
 locationSelect?.addEventListener("change", updateCars);
 sortCars?.addEventListener("change", updateCars);
+pickupDate?.addEventListener("change", updateRentalRanges);
+returnDate?.addEventListener("change", updateRentalRanges);
 
 function clearCarFilters() {
   typeFilters.forEach((input) => {
@@ -121,13 +171,20 @@ discountCode?.addEventListener("input", validateDiscount);
 
 document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").forEach((button) => {
   button.addEventListener("click", (event) => {
-    if (!discountCode?.value.trim()) return;
-    const code = discountCode.value.trim().toUpperCase();
-    const discount = activeDiscounts.find((item) => item.code.toUpperCase() === code);
-    if (!discount || discountMessage?.classList.contains("is-error")) return;
     event.preventDefault();
     const url = new URL(button.getAttribute("href"), window.location.origin);
-    url.searchParams.set("discount_code", code);
+    url.searchParams.set("days", String(getRentalDays()));
+    if (pickupDate?.value) url.searchParams.set("pickup_date", pickupDate.value);
+    if (returnDate?.value) url.searchParams.set("return_date", returnDate.value);
+    if (pickupTime?.value) url.searchParams.set("pickup_time", pickupTime.value);
+    if (returnTime?.value) url.searchParams.set("return_time", returnTime.value);
+    if (discountCode?.value.trim()) {
+      const code = discountCode.value.trim().toUpperCase();
+      const discount = activeDiscounts.find((item) => item.code.toUpperCase() === code);
+      if (discount && !discountMessage?.classList.contains("is-error")) {
+        url.searchParams.set("discount_code", code);
+      }
+    }
     window.location.href = `${url.pathname}${url.search}`;
   });
 });
@@ -156,6 +213,7 @@ searchForm?.addEventListener("submit", (event) => {
 });
 
 updateCars();
+updateRentalRanges();
 
 const heroFold = document.querySelector("[data-hero-fold]");
 const heroFoldTrigger = heroFold?.querySelector(".hero-fold-trigger");

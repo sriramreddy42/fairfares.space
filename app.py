@@ -1040,7 +1040,26 @@ def make_booking_id() -> str:
     return f"FF{secrets.randbelow(900000000) + 100000000}"
 
 
-def create_booking_for_user(user_id: int, car_id: int, discount_code: str = "") -> sqlite3.Row:
+def format_booking_date(value: str, fallback: str) -> str:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%b %-d, %Y")
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").strftime("%b %#d, %Y")
+        except ValueError:
+            return fallback
+
+
+def create_booking_for_user(
+    user_id: int,
+    car_id: int,
+    discount_code: str = "",
+    days: int = 10,
+    pickup_date: str = "",
+    return_date: str = "",
+    pickup_time: str = "10:00 AM",
+    return_time: str = "10:00 AM",
+) -> sqlite3.Row:
     requested_car = get_car(car_id)
     available_cars = get_cars()
     car = requested_car if requested_car and requested_car["status"].strip().upper() == "AVAILABLE" else None
@@ -1052,7 +1071,8 @@ def create_booking_for_user(user_id: int, car_id: int, discount_code: str = "") 
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
             booking_id = make_booking_id()
         discount = get_valid_discount(discount_code)
-        subtotal = float(car["total_price"])
+        rental_days = max(1, min(int(days or 1), 366))
+        subtotal = round(float(car["daily_price"]) * rental_days, 2)
         discount_amount = calculate_discount_amount(subtotal, discount)
         final_total = round(subtotal - discount_amount, 2)
         applied_code = discount["code"] if discount else ""
@@ -1070,12 +1090,12 @@ def create_booking_for_user(user_id: int, car_id: int, discount_code: str = "") 
                 car["id"],
                 "AVIS",
                 "Denver International Airport (DEN)",
-                "Jun 10, 2025",
-                "10:00 AM",
+                format_booking_date(pickup_date, "Jun 10, 2025"),
+                pickup_time or "10:00 AM",
                 "Denver International Airport (DEN)",
-                "Jun 20, 2025",
-                "10:00 AM",
-                10,
+                format_booking_date(return_date, "Jun 20, 2025"),
+                return_time or "10:00 AM",
+                rental_days,
                 subtotal,
                 applied_code,
                 discount_amount,
@@ -1092,19 +1112,28 @@ def create_booking_for_user(user_id: int, car_id: int, discount_code: str = "") 
     return booking
 
 
-def ensure_booking_for_user(user_id: int, car_id: int | None = None, discount_code: str = "") -> sqlite3.Row | None:
+def ensure_booking_for_user(
+    user_id: int,
+    car_id: int | None = None,
+    discount_code: str = "",
+    days: int = 10,
+    pickup_date: str = "",
+    return_date: str = "",
+    pickup_time: str = "10:00 AM",
+    return_time: str = "10:00 AM",
+) -> sqlite3.Row | None:
     existing = get_booking_for_user(user_id)
     if existing and not car_id:
         return existing
     if car_id:
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() == "AVAILABLE":
-            return create_booking_for_user(user_id, car_id, discount_code)
+            return create_booking_for_user(user_id, car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time)
         return None
     cars = get_cars()
     if not cars:
         return None
-    return create_booking_for_user(user_id, cars[0]["id"], discount_code)
+    return create_booking_for_user(user_id, cars[0]["id"], discount_code, days, pickup_date, return_date, pickup_time, return_time)
 
 
 AGREEMENT_FIELD_GROUPS = (
@@ -1717,8 +1746,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <ul>{features}</ul>
             </div>
             <div class="price-box">
-                <strong>${row["daily_price"]:.2f}</strong><span>/day</span>
-                <small>${row["total_price"]:.2f} total</small>
+                <strong data-price-range>${row["daily_price"] * 0.9:.0f}-${row["daily_price"] * 1.1:.0f}</strong><span>/day est.</span>
+                <small><b data-total-range>${row["total_price"] * 0.9:.0f}-${row["total_price"] * 1.1:.0f}</b> total range · <span data-range-days>10 days</span></small>
+                <em>Quote match + extra 10% discount with Avis/Enterprise/etc. quote.</em>
                 <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 <a class="details-link" href="/api/cars">View Details</a>
             </div>
@@ -2768,11 +2798,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             selected_car_id = None
         discount_code = query.get("discount_code", [""])[0]
-        self.render_manage_booking(self.current_user(), selected_car_id, discount_code)
+        try:
+            days = int(query.get("days", ["10"])[0])
+        except ValueError:
+            days = 10
+        self.render_manage_booking(
+            self.current_user(),
+            selected_car_id,
+            discount_code,
+            max(1, min(days, 366)),
+            query.get("pickup_date", [""])[0],
+            query.get("return_date", [""])[0],
+            query.get("pickup_time", ["10:00 AM"])[0],
+            query.get("return_time", ["10:00 AM"])[0],
+        )
 
-    def render_manage_booking(self, user: sqlite3.Row | None, selected_car_id: int | None = None, discount_code: str = "") -> None:
+    def render_manage_booking(
+        self,
+        user: sqlite3.Row | None,
+        selected_car_id: int | None = None,
+        discount_code: str = "",
+        days: int = 10,
+        pickup_date: str = "",
+        return_date: str = "",
+        pickup_time: str = "10:00 AM",
+        return_time: str = "10:00 AM",
+    ) -> None:
         if user and selected_car_id:
-            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code)
+            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time)
         elif user:
             booking = get_booking_for_user(user["id"])
         else:

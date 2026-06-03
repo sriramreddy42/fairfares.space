@@ -153,6 +153,7 @@ def main() -> None:
     assert_true(any(row["name"] == "Stress Fleet 1" for row in cars), "available status should be normalized for user feed queries")
     first_card = app.FairFaresHandler.render_car_card(None, cars[0])
     assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
+    assert_true("data-price-range" in first_card and "data-total-range" in first_card, "feed cards should render estimate ranges instead of one fixed quote")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
     assert_true("payment-confirmation" not in dashboard_template and "$booking_payment_state" not in dashboard_template, "manage booking should use the booking badge for pay at pickup")
@@ -163,6 +164,9 @@ def main() -> None:
     css_text = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
     assert_true(".agreement-customer" in css_text and ".agreement-issuer" in css_text, "agreement fields should mark customer and issuer ownership")
     app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+    assert_true("rentalLengthLabel" in index_template and "quoteMatchLabel" in index_template, "homepage search should show rental days/months and quote-match message")
+    assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
@@ -251,7 +255,7 @@ def main() -> None:
     booked_ids: list[int] = []
     discounted_booking_id = 0
     for index, user in enumerate(users, start=1):
-        booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"], "STRESS15" if index == 1 else "")
+        booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"], "STRESS15" if index == 1 else "", 45 if index == 1 else 10)
         assert_true(booking["booking_status"] == "CONFIRMED", "new booking should be confirmed")
         assert_true(booking["payment_status"] == "PAY_AT_PICKUP", "new selected bookings should default to pay at pickup")
         assert_true(app.booking_status_label(booking["booking_status"], booking["payment_status"]) == "Confirmed / Pay at pickup", "confirmed booking badge should show pay at pickup")
@@ -259,6 +263,7 @@ def main() -> None:
         if index == 1:
             discounted_booking_id = booking["id"]
             assert_true(booking["discount_code"] == "STRESS15", "selected discount code should save on booking")
+            assert_true(booking["days"] == 45, "booking should store selected rental length")
             assert_true(float(booking["discount_amount"]) > 0 and float(booking["total_price"]) < float(booking["subtotal_price"]), "discount should reduce booking total")
         booked_ids.append(booking["id"])
         with app.db() as con:
