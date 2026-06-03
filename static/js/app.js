@@ -128,6 +128,101 @@ searchForm?.addEventListener("submit", (event) => {
 
 updateCars();
 
+const heroFold = document.querySelector("[data-hero-fold]");
+const heroFoldTrigger = heroFold?.querySelector(".hero-fold-trigger");
+const heroFoldVideo = heroFold?.querySelector("video");
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let heroFoldTimer;
+let heroFoldRunning = false;
+let heroVideoAvailable;
+
+function closeHeroFold() {
+  if (!heroFold || !heroFoldVideo) return;
+  window.clearTimeout(heroFoldTimer);
+  heroFold.classList.remove("is-playing", "is-folding");
+  heroFoldRunning = false;
+  heroFoldVideo.pause();
+  try {
+    heroFoldVideo.currentTime = 0;
+  } catch {
+    // Some browsers block resetting unloaded media.
+  }
+}
+
+function previewHeroFold() {
+  if (!heroFold || heroFoldRunning || reduceMotion.matches) return;
+  heroFoldRunning = true;
+  heroFold.classList.add("is-folding");
+  heroFoldTimer = window.setTimeout(() => {
+    heroFold.classList.add("is-playing");
+    heroFold.classList.remove("is-folding");
+    heroFoldTimer = window.setTimeout(closeHeroFold, 900);
+  }, 260);
+}
+
+function ensureHeroVideoSource() {
+  if (!heroFoldVideo?.dataset.videoSrc) return Promise.resolve(false);
+  if (heroFoldVideo.src) return Promise.resolve(true);
+  if (typeof heroVideoAvailable === "boolean") return Promise.resolve(heroVideoAvailable);
+  return fetch(heroFoldVideo.dataset.videoSrc, { method: "HEAD", cache: "no-store" })
+    .then((response) => {
+      heroVideoAvailable = response.ok;
+      if (heroVideoAvailable) {
+        heroFoldVideo.src = heroFoldVideo.dataset.videoSrc;
+        heroFoldVideo.load();
+      }
+      return heroVideoAvailable;
+    })
+    .catch(() => {
+      heroVideoAvailable = false;
+      return false;
+    });
+}
+
+function startHeroFoldPlayback() {
+  heroFoldRunning = true;
+  heroFold.classList.add("is-folding");
+  heroFoldTimer = window.setTimeout(() => {
+    heroFold.classList.add("is-playing");
+    heroFold.classList.remove("is-folding");
+    try {
+      heroFoldVideo.currentTime = 0;
+    } catch {
+      // The video file may not exist yet; fold back cleanly below.
+    }
+    const playAttempt = heroFoldVideo.play();
+    if (playAttempt?.catch) {
+      playAttempt.catch(() => {
+        heroFoldTimer = window.setTimeout(closeHeroFold, 1200);
+      });
+    }
+    if (!heroFoldVideo.duration || Number.isNaN(heroFoldVideo.duration)) {
+      heroFoldTimer = window.setTimeout(closeHeroFold, 5200);
+    }
+  }, 260);
+}
+
+function playHeroFold(options = {}) {
+  if (!heroFold || !heroFoldVideo || heroFoldRunning || reduceMotion.matches) return;
+  ensureHeroVideoSource().then((available) => {
+    if (available) {
+      startHeroFoldPlayback();
+    } else if (options.previewWhenMissing) {
+      previewHeroFold();
+    }
+  });
+}
+
+heroFoldTrigger?.addEventListener("click", () => playHeroFold({ previewWhenMissing: true }));
+heroFoldVideo?.addEventListener("ended", closeHeroFold);
+heroFoldVideo?.addEventListener("error", () => {
+  if (heroFoldRunning) heroFoldTimer = window.setTimeout(closeHeroFold, 1200);
+});
+
+if (heroFold && !reduceMotion.matches) {
+  window.setTimeout(playHeroFold, 1200);
+}
+
 const mainNav = document.querySelector(".main-nav");
 const menuButton = document.querySelector(".menu-button");
 const mobileMenu = document.createElement("div");

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-26">
-  <script defer src="/static/js/app.js?v=26"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-27">
+  <script defer src="/static/js/app.js?v=27"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -62,7 +62,15 @@
         </label>
         <button type="submit">Search Cars</button>
       </form>
-      <div class="hero-poster" role="img" aria-label="FairFares car rental campaign"></div>
+      <div class="hero-poster hero-fold-media" data-hero-fold aria-label="FairFares car rental campaign">
+        <button class="hero-fold-trigger" type="button" aria-label="Play FairFares hero video">
+          <span class="hero-fold-image" aria-hidden="true"></span>
+          <video class="hero-fold-video" muted playsinline preload="none" poster="/static/img/hero-road.png" data-video-src="/static/video/fairfares-hero.mp4"></video>
+          <span class="hero-fold-panel hero-fold-panel-left" aria-hidden="true"></span>
+          <span class="hero-fold-panel hero-fold-panel-right" aria-hidden="true"></span>
+          <span class="hero-play-chip">Play feature</span>
+        </button>
+      </div>
     </section>
 
     <section class="results-layout" id="results">
