@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-23">
-  <script defer src="/static/js/app.js?v=18"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-24">
+  <script defer src="/static/js/app.js?v=19"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -258,44 +258,73 @@
         </article>
       </section>
 
-      <section class="wide-panels">
-        <article class="manage-card why-card">
-          <h2>Why Book With FairFares?</h2>
-          <div class="why-options">
-            <button class="active" type="button" data-why="prices">Best Student Prices</button>
-            <button type="button" data-why="fees">No Hidden Fees</button>
-            <button type="button" data-why="cancel">Free Cancellation</button>
-            <button type="button" data-why="support">24/7 Support</button>
-          </div>
-          <div class="why-detail" id="whyDetail">
-            <b>Best Student Prices</b>
-            <span>Verified students get exclusive rates and discounts applied before checkout.</span>
-            <small>Current booking savings: 15% student discount applied.</small>
-          </div>
-          <div class="why-actions">
-            <button type="button" id="applyStudentSavings">Apply Student Savings</button>
-            <button class="light-button" type="button" data-manage-tab="support">Ask Support</button>
-          </div>
-          <p class="modify-status" id="whyStatus" aria-live="polite"></p>
-        </article>
-      </section>
+      <section class="booking-accordions">
+        <div class="accordion-tabs" role="tablist" aria-label="Booking benefits">
+          <button class="active" type="button" data-accordion-tab="why" aria-controls="whyCard">
+            <span class="tab-icon">tag</span>
+            <span>Why Book With FairFares?</span>
+            <b>›</b>
+          </button>
+          <button type="button" data-accordion-tab="savings" aria-controls="savingsCard">
+            <span class="tab-icon">spark</span>
+            <span>Smarter Booking. More Savings.</span>
+            <b>›</b>
+          </button>
+        </div>
 
-      <section class="savings-band">
-        <h2>Smarter Booking. More Savings.</h2>
-        <div class="savings-options">
-          <button class="active" type="button" data-saving="dates">AI Cheapest Date Suggestions</button>
-          <button type="button" data-saving="alerts">Price Drop Alerts</button>
-        </div>
-        <div class="savings-detail" id="savingsDetail">
-          <b>AI Cheapest Date Suggestions</b>
-          <span>Shift your pickup or return dates to compare lower student rates.</span>
-          <small>Potential savings: $18.40 if pickup moves by one day.</small>
-        </div>
-        <div class="savings-actions">
-          <button type="button" id="activateSavingsTool">Activate Tool</button>
-          <button class="light-button" type="button" data-manage-tab="modify">Edit Trip Dates</button>
-        </div>
-        <p class="modify-status" id="savingsStatus" aria-live="polite"></p>
+        <article class="accordion-card active" id="whyCard" data-accordion-panel="why">
+          <button class="accordion-head" type="button" data-accordion-toggle="why">
+            <span class="head-icon">shield</span>
+            <span>Why Book With FairFares?</span>
+            <b>⌃</b>
+          </button>
+          <div class="accordion-body">
+            <div class="benefit-row">
+              <span class="benefit-icon red">edu</span>
+              <div><b>Best Student Prices</b><span>Verified students get exclusive rates and discounts.</span></div>
+            </div>
+            <div class="benefit-row">
+              <span class="benefit-icon blue">fee</span>
+              <div><b>No Hidden Fees</b><span>What you see is what you pay. No surprises.</span></div>
+            </div>
+            <div class="benefit-row">
+              <span class="benefit-icon green">free</span>
+              <div><b>Free Cancellation</b><span>Cancel for free before the eligible deadline.</span></div>
+            </div>
+            <div class="benefit-row">
+              <span class="benefit-icon purple">24/7</span>
+              <div><b>24/7 Support</b><span>We're here anytime you need help.</span></div>
+            </div>
+            <div class="accordion-actions">
+              <button type="button" id="applyStudentSavings">Apply Student Savings</button>
+              <button class="light-button" type="button" data-manage-tab="support">Ask Support</button>
+            </div>
+            <p class="modify-status" id="whyStatus" aria-live="polite"></p>
+          </div>
+        </article>
+
+        <article class="accordion-card" id="savingsCard" data-accordion-panel="savings">
+          <button class="accordion-head" type="button" data-accordion-toggle="savings">
+            <span class="head-icon">spark</span>
+            <span>Smarter Booking. More Savings.</span>
+            <b>⌄</b>
+          </button>
+          <div class="accordion-body">
+            <div class="benefit-row">
+              <span class="benefit-icon red">date</span>
+              <div><b>AI Cheapest Date Suggestions</b><span>Shift pickup or return dates to compare lower student rates.</span></div>
+            </div>
+            <div class="benefit-row">
+              <span class="benefit-icon blue">alert</span>
+              <div><b>Price Drop Alerts</b><span>We watch your route and notify you when the booked price drops.</span></div>
+            </div>
+            <div class="accordion-actions">
+              <button type="button" id="activateSavingsTool">Activate Tool</button>
+              <button class="light-button" type="button" data-manage-tab="modify">Edit Trip Dates</button>
+            </div>
+            <p class="modify-status" id="savingsStatus" aria-live="polite"></p>
+          </div>
+        </article>
       </section>
 
       $admin_panel

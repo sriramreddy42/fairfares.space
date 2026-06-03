@@ -404,60 +404,42 @@ document.getElementById("supportForm")?.addEventListener("submit", (event) => {
 
 syncSupportTopic();
 
-const whyButtons = [...document.querySelectorAll("[data-why]")];
-const whyDetail = document.getElementById("whyDetail");
+const accordionTabs = [...document.querySelectorAll("[data-accordion-tab]")];
+const accordionToggles = [...document.querySelectorAll("[data-accordion-toggle]")];
+const accordionPanels = [...document.querySelectorAll("[data-accordion-panel]")];
 const whyStatus = document.getElementById("whyStatus");
-const whyCopy = {
-  prices: ["Best Student Prices", "Verified students get exclusive rates and discounts applied before checkout.", "Current booking savings: 15% student discount applied."],
-  fees: ["No Hidden Fees", "Every required fee is shown in the booking total, including taxes and airport charges.", "Your displayed total remains $209.93 for this trip."],
-  cancel: ["Free Cancellation", "Cancel before the free-cancellation deadline and keep your refund eligibility clear.", "Deadline: Jun 8, 2025 at 10:00 AM."],
-  support: ["24/7 Support", "Get help through chat, roadside assistance, or provider contact at any time.", "Average chat response: under 2 minutes."],
-};
-
-function showWhyBenefit(key) {
-  whyButtons.forEach((button) => {
-    button.classList.toggle("active", button.dataset.why === key);
-  });
-  const copy = whyCopy[key] || whyCopy.prices;
-  whyDetail.innerHTML = `<b>${copy[0]}</b><span>${copy[1]}</span><small>${copy[2]}</small>`;
-  if (whyStatus) whyStatus.textContent = "";
-}
-
-whyButtons.forEach((button) => {
-  button.addEventListener("click", () => showWhyBenefit(button.dataset.why));
-});
-
-document.getElementById("applyStudentSavings")?.addEventListener("click", () => {
-  showWhyBenefit("prices");
-  whyStatus.textContent = "Student savings are already applied to this booking.";
-});
-
-if (whyButtons.length) showWhyBenefit("prices");
-
-const savingsButtons = [...document.querySelectorAll("[data-saving]")];
-const savingsDetail = document.getElementById("savingsDetail");
 const savingsStatus = document.getElementById("savingsStatus");
-const savingsCopy = {
-  dates: ["AI Cheapest Date Suggestions", "Shift your pickup or return dates to compare lower student rates.", "Potential savings: $18.40 if pickup moves by one day.", "Date suggestions enabled. Open Modify Reservation to review cheaper dates."],
-  alerts: ["Price Drop Alerts", "We watch your booked route and notify you when the daily price drops.", "Watching Toyota Corolla at Denver International Airport.", "Price drop alerts enabled for this booking."],
-};
 
-function showSavingsTool(key) {
-  savingsButtons.forEach((button) => {
-    button.classList.toggle("active", button.dataset.saving === key);
+function showBookingAccordion(panelName) {
+  accordionTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.accordionTab === panelName);
   });
-  const copy = savingsCopy[key] || savingsCopy.dates;
-  savingsDetail.innerHTML = `<b>${copy[0]}</b><span>${copy[1]}</span><small>${copy[2]}</small>`;
+  accordionPanels.forEach((panel) => {
+    const active = panel.dataset.accordionPanel === panelName;
+    panel.classList.toggle("active", active);
+    const chevron = panel.querySelector(".accordion-head b");
+    if (chevron) chevron.textContent = active ? "⌃" : "⌄";
+  });
+  if (whyStatus) whyStatus.textContent = "";
   if (savingsStatus) savingsStatus.textContent = "";
 }
 
-savingsButtons.forEach((button) => {
-  button.addEventListener("click", () => showSavingsTool(button.dataset.saving));
+accordionTabs.forEach((button) => {
+  button.addEventListener("click", () => showBookingAccordion(button.dataset.accordionTab));
+});
+
+accordionToggles.forEach((button) => {
+  button.addEventListener("click", () => showBookingAccordion(button.dataset.accordionToggle));
+});
+
+document.getElementById("applyStudentSavings")?.addEventListener("click", () => {
+  showBookingAccordion("why");
+  whyStatus.textContent = "Student savings are already applied to this booking.";
 });
 
 document.getElementById("activateSavingsTool")?.addEventListener("click", () => {
-  const active = document.querySelector("[data-saving].active")?.dataset.saving || "dates";
-  savingsStatus.textContent = savingsCopy[active][3];
+  showBookingAccordion("savings");
+  savingsStatus.textContent = "Savings tools enabled. Open Modify Reservation to review cheaper dates and alerts.";
 });
 
-if (savingsButtons.length) showSavingsTool("dates");
+if (accordionTabs.length) showBookingAccordion("why");

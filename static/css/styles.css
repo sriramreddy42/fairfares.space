@@ -717,8 +717,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   color: var(--red);
 }
 .trip-card,
-.manage-card,
-.savings-band {
+.manage-card {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1162,99 +1161,144 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   line-height: 1.45;
   padding: 12px;
 }
-.wide-panels {
+.booking-accordions {
   display: grid;
   gap: 18px;
-  grid-template-columns: 1fr 1.2fr;
 }
-.support-card div,
-.why-options,
-.savings-options {
+.accordion-tabs {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.support-card div {
-  grid-template-columns: repeat(3, 1fr);
-}
-.support-card button {
+.accordion-tabs button,
+.accordion-head {
+  align-items: center;
   background: #fff;
   border: 1px solid var(--line);
-  color: var(--red);
-}
-.why-options button,
-.savings-options button {
-  border-left: 1px solid var(--line);
-  font-size: 0.82rem;
+  border-radius: 8px;
+  color: var(--navy);
+  display: grid;
   font-weight: 900;
-  padding: 10px;
-}
-.why-options button,
-.savings-options button {
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-  border-right: 1px solid var(--line);
-  border-top: 1px solid var(--line);
-  color: var(--navy);
-  min-height: 58px;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  letter-spacing: 0;
+  min-height: 72px;
+  padding: 14px 20px;
   text-align: left;
+  text-transform: uppercase;
+  width: 100%;
 }
-.why-options button.active,
-.savings-options button.active {
-  background: #fff6f6;
-  border-color: #ffb5bd;
+.accordion-tabs button.active {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.accordion-tabs button span:nth-child(2),
+.accordion-head span:nth-child(2) {
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.accordion-tabs b,
+.accordion-head b {
+  font-size: 2rem;
+  line-height: 1;
+}
+.tab-icon,
+.head-icon,
+.benefit-icon {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  font-weight: 950;
+  height: 44px;
+  justify-content: center;
+  text-transform: uppercase;
+  width: 44px;
+}
+.accordion-tabs .tab-icon,
+.head-icon {
+  background: #fff0f1;
   color: var(--red);
 }
-.why-detail,
-.savings-detail {
-  background: #f7f9fc;
+.accordion-tabs button.active .tab-icon {
+  background: #fff;
+  color: var(--red);
+}
+.accordion-card {
+  background: #fff;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.accordion-card:not(.active) .accordion-body {
+  display: none;
+}
+.accordion-card:not(.active) .accordion-head {
+  border: 0;
+}
+.accordion-head {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--red);
+  min-height: 72px;
+  padding: 18px 22px;
+}
+.accordion-body {
   display: grid;
-  gap: 7px;
-  margin-top: 14px;
-  padding: 16px;
+  gap: 0;
+  padding: 18px 34px 28px;
 }
-.why-detail b,
-.savings-detail b {
-  color: var(--navy);
+.benefit-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 22px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 18px 0;
 }
-.why-detail span,
-.savings-detail span {
-  color: #273044;
+.benefit-row:last-of-type {
+  border-bottom: 0;
 }
-.why-detail small,
-.savings-detail small {
+.benefit-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.benefit-row b {
+  color: #172139;
+  font-size: 1.08rem;
+  line-height: 1.2;
+}
+.benefit-row span:not(.benefit-icon) {
   color: var(--muted);
-  font-weight: 800;
+  line-height: 1.4;
 }
-.why-actions,
-.savings-actions {
-  display: flex;
+.benefit-icon {
+  height: 56px;
+  width: 56px;
+}
+.benefit-icon.red { background: #ffe2e5; color: var(--red); }
+.benefit-icon.blue { background: #e3efff; color: #1354b8; }
+.benefit-icon.green { background: #dcf8e8; color: #087a48; }
+.benefit-icon.purple { background: #eee3ff; color: #5a32b8; }
+.accordion-actions {
+  display: grid;
   gap: 12px;
-  justify-content: flex-end;
-  margin-top: 14px;
+  margin-top: 16px;
 }
-.why-actions button,
-.savings-actions button {
+.accordion-actions button {
   background: var(--red);
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   color: #fff;
   font-weight: 900;
-  min-height: 40px;
-  padding: 10px 14px;
-}
-.savings-band {
-  background: #fff6f6;
-  border-color: #ffd1d5;
-  padding: 18px;
-}
-.savings-band h2 {
-  color: var(--red);
-  font-size: 1.05rem;
-  margin: 0 0 12px;
-  text-transform: uppercase;
+  min-height: 54px;
+  padding: 12px 16px;
+  width: 100%;
 }
 .manage-content .editor-panel {
   margin-top: 6px;
@@ -1336,7 +1380,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 @media (max-width: 1100px) {
-  .top-brand, .booking-hero, .results-layout, .login-top, .login-main, .manage-top, .manage-layout, .trip-card, .manage-grid, .wide-panels {
+  .top-brand, .booking-hero, .results-layout, .login-top, .login-main, .manage-top, .manage-layout, .trip-card, .manage-grid {
     grid-template-columns: 1fr;
   }
   .main-nav {
@@ -1379,7 +1423,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .price-summary {
     grid-template-columns: repeat(4, auto);
   }
-  .trip-actions, .support-card div, .why-options, .savings-options {
+  .trip-actions {
     grid-template-columns: 1fr 1fr;
   }
   .modify-grid,
@@ -1514,24 +1558,15 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     grid-column: auto;
   }
   .trip-card,
-  .manage-card,
-  .savings-band {
+  .manage-card {
     padding: 16px;
   }
   .price-summary {
     grid-template-columns: 1fr;
   }
   .auth-card { padding: 34px 24px; }
-  .trip-actions, .support-card div, .why-options, .savings-options {
+  .trip-actions {
     grid-template-columns: 1fr;
-  }
-  .why-actions,
-  .savings-actions {
-    flex-direction: column;
-  }
-  .why-actions button,
-  .savings-actions button {
-    width: 100%;
   }
   .modify-grid,
   .modify-grid.two,
@@ -2032,14 +2067,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     transform: scale(1);
   }
 
-  .manage-card,
-  .savings-band {
+  .manage-card {
     border-radius: 8px;
     padding: 16px;
   }
 
-  .manage-card h2,
-  .savings-band h2 {
+  .manage-card h2 {
     font-size: 0.95rem;
   }
 
@@ -2072,8 +2105,59 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     flex: 0 0 auto;
   }
 
-  .wide-panels {
-    grid-template-columns: 1fr;
+  .accordion-tabs {
+    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .accordion-tabs button,
+  .accordion-head {
+    gap: 10px;
+    min-height: 62px;
+    padding: 12px;
+  }
+
+  .accordion-tabs button {
+    font-size: 0.74rem;
+  }
+
+  .accordion-head {
+    font-size: 0.82rem;
+  }
+
+  .tab-icon,
+  .head-icon {
+    font-size: 0.52rem;
+    height: 38px;
+    width: 38px;
+  }
+
+  .accordion-tabs b,
+  .accordion-head b {
+    font-size: 1.55rem;
+  }
+
+  .accordion-body {
+    padding: 14px 20px 22px;
+  }
+
+  .benefit-row {
+    gap: 14px;
+    padding: 15px 0;
+  }
+
+  .benefit-icon {
+    font-size: 0.56rem;
+    height: 48px;
+    width: 48px;
+  }
+
+  .benefit-row b {
+    font-size: 0.98rem;
+  }
+
+  .benefit-row span:not(.benefit-icon) {
+    font-size: 0.86rem;
   }
 }
 
@@ -2103,8 +2187,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .auth-card,
   .page-heading,
   .trip-card,
-  .manage-card,
-  .savings-band {
+  .manage-card {
     box-shadow: none;
   }
 
@@ -3391,6 +3474,32 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     min-height: 54px;
     padding: 8px 5px;
   }
+
+  .accordion-tabs {
+    gap: 10px;
+  }
+
+  .accordion-tabs button {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    min-height: 58px;
+    padding: 10px 9px;
+  }
+
+  .accordion-tabs button span:nth-child(2) {
+    font-size: clamp(0.66rem, 2.9vw, 0.78rem);
+  }
+
+  .accordion-head {
+    padding: 12px 14px;
+  }
+
+  .accordion-body {
+    padding: 12px 18px 20px;
+  }
+
+  .accordion-actions button {
+    min-height: 50px;
+  }
 }
 
 @media (max-width: 360px) {
@@ -3417,5 +3526,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     min-height: 50px;
     padding-left: 4px;
     padding-right: 4px;
+  }
+
+  .accordion-tabs {
+    grid-template-columns: 1fr;
   }
 }
