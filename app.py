@@ -1018,6 +1018,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         routes = {
             "/": self.home,
+            "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/activate": self.activate_account,
             "/healthz": self.healthz,
@@ -1232,6 +1233,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             generated_code=escape(code),
             referral_message=escape(message),
             generated_class="" if code else "is-hidden",
+        )
+        self.send_html(body)
+
+    def buy_cars_page(self) -> None:
+        user = self.current_user()
+        body = render_template(
+            "buy_cars.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
 

@@ -209,8 +209,14 @@ input, select, textarea {
   gap: 22px;
   padding: 24px 30px 54px;
 }
+.buy-page {
+  display: grid;
+  gap: 18px;
+  padding: 24px 30px 54px;
+}
 .deals-hero,
-.deal-card {
+.deal-card,
+.buy-hero {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -225,6 +231,22 @@ input, select, textarea {
   height: 100%;
   object-fit: cover;
   width: 100%;
+}
+.buy-hero {
+  overflow: hidden;
+}
+.buy-hero img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+.buy-actions {
+  display: flex;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.buy-actions a {
+  flex: 1;
 }
 .deals-copy {
   align-content: center;
@@ -371,6 +393,38 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .results-toolbar h2 span { color: var(--red); }
 .results-toolbar label { align-items: center; display: flex; gap: 10px; }
 .results-toolbar select { min-width: 200px; }
+.no-results {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin-top: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.no-results.is-hidden {
+  display: none;
+}
+.no-results b {
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+.no-results span {
+  color: var(--muted);
+}
+.no-results button {
+  background: var(--red);
+  border: 0;
+  border-radius: 5px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 10px 18px;
+}
 .car-list { display: grid; gap: 0; }
 .car-card {
   align-items: center;
@@ -2814,12 +2868,21 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 @media (max-width: 600px) {
-  .deals-page {
+  .deals-page,
+  .buy-page {
     padding: 16px 12px 34px;
   }
   .deals-hero,
   .deals-grid {
     grid-template-columns: 1fr;
+  }
+  .deals-hero img {
+    height: auto;
+    object-fit: contain;
+  }
+  .buy-actions {
+    flex-direction: column;
+    padding: 14px;
   }
   .deals-copy,
   .deal-card {

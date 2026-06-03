@@ -4,6 +4,8 @@ const resultCount = document.getElementById("resultCount");
 const typeFilters = [...document.querySelectorAll(".type-filter")];
 const fuelFilters = [...document.querySelectorAll(".fuel-filter")];
 const clearFilters = document.getElementById("clearFilters");
+const resetCarFilters = document.getElementById("resetCarFilters");
+const noCarResults = document.getElementById("noCarResults");
 const searchForm = document.getElementById("searchForm");
 const locationSelect = document.getElementById("location");
 const discountCode = document.getElementById("discountCode");
@@ -36,14 +38,25 @@ function updateCars() {
     })
     .forEach((card) => carList.appendChild(card));
 
-  resultCount.textContent = cards.filter((card) => !card.hidden).length || "0";
+  const visibleCount = cards.filter((card) => !card.hidden).length;
+  if (resultCount) resultCount.textContent = visibleCount || "0";
+  if (noCarResults) {
+    noCarResults.classList.toggle("is-hidden", visibleCount > 0);
+    const message = noCarResults.querySelector("span");
+    if (message) {
+      message.textContent = cards.length
+        ? "Clear filters or choose All available locations to see the full feed."
+        : "No cars are currently available in inventory. Please check back soon or contact support.";
+    }
+  }
 }
 
 typeFilters.forEach((input) => input.addEventListener("change", updateCars));
 fuelFilters.forEach((input) => input.addEventListener("change", updateCars));
 locationSelect?.addEventListener("change", updateCars);
 sortCars?.addEventListener("change", updateCars);
-clearFilters?.addEventListener("click", () => {
+
+function clearCarFilters() {
   typeFilters.forEach((input) => {
     input.checked = false;
   });
@@ -52,7 +65,10 @@ clearFilters?.addEventListener("click", () => {
   });
   if (locationSelect) locationSelect.value = "";
   updateCars();
-});
+}
+
+clearFilters?.addEventListener("click", clearCarFilters);
+resetCarFilters?.addEventListener("click", clearCarFilters);
 
 function validateDiscount() {
   if (!discountCode || !discountMessage) return;

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-25">
-  <script defer src="/static/js/app.js?v=22"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-26">
+  <script defer src="/static/js/app.js?v=26"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -19,7 +19,7 @@
     <div class="nav-links">
       <a class="active" href="/">Book</a>
       <a href="/manage-booking">Manage Booking</a>
-      <a href="#results">Buy Cars</a>
+      <a href="/buy-cars">Buy Cars</a>
       <a href="/deals">Deals</a>
     </div>
     <div class="nav-actions">
@@ -97,6 +97,11 @@
           </label>
         </div>
         <div class="car-list" id="carList">$cars</div>
+        <div class="no-results is-hidden" id="noCarResults">
+          <b>No cars match your search right now.</b>
+          <span>Clear filters or choose All available locations to see the full feed.</span>
+          <button type="button" id="resetCarFilters">Reset Filters</button>
+        </div>
       </section>
     </section>
   </main>
