@@ -295,6 +295,7 @@ const cancelReason = document.getElementById("cancelReason");
 const refundMethod = document.getElementById("refundMethod");
 const refundTimeline = document.getElementById("refundTimeline");
 const cancelStatus = document.getElementById("cancelStatus");
+const bookingStatusBadge = document.getElementById("bookingStatusBadge");
 
 refundMethod?.addEventListener("change", () => {
   refundTimeline.textContent = refundMethod.value.includes("credit")
@@ -331,6 +332,10 @@ cancelForm?.addEventListener("submit", (event) => {
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((data) => {
       cancelStatus.textContent = data.message || `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
+      if (bookingStatusBadge && data.status_label) {
+        bookingStatusBadge.textContent = data.status_label;
+        bookingStatusBadge.className = `status-badge ${data.status_class || "status-pending"}`;
+      }
     })
     .catch(() => {
       cancelStatus.textContent = `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
@@ -421,6 +426,14 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((payload) => {
       document.getElementById("studentStatus").textContent = payload.message || "Student verification details updated.";
+      const verifiedBox = document.getElementById("studentVerifiedBox");
+      const verifiedLabel = document.getElementById("studentVerifiedLabel");
+      const discountLabel = document.getElementById("studentDiscountLabel");
+      const verifiedChecks = document.getElementById("studentVerifiedChecks");
+      if (verifiedLabel && payload.verified_label) verifiedLabel.textContent = payload.verified_label;
+      if (discountLabel && payload.discount_label) discountLabel.textContent = payload.discount_label;
+      if (verifiedChecks && payload.checks_html) verifiedChecks.innerHTML = payload.checks_html;
+      verifiedBox?.classList.toggle("is-pending", !payload.verified);
     })
     .catch(() => {
       document.getElementById("studentStatus").textContent = "Student verification details updated.";

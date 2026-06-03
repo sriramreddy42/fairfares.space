@@ -58,7 +58,7 @@
       $first_booking_promo
       <section class="$trip_card_class" id="upcoming">
         <div class="trip-car">
-          <span class="status-badge">$status</span>
+          <span class="status-badge $status_class" id="bookingStatusBadge">$status</span>
           $booking_car_visual
           <p>Rental Provider <b>$provider</b></p>
         </div>
@@ -198,13 +198,13 @@
             <article class="manage-card detail-card active" id="student" data-detail-panel="student">
               <h2>Student Verification</h2>
               <p>Verify to unlock exclusive student benefits</p>
-              <div class="verified-box"><strong>$student_verified_label</strong><span>$student_discount_label</span></div>
+              <div class="verified-box $student_verified_box_class" id="studentVerifiedBox"><strong id="studentVerifiedLabel">$student_verified_label</strong><span id="studentDiscountLabel">$student_discount_label</span></div>
               <form class="workflow-form" id="studentForm" method="post" action="/student-verification">
                 <div class="modify-grid two">
                   <label><span>University Email</span><input name="student_email" type="email" value="$student_email"></label>
                   <label><span>Student ID</span><input name="student_id" value="$student_id"></label>
                 </div>
-                <ul class="check-list">$student_verified_checks</ul>
+                <ul class="check-list" id="studentVerifiedChecks">$student_verified_checks</ul>
                 <button class="light-button" type="submit">Update Verification</button>
                 <p class="modify-status" id="studentStatus" aria-live="polite"></p>
               </form>

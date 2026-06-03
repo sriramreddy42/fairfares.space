@@ -705,6 +705,22 @@ def render_user_trip_rows(bookings: list[sqlite3.Row]) -> str:
     return "\n".join(rows)
 
 
+def booking_status_label(status: str) -> str:
+    labels = {
+        "CANCELLATION_REQUESTED": "REQUEST SENT TO ADMIN",
+        "PICKED_UP": "PICKED UP",
+    }
+    return labels.get(status, status.replace("_", " "))
+
+
+def booking_status_class(status: str) -> str:
+    if status == "CANCELLATION_REQUESTED":
+        return "status-pending"
+    if status in {"CANCELLED", "RETURNED"}:
+        return "status-muted"
+    return "status-confirmed"
+
+
 def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
     if not booking:
         return {
@@ -1371,7 +1387,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (reason, booking["id"], user["id"]),
             )
-        self.send_json({"ok": True, "message": "Cancellation request sent to admin for approval."})
+        self.send_json({
+            "ok": True,
+            "message": "Cancellation request sent to admin for approval.",
+            "booking_status": "CANCELLATION_REQUESTED",
+            "status_label": booking_status_label("CANCELLATION_REQUESTED"),
+            "status_class": booking_status_class("CANCELLATION_REQUESTED"),
+        })
 
     def update_student_verification(self) -> None:
         user = self.current_user()
@@ -1394,7 +1416,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (student_email, student_id, verified, user["id"]),
             )
         message = "Student verification saved. Discount applied." if verified else "Add a valid student email and student ID."
-        self.send_json({"ok": bool(verified), "message": message})
+        self.send_json({
+            "ok": bool(verified),
+            "message": message,
+            "verified": bool(verified),
+            "verified_label": "Verified Student" if verified else "Student Verification Pending",
+            "discount_label": "15% discount applied" if verified else "Verify to unlock student discount",
+            "checks_html": (
+                "<li>Student ID Verified</li><li>University Email Verified</li><li>Discount Applied <b>15% OFF</b></li>"
+                if verified
+                else "<li>Student ID pending</li><li>University email pending</li><li>Discount pending <b>0% OFF</b></li>"
+            ),
+        })
 
     def dashboard(self) -> None:
         user = self.current_user()
@@ -2025,7 +2058,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
             price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
-            status=escape(booking["status"] if booking else "NO BOOKING"),
+            status=escape(booking_status_label(booking["booking_status"]) if booking else "NO BOOKING"),
+            status_class=escape(booking_status_class(booking["booking_status"]) if booking else "status-muted"),
             upgrade_options=upgrade_options,
             upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),
@@ -2034,6 +2068,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             student_id=escape((user["student_id"] or f"STU-{user['id']:04d}") if user else "STU-2025-1042"),
             student_verified_label="Verified Student" if user and user["student_verified"] else "Student Verification Pending",
             student_discount_label="15% discount applied" if user and user["student_verified"] else "Verify to unlock student discount",
+            student_verified_box_class="" if user and user["student_verified"] else "is-pending",
             student_verified_checks=(
                 '<li>Student ID Verified</li><li>University Email Verified</li><li>Discount Applied <b>15% OFF</b></li>'
                 if user and user["student_verified"]
