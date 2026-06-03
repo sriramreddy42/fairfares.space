@@ -165,12 +165,33 @@ def main() -> None:
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
     assert_true("parseJsonData" in app_js and "textarea.innerHTML" in app_js, "frontend JSON parsing should not break all mobile controls")
     assert_true("fetch(heroFoldVideo.dataset.videoSrc" not in app_js, "hero video should not depend on fragile HEAD requests")
+    assert_true("querySelector(\"[data-video-src]\")" in app_js and "setAttribute(\"src\"" in app_js, "homepage hero should load commercial embeds dynamically")
     styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
     assert_true("rotateY(-82deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should include fold animation and reduced-motion fallback")
+    assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in index_template, "book page should link to the Buy Cars page")
     assert_true("noCarResults" in index_template and "resetCarFilters" in index_template, "book page should render no-results reset controls")
-    assert_true("data-hero-fold" in index_template and "fairfares-hero.mp4" in index_template, "homepage hero should wire fold video transition")
+    assert_true("data-hero-fold" in index_template and "$commercial_embed_url" in index_template, "homepage hero should wire dynamic commercial embeds")
+    admin_commercials_template = (ROOT / "templates" / "admin_commercials.html").read_text(encoding="utf-8")
+    assert_true("/admin/commercials" in admin_commercials_template and "Live feature" in admin_commercials_template, "admin should manage commercials and live links")
+    assert_true(not (ROOT / "static" / "video" / "fairfares-hero.mp4").exists(), "homepage should no longer depend on uploaded static MP4")
+    active_commercial = app.get_active_commercial()
+    assert_true(active_commercial is not None, "default active commercial should be seeded")
+    assert_true("youtube.com/embed/vMG_P78gAOE" in active_commercial["embed_url"], "default YouTube link should become an embed URL")
+    assert_true(app.commercial_embed_url("https://www.youtube.com/live/vMG_P78gAOE?feature=share").startswith("https://www.youtube.com/embed/vMG_P78gAOE"), "YouTube live links should become embeds")
+    with app.db() as con:
+        live_url = "https://www.youtube.com/live/vMG_P78gAOE?feature=share"
+        con.execute(
+            """
+            INSERT INTO commercials (title, video_url, embed_url, status, is_live, duration_seconds, sort_order)
+            VALUES (?, ?, ?, 'ACTIVE', 1, 60, 99)
+            """,
+            ("Stress Live Commercial", live_url, app.commercial_embed_url(live_url)),
+        )
+    active_live = app.get_active_commercial()
+    assert_true(active_live["title"] == "Stress Live Commercial" and active_live["is_live"] == 1, "live commercials should take homepage priority")
+    assert_true('"/admin/commercials": self.admin_commercials_page' in (ROOT / "app.py").read_text(encoding="utf-8"), "admin commercials route should be registered")
     buy_template = (ROOT / "templates" / "buy_cars.html").read_text(encoding="utf-8")
     assert_true("buy-cars-coming-soon.png" in buy_template, "Buy Cars page should render the coming-soon campaign")
     assert_true('class="top-brand"' in buy_template and 'href="/manage-booking"' in buy_template, "Buy Cars page should share main header navigation")

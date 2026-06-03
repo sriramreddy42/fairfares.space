@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Commercials | FairFares Admin</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-4">
+  <script defer src="/static/js/app.js?v=29"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <nav>
+      <a href="/admin">Inventory</a>
+      <a href="/admin/bookings">Booked Cars</a>
+      <a href="/admin/discounts">Discounts</a>
+      <a class="active" href="/admin/commercials">Commercials</a>
+      <a href="/admin/pickup">User Pickup</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Developer Portal</p>
+        <h1>Commercials</h1>
+        <span>Hero videos, YouTube links, live features, and campaign playback · $admin_name</span>
+      </div>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Add Commercial</h2>
+          <p>Paste a YouTube, Shorts, Live, or embed link. Active commercials appear in the homepage fold-video hero.</p>
+        </div>
+      </div>
+      <form class="admin-form" method="post" action="/admin/commercials">
+        <label><span>Title</span><input name="title" required placeholder="Denver student launch"></label>
+        <label><span>Video Link</span><input name="video_url" required placeholder="https://youtu.be/..."></label>
+        <label><span>Status</span><select name="status"><option>ACTIVE</option><option>INACTIVE</option></select></label>
+        <label><span>Duration Seconds</span><input name="duration_seconds" type="number" min="6" value="12"></label>
+        <label><span>Sort Order</span><input name="sort_order" type="number" value="1"></label>
+        <label class="check-row"><input type="checkbox" name="is_live" value="1"> Live feature</label>
+        <button type="submit">Add Commercial</button>
+      </form>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Commercial Library</h2>
+          <p>Set one or more links active. Live items get priority on the homepage and stay open longer.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Commercial</th><th>Live Preview</th><th>State</th><th>Duration</th><th>Edit</th><th>Action</th></tr></thead>
+          <tbody>$commercials</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

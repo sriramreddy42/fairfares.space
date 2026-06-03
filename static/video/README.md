@@ -1,5 +1,5 @@
-Place the homepage hero video at:
+Homepage commercials are now managed from:
 
-fairfares-hero.mp4
+/admin/commercials
 
-The homepage fold transition lazy-loads this file and folds back to the hero image when playback ends.
+Paste YouTube, Shorts, Live, or embed links there. The homepage fold transition loads the active commercial link from the database.

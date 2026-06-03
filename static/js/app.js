@@ -146,7 +146,7 @@ updateCars();
 
 const heroFold = document.querySelector("[data-hero-fold]");
 const heroFoldTrigger = heroFold?.querySelector(".hero-fold-trigger");
-const heroFoldVideo = heroFold?.querySelector("video");
+const heroFoldVideo = heroFold?.querySelector("[data-video-src]");
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let heroFoldTimer;
 let heroFoldRunning = false;
@@ -157,12 +157,7 @@ function closeHeroFold() {
   window.clearTimeout(heroFoldTimer);
   heroFold.classList.remove("is-playing", "is-folding");
   heroFoldRunning = false;
-  heroFoldVideo.pause();
-  try {
-    heroFoldVideo.currentTime = 0;
-  } catch {
-    // Some browsers block resetting unloaded media.
-  }
+  heroFoldVideo.removeAttribute("src");
 }
 
 function previewHeroFold() {
@@ -178,10 +173,9 @@ function previewHeroFold() {
 
 function ensureHeroVideoSource() {
   if (!heroFoldVideo?.dataset.videoSrc) return Promise.resolve(false);
-  if (heroFoldVideo.src) return Promise.resolve(true);
+  if (heroFoldVideo.getAttribute("src")) return Promise.resolve(true);
   if (heroVideoAvailable === false) return Promise.resolve(false);
-  heroFoldVideo.src = heroFoldVideo.dataset.videoSrc;
-  heroFoldVideo.load();
+  heroFoldVideo.setAttribute("src", heroFoldVideo.dataset.videoSrc);
   heroVideoAvailable = true;
   return Promise.resolve(true);
 }
@@ -192,19 +186,11 @@ function startHeroFoldPlayback() {
   heroFoldTimer = window.setTimeout(() => {
     heroFold.classList.add("is-playing");
     heroFold.classList.remove("is-folding");
-    try {
-      heroFoldVideo.currentTime = 0;
-    } catch {
-      // The video file may not exist yet; fold back cleanly below.
+    const isLive = heroFoldVideo.dataset.live === "1";
+    if (!isLive) {
+      const duration = Number(heroFoldVideo.dataset.duration || 12);
+      heroFoldTimer = window.setTimeout(closeHeroFold, Math.max(duration, 6) * 1000);
     }
-    const playAttempt = heroFoldVideo.play();
-    if (playAttempt?.catch) {
-      playAttempt.catch(() => {
-        heroVideoAvailable = false;
-        heroFoldTimer = window.setTimeout(closeHeroFold, 1200);
-      });
-    }
-    heroFoldTimer = window.setTimeout(closeHeroFold, 12000);
   }, 260);
 }
 
@@ -220,7 +206,6 @@ function playHeroFold(options = {}) {
 }
 
 heroFoldTrigger?.addEventListener("click", () => playHeroFold({ previewWhenMissing: true }));
-heroFoldVideo?.addEventListener("ended", closeHeroFold);
 heroFoldVideo?.addEventListener("error", () => {
   heroVideoAvailable = false;
   if (heroFoldRunning) heroFoldTimer = window.setTimeout(closeHeroFold, 1200);

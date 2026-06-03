@@ -365,6 +365,18 @@ def init_db() -> None:
                 used_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS commercials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                video_url TEXT NOT NULL,
+                embed_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                is_live INTEGER NOT NULL DEFAULT 0,
+                duration_seconds INTEGER NOT NULL DEFAULT 12,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -393,6 +405,9 @@ def init_db() -> None:
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "discounts", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
+        ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
@@ -430,6 +445,17 @@ def init_db() -> None:
                     ("Fuel-Efficient", "Rentals", "fuel", 2),
                     ("Electric", "Vehicle Options", "bolt", 3),
                 ],
+            )
+
+        commercial_count = con.execute("SELECT COUNT(*) AS total FROM commercials").fetchone()["total"]
+        if commercial_count == 0:
+            video_url = "https://youtu.be/vMG_P78gAOE?si=xZl2lx0ImHZsS5Ku"
+            con.execute(
+                """
+                INSERT INTO commercials (title, video_url, embed_url, status, is_live, duration_seconds, sort_order)
+                VALUES (?, ?, ?, 'ACTIVE', 0, 12, 1)
+                """,
+                ("FairFares Cinematic Commercial", video_url, commercial_embed_url(video_url)),
             )
 
         car_count = con.execute("SELECT COUNT(*) AS total FROM cars").fetchone()["total"]
@@ -550,6 +576,46 @@ def get_content() -> dict[str, str]:
     with db() as con:
         rows = con.execute("SELECT key, value FROM site_content").fetchall()
     return {row["key"]: row["value"] for row in rows}
+
+
+def commercial_embed_url(video_url: str) -> str:
+    parsed = urllib.parse.urlparse(video_url.strip())
+    host = parsed.netloc.lower().removeprefix("www.")
+    video_id = ""
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/").split("/")[0]
+    elif host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if parsed.path.startswith("/shorts/") or parsed.path.startswith("/live/") or parsed.path.startswith("/embed/"):
+            parts = [part for part in parsed.path.split("/") if part]
+            video_id = parts[1] if len(parts) > 1 and parts[0] in {"shorts", "live", "embed"} else ""
+        else:
+            query = urllib.parse.parse_qs(parsed.query)
+            video_id = query.get("v", [""])[0]
+    if video_id:
+        return f"https://www.youtube.com/embed/{urllib.parse.quote(video_id)}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1"
+    return video_url.strip()
+
+
+def get_active_commercial() -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM commercials
+            WHERE UPPER(TRIM(status)) = 'ACTIVE'
+            ORDER BY is_live DESC, sort_order, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+
+def get_all_commercials() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM commercials
+            ORDER BY is_live DESC, sort_order, id DESC
+            """
+        ).fetchall()
 
 
 def get_services() -> list[sqlite3.Row]:
@@ -1035,6 +1101,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin": self.admin_portal,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/discounts": self.admin_discounts_page,
+            "/admin/commercials": self.admin_commercials_page,
             "/admin/pickup": self.admin_pickup_page,
             "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
@@ -1063,6 +1130,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/commercials": self.create_admin_commercial,
+            "/admin/commercials/status": self.update_admin_commercial_status,
+            "/admin/commercials/delete": self.delete_admin_commercial,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/backups/create": self.create_admin_backup,
         }
@@ -1207,6 +1277,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 for row in get_active_discounts()
             ]
         )
+        commercial = get_active_commercial()
         body = render_template(
             "index.html",
             brand=escape(content["brand"]),
@@ -1227,6 +1298,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             type_filters=type_filters,
             fuel_filters=fuel_filters,
             discounts_json=escape(discounts_json),
+            commercial_title=escape(commercial["title"] if commercial else "FairFares commercial"),
+            commercial_embed_url=escape(commercial["embed_url"] if commercial else ""),
+            commercial_duration=escape(commercial["duration_seconds"] if commercial else 12),
+            commercial_live=escape("1" if commercial and commercial["is_live"] else "0"),
+            commercial_badge=escape("Live now" if commercial and commercial["is_live"] else "Play feature"),
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
@@ -1601,6 +1677,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def admin_commercials_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        commercials = "\n".join(self.render_commercial_row(row) for row in get_all_commercials())
+        body = render_template(
+            "admin_commercials.html",
+            admin_name=escape(user["name"]),
+            commercials=commercials or '<tr><td colspan="6">No commercials yet.</td></tr>',
+        )
+        self.send_html(body)
+
     def admin_pickup_page(self) -> None:
         user = self.require_admin()
         if not user:
@@ -1636,6 +1724,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>
                 <form method="post" action="/admin/cars/delete" class="inline-form">
                     <input type="hidden" name="car_id" value="{row["id"]}">
+                    <button class="danger-button" type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_commercial_row(self, row: sqlite3.Row) -> str:
+        status_options = "".join(
+            f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status}</option>'
+            for status in ("ACTIVE", "INACTIVE")
+        )
+        live_checked = "checked" if row["is_live"] else ""
+        preview_src = escape(row["embed_url"])
+        return f"""
+        <tr>
+            <td><b>{escape(row["title"])}</b><span>{escape(row["video_url"])}</span></td>
+            <td><iframe class="commercial-preview" src="{preview_src}" title="{escape(row["title"])}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></td>
+            <td><span class="status-badge {'status-live' if row["is_live"] else ''}">{'LIVE' if row["is_live"] else escape(row["status"])}</span></td>
+            <td>{escape(row["duration_seconds"])}s</td>
+            <td>
+                <form method="post" action="/admin/commercials/status" class="admin-stack-form">
+                    <input type="hidden" name="commercial_id" value="{row["id"]}">
+                    <input name="title" value="{escape(row["title"])}" placeholder="Title">
+                    <input name="video_url" value="{escape(row["video_url"])}" placeholder="YouTube or live link">
+                    <select name="status">{status_options}</select>
+                    <label class="check-row"><input type="checkbox" name="is_live" value="1" {live_checked}> Live feature</label>
+                    <input name="duration_seconds" type="number" min="6" value="{escape(row["duration_seconds"])}">
+                    <input name="sort_order" type="number" value="{escape(row["sort_order"])}">
+                    <button type="submit">Save</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/admin/commercials/delete" class="inline-form">
+                    <input type="hidden" name="commercial_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
                 </form>
             </td>
@@ -1958,6 +2080,76 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute("DELETE FROM discounts WHERE id = ?", (form.get("discount_id"),))
         self.redirect("/admin/discounts")
+
+    def create_admin_commercial(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        video_url = form.get("video_url", "")
+        if not video_url:
+            self.redirect("/admin/commercials")
+            return
+        status = form.get("status") if form.get("status") in {"ACTIVE", "INACTIVE"} else "ACTIVE"
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO commercials (title, video_url, embed_url, status, is_live, duration_seconds, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    form.get("title") or "FairFares Commercial",
+                    video_url,
+                    commercial_embed_url(video_url),
+                    status,
+                    1 if form.get("is_live") == "1" else 0,
+                    int(form.get("duration_seconds") or 12),
+                    int(form.get("sort_order") or 99),
+                ),
+            )
+        self.redirect("/admin/commercials")
+
+    def update_admin_commercial_status(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        video_url = form.get("video_url", "")
+        status = form.get("status") if form.get("status") in {"ACTIVE", "INACTIVE"} else "ACTIVE"
+        with db() as con:
+            con.execute(
+                """
+                UPDATE commercials
+                SET title = ?,
+                    video_url = ?,
+                    embed_url = ?,
+                    status = ?,
+                    is_live = ?,
+                    duration_seconds = ?,
+                    sort_order = ?
+                WHERE id = ?
+                """,
+                (
+                    form.get("title") or "FairFares Commercial",
+                    video_url,
+                    commercial_embed_url(video_url),
+                    status,
+                    1 if form.get("is_live") == "1" else 0,
+                    int(form.get("duration_seconds") or 12),
+                    int(form.get("sort_order") or 99),
+                    form.get("commercial_id"),
+                ),
+            )
+        self.redirect("/admin/commercials")
+
+    def delete_admin_commercial(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM commercials WHERE id = ?", (form.get("commercial_id"),))
+        self.redirect("/admin/commercials")
 
     def save_pickup_documents(self) -> None:
         user = self.require_admin()
