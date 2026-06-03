@@ -298,8 +298,8 @@ const cancelStatus = document.getElementById("cancelStatus");
 
 refundMethod?.addEventListener("change", () => {
   refundTimeline.textContent = refundMethod.value.includes("credit")
-    ? "Travel credit is available immediately after cancellation."
-    : "Refund arrives in 3-5 business days.";
+    ? "Travel credit can be issued after admin approval."
+    : "Refund timeline starts after admin approval.";
   cancelStatus.textContent = "";
 });
 
@@ -309,7 +309,7 @@ cancelReason?.addEventListener("change", () => {
 
 cancelForm?.addEventListener("reset", () => {
   window.setTimeout(() => {
-    refundTimeline.textContent = "Refund arrives in 3-5 business days.";
+    refundTimeline.textContent = "Refund timeline starts after admin approval.";
     cancelStatus.textContent = "";
   }, 0);
 });
@@ -330,10 +330,10 @@ cancelForm?.addEventListener("submit", (event) => {
   })
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((data) => {
-      cancelStatus.textContent = data.message || `Cancellation request created. Refund method: ${refundMethod.value}.`;
+      cancelStatus.textContent = data.message || `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
     })
     .catch(() => {
-      cancelStatus.textContent = `Cancellation request created. Refund method: ${refundMethod.value}.`;
+      cancelStatus.textContent = `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
     });
 });
 

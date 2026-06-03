@@ -717,7 +717,10 @@ def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
             "secs": "00",
         }
     status = booking["booking_status"]
-    if status == "CANCELLED":
+    if status == "CANCELLATION_REQUESTED":
+        title = "Cancellation pending approval"
+        body = f"Admin is reviewing your request: {booking['cancellation_reason'] or 'Customer cancellation'}"
+    elif status == "CANCELLED":
         title = "Booking cancelled"
         body = f"Cancellation reason: {booking['cancellation_reason'] or 'Customer cancellation'}"
     elif status == "PICKED_UP":
@@ -1360,16 +1363,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """
                 UPDATE bookings
-                SET booking_status = 'CANCELLED',
-                    status = 'CANCELLED',
-                    payment_status = CASE WHEN payment_status = 'PAID' THEN 'REFUNDED' ELSE payment_status END,
+                SET booking_status = 'CANCELLATION_REQUESTED',
+                    status = 'CANCELLATION_REQUESTED',
+                    payment_status = CASE WHEN payment_status = 'PAID' THEN 'REFUND_REVIEW' ELSE payment_status END,
                     cancellation_reason = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (reason, booking["id"], user["id"]),
             )
-            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
-        self.send_json({"ok": True, "message": "Cancellation saved and visible to admin."})
+        self.send_json({"ok": True, "message": "Cancellation request sent to admin for approval."})
 
     def update_student_verification(self) -> None:
         user = self.current_user()
@@ -1501,12 +1503,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
         status_options = "".join(
             f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{status}</option>'
-            for status in ("CONFIRMED", "MODIFIED", "CANCELLED", "PICKED_UP", "RETURNED")
+            for status in ("CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED")
         )
         payment_options = "".join(
             f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{status}</option>'
-            for status in ("PENDING", "PAID", "FAILED", "REFUNDED")
+            for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")
         )
+        request_note = ""
+        if row["booking_status"] == "CANCELLATION_REQUESTED":
+            request_note = '<small class="approval-note">Approval requested: choose CANCELLED to approve, or CONFIRMED/MODIFIED to keep booking.</small>'
         return f"""
         <tr>
             <td><b>{escape(row["booking_id"])}</b><span>{escape(row["booking_status"])}</span></td>
@@ -1520,6 +1525,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <select name="booking_status">{status_options}</select>
                     <select name="payment_status">{payment_options}</select>
                     <input name="reason" value="{escape(row["cancellation_reason"])}" placeholder="Reason / notes">
+                    {request_note}
                     <button type="submit">Save</button>
                 </form>
             </td>
@@ -1696,9 +1702,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking_status = form.get("booking_status", "CONFIRMED")
         payment_status = form.get("payment_status", "PAID")
-        if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLED", "PICKED_UP", "RETURNED"}:
+        if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status not in {"PENDING", "PAID", "FAILED", "REFUNDED"}:
+        if payment_status not in {"PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED"}:
             payment_status = "PAID"
         with db() as con:
             con.execute(
@@ -1721,7 +1727,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (form.get("booking_id"),),
                 )
-            elif booking_status in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
+            elif booking_status in {"CONFIRMED", "MODIFIED", "PICKED_UP", "CANCELLATION_REQUESTED"}:
                 con.execute(
                     """
                     UPDATE cars

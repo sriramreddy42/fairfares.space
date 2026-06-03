@@ -146,19 +146,19 @@
 
         <article class="manage-card manage-panel is-hidden" id="cancel" data-manage-panel="cancel">
           <h2>2. Cancel Booking</h2>
-          <p>Check eligibility and cancel easily</p>
+          <p>Submit a cancellation request for admin approval</p>
           <form class="workflow-form" id="cancelForm">
-            <div class="green-note"><b>Free cancellation available</b><br>Cancel before Jun 8, 2025, 10:00 AM and receive your estimated refund.</div>
+            <div class="green-note"><b>Cancellation approval required</b><br>Admin will review your request and confirm refund details.</div>
             <div class="modify-grid two">
               <label><span>Cancellation Reason</span><select id="cancelReason" required><option value="">Choose reason</option><option>Plans changed</option><option>Found a better price</option><option>Need a different vehicle</option><option>Booked by mistake</option></select></label>
               <label><span>Refund Method</span><select id="refundMethod"><option>Original payment method</option><option>FairFares travel credit</option></select></label>
             </div>
             <label><span>Optional Note</span><textarea id="cancelNote" rows="3" placeholder="Add details for support"></textarea></label>
-            <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$price_text</strong><small id="refundTimeline">Refund arrives in 3-5 business days.</small></div>
-            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this will cancel booking $booking_id.</label>
+            <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$price_text</strong><small id="refundTimeline">Refund timeline starts after admin approval.</small></div>
+            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this sends booking $booking_id to admin for cancellation approval.</label>
             <div class="modify-actions">
               <button type="reset" class="light-button">Keep Booking</button>
-              <button type="submit">Cancel Booking</button>
+              <button type="submit">Submit Request</button>
             </div>
             <p class="modify-status" id="cancelStatus" aria-live="polite"></p>
           </form>
