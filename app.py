@@ -168,6 +168,10 @@ def init_db() -> None:
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL DEFAULT 'CUSTOMER',
+                phone TEXT,
+                address TEXT,
+                date_of_birth TEXT,
                 is_verified INTEGER NOT NULL DEFAULT 0,
                 verified_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -205,7 +209,12 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS cars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
+                brand TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                year INTEGER,
                 category TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT '',
+                fuel_type TEXT NOT NULL DEFAULT 'Gasoline',
                 seats INTEGER NOT NULL,
                 bags INTEGER NOT NULL,
                 doors INTEGER NOT NULL,
@@ -215,6 +224,11 @@ def init_db() -> None:
                 badge TEXT NOT NULL,
                 color TEXT NOT NULL,
                 features TEXT NOT NULL,
+                location TEXT NOT NULL DEFAULT 'Denver International Airport (DEN)',
+                image_url TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'AVAILABLE',
+                license_plate TEXT NOT NULL DEFAULT '',
+                vin_number TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0
             );
 
@@ -233,20 +247,77 @@ def init_db() -> None:
                 days INTEGER NOT NULL,
                 total_price REAL NOT NULL,
                 status TEXT NOT NULL,
+                booking_status TEXT NOT NULL DEFAULT 'CONFIRMED',
+                payment_status TEXT NOT NULL DEFAULT 'PAID',
+                return_location TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
+
+            CREATE TABLE IF NOT EXISTS driver_licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                license_number TEXT NOT NULL,
+                state TEXT NOT NULL,
+                expiry_date TEXT NOT NULL,
+                front_image_url TEXT NOT NULL DEFAULT '',
+                back_image_url TEXT NOT NULL DEFAULT '',
+                verification_status TEXT NOT NULL DEFAULT 'PENDING',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS insurances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_id INTEGER NOT NULL,
+                insurance_type TEXT NOT NULL,
+                coverage_amount REAL NOT NULL DEFAULT 0,
+                insurance_provider TEXT NOT NULL,
+                price REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(booking_id) REFERENCES bookings(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_id INTEGER NOT NULL,
+                payment_method TEXT NOT NULL,
+                amount REAL NOT NULL,
+                transaction_status TEXT NOT NULL DEFAULT 'PAID',
+                invoice_number TEXT NOT NULL UNIQUE,
+                invoice_pdf_url TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(booking_id) REFERENCES bookings(id)
+            );
             """
         )
+        ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
+        ensure_column(con, "users", "phone", "phone TEXT")
+        ensure_column(con, "users", "address", "address TEXT")
+        ensure_column(con, "users", "date_of_birth", "date_of_birth TEXT")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "cars", "brand", "brand TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "model", "model TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "year", "year INTEGER")
+        ensure_column(con, "cars", "type", "type TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "fuel_type", "fuel_type TEXT NOT NULL DEFAULT 'Gasoline'")
+        ensure_column(con, "cars", "location", "location TEXT NOT NULL DEFAULT 'Denver International Airport (DEN)'")
+        ensure_column(con, "cars", "image_url", "image_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "status", "status TEXT NOT NULL DEFAULT 'AVAILABLE'")
+        ensure_column(con, "cars", "license_plate", "license_plate TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "vin_number", "vin_number TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "booking_status", "booking_status TEXT NOT NULL DEFAULT 'CONFIRMED'")
+        ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
+        ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
             con.execute(
-                "INSERT INTO users (name, email, password_hash, is_admin) VALUES (?, ?, ?, 1)",
+                "INSERT INTO users (name, email, password_hash, is_admin, role) VALUES (?, ?, ?, 1, 'ADMIN')",
                 ("FairFares Admin", "admin@fairfares.com", hash_password("ChangeMe123!")),
             )
+        con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
 
         defaults = {
             "brand": "FairFares",
@@ -283,14 +354,14 @@ def init_db() -> None:
             con.executemany(
                 """
                 INSERT INTO cars
-                (name, category, seats, bags, doors, transmission, daily_price, total_price, badge, color, features, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission, daily_price, total_price, badge, color, features, location, status, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("Toyota Corolla", "Economy", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", 1),
-                    ("Nissan Sentra", "Compact", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", 2),
-                    ("Hyundai Kona", "SUV", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", 3),
-                    ("Honda Civic", "Midsize", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", 4),
+                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "AVAILABLE", 1),
+                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "AVAILABLE", 2),
+                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "AVAILABLE", 3),
+                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "AVAILABLE", 4),
                 ],
             )
 
@@ -421,12 +492,48 @@ def get_services() -> list[sqlite3.Row]:
 
 def get_cars() -> list[sqlite3.Row]:
     with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM cars
+            WHERE status = 'AVAILABLE'
+            ORDER BY sort_order, daily_price, id
+            """
+        ).fetchall()
+
+
+def get_admin_cars() -> list[sqlite3.Row]:
+    with db() as con:
         return con.execute("SELECT * FROM cars ORDER BY sort_order, daily_price, id").fetchall()
 
 
 def get_car(car_id: int) -> sqlite3.Row | None:
     with db() as con:
         return con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
+
+
+def get_admin_bookings() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
+                   cars.name AS car_name, cars.license_plate, cars.status AS car_status
+            FROM bookings
+            JOIN users ON users.id = bookings.user_id
+            JOIN cars ON cars.id = bookings.car_id
+            ORDER BY bookings.id DESC
+            LIMIT 50
+            """
+        ).fetchall()
+
+
+def get_admin_metrics() -> dict[str, int]:
+    with db() as con:
+        return {
+            "cars": con.execute("SELECT COUNT(*) AS total FROM cars").fetchone()["total"],
+            "available": con.execute("SELECT COUNT(*) AS total FROM cars WHERE status = 'AVAILABLE'").fetchone()["total"],
+            "booked": con.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"],
+            "users": con.execute("SELECT COUNT(*) AS total FROM users WHERE is_admin = 0").fetchone()["total"],
+        }
 
 
 def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
@@ -471,7 +578,10 @@ def make_booking_id() -> str:
 
 
 def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
-    car = get_car(car_id) or get_cars()[0]
+    requested_car = get_car(car_id)
+    available_cars = get_cars()
+    car = requested_car if requested_car and requested_car["status"] == "AVAILABLE" else None
+    car = car or (available_cars[0] if available_cars else get_admin_cars()[0])
     with db() as con:
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
@@ -512,6 +622,8 @@ def ensure_booking_for_user(user_id: int, car_id: int | None = None) -> sqlite3.
     if car_id:
         return create_booking_for_user(user_id, car_id)
     cars = get_cars()
+    if not cars:
+        cars = get_admin_cars()
     return create_booking_for_user(user_id, cars[0]["id"])
 
 
@@ -541,6 +653,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/signup": self.signup_page,
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
+            "/admin": self.admin_portal,
             "/logout": self.logout,
             "/api/site": self.api_site,
             "/api/cars": self.api_cars,
@@ -557,6 +670,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/login": self.login,
             "/signup": self.signup,
             "/admin/content": self.update_content,
+            "/admin/cars": self.create_admin_car,
+            "/admin/cars/status": self.update_admin_car_status,
+            "/admin/cars/delete": self.delete_admin_car,
         }
         handler = routes.get(parsed.path)
         if handler:
@@ -839,7 +955,152 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.redirect("/login")
             return
+        if user["is_admin"]:
+            self.redirect("/admin")
+            return
         self.render_manage_booking(user)
+
+    def require_admin(self) -> sqlite3.Row | None:
+        user = self.current_user()
+        if not user:
+            self.redirect("/login")
+            return None
+        if not user["is_admin"]:
+            self.redirect("/dashboard")
+            return None
+        return user
+
+    def admin_portal(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        metrics = get_admin_metrics()
+        cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
+        bookings = "\n".join(self.render_admin_booking_row(row) for row in get_admin_bookings())
+        body = render_template(
+            "admin.html",
+            admin_name=escape(user["name"]),
+            total_cars=metrics["cars"],
+            available_cars=metrics["available"],
+            booked_count=metrics["booked"],
+            user_count=metrics["users"],
+            cars=cars or '<tr><td colspan="8">No inventory yet.</td></tr>',
+            bookings=bookings or '<tr><td colspan="7">No bookings yet.</td></tr>',
+        )
+        self.send_html(body)
+
+    def render_admin_car_row(self, row: sqlite3.Row) -> str:
+        status_options = "".join(
+            f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status}</option>'
+            for status in ("AVAILABLE", "BOOKED", "MAINTENANCE")
+        )
+        return f"""
+        <tr>
+            <td><b>{escape(row["name"])}</b><span>{escape(row["brand"] or "-")} {escape(row["model"] or "")}</span></td>
+            <td>{escape(row["year"] or "-")}</td>
+            <td>{escape(row["type"] or row["category"])}</td>
+            <td>{escape(row["fuel_type"])}</td>
+            <td>{escape(row["location"])}</td>
+            <td>${row["daily_price"]:.2f}</td>
+            <td>
+                <form method="post" action="/admin/cars/status" class="inline-form">
+                    <input type="hidden" name="car_id" value="{row["id"]}">
+                    <select name="status">{status_options}</select>
+                    <button type="submit">Update</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/admin/cars/delete" class="inline-form">
+                    <input type="hidden" name="car_id" value="{row["id"]}">
+                    <button class="danger-button" type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_admin_booking_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+            <td><b>{escape(row["booking_id"])}</b><span>{escape(row["booking_status"])}</span></td>
+            <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
+            <td>{escape(row["car_name"])}</td>
+            <td>{escape(row["pickup_date"])} - {escape(row["dropoff_date"])}</td>
+            <td>${row["total_price"]:.2f}</td>
+            <td>{escape(row["payment_status"])}</td>
+            <td>{escape(row["status"])}</td>
+        </tr>
+        """
+
+    def create_admin_car(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        brand = form.get("brand", "")
+        model = form.get("model", "")
+        name = f"{brand} {model}".strip() or form.get("name", "New Car")
+        daily_price = float(form.get("daily_price") or 0)
+        days = int(form.get("days") or 7)
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO cars
+                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+                 daily_price, total_price, badge, color, features, location, image_url, status,
+                 license_plate, vin_number, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    brand,
+                    model,
+                    int(form.get("year") or 2026),
+                    form.get("category") or form.get("type") or "Economy",
+                    form.get("type") or "Sedan",
+                    form.get("fuel_type") or "Gasoline",
+                    int(form.get("seats") or 5),
+                    int(form.get("bags") or 2),
+                    int(form.get("doors") or 4),
+                    form.get("transmission") or "Automatic",
+                    daily_price,
+                    daily_price * days,
+                    form.get("badge") or "Available",
+                    form.get("color") or "white",
+                    form.get("features") or "Free Cancellation|Unlimited Mileage|24/7 Support",
+                    form.get("location") or "Denver International Airport (DEN)",
+                    form.get("image_url") or "",
+                    form.get("status") or "AVAILABLE",
+                    form.get("license_plate") or "",
+                    form.get("vin_number") or "",
+                    int(form.get("sort_order") or 99),
+                ),
+            )
+        self.redirect("/admin")
+
+    def update_admin_car_status(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        status = form.get("status", "AVAILABLE")
+        if status not in {"AVAILABLE", "BOOKED", "MAINTENANCE"}:
+            status = "AVAILABLE"
+        with db() as con:
+            con.execute("UPDATE cars SET status = ? WHERE id = ?", (status, form.get("car_id")))
+        self.redirect("/admin")
+
+    def delete_admin_car(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            booked = con.execute("SELECT 1 FROM bookings WHERE car_id = ? LIMIT 1", (form.get("car_id"),)).fetchone()
+            if booked:
+                con.execute("UPDATE cars SET status = 'MAINTENANCE' WHERE id = ?", (form.get("car_id"),))
+            else:
+                con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
+        self.redirect("/admin")
 
     def manage_booking(self) -> None:
         parsed = urllib.parse.urlparse(self.path)

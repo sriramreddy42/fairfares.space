@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Developer Portal | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-1">
+  <script defer src="/static/js/app.js?v=19"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <nav>
+      <a href="/">User Portal</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </header>
+
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Developer Portal</p>
+        <h1>Inventory, bookings, users, documents, and invoices</h1>
+        <span>Signed in as $admin_name</span>
+      </div>
+    </section>
+
+    <section class="admin-metrics" aria-label="Admin metrics">
+      <article><span>Total Cars</span><b>$total_cars</b></article>
+      <article><span>Available</span><b>$available_cars</b></article>
+      <article><span>Bookings</span><b>$booked_count</b></article>
+      <article><span>Customers</span><b>$user_count</b></article>
+    </section>
+
+    <section class="admin-grid">
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Add Inventory</h2>
+            <p>Cars added here become visible to users when status is AVAILABLE.</p>
+          </div>
+        </div>
+        <form class="admin-form" method="post" action="/admin/cars">
+          <label><span>Brand</span><input name="brand" required placeholder="Toyota"></label>
+          <label><span>Model</span><input name="model" required placeholder="Corolla"></label>
+          <label><span>Year</span><input name="year" type="number" value="2026"></label>
+          <label><span>Type</span><select name="type"><option>Sedan</option><option>SUV</option><option>Compact</option><option>Midsize</option><option>Electric</option></select></label>
+          <label><span>Fuel Type</span><select name="fuel_type"><option>Gasoline</option><option>Hybrid</option><option>Electric</option></select></label>
+          <label><span>Seats</span><input name="seats" type="number" value="5"></label>
+          <label><span>Daily Price</span><input name="daily_price" type="number" step="0.01" value="39.99"></label>
+          <label><span>Location</span><input name="location" value="Denver International Airport (DEN)"></label>
+          <label><span>License Plate</span><input name="license_plate" placeholder="ABC-1234"></label>
+          <label><span>VIN Number</span><input name="vin_number" placeholder="VIN"></label>
+          <label><span>Status</span><select name="status"><option>AVAILABLE</option><option>MAINTENANCE</option><option>BOOKED</option></select></label>
+          <label><span>Features</span><input name="features" value="Free Cancellation|Unlimited Mileage|24/7 Support"></label>
+          <button type="submit">Add Car</button>
+        </form>
+      </article>
+
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Booked Cars</h2>
+            <p>Customer, car, payment, and confirmation status are connected here.</p>
+          </div>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Booking</th><th>User</th><th>Car</th><th>Dates</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead>
+            <tbody>$bookings</tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Car Inventory</h2>
+          <p>Available cars show in the user portal. Booked and maintenance cars stay hidden from search.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Car</th><th>Year</th><th>Type</th><th>Fuel</th><th>Location</th><th>Daily</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>$cars</tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-modules">
+      <article><b>Driver License</b><span>Schema ready for front/back images and verification status.</span></article>
+      <article><b>Insurance</b><span>Schema ready for provider, coverage amount, type, and price.</span></article>
+      <article><b>Transactions</b><span>Schema ready for payment method, amount, invoice number, and PDF URL.</span></article>
+    </section>
+  </main>
+</body>
+</html>
