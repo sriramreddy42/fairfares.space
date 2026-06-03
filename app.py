@@ -1978,12 +1978,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         elif user:
             booking = get_booking_for_user(user["id"])
         else:
-            booking = get_demo_booking(selected_car_id) or get_demo_booking()
+            booking = None
         content = get_content()
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
-        user_bookings = get_bookings_for_user(user["id"]) if user else ([booking] if booking else [])
+        user_bookings = get_bookings_for_user(user["id"]) if user else []
         is_first_time_user = bool(user and not user_bookings)
+        show_start_experience = not user or is_first_time_user
         trip_rows = render_user_trip_rows(user_bookings)
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
@@ -2029,26 +2030,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_documents_json = json.dumps(get_booking_documents(booking["id"] if booking else None)).replace("</", "<\\/")
         first_booking_promo = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
-        if is_first_time_user:
+        if show_start_experience:
             dashboard_booking_title = "Start Your First Trip"
-            dashboard_booking_body = "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
+            dashboard_booking_body = (
+                "Sign in or create an account to save your trip, documents, live status, and student deals."
+                if not user
+                else "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
+            )
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
             dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
         else:
             dashboard_booking_title = "Last Booking"
             dashboard_booking_body = "You do not have a current booking. Your most recent trip details are saved here."
-        sidebar_title = "Start Booking" if is_first_time_user else "Manage Booking"
-        sidebar_primary_label = "Find Your First Car" if is_first_time_user else "Upcoming Trips"
-        sidebar_primary_body = "Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings"
-        booking_link_class = "is-hidden" if is_first_time_user else ""
+        sidebar_title = "Start Booking" if show_start_experience else "Manage Booking"
+        sidebar_primary_label = "Find Your First Car" if show_start_experience else "Upcoming Trips"
+        sidebar_primary_body = "Login to save trip tools and documents" if not user else ("Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings")
+        booking_link_class = "is-hidden" if show_start_experience else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
         if booking and booking["image_url"]:
             booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         first_time_manage_content = ""
-        if is_first_time_user:
+        if show_start_experience:
+            login_prompt = (
+                '<div class="start-login-prompt"><a class="select-button" href="/login">Login / Create Account</a><span>After login, your bookings, documents, and live status stay connected to your real email.</span></div>'
+                if not user
+                else ""
+            )
             first_time_manage_content = """
             <section class="first-time-founder-card">
                 <img src="/static/img/founders-note-fairfares.png" alt="FairFares founders note">
@@ -2060,23 +2070,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <a class="select-button" href="/#results">Browse Cars</a>
                 </div>
+                {login_prompt}
             </section>
-            """
-        if is_first_time_user:
-            first_booking_promo = """
+            """.format(login_prompt=login_prompt)
+            upgrade_options = ""
+            upgrade_select_options = ""
+        if show_start_experience:
+            promo_login_prompt = (
+                '<a class="select-button light-button" href="/login">Login</a>'
+                if not user
+                else ""
+            )
+            first_booking_promo = f"""
             <section class="first-booking-promo" id="upcoming">
                 <img src="/static/img/referral-deals-denver.jpeg" alt="FairFares Denver referral deal">
                 <div class="first-booking-promo-body">
                     <div>
                         <p class="eyebrow">First trip offer</p>
                         <h2>Start with a Denver student deal.</h2>
-                        <p>No booking yet. Use the referral code when you search and your trip details will appear here after checkout.</p>
+                        <p>{"Login to save this deal and keep your documents under your real email." if not user else "No booking yet. Use the referral code when you search and your trip details will appear here after checkout."}</p>
                     </div>
                     <div class="promo-code-box">
                         <span>Deal code</span>
                         <b>REFER_DUDE143</b>
                     </div>
                     <a class="select-button" href="/#results">Search Cars</a>
+                    {promo_login_prompt}
                 </div>
             </section>
             """
@@ -2099,10 +2118,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             sidebar_primary_body=escape(sidebar_primary_body),
             booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
-            trip_card_class="trip-card is-hidden" if is_first_time_user else "trip-card",
+            trip_card_class="trip-card is-hidden" if show_start_experience else "trip-card",
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,
-            manage_panels_class="manage-panels is-hidden" if is_first_time_user else "manage-panels",
+            manage_panels_class="manage-panels is-hidden" if show_start_experience else "manage-panels",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),

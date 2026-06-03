@@ -1191,6 +1191,19 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   color: var(--muted);
   margin: 0;
 }
+.start-login-prompt {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+.start-login-prompt span {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.35;
+}
 .status-badge {
   background: #c9f0cf;
   border-radius: 6px;
@@ -2695,6 +2708,11 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
   .first-time-founder-actions h2 {
     font-size: 1.1rem;
+  }
+  .start-login-prompt {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px;
   }
   .admin-layout {
     padding: 14px 12px 34px;
