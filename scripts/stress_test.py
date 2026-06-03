@@ -249,12 +249,17 @@ def main() -> None:
     assert_true(duplicate_failed, "duplicate signup email should be rejected")
 
     booked_ids: list[int] = []
+    discounted_booking_id = 0
     for index, user in enumerate(users, start=1):
-        booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"])
+        booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"], "STRESS15" if index == 1 else "")
         assert_true(booking["booking_status"] == "CONFIRMED", "new booking should be confirmed")
         assert_true(booking["payment_status"] == "PAY_AT_PICKUP", "new selected bookings should default to pay at pickup")
         assert_true(app.booking_status_label(booking["booking_status"], booking["payment_status"]) == "Confirmed / Pay at pickup", "confirmed booking badge should show pay at pickup")
         assert_true(app.payment_status_label(booking["payment_status"]) == "Pay at pickup", "pay at pickup label should be user friendly")
+        if index == 1:
+            discounted_booking_id = booking["id"]
+            assert_true(booking["discount_code"] == "STRESS15", "selected discount code should save on booking")
+            assert_true(float(booking["discount_amount"]) > 0 and float(booking["total_price"]) < float(booking["subtotal_price"]), "discount should reduce booking total")
         booked_ids.append(booking["id"])
         with app.db() as con:
             con.execute(
@@ -286,6 +291,7 @@ def main() -> None:
     assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")), "admin payment dropdown should not show old payment options")
     pickup_html = app.FairFaresHandler.render_pickup_record(None, admin_bookings[0])
     assert_true("Rental Agreement Builder" in pickup_html, "admin pickup should include agreement builder")
+    assert_true('data-dl-camera="front"' in pickup_html and 'data-dl-camera="back"' in pickup_html, "admin pickup should allow taking DL pictures")
     assert_true('name="agreement_license_number"' in pickup_html and 'name="agreement_vehicle_mileage"' in pickup_html, "agreement builder should expose customer and issuer fields")
     agreement_values = app.agreement_default_values(admin_bookings[0])
     agreement_values.update(
@@ -315,6 +321,23 @@ def main() -> None:
         )
     docs = app.get_booking_documents(admin_bookings[0]["id"])
     assert_true("42150" in docs["Rental Agreement"]["content"] and "POL-STRESS-123" in docs["Rental Agreement"]["content"], "user rental agreement document should use saved dynamic agreement data")
+    discount_docs = app.get_booking_documents(discounted_booking_id)
+    assert_true("STRESS15" in discount_docs["Invoice / Receipt"]["content"], "invoice should show applied discount code")
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO driver_licenses
+            (user_id, license_number, state, expiry_date, front_image_url, back_image_url, verification_status)
+            VALUES (?, 'PHOTO_CAPTURED_PENDING_NUMBER', 'CO', '2028-12-31', 'data:image/jpeg;base64,front', 'data:image/jpeg;base64,back', 'PHOTO_CAPTURED')
+            """,
+            (admin_bookings[0]["user_id"],),
+        )
+    admin_users_template = (ROOT / "templates" / "admin_users.html").read_text(encoding="utf-8")
+    assert_true("adminUserSearch" in admin_users_template and "/admin/users" in admin_users_template, "admin users page should include search and nav")
+    admin_user_rows = app.get_admin_users()
+    assert_true(any(row["booking_count"] > 0 for row in admin_user_rows), "admin users should aggregate booking counts")
+    user_card = app.FairFaresHandler.render_admin_user_card(None, next(row for row in admin_user_rows if row["id"] == admin_bookings[0]["user_id"]))
+    assert_true("Driver License" in user_card and "Front saved" in user_card and "Rental Agreements" in user_card, "admin user profile should show DL images and agreements")
 
     for booking_id in booked_ids[:8]:
         admin_approve_cancel(booking_id)

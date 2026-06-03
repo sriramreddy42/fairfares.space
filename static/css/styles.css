@@ -1165,6 +1165,16 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-size: 0.74rem;
   text-transform: uppercase;
 }
+.dl-capture-field {
+  background: #f7f9fc;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+.dl-capture-field small {
+  color: var(--muted);
+  font-weight: 800;
+}
 .pickup-form .wide-field {
   grid-column: 1 / -1;
 }
@@ -1259,6 +1269,78 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   border-radius: 8px;
   margin: 0;
   padding: 18px;
+}
+.admin-users-list {
+  display: grid;
+  gap: 12px;
+}
+.admin-user-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.admin-user-card summary {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(120px, 1fr));
+  list-style: none;
+  padding: 16px;
+}
+.admin-user-card summary::-webkit-details-marker {
+  display: none;
+}
+.admin-user-card summary span {
+  color: var(--muted);
+  display: grid;
+  font-weight: 850;
+}
+.admin-user-card summary b {
+  color: var(--navy);
+}
+.admin-user-card summary small {
+  color: var(--muted);
+}
+.admin-user-detail {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+.admin-user-detail h3 {
+  margin: 0;
+}
+.admin-user-metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.admin-user-metrics span {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+.admin-user-metrics b {
+  color: var(--navy);
+}
+.admin-mini-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.admin-mini-table td {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+  vertical-align: top;
+}
+.admin-mini-table span {
+  color: var(--muted);
+  display: block;
 }
 .admin-search {
   display: grid;
@@ -2365,6 +2447,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .admin-modules,
   .admin-link-grid,
   .pickup-status-grid {
+    grid-template-columns: 1fr;
+  }
+  .admin-user-card summary,
+  .admin-user-metrics {
     grid-template-columns: 1fr;
   }
   .pickup-form {

@@ -119,6 +119,19 @@ function validateDiscount() {
 
 discountCode?.addEventListener("input", validateDiscount);
 
+document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").forEach((button) => {
+  button.addEventListener("click", (event) => {
+    if (!discountCode?.value.trim()) return;
+    const code = discountCode.value.trim().toUpperCase();
+    const discount = activeDiscounts.find((item) => item.code.toUpperCase() === code);
+    if (!discount || discountMessage?.classList.contains("is-error")) return;
+    event.preventDefault();
+    const url = new URL(button.getAttribute("href"), window.location.origin);
+    url.searchParams.set("discount_code", code);
+    window.location.href = `${url.pathname}${url.search}`;
+  });
+});
+
 function setFilterOptions(open) {
   if (!filterToggle || !filterOptions) return;
   filterOptions.hidden = !open;
@@ -678,6 +691,8 @@ if (accordionTabs.length) showBookingAccordion("why");
 
 const pickupSearch = document.getElementById("pickupSearch");
 const pickupRecords = [...document.querySelectorAll(".pickup-record")];
+const adminUserSearch = document.getElementById("adminUserSearch");
+const adminUserCards = [...document.querySelectorAll("[data-admin-user-card]")];
 
 pickupSearch?.addEventListener("input", () => {
   const query = pickupSearch.value.trim().toLowerCase();
@@ -686,10 +701,44 @@ pickupSearch?.addEventListener("input", () => {
   });
 });
 
+adminUserSearch?.addEventListener("input", () => {
+  const query = adminUserSearch.value.trim().toLowerCase();
+  adminUserCards.forEach((card) => {
+    card.hidden = query && !card.dataset.search.includes(query);
+  });
+});
+
 document.querySelectorAll("[data-print-record]").forEach((button) => {
   button.addEventListener("click", () => {
     pickupRecords.forEach((record) => record.classList.remove("is-printing"));
     button.closest(".pickup-record")?.classList.add("is-printing");
     window.print();
+  });
+});
+
+document.querySelectorAll("[data-dl-camera]").forEach((input) => {
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    const field = input.closest(".dl-capture-field");
+    const target = field?.querySelector("input[type='hidden']");
+    const status = field?.querySelector("small");
+    if (!file || !target) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const maxSize = 1200;
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const context = canvas.getContext("2d");
+        context?.drawImage(image, 0, 0, canvas.width, canvas.height);
+        target.value = canvas.toDataURL("image/jpeg", 0.78);
+        if (status) status.textContent = "Picture ready to save";
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
   });
 });

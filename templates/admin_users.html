@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Booked Cars | FairFares Admin</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=admin-3">
+  <title>Users | FairFares Admin</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-6">
+  <script defer src="/static/js/app.js?v=32"></script>
 </head>
 <body class="admin-screen">
   <header class="admin-shell-header">
     <a class="logo-lockup" href="/admin"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
     <nav>
       <a href="/admin">Inventory</a>
+      <a href="/admin/bookings">Booked Cars</a>
       <a href="/admin/users">Users</a>
       <a href="/admin/discounts">Discounts</a>
       <a href="/admin/commercials">Commercials</a>
@@ -22,24 +24,17 @@
     <section class="admin-hero">
       <div>
         <p class="eyebrow">Developer Portal</p>
-        <h1>Booked Cars</h1>
-        <span>Status, cancel/modify reason, payment status · $admin_name</span>
+        <h1>Users</h1>
+        <span>Search by name, phone, email, booking, student ID, or FairFares user ID · $admin_name</span>
       </div>
     </section>
     <section class="admin-card">
-      <div class="admin-card-head">
-        <div>
-          <h2>Booked Cars</h2>
-          <p>Update/cancel/modify details here. Changes reflect back into admin records and car availability.</p>
-        </div>
-      </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead><tr><th>Booking</th><th>User</th><th>Car</th><th>Dates</th><th>Total</th><th>Status / Reason</th><th>Pickup Page</th></tr></thead>
-          <tbody>$bookings</tbody>
-        </table>
-      </div>
+      <label class="admin-search">
+        <span>Search users</span>
+        <input id="adminUserSearch" placeholder="First name, last name, phone number, email, booking ID, or user ID">
+      </label>
     </section>
+    <section class="admin-users-list">$users</section>
   </main>
 </body>
 </html>

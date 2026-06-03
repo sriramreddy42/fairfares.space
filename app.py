@@ -295,6 +295,9 @@ def init_db() -> None:
                 dropoff_date TEXT NOT NULL,
                 dropoff_time TEXT NOT NULL,
                 days INTEGER NOT NULL,
+                subtotal_price REAL NOT NULL DEFAULT 0,
+                discount_code TEXT NOT NULL DEFAULT '',
+                discount_amount REAL NOT NULL DEFAULT 0,
                 total_price REAL NOT NULL,
                 status TEXT NOT NULL,
                 booking_status TEXT NOT NULL DEFAULT 'CONFIRMED',
@@ -403,6 +406,9 @@ def init_db() -> None:
         ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "subtotal_price", "subtotal_price REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "discount_code", "discount_code TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "discount_amount", "discount_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
@@ -418,6 +424,7 @@ def init_db() -> None:
                 ("FairFares Admin", "admin@fairfares.com", hash_password("ChangeMe123!")),
             )
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
+        con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
         defaults = {
             "brand": "FairFares",
@@ -572,6 +579,7 @@ def init_db() -> None:
                OR email = 'demo@fairfares.com'
             """
         )
+        con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
 
 def get_content() -> dict[str, str]:
@@ -688,6 +696,38 @@ def get_all_discounts() -> list[sqlite3.Row]:
         return con.execute("SELECT * FROM discounts ORDER BY valid_through DESC, code").fetchall()
 
 
+def get_valid_discount(code: str) -> sqlite3.Row | None:
+    normalized = code.strip().upper()
+    if not normalized:
+        return None
+    today = datetime.now().strftime("%Y-%m-%d")
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM discounts
+            WHERE UPPER(code) = ?
+              AND UPPER(TRIM(status)) = 'ACTIVE'
+              AND valid_through >= ?
+              AND (max_uses = 0 OR used_count < max_uses)
+            """,
+            (normalized, today),
+        ).fetchone()
+
+
+def calculate_discount_amount(total: float, discount: sqlite3.Row | None) -> float:
+    if not discount:
+        return 0.0
+    if discount["discount_type"] == "PERCENT":
+        amount = total * (float(discount["value"]) / 100)
+    else:
+        amount = float(discount["value"])
+    return max(0.0, min(total, round(amount, 2)))
+
+
+def format_money(value: object) -> str:
+    return f"${float(value or 0):.2f}"
+
+
 def referral_code_for_username(username: str) -> str:
     cleaned = username.strip().lstrip("@").lower()
     cleaned = "".join(char if char.isalnum() else "_" for char in cleaned)
@@ -740,6 +780,85 @@ def get_admin_bookings() -> list[sqlite3.Row]:
             LIMIT 50
             """
         ).fetchall()
+
+
+def get_admin_users() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT users.*,
+                   COUNT(DISTINCT bookings.id) AS booking_count,
+                   COUNT(DISTINCT CASE WHEN bookings.booking_status = 'CANCELLED' THEN bookings.id END) AS cancelled_count,
+                   COUNT(DISTINCT CASE WHEN bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP') THEN bookings.id END) AS current_count,
+                   COUNT(DISTINCT transactions.id) AS transaction_count,
+                   COALESCE(SUM(transactions.amount), 0) AS transaction_total,
+                   MAX(bookings.booking_id) AS latest_booking_id
+            FROM users
+            LEFT JOIN bookings ON bookings.user_id = users.id
+            LEFT JOIN transactions ON transactions.booking_id = bookings.id
+            WHERE users.is_admin = 0
+            GROUP BY users.id
+            ORDER BY users.name COLLATE NOCASE
+            LIMIT 100
+            """
+        ).fetchall()
+
+
+def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:
+    with db() as con:
+        user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        bookings = con.execute(
+            """
+            SELECT bookings.*, cars.name AS car_name, cars.license_plate, cars.vin_number
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.user_id = ?
+            ORDER BY bookings.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        licenses = con.execute(
+            "SELECT * FROM driver_licenses WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        ).fetchall()
+        transactions = con.execute(
+            """
+            SELECT transactions.*, bookings.booking_id
+            FROM transactions
+            JOIN bookings ON bookings.id = transactions.booking_id
+            WHERE bookings.user_id = ?
+            ORDER BY transactions.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        insurances = con.execute(
+            """
+            SELECT insurances.*, bookings.booking_id
+            FROM insurances
+            JOIN bookings ON bookings.id = insurances.booking_id
+            WHERE bookings.user_id = ?
+            ORDER BY insurances.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        agreements = con.execute(
+            """
+            SELECT rental_agreements.*, bookings.booking_id
+            FROM rental_agreements
+            JOIN bookings ON bookings.id = rental_agreements.booking_id
+            WHERE bookings.user_id = ?
+            ORDER BY rental_agreements.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return {
+        "user": user,
+        "bookings": bookings,
+        "licenses": licenses,
+        "transactions": transactions,
+        "insurances": insurances,
+        "agreements": agreements,
+    }
 
 
 def get_fleet_summary() -> list[sqlite3.Row]:
@@ -921,7 +1040,7 @@ def make_booking_id() -> str:
     return f"FF{secrets.randbelow(900000000) + 100000000}"
 
 
-def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
+def create_booking_for_user(user_id: int, car_id: int, discount_code: str = "") -> sqlite3.Row:
     requested_car = get_car(car_id)
     available_cars = get_cars()
     car = requested_car if requested_car and requested_car["status"].strip().upper() == "AVAILABLE" else None
@@ -932,12 +1051,18 @@ def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
             booking_id = make_booking_id()
+        discount = get_valid_discount(discount_code)
+        subtotal = float(car["total_price"])
+        discount_amount = calculate_discount_amount(subtotal, discount)
+        final_total = round(subtotal - discount_amount, 2)
+        applied_code = discount["code"] if discount else ""
         con.execute(
             """
             INSERT INTO bookings
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
-             dropoff_location, dropoff_date, dropoff_time, days, total_price, status, booking_status, payment_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP')
+             dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
+             total_price, status, booking_status, payment_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP')
             """,
             (
                 booking_id,
@@ -951,10 +1076,15 @@ def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
                 "Jun 20, 2025",
                 "10:00 AM",
                 10,
-                car["total_price"],
+                subtotal,
+                applied_code,
+                discount_amount,
+                final_total,
                 "CONFIRMED",
             ),
         )
+        if applied_code:
+            con.execute("UPDATE discounts SET used_count = used_count + 1 WHERE code = ?", (applied_code,))
         con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (car["id"],))
     booking = get_booking_for_user(user_id)
     if not booking:
@@ -962,19 +1092,19 @@ def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
     return booking
 
 
-def ensure_booking_for_user(user_id: int, car_id: int | None = None) -> sqlite3.Row | None:
+def ensure_booking_for_user(user_id: int, car_id: int | None = None, discount_code: str = "") -> sqlite3.Row | None:
     existing = get_booking_for_user(user_id)
     if existing and not car_id:
         return existing
     if car_id:
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() == "AVAILABLE":
-            return create_booking_for_user(user_id, car_id)
+            return create_booking_for_user(user_id, car_id, discount_code)
         return None
     cars = get_cars()
     if not cars:
         return None
-    return create_booking_for_user(user_id, cars[0]["id"])
+    return create_booking_for_user(user_id, cars[0]["id"], discount_code)
 
 
 AGREEMENT_FIELD_GROUPS = (
@@ -1109,6 +1239,9 @@ Purpose: Personal Use Only
 
 3. AMOUNT DUE AT LEASE SIGNING.
 A refundable security deposit shall be paid in the amount of ${values.get('security_deposit', '250.00')}.
+Rental subtotal: {format_money(row_value(row, 'subtotal_price') or row_value(row, 'total_price'))}
+Discount applied: {row_value(row, 'discount_code') or 'None'} - {format_money(row_value(row, 'discount_amount'))}
+Final total due: {format_money(row_value(row, 'total_price'))}
 
 4. LEASE PAYMENT.
 As consideration of this lease, Lessee shall pay ${values.get('monthly_payment', '')} monthly on a month-to-month basis.
@@ -1270,7 +1403,9 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Vehicle: {booking['car_name']}\n"
                 f"Dates: {booking['pickup_date']} {booking['pickup_time']} to {booking['dropoff_date']} {booking['dropoff_time']}\n"
                 f"Payment: {payment_method} · {transaction_status}\n"
-                f"Total paid: ${float(booking['total_price']):.2f}"
+                f"Subtotal: {format_money(booking['subtotal_price'] or booking['total_price'])}\n"
+                f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"Total due: {format_money(booking['total_price'])}"
             ),
             "status": f"Generated from booking {booking['booking_id']} and admin payment records.",
         },
@@ -1289,6 +1424,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "content": (
                 f"Booking: {booking['booking_id']}\n"
                 f"Rental subtotal: ${base_amount:.2f}\n"
+                f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
                 f"Taxes estimate: ${tax_amount:.2f}\n"
                 f"Airport/provider fees estimate: ${fee_amount:.2f}\n"
                 f"Insurance: {insurance_line}\n"
@@ -1329,6 +1465,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
             "/admin/bookings": self.admin_bookings_page,
+            "/admin/users": self.admin_users_page,
             "/admin/discounts": self.admin_discounts_page,
             "/admin/commercials": self.admin_commercials_page,
             "/admin/pickup": self.admin_pickup_page,
@@ -1894,6 +2031,123 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def admin_users_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
+        body = render_template(
+            "admin_users.html",
+            admin_name=escape(user["name"]),
+            users=users or '<p class="admin-empty">No users yet.</p>',
+        )
+        self.send_html(body)
+
+    def render_admin_user_card(self, row: sqlite3.Row) -> str:
+        profile = get_admin_user_profile(row["id"])
+        bookings = profile["bookings"]
+        licenses = profile["licenses"]
+        transactions = profile["transactions"]
+        insurances = profile["insurances"]
+        agreements = profile["agreements"]
+        search_text = " ".join(
+            [
+                str(row["id"]),
+                row["name"] or "",
+                row["email"] or "",
+                row["phone"] or "",
+                row["student_id"] or "",
+                row["latest_booking_id"] or "",
+            ]
+        ).lower()
+        booking_rows = "".join(
+            f"""
+            <tr>
+                <td><b>{escape(booking["booking_id"])}</b><span>{escape(booking["car_name"])}</span></td>
+                <td>{escape(booking_status_label(booking["booking_status"], booking["payment_status"]))}</td>
+                <td>{escape(booking["pickup_date"])} - {escape(booking["dropoff_date"])}</td>
+                <td>{escape(booking["discount_code"] or "None")}</td>
+                <td>{format_money(booking["total_price"])}</td>
+            </tr>
+            """
+            for booking in bookings
+        ) or '<tr><td colspan="5">No bookings.</td></tr>'
+        license_rows = "".join(
+            f"""
+            <tr>
+                <td>{escape(license_row["state"])} · {escape(license_row["license_number"])}</td>
+                <td>{escape(license_row["expiry_date"])}</td>
+                <td>{escape(license_row["verification_status"])}</td>
+                <td>{'Front saved' if license_row["front_image_url"] else 'No front'} / {'Back saved' if license_row["back_image_url"] else 'No back'}</td>
+            </tr>
+            """
+            for license_row in licenses
+        ) or '<tr><td colspan="4">No driver license data.</td></tr>'
+        transaction_rows = "".join(
+            f"""
+            <tr>
+                <td>{escape(transaction["invoice_number"])}</td>
+                <td>{escape(transaction["booking_id"])}</td>
+                <td>{escape(transaction["payment_method"])}</td>
+                <td>{format_money(transaction["amount"])}</td>
+                <td>{escape(transaction["transaction_status"])}</td>
+            </tr>
+            """
+            for transaction in transactions
+        ) or '<tr><td colspan="5">No transactions.</td></tr>'
+        insurance_rows = "".join(
+            f"""
+            <tr>
+                <td>{escape(insurance["booking_id"])}</td>
+                <td>{escape(insurance["insurance_provider"])}</td>
+                <td>{escape(insurance["insurance_type"])}</td>
+                <td>{format_money(insurance["coverage_amount"])}</td>
+            </tr>
+            """
+            for insurance in insurances
+        ) or '<tr><td colspan="4">No insurance data.</td></tr>'
+        agreement_rows = "".join(
+            f"""
+            <tr>
+                <td>{escape(agreement["booking_id"])}</td>
+                <td>{escape(agreement["signer_name"] or "Pending")}</td>
+                <td>{escape("Signed" if agreement["signature_text"] else "Pending")}</td>
+                <td>{escape(agreement["created_at"])}</td>
+            </tr>
+            """
+            for agreement in agreements
+        ) or '<tr><td colspan="4">No rental agreements.</td></tr>'
+        return f"""
+        <details class="admin-user-card" data-admin-user-card data-search="{escape(search_text)}">
+            <summary>
+                <span><b>{escape(row["name"])}</b><small>#{row["id"]} · {escape(row["email"])}</small></span>
+                <span>{escape(row["phone"] or "No phone")}</span>
+                <span>{row["booking_count"]} bookings</span>
+                <span>{row["cancelled_count"] or 0} cancelled</span>
+                <span>{format_money(row["transaction_total"])}</span>
+            </summary>
+            <div class="admin-user-detail">
+                <div class="admin-user-metrics">
+                    <span><b>Current</b>{row["current_count"] or 0}</span>
+                    <span><b>Transactions</b>{row["transaction_count"] or 0}</span>
+                    <span><b>Student</b>{'Verified' if row["student_verified"] else 'Not verified'}</span>
+                    <span><b>DOB</b>{escape(row["date_of_birth"] or "Not captured")}</span>
+                    <span><b>Address</b>{escape(row["address"] or "Not captured")}</span>
+                </div>
+                <h3>Bookings</h3>
+                <table class="admin-mini-table"><tbody>{booking_rows}</tbody></table>
+                <h3>Driver License</h3>
+                <table class="admin-mini-table"><tbody>{license_rows}</tbody></table>
+                <h3>Transactions</h3>
+                <table class="admin-mini-table"><tbody>{transaction_rows}</tbody></table>
+                <h3>Insurance</h3>
+                <table class="admin-mini-table"><tbody>{insurance_rows}</tbody></table>
+                <h3>Rental Agreements</h3>
+                <table class="admin-mini-table"><tbody>{agreement_rows}</tbody></table>
+            </div>
+        </details>
+        """
+
     def admin_discounts_page(self) -> None:
         user = self.require_admin()
         if not user:
@@ -2052,6 +2306,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         agreement_values = agreement_default_values(row, license_row, insurance, agreement)
         agreement_text = agreement["agreement_text"] if agreement else build_rental_agreement_text(row, agreement_values)
         agreement_fields = render_agreement_fields(agreement_values)
+        front_scan = license_row["front_image_url"] if license_row else ""
+        back_scan = license_row["back_image_url"] if license_row else ""
         return f"""
         <article class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
             <div class="pickup-record-head">
@@ -2065,6 +2321,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <span><b>DL</b>{escape(license_row["verification_status"] if license_row else "Not captured")}</span>
                 <span><b>Insurance</b>{escape(insurance["insurance_provider"] if insurance else "Not captured")}</span>
                 <span><b>Payment</b>{escape(transaction["transaction_status"] if transaction else row["payment_status"])}</span>
+                <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
+                <span><b>Total</b>{escape(format_money(row["total_price"]))}</span>
                 <span><b>Agreement</b>{escape("Signed" if agreement and agreement["signature_text"] else "Pending")}</span>
             </div>
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
@@ -2077,8 +2335,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <label><span>DL Number</span><input name="license_number" value="{escape(license_row["license_number"] if license_row else "")}" placeholder="Scan or enter DL"></label>
                 <label><span>DL State</span><input name="license_state" value="{escape(license_row["state"] if license_row else "CO")}"></label>
                 <label><span>DL Expiry</span><input name="license_expiry" type="date" value="{escape(license_row["expiry_date"] if license_row else "2028-12-31")}"></label>
-                <label><span>DL Front Scan URL/Path</span><input name="front_image_url" value="{escape(license_row["front_image_url"] if license_row else "")}" placeholder="Scan path or uploaded file URL"></label>
-                <label><span>DL Back Scan URL/Path</span><input name="back_image_url" value="{escape(license_row["back_image_url"] if license_row else "")}" placeholder="Scan path or uploaded file URL"></label>
+                <label class="dl-capture-field"><span>DL Front Picture</span><input type="file" accept="image/*" capture="environment" data-dl-camera="front"><input type="hidden" name="front_image_url" value="{escape(front_scan)}"><small>{'Front image saved' if front_scan else 'Take picture or choose photo'}</small></label>
+                <label class="dl-capture-field"><span>DL Back Picture</span><input type="file" accept="image/*" capture="environment" data-dl-camera="back"><input type="hidden" name="back_image_url" value="{escape(back_scan)}"><small>{'Back image saved' if back_scan else 'Take picture or choose photo'}</small></label>
                 <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
                 <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
                 <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
@@ -2421,20 +2679,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     user_id,
                 ),
             )
-            if form.get("license_number"):
+            if form.get("license_number") or form.get("front_image_url") or form.get("back_image_url"):
                 con.execute(
                     """
                     INSERT INTO driver_licenses
                     (user_id, license_number, state, expiry_date, front_image_url, back_image_url, verification_status)
-                    VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED')
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
-                        form.get("license_number"),
+                        form.get("license_number") or "PHOTO_CAPTURED_PENDING_NUMBER",
                         form.get("license_state") or "CO",
                         form.get("license_expiry") or "2028-12-31",
                         form.get("front_image_url", ""),
                         form.get("back_image_url", ""),
+                        "VERIFIED" if form.get("license_number") else "PHOTO_CAPTURED",
                     ),
                 )
             if form.get("insurance_provider"):
@@ -2508,11 +2767,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             selected_car_id = int(query.get("car_id", [""])[0])
         except ValueError:
             selected_car_id = None
-        self.render_manage_booking(self.current_user(), selected_car_id)
+        discount_code = query.get("discount_code", [""])[0]
+        self.render_manage_booking(self.current_user(), selected_car_id, discount_code)
 
-    def render_manage_booking(self, user: sqlite3.Row | None, selected_car_id: int | None = None) -> None:
+    def render_manage_booking(self, user: sqlite3.Row | None, selected_car_id: int | None = None, discount_code: str = "") -> None:
         if user and selected_car_id:
-            booking = ensure_booking_for_user(user["id"], selected_car_id)
+            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code)
         elif user:
             booking = get_booking_for_user(user["id"])
         else:
