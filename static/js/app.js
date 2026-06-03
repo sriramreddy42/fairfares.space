@@ -188,6 +188,9 @@ document.addEventListener("click", (event) => {
   if (!tab) return;
   event.preventDefault();
   showManagePanel(tab.dataset.manageTab);
+  if (tab.dataset.detailJump) {
+    showDetailPanel(tab.dataset.detailJump);
+  }
 });
 
 if (manageTabs.length) {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
   <link rel="stylesheet" href="/static/css/styles.css?v=mobile-25">
-  <script defer src="/static/js/app.js?v=23"></script>
+  <script defer src="/static/js/app.js?v=24"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -38,21 +38,21 @@
       <a class="$booking_link_class" href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
       <a class="$booking_link_class" href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
       <a class="$booking_link_class" href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
-      <a href="#student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
-      <a href="#saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
-      <a href="#support"><b>Support</b><span>Chat, help center & emergency support</span></a>
+      <a href="#student" data-manage-tab="details" data-detail-jump="student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
+      <a href="#saved" data-manage-tab="details" data-detail-jump="saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
+      <a href="#support" data-manage-tab="support"><b>Support</b><span>Chat, help center & emergency support</span></a>
       <div class="student-promo">
         <strong>Exclusive for Students</strong>
         <span>Verified students get up to</span>
         <b>15% OFF</b>
-        <button type="button">Verify Now</button>
+        <button type="button" data-manage-tab="details" data-detail-jump="student">Verify Now</button>
       </div>
     </aside>
 
     <section class="manage-content">
       <div class="page-heading">
         <div><h1>$dashboard_booking_title</h1><p>$dashboard_booking_body</p></div>
-        <button type="button">View All Bookings</button>
+        <button type="button" data-manage-tab="details" data-detail-jump="saved">View All Bookings</button>
       </div>
 
       $first_booking_promo
@@ -80,7 +80,7 @@
           <small>Total Price</small>
           <strong>$price_text</strong>
           <span>$days Days</span>
-          <a href="#documents">Price Details</a>
+          <a href="#documents" data-manage-tab="documents">Price Details</a>
         </aside>
         <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
           <button class="active" type="button" data-manage-tab="modify">Modify Reservation</button>
