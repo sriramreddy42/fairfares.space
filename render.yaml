@@ -11,6 +11,10 @@ services:
     envVars:
       - key: FAIRFARES_DB_PATH
         value: /var/data/fairfares.sqlite3
+      - key: FAIRFARES_BACKUP_DIR
+        value: /var/data/backups
+      - key: FAIRFARES_BACKUP_KEEP
+        value: "20"
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM

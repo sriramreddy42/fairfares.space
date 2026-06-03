@@ -41,6 +41,28 @@
       <a href="/admin/pickup"><b>User Pickup Info</b><span>DL, insurance, payment, agreement, signature, print</span></a>
     </section>
 
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Database Backups</h2>
+          <p>Automatic startup backups and admin-created backups are stored on the persistent disk.</p>
+        </div>
+        <form method="post" action="/admin/backups/create" class="inline-form">
+          <button type="submit">Create Backup</button>
+        </form>
+      </div>
+      <div class="backup-meta">
+        <span><b>Database</b>$db_path</span>
+        <span><b>Backups</b>$backup_dir</span>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Backup</th><th>Size</th><th>Folder</th><th>Action</th></tr></thead>
+          <tbody>$backup_rows</tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="admin-grid">
       <article class="admin-card">
         <div class="admin-card-head">

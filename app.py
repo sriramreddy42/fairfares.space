@@ -11,6 +11,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -20,11 +21,19 @@ from string import Template
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DATA_DIR / "fairfares.sqlite3"))
+DEFAULT_DB_PATH = DATA_DIR / "fairfares.sqlite3"
+DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
+BACKUP_DIR = Path(os.environ.get("FAIRFARES_BACKUP_DIR", DB_PATH.parent / "backups"))
 OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
+
+
+def refresh_storage_paths() -> None:
+    global DB_PATH, BACKUP_DIR
+    DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
+    BACKUP_DIR = Path(os.environ.get("FAIRFARES_BACKUP_DIR", DB_PATH.parent / "backups"))
 
 
 def load_env_file() -> None:
@@ -37,6 +46,7 @@ def load_env_file() -> None:
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    refresh_storage_paths()
 
 
 def db() -> sqlite3.Connection:
@@ -44,6 +54,41 @@ def db() -> sqlite3.Connection:
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def list_db_backups() -> list[Path]:
+    if not BACKUP_DIR.exists():
+        return []
+    return sorted(BACKUP_DIR.glob("fairfares-*.sqlite3"), key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def prune_db_backups() -> None:
+    keep = int(os.environ.get("FAIRFARES_BACKUP_KEEP", "20"))
+    for backup in list_db_backups()[keep:]:
+        backup.unlink(missing_ok=True)
+
+
+def create_db_backup(reason: str = "manual") -> Path:
+    if not DB_PATH.exists():
+        raise FileNotFoundError(f"Database does not exist: {DB_PATH}")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    safe_reason = "".join(char for char in reason.lower() if char.isalnum() or char in {"-", "_"}) or "manual"
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    backup_path = BACKUP_DIR / f"fairfares-{timestamp}-{safe_reason}.sqlite3"
+    with sqlite3.connect(DB_PATH) as source, sqlite3.connect(backup_path) as destination:
+        source.backup(destination)
+    prune_db_backups()
+    return backup_path
+
+
+def auto_backup_on_startup() -> None:
+    if os.environ.get("FAIRFARES_AUTO_BACKUP", "1") == "0":
+        return
+    try:
+        backup_path = create_db_backup("startup")
+        print(f"SQLite backup saved: {backup_path}")
+    except Exception as exc:
+        print(f"SQLite backup skipped: {exc}")
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -984,6 +1029,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/bookings": self.admin_bookings_page,
             "/admin/discounts": self.admin_discounts_page,
             "/admin/pickup": self.admin_pickup_page,
+            "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
             "/api/site": self.api_site,
             "/api/cars": self.api_cars,
@@ -1010,6 +1056,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
             "/admin/pickup-documents": self.save_pickup_documents,
+            "/admin/backups/create": self.create_admin_backup,
         }
         handler = routes.get(parsed.path)
         if handler:
@@ -1458,6 +1505,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         metrics = get_admin_metrics()
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
         fleet_summary = "\n".join(self.render_fleet_summary_row(row) for row in get_fleet_summary())
+        backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         body = render_template(
             "admin.html",
             admin_name=escape(user["name"]),
@@ -1467,8 +1515,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user_count=metrics["users"],
             cars=cars or '<tr><td colspan="8">No inventory yet.</td></tr>',
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
+            db_path=escape(DB_PATH),
+            backup_dir=escape(BACKUP_DIR),
+            backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
         )
         self.send_html(body)
+
+    def render_backup_row(self, path: Path) -> str:
+        size_kb = path.stat().st_size / 1024
+        modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%b %d, %Y %I:%M %p")
+        href = f"/admin/backups/download?file={urllib.parse.quote(path.name)}"
+        return f"""
+        <tr>
+            <td><b>{escape(path.name)}</b><span>{escape(modified)}</span></td>
+            <td>{size_kb:.1f} KB</td>
+            <td>{escape(path.parent)}</td>
+            <td><a class="admin-text-link" href="{href}">Download</a></td>
+        </tr>
+        """
 
     def admin_bookings_page(self) -> None:
         user = self.require_admin()
@@ -1658,6 +1722,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>Free maintenance tracking ready</td>
         </tr>
         """
+
+    def create_admin_backup(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        create_db_backup("admin")
+        self.redirect("/admin")
+
+    def download_admin_backup(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        filename = Path(query.get("file", [""])[0]).name
+        requested = (BACKUP_DIR / filename).resolve()
+        backup_root = BACKUP_DIR.resolve()
+        if not filename or not str(requested).startswith(str(backup_root)) or not requested.exists():
+            self.not_found()
+            return
+        body = requested.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.sqlite3")
+        self.send_header("Content-Disposition", f'attachment; filename="{requested.name}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def create_admin_car(self) -> None:
         user = self.require_admin()
@@ -2146,6 +2237,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     load_env_file()
     init_db()
+    auto_backup_on_startup()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
     server = ThreadingHTTPServer((host, port), FairFaresHandler)

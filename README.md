@@ -17,9 +17,13 @@ HOST=0.0.0.0
 PORT=8000
 PUBLIC_BASE_URL=https://your-live-site.example
 FAIRFARES_DB_PATH=/var/data/fairfares.sqlite3
+FAIRFARES_BACKUP_DIR=/var/data/backups
+FAIRFARES_BACKUP_KEEP=20
 ```
 
 `FAIRFARES_DB_PATH` should point to persistent storage in production. If it is left on the app container filesystem, user accounts, bookings, discounts, and admin updates can disappear after redeploys or restarts.
+
+The app creates an automatic SQLite backup on startup unless `FAIRFARES_AUTO_BACKUP=0`. Admins can also create and download backups from the Developer Portal. Backups are stored in `FAIRFARES_BACKUP_DIR`, and the newest `FAIRFARES_BACKUP_KEEP` files are retained.
 
 ## Signup Activation
 
@@ -55,6 +59,8 @@ The project includes `render.yaml` for Render hosting.
 2. Create a new Render Blueprint from that repository.
 3. Set these Render environment variables:
    - `FAIRFARES_DB_PATH=/var/data/fairfares.sqlite3`
+   - `FAIRFARES_BACKUP_DIR=/var/data/backups`
+   - `FAIRFARES_BACKUP_KEEP=20`
    - `RESEND_API_KEY`
    - `RESEND_FROM=FairFares <hello@fairfare.space>`
    - `PUBLIC_BASE_URL=https://your-render-url`
