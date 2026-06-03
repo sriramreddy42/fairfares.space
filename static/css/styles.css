@@ -1142,6 +1142,32 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-size: 1rem;
   margin-top: 3px;
 }
+.first-time-founder-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.first-time-founder-card img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+.first-time-founder-actions {
+  align-items: center;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 180px);
+  padding: 18px 20px;
+}
+.first-time-founder-actions h2 {
+  font-size: 1.3rem;
+  margin: 2px 0 6px;
+}
+.first-time-founder-actions p {
+  color: var(--muted);
+  margin: 0;
+}
 .status-badge {
   background: #c9f0cf;
   border-radius: 6px;
@@ -1154,6 +1180,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .trip-car .car-art {
   height: 110px;
+}
+.trip-car-image {
+  display: block;
+  height: 120px;
+  margin: 0 auto;
+  max-width: 100%;
+  object-fit: contain;
+  width: 220px;
 }
 .trip-car p {
   align-items: center;
@@ -1749,6 +1783,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     justify-content: space-between;
   }
   .first-booking-promo-body {
+    grid-template-columns: 1fr;
+  }
+  .first-time-founder-actions {
     grid-template-columns: 1fr;
   }
   .promo-code-box {
@@ -2611,6 +2648,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     padding: 14px;
   }
   .first-booking-promo-body h2 {
+    font-size: 1.1rem;
+  }
+  .first-time-founder-actions {
+    padding: 14px;
+  }
+  .first-time-founder-actions h2 {
     font-size: 1.1rem;
   }
   .admin-layout {

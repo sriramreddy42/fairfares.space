@@ -658,7 +658,7 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
         return con.execute(
             """
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
-                   cars.doors, cars.transmission, cars.color
+                   cars.doors, cars.transmission, cars.color, cars.image_url
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -756,7 +756,7 @@ def get_demo_booking(car_id: int | None = None) -> sqlite3.Row | None:
         return con.execute(
             f"""
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
-                   cars.doors, cars.transmission, cars.color
+                   cars.doors, cars.transmission, cars.color, cars.image_url
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             {car_filter}
@@ -1947,6 +1947,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             dashboard_booking_title = "Last Booking"
             dashboard_booking_body = "You do not have a current booking. Your most recent trip details are saved here."
+        sidebar_title = "Start Booking" if is_first_time_user else "Manage Booking"
+        sidebar_primary_label = "Find Your First Car" if is_first_time_user else "Upcoming Trips"
+        sidebar_primary_body = "Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings"
+        booking_link_class = "is-hidden" if is_first_time_user else ""
+        car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
+        if booking and booking["image_url"]:
+            booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
+        else:
+            booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
+        first_time_manage_content = ""
+        if is_first_time_user:
+            first_time_manage_content = """
+            <section class="first-time-founder-card">
+                <img src="/static/img/founders-note-fairfares.png" alt="FairFares founders note">
+                <div class="first-time-founder-actions">
+                    <div>
+                        <p class="eyebrow">Founders note</p>
+                        <h2>Fair prices before the first booking.</h2>
+                        <p>When you book, your modify, cancel, documents, and live trip tools will appear here automatically.</p>
+                    </div>
+                    <a class="select-button" href="/#results">Browse Cars</a>
+                </div>
+            </section>
+            """
         if is_first_time_user:
             first_booking_promo = """
             <section class="first-booking-promo" id="upcoming">
@@ -1978,8 +2002,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_id=escape(booking["booking_id"] if booking else "No booking yet"),
             dashboard_booking_title=escape(dashboard_booking_title),
             dashboard_booking_body=escape(dashboard_booking_body),
+            sidebar_title=escape(sidebar_title),
+            sidebar_primary_label=escape(sidebar_primary_label),
+            sidebar_primary_body=escape(sidebar_primary_body),
+            booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
             trip_card_class="trip-card is-hidden" if is_first_time_user else "trip-card",
+            booking_car_visual=booking_car_visual,
+            first_time_manage_content=first_time_manage_content,
+            manage_panels_class="manage-panels is-hidden" if is_first_time_user else "manage-panels",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),

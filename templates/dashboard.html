@@ -33,11 +33,11 @@
 
   <main class="manage-layout">
     <aside class="manage-sidebar">
-      <h2>Manage Booking</h2>
-      <a class="side-active" href="#upcoming"><b>Upcoming Trips</b><span>View and manage your upcoming bookings</span></a>
-      <a href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
-      <a href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
-      <a href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
+      <h2>$sidebar_title</h2>
+      <a class="side-active" href="#upcoming"><b>$sidebar_primary_label</b><span>$sidebar_primary_body</span></a>
+      <a class="$booking_link_class" href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
+      <a class="$booking_link_class" href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
+      <a class="$booking_link_class" href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
       <a href="#student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
       <a href="#saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
       <a href="#support"><b>Support</b><span>Chat, help center & emergency support</span></a>
@@ -59,7 +59,7 @@
       <section class="$trip_card_class" id="upcoming">
         <div class="trip-car">
           <span class="status-badge">$status</span>
-          <div class="car-art car-charcoal"><div class="car-shape"></div></div>
+          $booking_car_visual
           <p>Rental Provider <b>$provider</b></p>
         </div>
         <div class="trip-details">
@@ -91,7 +91,8 @@
         </div>
       </section>
 
-      <section class="manage-panels">
+      $first_time_manage_content
+      <section class="$manage_panels_class">
         <article class="manage-card manage-panel active" id="modify" data-manage-panel="modify">
           <h2>1. Modify Your Booking</h2>
           <p>Make changes to fit your plans</p>
