@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>User Pickup Info | FairFares Admin</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-4">
+  <script defer src="/static/js/app.js?v=21"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <nav>
+      <a href="/admin">Inventory</a>
+      <a href="/admin/bookings">Booked Cars</a>
+      <a href="/admin/discounts">Discounts</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Developer Portal</p>
+        <h1>User Pickup Info</h1>
+        <span>Capture DL, insurance, payment, agreement, signature, print, and save · $admin_name</span>
+      </div>
+    </section>
+    <section class="admin-card">
+      <label class="admin-search">
+        <span>Search customer, email, booking, or car</span>
+        <input id="pickupSearch" placeholder="Start typing user name, email, booking ID, or vehicle">
+      </label>
+    </section>
+    <section class="pickup-records">$records</section>
+  </main>
+</body>
+</html>

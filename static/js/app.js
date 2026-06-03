@@ -340,11 +340,34 @@ cancelForm?.addEventListener("submit", (event) => {
 const documentPreview = document.getElementById("documentPreview");
 const documentStatus = document.getElementById("documentStatus");
 const documentEmail = document.getElementById("documentEmail");
-const documentCopy = {
-  "Invoice / Receipt": "Payment summary, taxes, rental dates, and provider details.",
-  "Rental Agreement": "Driver responsibilities, vehicle terms, pickup rules, and return policy.",
-  "Taxes & Fees Breakdown": "Airport fee, local tax, student discount, and final total breakdown.",
-};
+const bookingDocumentsNode = document.getElementById("bookingDocuments");
+const bookingDocuments = bookingDocumentsNode ? JSON.parse(bookingDocumentsNode.textContent || "{}") : {};
+
+function renderBookingDocument(name) {
+  if (!documentPreview) return;
+  const escapeHtml = (value) => String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+  const doc = bookingDocuments[name] || {
+    title: name,
+    content: "This document is not generated yet. Ask admin to complete pickup, payment, insurance, or agreement data.",
+    status: "Waiting for admin data.",
+  };
+  documentPreview.innerHTML = `<h3>${escapeHtml(doc.title)}</h3><p>${escapeHtml(doc.content).replaceAll("\n", "<br>")}</p><small>${escapeHtml(doc.status)}</small>`;
+  if (documentStatus) documentStatus.textContent = `${doc.title} generated from saved booking records.`;
+}
+
+function downloadTextFile(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
 
 document.addEventListener("click", (event) => {
   const docButton = event.target.closest("[data-doc-name]");
@@ -353,8 +376,7 @@ document.addEventListener("click", (event) => {
   document.querySelectorAll("[data-doc-name]").forEach((button) => {
     button.classList.toggle("active", button === docButton);
   });
-  documentPreview.innerHTML = `<h3>${name}</h3><p>${documentCopy[name]}</p><small>Ready to download for booking FF123456789.</small>`;
-  documentStatus.textContent = `${name} is ready.`;
+  renderBookingDocument(name);
 });
 
 document.getElementById("emailDocuments")?.addEventListener("click", () => {
@@ -362,8 +384,14 @@ document.getElementById("emailDocuments")?.addEventListener("click", () => {
 });
 
 document.getElementById("downloadAllDocuments")?.addEventListener("click", () => {
+  const bundle = Object.values(bookingDocuments)
+    .map((doc) => `${doc.title}\n\n${doc.content}\n\n${doc.status}`)
+    .join("\n\n------------------------------\n\n");
+  if (bundle) downloadTextFile("fairfares-booking-documents.txt", bundle);
   documentStatus.textContent = "All booking documents are ready to download.";
 });
+
+renderBookingDocument("Invoice / Receipt");
 
 const detailTabs = [...document.querySelectorAll("[data-detail-tab]")];
 const detailPanels = [...document.querySelectorAll("[data-detail-panel]")];
@@ -385,7 +413,18 @@ detailTabs.forEach((tab) => {
 
 document.getElementById("studentForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  document.getElementById("studentStatus").textContent = "Student verification details updated.";
+  const form = event.currentTarget;
+  fetch("/student-verification", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((payload) => {
+      document.getElementById("studentStatus").textContent = payload.message || "Student verification details updated.";
+    })
+    .catch(() => {
+      document.getElementById("studentStatus").textContent = "Student verification details updated.";
+    });
 });
 
 const tripFilterButtons = [...document.querySelectorAll("[data-trip-filter]")];
@@ -512,3 +551,21 @@ document.getElementById("activateSavingsTool")?.addEventListener("click", () => 
 });
 
 if (accordionTabs.length) showBookingAccordion("why");
+
+const pickupSearch = document.getElementById("pickupSearch");
+const pickupRecords = [...document.querySelectorAll(".pickup-record")];
+
+pickupSearch?.addEventListener("input", () => {
+  const query = pickupSearch.value.trim().toLowerCase();
+  pickupRecords.forEach((record) => {
+    record.hidden = query && !record.dataset.search.includes(query);
+  });
+});
+
+document.querySelectorAll("[data-print-record]").forEach((button) => {
+  button.addEventListener("click", () => {
+    pickupRecords.forEach((record) => record.classList.remove("is-printing"));
+    button.closest(".pickup-record")?.classList.add("is-printing");
+    window.print();
+  });
+});

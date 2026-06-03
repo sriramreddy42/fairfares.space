@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
   <link rel="stylesheet" href="/static/css/styles.css?v=mobile-24">
-  <script defer src="/static/js/app.js?v=19"></script>
+  <script defer src="/static/js/app.js?v=22"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -176,7 +176,7 @@
             <div class="document-preview" id="documentPreview">
               <h3>Invoice / Receipt</h3>
               <p>Booking $booking_id | $provider | $price_text total | $days days</p>
-              <small>Select a document to preview or download.</small>
+              <small>Generated documents load from admin booking records.</small>
             </div>
             <div class="modify-actions">
               <button type="button" class="light-button" id="emailDocuments">Email All Documents</button>
@@ -196,13 +196,13 @@
             <article class="manage-card detail-card active" id="student" data-detail-panel="student">
               <h2>Student Verification</h2>
               <p>Verify to unlock exclusive student benefits</p>
-              <div class="verified-box"><strong>Verified Student</strong><span>15% discount applied</span></div>
-              <form class="workflow-form" id="studentForm">
+              <div class="verified-box"><strong>$student_verified_label</strong><span>$student_discount_label</span></div>
+              <form class="workflow-form" id="studentForm" method="post" action="/student-verification">
                 <div class="modify-grid two">
-                  <label><span>University Email</span><input type="email" value="alex@student.edu"></label>
-                  <label><span>Student ID</span><input value="STU-2025-1042"></label>
+                  <label><span>University Email</span><input name="student_email" type="email" value="$student_email"></label>
+                  <label><span>Student ID</span><input name="student_id" value="$student_id"></label>
                 </div>
-                <ul class="check-list"><li>Student ID Verified</li><li>University Email Verified</li><li>Discount Applied <b>15% OFF</b></li></ul>
+                <ul class="check-list">$student_verified_checks</ul>
                 <button class="light-button" type="submit">Update Verification</button>
                 <p class="modify-status" id="studentStatus" aria-live="polite"></p>
               </form>
@@ -211,11 +211,9 @@
             <article class="manage-card detail-card is-hidden" id="saved" data-detail-panel="saved">
               <h2>Saved Trips</h2>
               <p>View upcoming, past and saved trips</p>
-              <div class="tabs"><button class="active" type="button" data-trip-filter="upcoming">Upcoming (2)</button><button type="button" data-trip-filter="past">Past (4)</button><button type="button" data-trip-filter="favorites">Favorites (3)</button></div>
+              <div class="tabs"><button class="active" type="button" data-trip-filter="upcoming">Upcoming ($upcoming_count)</button><button type="button" data-trip-filter="past">Past ($past_count)</button><button type="button" data-trip-filter="favorites">Saved ($favorite_count)</button></div>
               <div class="trip-list">
-                <div class="mini-trip" data-trip-type="upcoming favorites"><div class="mini-car"></div><span>Denver, CO<br><small>Jun 10 - Jun 20, 2025</small></span><b>$price_text</b></div>
-                <div class="mini-trip" data-trip-type="upcoming"><div class="mini-car"></div><span>Orlando, FL<br><small>Jul 05 - Jul 12, 2025</small></span><b>$189.50</b></div>
-                <div class="mini-trip is-hidden" data-trip-type="past"><div class="mini-car"></div><span>Austin, TX<br><small>Mar 12 - Mar 16, 2025</small></span><b>$156.20</b></div>
+                $trip_rows
               </div>
               <button class="light-button" type="button" id="saveCurrentTrip">Save Current Trip</button>
             </article>
@@ -223,9 +221,9 @@
             <article class="manage-card detail-card is-hidden" id="status" data-detail-panel="status">
               <h2>Live Rental Status</h2>
               <p>Stay updated in real-time</p>
-              <div class="green-note" id="liveStatusText"><b>Car is Ready for Pickup!</b><br>Your car will be ready at 10:00 AM on Jun 10, 2025.</div>
-              <div class="countdown"><b>02<span>Days</span></b><b>14<span>Hours</span></b><b>37<span>Mins</span></b><b>52<span>Secs</span></b></div>
-              <div class="pickup-note"><b>Pickup Instructions</b><br>Please proceed to Avis counter at Door A, Level 5, Island 3.</div>
+              <div class="green-note" id="liveStatusText"><b>$live_status_title</b><br>$live_status_body</div>
+              <div class="countdown"><b>$live_days<span>Days</span></b><b>$live_hours<span>Hours</span></b><b>$live_mins<span>Mins</span></b><b>$live_secs<span>Secs</span></b></div>
+              <div class="pickup-note"><b>Pickup Instructions</b><br>$live_status_instructions</div>
               <div class="modify-actions">
                 <button type="button" class="light-button" id="refreshStatus">Refresh Status</button>
                 <button type="button" id="textStatus">Text Me Updates</button>
@@ -330,5 +328,6 @@
       $admin_panel
     </section>
   </main>
+  <script type="application/json" id="bookingDocuments">$booking_documents_json</script>
 </body>
 </html>

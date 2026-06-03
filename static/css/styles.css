@@ -566,7 +566,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .admin-metrics,
 .admin-grid,
-.admin-modules {
+.admin-modules,
+.admin-link-grid {
   display: grid;
   gap: 14px;
 }
@@ -575,7 +576,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .admin-metrics article,
 .admin-card,
-.admin-modules article {
+.admin-modules article,
+.admin-link-grid a,
+.pickup-record {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -597,6 +600,23 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .admin-grid {
   grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.5fr);
+}
+.admin-link-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.admin-link-grid a {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+}
+.admin-link-grid b {
+  color: var(--navy);
+  font-size: 1rem;
+}
+.admin-link-grid span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
 }
 .admin-card {
   min-width: 0;
@@ -713,6 +733,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-weight: 900;
   min-height: 34px;
 }
+.admin-text-link {
+  color: var(--red);
+  font-weight: 900;
+}
 .admin-modules {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -723,6 +747,119 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .admin-modules b {
   color: var(--navy);
+}
+.pickup-records {
+  display: grid;
+  gap: 18px;
+}
+.pickup-record {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+.pickup-record-head {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+.pickup-record-head h2 {
+  color: var(--navy);
+  font-size: 1.05rem;
+  margin: 0 0 4px;
+}
+.pickup-record-head p {
+  color: var(--muted);
+  margin: 0;
+}
+.pickup-record-head button {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--navy);
+  font-weight: 900;
+  min-height: 40px;
+  padding: 9px 12px;
+}
+.pickup-status-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pickup-status-grid span {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+.pickup-status-grid b {
+  color: var(--navy);
+}
+.pickup-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pickup-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 850;
+}
+.pickup-form label span {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+.pickup-form .wide-field {
+  grid-column: 1 / -1;
+}
+.pickup-form button {
+  background: var(--red);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  grid-column: 1 / -1;
+  min-height: 46px;
+}
+.admin-empty {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0;
+  padding: 18px;
+}
+.admin-search {
+  display: grid;
+  gap: 8px;
+  font-weight: 900;
+}
+.admin-search span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+@media print {
+  .admin-shell-header,
+  .admin-hero,
+  .admin-search,
+  .pickup-record:not(.is-printing),
+  .pickup-record-head button {
+    display: none !important;
+  }
+  body,
+  .admin-screen {
+    background: #fff;
+  }
+  .admin-layout {
+    padding: 0;
+  }
+  .pickup-record {
+    border: 0;
+  }
 }
 
 .dashboard {
@@ -1675,8 +1812,13 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
   .admin-grid,
   .admin-metrics,
-  .admin-modules {
+  .admin-modules,
+  .admin-link-grid,
+  .pickup-status-grid {
     grid-template-columns: 1fr;
+  }
+  .pickup-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .logo-lockup img,
   .login-logo img {
@@ -2418,6 +2560,13 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     padding: 14px;
   }
   .admin-form {
+    grid-template-columns: 1fr;
+  }
+  .pickup-record-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .pickup-form {
     grid-template-columns: 1fr;
   }
   .admin-table {
