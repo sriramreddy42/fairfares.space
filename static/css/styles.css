@@ -161,14 +161,14 @@ input, select, textarea, button {
   background-repeat: no-repeat;
 }
 .hero-fold-image {
-  background-position: center center;
-  background-size: cover;
+  background-position: left center;
+  background-size: auto 100%;
   transition: opacity 420ms ease;
   z-index: 1;
 }
 .hero-fold-video {
   border: 0;
-  background: #102746 url("/static/img/hero-road.png") center center / cover no-repeat;
+  background: #102746 url("/static/img/hero-road.png") left center / auto 100% no-repeat;
   height: 100%;
   opacity: 0;
   transition: opacity 360ms ease;
@@ -177,8 +177,8 @@ input, select, textarea, button {
 }
 .hero-fold-panel {
   backface-visibility: hidden;
-  background-position: center center;
-  background-size: cover;
+  background-position: left center;
+  background-size: auto 100%;
   height: 100%;
   opacity: 0;
   top: 0;
