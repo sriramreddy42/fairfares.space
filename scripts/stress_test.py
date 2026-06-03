@@ -167,7 +167,7 @@ def main() -> None:
     assert_true("fetch(heroFoldVideo.dataset.videoSrc" not in app_js, "hero video should not depend on fragile HEAD requests")
     assert_true("querySelector(\"[data-video-src]\")" in app_js and "setAttribute(\"src\"" in app_js, "homepage hero should load commercial embeds dynamically")
     styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
-    assert_true("rotateY(-82deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should include fold animation and reduced-motion fallback")
+    assert_true("perspective-origin: left center" in styles and "rotateY(-86deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should fold toward the left with reduced-motion fallback")
     assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in index_template, "book page should link to the Buy Cars page")
