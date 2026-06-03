@@ -662,7 +662,9 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
-            ORDER BY bookings.id DESC
+            ORDER BY
+                CASE WHEN bookings.booking_status IN ('CANCELLED', 'RETURNED') THEN 1 ELSE 0 END,
+                bookings.id DESC
             LIMIT 1
             """,
             (user_id,),
@@ -1929,6 +1931,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
         booking_documents_json = json.dumps(get_booking_documents(booking["id"] if booking else None)).replace("</", "<\\/")
         first_booking_promo = ""
+        has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
+        if is_first_time_user:
+            dashboard_booking_title = "Start Your First Trip"
+            dashboard_booking_body = "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
+        elif has_current_booking:
+            dashboard_booking_title = "Upcoming Trip"
+            dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
+        else:
+            dashboard_booking_title = "Last Booking"
+            dashboard_booking_body = "You do not have a current booking. Your most recent trip details are saved here."
         if is_first_time_user:
             first_booking_promo = """
             <section class="first-booking-promo" id="upcoming">
@@ -1958,6 +1970,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else '<span class="user-chip"><span></span><b>Hi, Alex</b><small>Student</small></span><a href="/login">Sign in / Join</a>'
             ),
             booking_id=escape(booking["booking_id"] if booking else "No booking yet"),
+            dashboard_booking_title=escape(dashboard_booking_title),
+            dashboard_booking_body=escape(dashboard_booking_body),
             first_booking_promo=first_booking_promo,
             trip_card_class="trip-card is-hidden" if is_first_time_user else "trip-card",
             provider=escape(booking["provider"] if booking else "Pending"),
