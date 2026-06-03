@@ -138,12 +138,19 @@ def main() -> None:
     with app.db() as con:
         con.execute(
             """
-            INSERT INTO discounts (code, description, discount_type, value, valid_through, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO discounts (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            ("STRESS15", "Stress discount", "PERCENT", 15, "2099-01-01", "ACTIVE"),
+            ("STRESS15", "Stress discount", "PERCENT", 15, "2099-01-01", "ACTIVE", 0, 0),
         )
     assert_true(any(row["code"] == "STRESS15" for row in app.get_active_discounts()), "active discount should feed user portal")
+    referral_code = app.create_referral_discount("@stress.student")
+    assert_true(referral_code == "REFERRAL_STRESS_STUDENT", "referral code should normalize instagram username")
+    referral = next(row for row in app.get_all_discounts() if row["code"] == referral_code)
+    assert_true(referral["value"] == 10 and referral["max_uses"] == 3, "referral code should be 10 percent with max 3 uses")
+    assert_true("max 3 referrals" in referral["description"], "referral terms should be visible in admin description")
+    deals_template = (ROOT / "templates" / "deals.html").read_text(encoding="utf-8")
+    assert_true("Follow Instagram" in deals_template and "Maximum 3 successful referrals" in deals_template, "deals page should include follow CTA and terms")
 
     users = [create_verified_user(index) for index in range(1, 16)]
     emails = {user["email"] for user in users}

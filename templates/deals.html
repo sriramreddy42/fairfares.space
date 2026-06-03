@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Referral Deals | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=deals-1">
+  <script defer src="/static/js/app.js?v=24"></script>
+</head>
+<body>
+  <header class="top-brand compact-top">
+    <a class="logo-lockup" href="/"><img src="/static/img/logo-light-header.png" alt="FairFares logo"></a>
+    <nav class="main-nav">
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/#results">Cars</a>
+        <a class="active" href="/deals">Deals</a>
+      </div>
+      <div class="nav-actions">$auth_link</div>
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </nav>
+  </header>
+
+  <main class="deals-page">
+    <section class="deals-hero">
+      <img src="/static/img/referral-follow-offer.png" alt="Follow FairFares and grab 10 percent additional offer">
+      <div class="deals-copy">
+        <p class="eyebrow">Referral Deals</p>
+        <h1>Follow us, generate your referral code, save 10%.</h1>
+        <p>Follow FairFares on Instagram, enter your username, and we will generate a referral code in Admin Discounts as <b>REFERRAL_USERNAME</b>.</p>
+        <div class="deals-actions">
+          <a class="select-button" href="https://www.instagram.com/fairfares.official/" target="_blank" rel="noopener">Follow Instagram</a>
+          <a class="light-button" href="/#results">Book Now</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="deals-grid">
+      <article class="deal-card">
+        <h2>Generate Referral Code</h2>
+        <p>Use the same Instagram username you followed with. The generated code is saved in admin so staff can manage or delete it.</p>
+        <form class="deal-form" method="post" action="/referrals/generate">
+          <label><span>Instagram Username</span><input name="instagram_username" placeholder="@yourusername" required></label>
+          <button type="submit">Generate 10% Code</button>
+        </form>
+        <div class="generated-referral $generated_class">
+          <span>$referral_message</span>
+          <b>$generated_code</b>
+        </div>
+      </article>
+
+      <article class="deal-card">
+        <h2>Terms & Conditions</h2>
+        <ul class="terms-list">
+          <li>Referral code gives 10% off eligible bookings.</li>
+          <li>Maximum 3 successful referrals per generated code.</li>
+          <li>Code format is <b>REFERRAL_USERNAME</b>.</li>
+          <li>Code must be active and not expired in Admin Discounts.</li>
+          <li>FairFares may pause, delete, or update codes from the admin portal.</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

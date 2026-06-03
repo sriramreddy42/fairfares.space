@@ -37,6 +37,7 @@
           <label><span>Description</span><input name="description" placeholder="Student promo"></label>
           <label><span>Type</span><select name="discount_type"><option value="PERCENT">Percent</option><option value="AMOUNT">Amount</option></select></label>
           <label><span>Value</span><input name="value" type="number" step="0.01" value="15"></label>
+          <label><span>Max Uses</span><input name="max_uses" type="number" min="0" value="0"></label>
           <label><span>Valid Through</span><input name="valid_through" type="date" value="2026-12-31"></label>
           <label><span>Status</span><select name="status"><option>ACTIVE</option><option>INACTIVE</option></select></label>
           <button type="submit">Save Discount</button>
@@ -51,7 +52,7 @@
         </div>
         <div class="admin-table-wrap">
           <table class="admin-table">
-            <thead><tr><th>Code</th><th>Type</th><th>Value</th><th>Valid Through</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Code</th><th>Type</th><th>Value</th><th>Usage</th><th>Valid Through</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>$discounts</tbody>
           </table>
         </div>

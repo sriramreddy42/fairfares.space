@@ -361,6 +361,8 @@ def init_db() -> None:
                 value REAL NOT NULL,
                 valid_through TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'ACTIVE',
+                max_uses INTEGER NOT NULL DEFAULT 0,
+                used_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
@@ -389,6 +391,8 @@ def init_db() -> None:
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "discounts", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
@@ -613,6 +617,32 @@ def get_active_discounts() -> list[sqlite3.Row]:
 def get_all_discounts() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute("SELECT * FROM discounts ORDER BY valid_through DESC, code").fetchall()
+
+
+def referral_code_for_username(username: str) -> str:
+    cleaned = username.strip().lstrip("@").lower()
+    cleaned = "".join(char if char.isalnum() else "_" for char in cleaned)
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    if not cleaned:
+        cleaned = "student"
+    return f"REFERRAL_{cleaned[:32].upper()}"
+
+
+def create_referral_discount(username: str) -> str:
+    code = referral_code_for_username(username)
+    handle = username.strip().lstrip("@") or "student"
+    description = f"Instagram follow referral for @{handle} · max 3 referrals"
+    with db() as con:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO discounts
+            (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, 'PERCENT', 10, '2026-12-31', 'ACTIVE', 3,
+                    COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
+            """,
+            (code, description, code),
+        )
+    return code
 
 
 def get_admin_cars() -> list[sqlite3.Row]:
@@ -988,6 +1018,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         routes = {
             "/": self.home,
+            "/deals": self.deals_page,
             "/activate": self.activate_account,
             "/healthz": self.healthz,
             "/login": self.login_page,
@@ -1017,6 +1048,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/modify": self.update_user_booking,
             "/bookings/cancel": self.cancel_user_booking,
             "/student-verification": self.update_student_verification,
+            "/referrals/generate": self.generate_referral_code,
             "/admin/content": self.update_content,
             "/admin/cars": self.create_admin_car,
             "/admin/cars/status": self.update_admin_car_status,
@@ -1162,6 +1194,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "value": row["value"],
                     "validThrough": row["valid_through"],
                     "status": row["status"],
+                    "maxUses": row["max_uses"],
+                    "usedCount": row["used_count"],
                 }
                 for row in get_active_discounts()
             ]
@@ -1187,6 +1221,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             fuel_filters=fuel_filters,
             discounts_json=escape(discounts_json),
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def deals_page(self, code: str = "", message: str = "") -> None:
+        user = self.current_user()
+        body = render_template(
+            "deals.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            generated_code=escape(code),
+            referral_message=escape(message),
+            generated_class="" if code else "is-hidden",
         )
         self.send_html(body)
 
@@ -1418,6 +1463,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "status_class": booking_status_class("CANCELLATION_REQUESTED"),
         })
 
+    def generate_referral_code(self) -> None:
+        form = self.read_form()
+        username = form.get("instagram_username", "")
+        code = create_referral_discount(username)
+        self.deals_page(
+            code,
+            "Referral code generated and saved in Admin Discounts. Use is limited to 3 referrals.",
+        )
+
     def update_student_verification(self) -> None:
         user = self.current_user()
         if not user:
@@ -1528,7 +1582,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_discounts.html",
             admin_name=escape(user["name"]),
-            discounts=discounts or '<tr><td colspan="6">No discount codes yet.</td></tr>',
+            discounts=discounts or '<tr><td colspan="7">No discount codes yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -1668,11 +1722,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_discount_row(self, row: sqlite3.Row) -> str:
         value = f'{row["value"]:.2f}%' if row["discount_type"] == "PERCENT" else f'${row["value"]:.2f}'
+        usage = f'{row["used_count"]}/{row["max_uses"]}' if row["max_uses"] else f'{row["used_count"]}/Unlimited'
         return f"""
         <tr>
             <td><b>{escape(row["code"])}</b><span>{escape(row["description"])}</span></td>
             <td>{escape(row["discount_type"])}</td>
             <td>{value}</td>
+            <td>{usage}</td>
             <td>{escape(row["valid_through"])}</td>
             <td>{escape(row["status"])}</td>
             <td>
@@ -1863,8 +1919,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """
                 INSERT OR REPLACE INTO discounts
-                (code, description, discount_type, value, valid_through, status)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
                 """,
                 (
                     code,
@@ -1873,6 +1929,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     float(form.get("value") or 0),
                     form.get("valid_through") or "2026-12-31",
                     form.get("status") or "ACTIVE",
+                    int(form.get("max_uses") or 0),
+                    code,
                 ),
             )
         self.redirect("/admin/discounts")

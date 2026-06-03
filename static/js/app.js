@@ -74,6 +74,11 @@ function validateDiscount() {
     discountMessage.classList.add("is-error");
     return;
   }
+  if (Number(discount.maxUses || 0) > 0 && Number(discount.usedCount || 0) >= Number(discount.maxUses)) {
+    discountMessage.textContent = "Discount code referral limit reached.";
+    discountMessage.classList.add("is-error");
+    return;
+  }
   discountMessage.textContent = discount.type === "PERCENT"
     ? `${discount.value}% discount will apply at booking.`
     : `$${Number(discount.value).toFixed(2)} discount will apply at booking.`;
