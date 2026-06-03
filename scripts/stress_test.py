@@ -163,6 +163,8 @@ def main() -> None:
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
+    assert_true("parseJsonData" in app_js and "textarea.innerHTML" in app_js, "frontend JSON parsing should not break all mobile controls")
+    assert_true("fetch(heroFoldVideo.dataset.videoSrc" not in app_js, "hero video should not depend on fragile HEAD requests")
     styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
     assert_true("rotateY(-82deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should include fold animation and reduced-motion fallback")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")

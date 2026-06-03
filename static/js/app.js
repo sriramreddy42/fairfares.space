@@ -14,7 +14,23 @@ const filterToggle = document.getElementById("filterToggle");
 const filterOptions = document.getElementById("filterOptions");
 const mobileQuery = window.matchMedia("(max-width: 760px)");
 const discountDataNode = document.getElementById("discountData");
-const activeDiscounts = discountDataNode ? JSON.parse(discountDataNode.textContent || "[]") : [];
+
+function parseJsonData(node, fallback = []) {
+  if (!node) return fallback;
+  try {
+    return JSON.parse(node.textContent || "[]");
+  } catch {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.innerHTML = node.textContent || "[]";
+      return JSON.parse(textarea.value);
+    } catch {
+      return fallback;
+    }
+  }
+}
+
+const activeDiscounts = parseJsonData(discountDataNode);
 
 function updateCars() {
   if (!carList) return;
@@ -163,20 +179,11 @@ function previewHeroFold() {
 function ensureHeroVideoSource() {
   if (!heroFoldVideo?.dataset.videoSrc) return Promise.resolve(false);
   if (heroFoldVideo.src) return Promise.resolve(true);
-  if (typeof heroVideoAvailable === "boolean") return Promise.resolve(heroVideoAvailable);
-  return fetch(heroFoldVideo.dataset.videoSrc, { method: "HEAD", cache: "no-store" })
-    .then((response) => {
-      heroVideoAvailable = response.ok;
-      if (heroVideoAvailable) {
-        heroFoldVideo.src = heroFoldVideo.dataset.videoSrc;
-        heroFoldVideo.load();
-      }
-      return heroVideoAvailable;
-    })
-    .catch(() => {
-      heroVideoAvailable = false;
-      return false;
-    });
+  if (heroVideoAvailable === false) return Promise.resolve(false);
+  heroFoldVideo.src = heroFoldVideo.dataset.videoSrc;
+  heroFoldVideo.load();
+  heroVideoAvailable = true;
+  return Promise.resolve(true);
 }
 
 function startHeroFoldPlayback() {
@@ -193,12 +200,11 @@ function startHeroFoldPlayback() {
     const playAttempt = heroFoldVideo.play();
     if (playAttempt?.catch) {
       playAttempt.catch(() => {
+        heroVideoAvailable = false;
         heroFoldTimer = window.setTimeout(closeHeroFold, 1200);
       });
     }
-    if (!heroFoldVideo.duration || Number.isNaN(heroFoldVideo.duration)) {
-      heroFoldTimer = window.setTimeout(closeHeroFold, 5200);
-    }
+    heroFoldTimer = window.setTimeout(closeHeroFold, 12000);
   }, 260);
 }
 
@@ -216,6 +222,7 @@ function playHeroFold(options = {}) {
 heroFoldTrigger?.addEventListener("click", () => playHeroFold({ previewWhenMissing: true }));
 heroFoldVideo?.addEventListener("ended", closeHeroFold);
 heroFoldVideo?.addEventListener("error", () => {
+  heroVideoAvailable = false;
   if (heroFoldRunning) heroFoldTimer = window.setTimeout(closeHeroFold, 1200);
 });
 
