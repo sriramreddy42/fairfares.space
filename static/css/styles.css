@@ -1938,10 +1938,6 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     font-size: 0.82rem;
   }
 
-  .manage-screen .manage-sidebar {
-    display: none;
-  }
-
   .page-heading {
     background: #fff;
     border: 1px solid var(--line);
