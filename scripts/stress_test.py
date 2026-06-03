@@ -114,6 +114,43 @@ def main() -> None:
     cars = app.get_cars()
     assert_true(len(cars) >= 4, "seed cars should be available")
     assert_true(all(row["image_url"] for row in cars), "all seed cars should have images")
+    with app.db() as con:
+        con.executemany(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    f"Stress Fleet {index}",
+                    "Stress",
+                    f"Fleet {index}",
+                    2026,
+                    "Compact" if index % 2 else "SUV",
+                    "Sedan" if index % 2 else "SUV",
+                    "Gasoline" if index % 3 else "Electric",
+                    5,
+                    2,
+                    4,
+                    "Automatic",
+                    31.00 + index,
+                    (31.00 + index) * 7,
+                    "Stress Ready",
+                    "charcoal",
+                    "Free Cancellation|Unlimited Mileage|24/7 Support",
+                    "Denver International Airport (DEN)",
+                    "/static/img/car-nissan-sentra.png",
+                    " available " if index == 1 else "AVAILABLE",
+                    100 + index,
+                )
+                for index in range(1, 21)
+            ],
+        )
+    cars = app.get_cars()
+    assert_true(len(cars) >= 24, "stress inventory should include added available cars")
+    assert_true(any(row["name"] == "Stress Fleet 1" for row in cars), "available status should be normalized for user feed queries")
     first_card = app.FairFaresHandler.render_car_card(None, cars[0])
     assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")

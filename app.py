@@ -463,6 +463,7 @@ def init_db() -> None:
             WHERE name = 'Honda Civic' AND (brand = '' OR model = '' OR type = '');
             UPDATE cars SET location = 'Denver International Airport (DEN)' WHERE location = '';
             UPDATE cars SET status = 'AVAILABLE' WHERE status = '';
+            UPDATE cars SET status = UPPER(TRIM(status)) WHERE status != UPPER(TRIM(status));
             """
         )
 
@@ -561,7 +562,7 @@ def get_cars() -> list[sqlite3.Row]:
         return con.execute(
             """
             SELECT * FROM cars
-            WHERE status = 'AVAILABLE'
+            WHERE UPPER(TRIM(status)) = 'AVAILABLE'
             ORDER BY sort_order, daily_price, id
             """
         ).fetchall()
@@ -586,7 +587,7 @@ def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
                 """
                 SELECT COALESCE(NULLIF(category, ''), type) AS label, COUNT(*) AS total
                 FROM cars
-                WHERE status = 'AVAILABLE'
+                WHERE UPPER(TRIM(status)) = 'AVAILABLE'
                 GROUP BY label
                 ORDER BY label
                 """
@@ -595,7 +596,7 @@ def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
                 """
                 SELECT fuel_type AS label, COUNT(*) AS total
                 FROM cars
-                WHERE status = 'AVAILABLE'
+                WHERE UPPER(TRIM(status)) = 'AVAILABLE'
                 GROUP BY fuel_type
                 ORDER BY fuel_type
                 """
@@ -677,9 +678,9 @@ def get_fleet_summary() -> list[sqlite3.Row]:
             """
             SELECT COALESCE(NULLIF(category, ''), type) AS type,
                    COUNT(*) AS total,
-                   SUM(CASE WHEN status = 'AVAILABLE' THEN 1 ELSE 0 END) AS available,
-                   SUM(CASE WHEN status = 'BOOKED' THEN 1 ELSE 0 END) AS booked,
-                   SUM(CASE WHEN status = 'MAINTENANCE' THEN 1 ELSE 0 END) AS maintenance,
+                   SUM(CASE WHEN UPPER(TRIM(status)) = 'AVAILABLE' THEN 1 ELSE 0 END) AS available,
+                   SUM(CASE WHEN UPPER(TRIM(status)) = 'BOOKED' THEN 1 ELSE 0 END) AS booked,
+                   SUM(CASE WHEN UPPER(TRIM(status)) = 'MAINTENANCE' THEN 1 ELSE 0 END) AS maintenance,
                    ROUND(AVG(daily_price), 2) AS avg_daily,
                    GROUP_CONCAT(DISTINCT fuel_type) AS fuel_types
             FROM cars
@@ -693,7 +694,7 @@ def get_admin_metrics() -> dict[str, int]:
     with db() as con:
         return {
             "cars": con.execute("SELECT COUNT(*) AS total FROM cars").fetchone()["total"],
-            "available": con.execute("SELECT COUNT(*) AS total FROM cars WHERE status = 'AVAILABLE'").fetchone()["total"],
+            "available": con.execute("SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) = 'AVAILABLE'").fetchone()["total"],
             "booked": con.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"],
             "users": con.execute("SELECT COUNT(*) AS total FROM users WHERE is_admin = 0").fetchone()["total"],
         }
@@ -836,8 +837,10 @@ def make_booking_id() -> str:
 def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
     requested_car = get_car(car_id)
     available_cars = get_cars()
-    car = requested_car if requested_car and requested_car["status"] == "AVAILABLE" else None
-    car = car or (available_cars[0] if available_cars else get_admin_cars()[0])
+    car = requested_car if requested_car and requested_car["status"].strip().upper() == "AVAILABLE" else None
+    car = car or (available_cars[0] if available_cars else None)
+    if not car:
+        raise RuntimeError("No available cars in inventory")
     with db() as con:
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
@@ -872,15 +875,18 @@ def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
     return booking
 
 
-def ensure_booking_for_user(user_id: int, car_id: int | None = None) -> sqlite3.Row:
+def ensure_booking_for_user(user_id: int, car_id: int | None = None) -> sqlite3.Row | None:
     existing = get_booking_for_user(user_id)
     if existing and not car_id:
         return existing
     if car_id:
-        return create_booking_for_user(user_id, car_id)
+        requested_car = get_car(car_id)
+        if requested_car and requested_car["status"].strip().upper() == "AVAILABLE":
+            return create_booking_for_user(user_id, car_id)
+        return None
     cars = get_cars()
     if not cars:
-        cars = get_admin_cars()
+        return None
     return create_booking_for_user(user_id, cars[0]["id"])
 
 
