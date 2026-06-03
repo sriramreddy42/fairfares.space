@@ -486,14 +486,6 @@ def init_db() -> None:
                 ),
             )
 
-        alex = con.execute("SELECT id FROM users WHERE email = ?", ("alex@student.edu",)).fetchone()
-        if not alex:
-            con.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-                ("Alex", "alex@student.edu", hash_password("Student123!")),
-            )
-            alex = con.execute("SELECT id FROM users WHERE email = ?", ("alex@student.edu",)).fetchone()
-
         demo = con.execute("SELECT id FROM users WHERE email = ?", ("demo@fairfares.com",)).fetchone()
         if not demo:
             con.execute(
@@ -534,40 +526,13 @@ def init_db() -> None:
                     ),
                 )
 
-        if alex and toyota:
-            alex_booking = con.execute("SELECT 1 FROM bookings WHERE user_id = ?", (alex["id"],)).fetchone()
-            if not alex_booking:
-                con.execute(
-                    """
-                    INSERT INTO bookings
-                    (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
-                     dropoff_location, dropoff_date, dropoff_time, days, total_price, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        "FFALX0001",
-                        alex["id"],
-                        toyota["id"],
-                        "AVIS",
-                        "Denver International Airport (DEN)",
-                        "Jun 10, 2025",
-                        "10:00 AM",
-                        "Denver International Airport (DEN)",
-                        "Jun 20, 2025",
-                        "10:00 AM",
-                        10,
-                        209.93,
-                        "CONFIRMED",
-                    ),
-                )
-
         con.execute(
             """
             UPDATE users
             SET is_verified = 1,
                 verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
             WHERE is_admin = 1
-               OR email IN ('alex@student.edu', 'demo@fairfares.com')
+               OR email = 'demo@fairfares.com'
             """
         )
 
@@ -2115,15 +2080,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
+        signed_out_auth = '<a class="user-chip" href="/login"><span></span><b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         body = render_template(
             "dashboard.html",
-            name=escape(user["name"] if user else "Alex"),
+            name=escape(user["name"] if user else "FairFares Member"),
             role="Admin" if user and user["is_admin"] else "Student",
             admin_panel=admin_panel,
             manage_auth=(
                 f'<a class="user-chip" href="/dashboard"><span></span><b>Hi, {escape(user["name"])}</b><small>Student</small></a><a href="/logout">Log out</a>'
                 if user
-                else '<span class="user-chip"><span></span><b>Hi, Alex</b><small>Student</small></span><a href="/login">Sign in / Join</a>'
+                else signed_out_auth
             ),
             booking_id=escape(booking["booking_id"] if booking else "No booking yet"),
             dashboard_booking_title=escape(dashboard_booking_title),
@@ -2157,8 +2123,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),
             booking_documents_json=booking_documents_json,
-            student_email=escape((user["student_email"] or user["email"]) if user else "alex@student.edu"),
-            student_id=escape((user["student_id"] or f"STU-{user['id']:04d}") if user else "STU-2025-1042"),
+            document_email=escape(user["email"] if user else ""),
+            student_email=escape((user["student_email"] or user["email"]) if user else ""),
+            student_id=escape((user["student_id"] or f"STU-{user['id']:04d}") if user else ""),
             student_verified_label="Verified Student" if user and user["student_verified"] else "Student Verification Pending",
             student_discount_label="15% discount applied" if user and user["student_verified"] else "Verify to unlock student discount",
             student_verified_box_class="" if user and user["student_verified"] else "is-pending",
