@@ -637,8 +637,22 @@ def get_cars() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
             """
-            SELECT * FROM cars
-            WHERE UPPER(TRIM(status)) = 'AVAILABLE'
+            SELECT cars.*,
+                   active.dropoff_date AS booked_until_date,
+                   active.dropoff_time AS booked_until_time,
+                   active.booking_status AS active_booking_status
+            FROM cars
+            LEFT JOIN (
+                SELECT b.*
+                FROM bookings b
+                JOIN (
+                    SELECT car_id, MAX(id) AS latest_id
+                    FROM bookings
+                    WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                    GROUP BY car_id
+                ) latest ON latest.latest_id = b.id
+            ) active ON active.car_id = cars.id
+            WHERE UPPER(TRIM(cars.status)) != 'MAINTENANCE'
             ORDER BY sort_order, daily_price, id
             """
         ).fetchall()
@@ -663,7 +677,7 @@ def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
                 """
                 SELECT COALESCE(NULLIF(category, ''), type) AS label, COUNT(*) AS total
                 FROM cars
-                WHERE UPPER(TRIM(status)) = 'AVAILABLE'
+                WHERE UPPER(TRIM(status)) != 'MAINTENANCE'
                 GROUP BY label
                 ORDER BY label
                 """
@@ -672,7 +686,7 @@ def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
                 """
                 SELECT fuel_type AS label, COUNT(*) AS total
                 FROM cars
-                WHERE UPPER(TRIM(status)) = 'AVAILABLE'
+                WHERE UPPER(TRIM(status)) != 'MAINTENANCE'
                 GROUP BY fuel_type
                 ORDER BY fuel_type
                 """
@@ -1050,6 +1064,39 @@ def format_booking_date(value: str, fallback: str) -> str:
             return fallback
 
 
+def parse_booking_datetime(date_value: str, time_value: str) -> datetime | None:
+    if not date_value:
+        return None
+    for date_format in ("%Y-%m-%d", "%b %d, %Y"):
+        try:
+            parsed_date = datetime.strptime(date_value, date_format)
+            break
+        except ValueError:
+            parsed_date = None
+    if not parsed_date:
+        return None
+    try:
+        parsed_time = datetime.strptime(time_value or "10:00 AM", "%I:%M %p").time()
+    except ValueError:
+        parsed_time = datetime.strptime("10:00 AM", "%I:%M %p").time()
+    return datetime.combine(parsed_date.date(), parsed_time)
+
+
+def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM bookings
+            WHERE car_id = ?
+              AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (car_id,),
+        ).fetchone()
+
+
 def create_booking_for_user(
     user_id: int,
     car_id: int,
@@ -1061,9 +1108,29 @@ def create_booking_for_user(
     return_time: str = "10:00 AM",
 ) -> sqlite3.Row:
     requested_car = get_car(car_id)
-    available_cars = get_cars()
-    car = requested_car if requested_car and requested_car["status"].strip().upper() == "AVAILABLE" else None
-    car = car or (available_cars[0] if available_cars else None)
+    requested_start = parse_booking_datetime(pickup_date or "2025-06-10", pickup_time)
+    candidates = []
+    if requested_car:
+        candidates.append(requested_car)
+    candidates.extend(row for row in get_cars() if not requested_car or row["id"] != requested_car["id"])
+    car = None
+    for candidate in candidates:
+        if candidate["status"].strip().upper() == "MAINTENANCE":
+            continue
+        active_booking = active_booking_for_car(candidate["id"])
+        active_return = parse_booking_datetime(
+            active_booking["dropoff_date"],
+            active_booking["dropoff_time"],
+        ) if active_booking else None
+        if requested_start and active_return and requested_start < active_return:
+            if requested_car and candidate["id"] == requested_car["id"] and requested_start.date() == active_return.date():
+                pickup_date = active_return.strftime("%Y-%m-%d")
+                pickup_time = active_return.strftime("%I:%M %p").lstrip("0")
+                car = candidate
+                break
+            continue
+        car = candidate
+        break
     if not car:
         raise RuntimeError("No available cars in inventory")
     with db() as con:
@@ -1127,7 +1194,7 @@ def ensure_booking_for_user(
         return existing
     if car_id:
         requested_car = get_car(car_id)
-        if requested_car and requested_car["status"].strip().upper() == "AVAILABLE":
+        if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
             return create_booking_for_user(user_id, car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time)
         return None
     cars = get_cars()
@@ -1728,8 +1795,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if row["image_url"]
             else '<div class="car-shape"></div>'
         )
+        booked_until_date = row_value(row, "booked_until_date")
+        booked_until_time = row_value(row, "booked_until_time")
         return f"""
-        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}">
+        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
             <div class="car-art car-{escape(row["color"])}">
                 <span class="deal-badge">{escape(row["badge"])}</span>
                 {car_visual}
@@ -1748,6 +1817,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <div class="price-box">
                 <strong data-price-range>${row["daily_price"] * 0.9:.0f}-${row["daily_price"] * 1.1:.0f}</strong><span>/day est.</span>
                 <small><b data-total-range>${row["total_price"] * 0.9:.0f}-${row["total_price"] * 1.1:.0f}</b> total range · <span data-range-days>10 days</span></small>
+                <small class="availability-note" data-availability-note></small>
                 <em>Quote match + extra 10% discount with Avis/Enterprise/etc. quote.</em>
                 <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 <a class="details-link" href="/api/cars">View Details</a>

@@ -167,6 +167,7 @@ def main() -> None:
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     assert_true("rentalLengthLabel" in index_template and "quoteMatchLabel" in index_template, "homepage search should show rental days/months and quote-match message")
     assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
+    assert_true("Available after" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
@@ -240,6 +241,38 @@ def main() -> None:
     emails = {user["email"] for user in users}
     assert_true(len(emails) == 15, "multiple unique signups should persist")
     assert_true(all("StressPass" not in user["password_hash"] for user in users), "passwords must be hashed, not plaintext")
+
+    same_day_user = create_verified_user(99)
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+            VALUES ('Same Day Return Test', 'Toyota', 'Camry', 2026, 'Midsize', 'Sedan', 'Gasoline',
+                    5, 2, 4, 'Automatic', 50, 500, 'Returning Soon', 'silver',
+                    'Free Cancellation|Quote Match', 'Denver International Airport (DEN)',
+                    '/static/img/car-honda-civic.png', 'BOOKED', 98)
+            """
+        )
+        same_day_car = con.execute("SELECT id FROM cars WHERE name = 'Same Day Return Test'").fetchone()
+        con.execute(
+            """
+            INSERT INTO bookings
+            (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
+             dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, total_price, status, booking_status, payment_status)
+            VALUES ('FFSAMEDAY1', ?, ?, 'AVIS', 'Denver International Airport (DEN)', 'Jun 1, 2026', '10:00 AM',
+                    'Denver International Airport (DEN)', 'Jun 15, 2026', '12:00 PM', 14, 700, 700,
+                    'CONFIRMED', 'CONFIRMED', 'PAY_AT_PICKUP')
+            """,
+            (same_day_user["id"], same_day_car["id"]),
+        )
+    same_day_row = next(row for row in app.get_cars() if row["name"] == "Same Day Return Test")
+    same_day_card = app.FairFaresHandler.render_car_card(None, same_day_row)
+    assert_true('data-booked-until-date="Jun 15, 2026"' in same_day_card and 'data-booked-until-time="12:00 PM"' in same_day_card, "booked cars returning same day should remain in feed with return time")
+    adjusted_user = create_verified_user(100)
+    adjusted_booking = app.create_booking_for_user(adjusted_user["id"], same_day_car["id"], "", 5, "2026-06-15", "2026-06-20", "10:00 AM", "10:00 AM")
+    assert_true(adjusted_booking["pickup_date"] == "Jun 15, 2026" and adjusted_booking["pickup_time"] == "12:00 PM", "same-day pickup should adjust to car return time")
 
     duplicate_failed = False
     try:

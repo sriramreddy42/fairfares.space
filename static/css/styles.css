@@ -688,6 +688,13 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .price-box strong { color: var(--red); font-size: 1.9rem; }
 .price-box small { color: #111; }
+.price-box .availability-note {
+  color: #0b6f35;
+  font-weight: 900;
+}
+.car-card.is-available-after {
+  border-color: #bfe6c6;
+}
 .price-box em {
   color: var(--muted);
   font-size: 0.78rem;

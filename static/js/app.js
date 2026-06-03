@@ -50,6 +50,35 @@ function getRentalDays() {
   return Number.isFinite(diff) && diff > 0 ? diff : 1;
 }
 
+function timeTo24(timeText) {
+  const match = String(timeText || "10:00 AM").trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return "10:00";
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hours !== 12) hours += 12;
+  if (period === "AM" && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, "0")}:${minutes}`;
+}
+
+function parseCardAvailabilityDate(dateText, timeText) {
+  if (!dateText) return null;
+  const parsed = new Date(`${dateText} ${timeText || "10:00 AM"}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function selectedPickupDateTime() {
+  if (!pickupDate?.value) return null;
+  const parsed = new Date(`${pickupDate.value}T${timeTo24(pickupTime?.value)}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function sameCalendarDay(left, right) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
 function rentalLengthText(days) {
   if (days >= 30) {
     const months = days / 30;
@@ -85,13 +114,30 @@ function updateCars() {
   const selectedTypes = typeFilters.filter((input) => input.checked).map((input) => input.value);
   const selectedFuel = fuelFilters.filter((input) => input.checked).map((input) => input.value);
   const selectedLocation = locationSelect?.value || "";
+  const selectedPickup = selectedPickupDateTime();
   const cards = [...carList.querySelectorAll(".car-card")];
 
   cards.forEach((card) => {
     const typeMatch = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
     const fuelMatch = selectedFuel.length === 0 || selectedFuel.includes(card.dataset.fuel);
     const locationMatch = !selectedLocation || card.dataset.location === selectedLocation;
-    const visible = typeMatch && fuelMatch && locationMatch;
+    const availableAfter = parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime);
+    const availabilityNote = card.querySelector("[data-availability-note]");
+    const selectButton = card.querySelector(".select-button");
+    let availabilityMatch = true;
+    if (availabilityNote) availabilityNote.textContent = "";
+    card.classList.remove("is-available-after");
+    if (selectButton) selectButton.textContent = "Select";
+    if (selectedPickup && availableAfter && selectedPickup < availableAfter) {
+      if (sameCalendarDay(selectedPickup, availableAfter)) {
+        card.classList.add("is-available-after");
+        if (availabilityNote) availabilityNote.textContent = `Available after ${card.dataset.bookedUntilTime}`;
+        if (selectButton) selectButton.textContent = `Select after ${card.dataset.bookedUntilTime}`;
+      } else {
+        availabilityMatch = false;
+      }
+    }
+    const visible = typeMatch && fuelMatch && locationMatch && availabilityMatch;
     card.hidden = !visible;
   });
 
@@ -121,6 +167,8 @@ locationSelect?.addEventListener("change", updateCars);
 sortCars?.addEventListener("change", updateCars);
 pickupDate?.addEventListener("change", updateRentalRanges);
 returnDate?.addEventListener("change", updateRentalRanges);
+pickupDate?.addEventListener("change", updateCars);
+pickupTime?.addEventListener("change", updateCars);
 
 function clearCarFilters() {
   typeFilters.forEach((input) => {
@@ -173,10 +221,16 @@ document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").for
   button.addEventListener("click", (event) => {
     event.preventDefault();
     const url = new URL(button.getAttribute("href"), window.location.origin);
+    const card = button.closest(".car-card");
+    const selectedPickup = selectedPickupDateTime();
+    const availableAfter = card ? parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime) : null;
+    const adjustedPickupTime = selectedPickup && availableAfter && selectedPickup < availableAfter && sameCalendarDay(selectedPickup, availableAfter)
+      ? card.dataset.bookedUntilTime
+      : pickupTime?.value;
     url.searchParams.set("days", String(getRentalDays()));
     if (pickupDate?.value) url.searchParams.set("pickup_date", pickupDate.value);
     if (returnDate?.value) url.searchParams.set("return_date", returnDate.value);
-    if (pickupTime?.value) url.searchParams.set("pickup_time", pickupTime.value);
+    if (adjustedPickupTime) url.searchParams.set("pickup_time", adjustedPickupTime);
     if (returnTime?.value) url.searchParams.set("return_time", returnTime.value);
     if (discountCode?.value.trim()) {
       const code = discountCode.value.trim().toUpperCase();
