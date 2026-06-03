@@ -92,7 +92,7 @@ function updateRentalRanges() {
   const days = getRentalDays();
   if (rentalLengthLabel) rentalLengthLabel.textContent = rentalLengthText(days);
   if (quoteMatchLabel) {
-    quoteMatchLabel.textContent = "Bring a written Avis, Enterprise, Budget, Hertz, or similar quote. FairFares will match it and add 10% extra discount.";
+    quoteMatchLabel.textContent = "Find a lower price from Avis, Enterprise, Budget, Hertz, or a similar provider for the same rental period, and FairFares will match it plus take an extra 10% off.";
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);

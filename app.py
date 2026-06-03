@@ -1818,7 +1818,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <strong data-price-range>${row["daily_price"] * 0.9:.0f}-${row["daily_price"] * 1.1:.0f}</strong><span>/day est.</span>
                 <small><b data-total-range>${row["total_price"] * 0.9:.0f}-${row["total_price"] * 1.1:.0f}</b> total range · <span data-range-days>10 days</span></small>
                 <small class="availability-note" data-availability-note></small>
-                <em>Quote match + extra 10% discount with Avis/Enterprise/etc. quote.</em>
+                <em>Lower provider price? FairFares matches it plus takes an extra 10% off.</em>
                 <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 <a class="details-link" href="/api/cars">View Details</a>
             </div>
