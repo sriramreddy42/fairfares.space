@@ -433,16 +433,20 @@ def init_db() -> None:
             con.executemany(
                 """
                 INSERT INTO cars
-                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission, daily_price, total_price, badge, color, features, location, status, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission, daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "AVAILABLE", 1),
-                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "AVAILABLE", 2),
-                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "AVAILABLE", 3),
-                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "AVAILABLE", 4),
+                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/car-toyota-corolla.png", "AVAILABLE", 1),
+                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/car-nissan-sentra.png", "AVAILABLE", 2),
+                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/car-hyundai-kona.png", "AVAILABLE", 3),
+                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/car-honda-civic.png", "AVAILABLE", 4),
                 ],
             )
+        con.execute("UPDATE cars SET image_url = '/static/img/car-toyota-corolla.png' WHERE name = 'Toyota Corolla' AND image_url = ''")
+        con.execute("UPDATE cars SET image_url = '/static/img/car-nissan-sentra.png' WHERE name = 'Nissan Sentra' AND image_url = ''")
+        con.execute("UPDATE cars SET image_url = '/static/img/car-hyundai-kona.png' WHERE name = 'Hyundai Kona' AND image_url = ''")
+        con.execute("UPDATE cars SET image_url = '/static/img/car-honda-civic.png' WHERE name = 'Honda Civic' AND image_url = ''")
         con.executescript(
             """
             UPDATE cars SET brand = 'Toyota', model = 'Corolla', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
@@ -1188,11 +1192,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_car_card(self, row: sqlite3.Row) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
+        car_visual = (
+            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(row["name"])}">'
+            if row["image_url"]
+            else '<div class="car-shape"></div>'
+        )
         return f"""
         <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}">
             <div class="car-art car-{escape(row["color"])}">
                 <span class="deal-badge">{escape(row["badge"])}</span>
-                <div class="car-shape"></div>
+                {car_visual}
             </div>
             <div class="car-info">
                 <h3>{escape(row["name"])}</h3>

@@ -277,7 +277,16 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   align-items: end;
   display: flex;
   height: 140px;
+  justify-content: center;
   position: relative;
+}
+.car-card-image {
+  display: block;
+  height: 132px;
+  margin: 0 auto;
+  max-width: 100%;
+  object-fit: contain;
+  width: 260px;
 }
 .deal-badge {
   background: #c9f0cf;
