@@ -1081,11 +1081,59 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.is-hidden {
+  display: none !important;
+}
 .trip-card {
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(210px, 260px) minmax(0, 1fr) minmax(230px, 1.15fr) minmax(118px, 130px);
   padding: 22px;
+}
+.first-booking-promo {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.first-booking-promo img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+.first-booking-promo-body {
+  align-items: center;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(140px, 180px);
+  padding: 18px 20px;
+}
+.first-booking-promo-body h2 {
+  font-size: 1.35rem;
+  margin: 2px 0 6px;
+}
+.first-booking-promo-body p {
+  color: var(--muted);
+  margin: 0;
+}
+.promo-code-box {
+  border: 1px dashed var(--red);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: center;
+}
+.promo-code-box span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.promo-code-box b {
+  color: var(--red);
+  display: block;
+  font-size: 1rem;
+  margin-top: 3px;
 }
 .status-badge {
   background: #c9f0cf;
@@ -1692,6 +1740,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     grid-column: 1 / -1;
     grid-template-columns: repeat(4, auto);
     justify-content: space-between;
+  }
+  .first-booking-promo-body {
+    grid-template-columns: 1fr;
+  }
+  .promo-code-box {
+    text-align: left;
   }
 }
 
@@ -2546,6 +2600,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 @media (max-width: 600px) {
+  .first-booking-promo-body {
+    padding: 14px;
+  }
+  .first-booking-promo-body h2 {
+    font-size: 1.1rem;
+  }
   .admin-layout {
     padding: 14px 12px 34px;
   }

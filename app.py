@@ -1884,6 +1884,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
         user_bookings = get_bookings_for_user(user["id"]) if user else ([booking] if booking else [])
+        is_first_time_user = bool(user and not user_bookings)
         trip_rows = render_user_trip_rows(user_bookings)
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
@@ -1927,6 +1928,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </section>
             """
         booking_documents_json = json.dumps(get_booking_documents(booking["id"] if booking else None)).replace("</", "<\\/")
+        first_booking_promo = ""
+        if is_first_time_user:
+            first_booking_promo = """
+            <section class="first-booking-promo" id="upcoming">
+                <img src="/static/img/referral-deals-denver.jpeg" alt="FairFares Denver referral deal">
+                <div class="first-booking-promo-body">
+                    <div>
+                        <p class="eyebrow">First trip offer</p>
+                        <h2>Start with a Denver student deal.</h2>
+                        <p>No booking yet. Use the referral code when you search and your trip details will appear here after checkout.</p>
+                    </div>
+                    <div class="promo-code-box">
+                        <span>Deal code</span>
+                        <b>REFER_DUDE143</b>
+                    </div>
+                    <a class="select-button" href="/#results">Search Cars</a>
+                </div>
+            </section>
+            """
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "Alex"),
@@ -1938,6 +1958,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else '<span class="user-chip"><span></span><b>Hi, Alex</b><small>Student</small></span><a href="/login">Sign in / Join</a>'
             ),
             booking_id=escape(booking["booking_id"] if booking else "No booking yet"),
+            first_booking_promo=first_booking_promo,
+            trip_card_class="trip-card is-hidden" if is_first_time_user else "trip-card",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),
