@@ -818,12 +818,17 @@ def render_user_trip_rows(bookings: list[sqlite3.Row]) -> str:
     return "\n".join(rows)
 
 
-def booking_status_label(status: str) -> str:
+def booking_status_label(status: str, payment_status: str = "") -> str:
+    if status == "CONFIRMED":
+        return "Confirmed / Pay at pickup"
     labels = {
-        "CANCELLATION_REQUESTED": "REQUEST SENT TO ADMIN",
-        "PICKED_UP": "PICKED UP",
+        "CANCELLATION_REQUESTED": "Request sent to admin",
+        "CANCELLED": "Cancelled",
+        "MODIFIED": "Modified",
+        "PICKED_UP": "Picked up",
+        "RETURNED": "Returned",
     }
-    return labels.get(status, status.replace("_", " "))
+    return labels.get(status, status.replace("_", " ").title())
 
 
 def booking_status_class(status: str) -> str:
@@ -1777,20 +1782,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
+        booking_status_options = (
+            ("CONFIRMED", "Confirmed / Pay at pickup"),
+            ("MODIFIED", "Modified"),
+            ("CANCELLATION_REQUESTED", "Cancellation requested"),
+            ("CANCELLED", "Cancelled"),
+            ("PICKED_UP", "Picked up"),
+            ("RETURNED", "Returned"),
+        )
         status_options = "".join(
-            f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{status}</option>'
-            for status in ("CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED")
+            f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{escape(label)}</option>'
+            for status, label in booking_status_options
         )
-        payment_options = "".join(
-            f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{status}</option>'
-            for status in ("PAY_AT_PICKUP", "PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")
-        )
+        payment_options = '<option value="PAY_AT_PICKUP" selected>Pay at pickup</option>'
         request_note = ""
         if row["booking_status"] == "CANCELLATION_REQUESTED":
             request_note = '<small class="approval-note">Approval requested: choose CANCELLED to approve, or CONFIRMED/MODIFIED to keep booking.</small>'
         return f"""
         <tr>
-            <td><b>{escape(row["booking_id"])}</b><span>{escape(row["booking_status"])}</span></td>
+            <td><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
             <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
             <td>{escape(row["car_name"])}</td>
             <td>{escape(row["pickup_date"])} - {escape(row["dropoff_date"])}</td>
@@ -2009,7 +2019,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
         if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status not in {"PAY_AT_PICKUP", "PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED"}:
+        if payment_status != "PAY_AT_PICKUP":
             payment_status = "PAY_AT_PICKUP"
         with db() as con:
             con.execute(
@@ -2422,11 +2432,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
             price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
-            status=escape(booking_status_label(booking["booking_status"]) if booking else "NO BOOKING"),
+            status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),
             status_class=escape(booking_status_class(booking["booking_status"]) if booking else "status-muted"),
-            payment_status_label=escape(payment_status_label(booking["payment_status"]) if booking else "No payment selected"),
-            payment_status_body=escape("Confirmed. Payment will be collected when you pick up the vehicle." if booking and booking["payment_status"] == "PAY_AT_PICKUP" else ("Payment received online." if booking and booking["payment_status"] == "PAID" else "Payment details are pending.")),
-            booking_payment_state=escape("CONFIRMED / PAY AT PICKUP" if booking and booking["payment_status"] == "PAY_AT_PICKUP" else ("CONFIRMED / PAID" if booking and booking["payment_status"] == "PAID" else payment_status_label(booking["payment_status"]) if booking else "NO PAYMENT")),
             upgrade_options=upgrade_options,
             upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),

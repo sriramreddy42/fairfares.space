@@ -155,7 +155,7 @@ def main() -> None:
     assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
-    assert_true("payment-confirmation" in dashboard_template and "$booking_payment_state" in dashboard_template, "manage booking should show payment pickup confirmation")
+    assert_true("payment-confirmation" not in dashboard_template and "$booking_payment_state" not in dashboard_template, "manage booking should use the booking badge for pay at pickup")
     assert_true('data-manage-tab="details" data-detail-jump="student"' in dashboard_template, "student verification link should open details/student")
     assert_true('data-manage-tab="details" data-detail-jump="saved"' in dashboard_template, "saved trips link should open details/saved")
     assert_true('data-manage-tab="support"' in dashboard_template, "support link should open support panel")
@@ -251,6 +251,7 @@ def main() -> None:
         booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"])
         assert_true(booking["booking_status"] == "CONFIRMED", "new booking should be confirmed")
         assert_true(booking["payment_status"] == "PAY_AT_PICKUP", "new selected bookings should default to pay at pickup")
+        assert_true(app.booking_status_label(booking["booking_status"], booking["payment_status"]) == "Confirmed / Pay at pickup", "confirmed booking badge should show pay at pickup")
         assert_true(app.payment_status_label(booking["payment_status"]) == "Pay at pickup", "pay at pickup label should be user friendly")
         booked_ids.append(booking["id"])
         with app.db() as con:
@@ -273,11 +274,14 @@ def main() -> None:
         request_cancellation(booking["id"])
         requested = app.get_booking_for_user(user["id"])
         assert_true(requested["booking_status"] == "CANCELLATION_REQUESTED", "cancel request should be visible to user")
-        assert_true(app.booking_status_label(requested["booking_status"]) == "REQUEST SENT TO ADMIN", "user card label should be friendly")
+        assert_true(app.booking_status_label(requested["booking_status"]) == "Request sent to admin", "user card label should be friendly")
 
     admin_bookings = app.get_admin_bookings()
     requested_count = sum(1 for row in admin_bookings if row["booking_status"] == "CANCELLATION_REQUESTED")
     assert_true(requested_count == len(users), "admin should see every cancellation request")
+    admin_row_html = app.FairFaresHandler.render_admin_booking_row(None, admin_bookings[0])
+    assert_true('value="PAY_AT_PICKUP"' in admin_row_html, "admin booking row should keep pay at pickup")
+    assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")), "admin payment dropdown should not show old payment options")
 
     for booking_id in booked_ids[:8]:
         admin_approve_cancel(booking_id)
