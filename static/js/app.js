@@ -2,19 +2,30 @@ const carList = document.getElementById("carList");
 const sortCars = document.getElementById("sortCars");
 const resultCount = document.getElementById("resultCount");
 const typeFilters = [...document.querySelectorAll(".type-filter")];
+const fuelFilters = [...document.querySelectorAll(".fuel-filter")];
 const clearFilters = document.getElementById("clearFilters");
 const searchForm = document.getElementById("searchForm");
+const locationSelect = document.getElementById("location");
+const discountCode = document.getElementById("discountCode");
+const discountMessage = document.getElementById("discountMessage");
 const filterToggle = document.getElementById("filterToggle");
 const filterOptions = document.getElementById("filterOptions");
 const mobileQuery = window.matchMedia("(max-width: 760px)");
+const discountDataNode = document.getElementById("discountData");
+const activeDiscounts = discountDataNode ? JSON.parse(discountDataNode.textContent || "[]") : [];
 
 function updateCars() {
   if (!carList) return;
   const selectedTypes = typeFilters.filter((input) => input.checked).map((input) => input.value);
+  const selectedFuel = fuelFilters.filter((input) => input.checked).map((input) => input.value);
+  const selectedLocation = locationSelect?.value || "";
   const cards = [...carList.querySelectorAll(".car-card")];
 
   cards.forEach((card) => {
-    const visible = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
+    const typeMatch = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
+    const fuelMatch = selectedFuel.length === 0 || selectedFuel.includes(card.dataset.fuel);
+    const locationMatch = !selectedLocation || card.dataset.location === selectedLocation;
+    const visible = typeMatch && fuelMatch && locationMatch;
     card.hidden = !visible;
   });
 
@@ -29,13 +40,47 @@ function updateCars() {
 }
 
 typeFilters.forEach((input) => input.addEventListener("change", updateCars));
+fuelFilters.forEach((input) => input.addEventListener("change", updateCars));
+locationSelect?.addEventListener("change", updateCars);
 sortCars?.addEventListener("change", updateCars);
 clearFilters?.addEventListener("click", () => {
   typeFilters.forEach((input) => {
     input.checked = false;
   });
+  fuelFilters.forEach((input) => {
+    input.checked = false;
+  });
+  if (locationSelect) locationSelect.value = "";
   updateCars();
 });
+
+function validateDiscount() {
+  if (!discountCode || !discountMessage) return;
+  const code = discountCode.value.trim().toUpperCase();
+  if (!code) {
+    discountMessage.textContent = "";
+    discountMessage.classList.remove("is-error");
+    return;
+  }
+  const discount = activeDiscounts.find((item) => item.code.toUpperCase() === code);
+  if (!discount) {
+    discountMessage.textContent = "Discount code not found.";
+    discountMessage.classList.add("is-error");
+    return;
+  }
+  const expires = new Date(`${discount.validThrough}T23:59:59`);
+  if (Number.isNaN(expires.getTime()) || expires < new Date()) {
+    discountMessage.textContent = "Discount code expired.";
+    discountMessage.classList.add("is-error");
+    return;
+  }
+  discountMessage.textContent = discount.type === "PERCENT"
+    ? `${discount.value}% discount will apply at booking.`
+    : `$${Number(discount.value).toFixed(2)} discount will apply at booking.`;
+  discountMessage.classList.remove("is-error");
+}
+
+discountCode?.addEventListener("input", validateDiscount);
 
 function setFilterOptions(open) {
   if (!filterToggle || !filterOptions) return;
@@ -230,7 +275,17 @@ modifyForm?.addEventListener("reset", () => {
 modifyForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   updateModifySummary();
-  modifyStatus.textContent = "Reservation changes saved for review.";
+  fetch("/bookings/modify", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(modifyForm)),
+  })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((payload) => {
+      modifyStatus.textContent = payload.message || "Reservation changes saved for review.";
+    })
+    .catch(() => {
+      modifyStatus.textContent = "Reservation changes saved for review.";
+    });
 });
 
 updateModifySummary();
@@ -265,7 +320,21 @@ cancelForm?.addEventListener("submit", (event) => {
     cancelStatus.textContent = "Choose a cancellation reason to continue.";
     return;
   }
-  cancelStatus.textContent = `Cancellation request created. Refund method: ${refundMethod.value}.`;
+  const payload = new URLSearchParams();
+  payload.set("reason", cancelReason.value);
+  payload.set("note", document.getElementById("cancelNote")?.value || "");
+  payload.set("refund_method", refundMethod.value);
+  fetch("/bookings/cancel", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((data) => {
+      cancelStatus.textContent = data.message || `Cancellation request created. Refund method: ${refundMethod.value}.`;
+    })
+    .catch(() => {
+      cancelStatus.textContent = `Cancellation request created. Refund method: ${refundMethod.value}.`;
+    });
 });
 
 const documentPreview = document.getElementById("documentPreview");

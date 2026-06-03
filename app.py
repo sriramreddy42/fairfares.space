@@ -250,6 +250,7 @@ def init_db() -> None:
                 booking_status TEXT NOT NULL DEFAULT 'CONFIRMED',
                 payment_status TEXT NOT NULL DEFAULT 'PAID',
                 return_location TEXT NOT NULL DEFAULT '',
+                cancellation_reason TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
@@ -289,6 +290,17 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(booking_id) REFERENCES bookings(id)
             );
+
+            CREATE TABLE IF NOT EXISTS discounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                discount_type TEXT NOT NULL DEFAULT 'PERCENT',
+                value REAL NOT NULL,
+                valid_through TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -310,6 +322,7 @@ def init_db() -> None:
         ensure_column(con, "bookings", "booking_status", "booking_status TEXT NOT NULL DEFAULT 'CONFIRMED'")
         ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
@@ -364,6 +377,20 @@ def init_db() -> None:
                     ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "AVAILABLE", 4),
                 ],
             )
+        con.executescript(
+            """
+            UPDATE cars SET brand = 'Toyota', model = 'Corolla', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
+            WHERE name = 'Toyota Corolla' AND (brand = '' OR model = '' OR type = '');
+            UPDATE cars SET brand = 'Nissan', model = 'Sentra', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
+            WHERE name = 'Nissan Sentra' AND (brand = '' OR model = '' OR type = '');
+            UPDATE cars SET brand = 'Hyundai', model = 'Kona', year = COALESCE(year, 2025), type = 'SUV', fuel_type = 'Electric'
+            WHERE name = 'Hyundai Kona' AND (brand = '' OR model = '' OR type = '');
+            UPDATE cars SET brand = 'Honda', model = 'Civic', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
+            WHERE name = 'Honda Civic' AND (brand = '' OR model = '' OR type = '');
+            UPDATE cars SET location = 'Denver International Airport (DEN)' WHERE location = '';
+            UPDATE cars SET status = 'AVAILABLE' WHERE status = '';
+            """
+        )
 
         admin = con.execute("SELECT id FROM users WHERE email = ?", ("admin@fairfares.com",)).fetchone()
         toyota = con.execute("SELECT id FROM cars WHERE name = ?", ("Toyota Corolla",)).fetchone()
@@ -501,6 +528,58 @@ def get_cars() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_inventory_locations() -> list[str]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT DISTINCT location FROM cars
+            WHERE location != ''
+            ORDER BY location
+            """
+        ).fetchall()
+    return [row["location"] for row in rows]
+
+
+def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
+    with db() as con:
+        return {
+            "types": con.execute(
+                """
+                SELECT COALESCE(NULLIF(category, ''), type) AS label, COUNT(*) AS total
+                FROM cars
+                WHERE status = 'AVAILABLE'
+                GROUP BY label
+                ORDER BY label
+                """
+            ).fetchall(),
+            "fuel": con.execute(
+                """
+                SELECT fuel_type AS label, COUNT(*) AS total
+                FROM cars
+                WHERE status = 'AVAILABLE'
+                GROUP BY fuel_type
+                ORDER BY fuel_type
+                """
+            ).fetchall(),
+        }
+
+
+def get_active_discounts() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM discounts
+            WHERE status = 'ACTIVE'
+            ORDER BY valid_through, code
+            """
+        ).fetchall()
+
+
+def get_all_discounts() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute("SELECT * FROM discounts ORDER BY valid_through DESC, code").fetchall()
+
+
 def get_admin_cars() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute("SELECT * FROM cars ORDER BY sort_order, daily_price, id").fetchall()
@@ -522,6 +601,24 @@ def get_admin_bookings() -> list[sqlite3.Row]:
             JOIN cars ON cars.id = bookings.car_id
             ORDER BY bookings.id DESC
             LIMIT 50
+            """
+        ).fetchall()
+
+
+def get_fleet_summary() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT COALESCE(NULLIF(category, ''), type) AS type,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'AVAILABLE' THEN 1 ELSE 0 END) AS available,
+                   SUM(CASE WHEN status = 'BOOKED' THEN 1 ELSE 0 END) AS booked,
+                   SUM(CASE WHEN status = 'MAINTENANCE' THEN 1 ELSE 0 END) AS maintenance,
+                   ROUND(AVG(daily_price), 2) AS avg_daily,
+                   GROUP_CONCAT(DISTINCT fuel_type) AS fuel_types
+            FROM cars
+            GROUP BY COALESCE(NULLIF(category, ''), type)
+            ORDER BY type
             """
         ).fetchall()
 
@@ -609,6 +706,7 @@ def create_booking_for_user(user_id: int, car_id: int) -> sqlite3.Row:
                 "CONFIRMED",
             ),
         )
+        con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (car["id"],))
     booking = get_booking_for_user(user_id)
     if not booking:
         raise RuntimeError("Booking creation failed")
@@ -669,10 +767,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/login": self.login,
             "/signup": self.signup,
+            "/bookings/modify": self.update_user_booking,
+            "/bookings/cancel": self.cancel_user_booking,
             "/admin/content": self.update_content,
             "/admin/cars": self.create_admin_car,
             "/admin/cars/status": self.update_admin_car_status,
             "/admin/cars/delete": self.delete_admin_car,
+            "/admin/bookings/status": self.update_admin_booking_status,
+            "/admin/discounts": self.create_admin_discount,
+            "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/pickup-documents": self.save_pickup_documents,
         }
         handler = routes.get(parsed.path)
         if handler:
@@ -708,6 +812,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_json(self, payload: dict[str, object], status: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -780,6 +892,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         car_rows = get_cars()
         cars = "\n".join(self.render_car_card(row) for row in car_rows)
+        filter_counts = get_filter_counts()
+        location_options = "\n".join(
+            f"<option>{escape(location)}</option>"
+            for location in get_inventory_locations()
+        ) or "<option>Denver International Airport (DEN)</option>"
+        type_filters = "\n".join(
+            f'<label><input type="checkbox" value="{escape(row["label"])}" class="type-filter"> {escape(row["label"])} ({row["total"]})</label>'
+            for row in filter_counts["types"]
+        )
+        fuel_filters = "\n".join(
+            f'<label><input type="checkbox" value="{escape(row["label"])}" class="fuel-filter"> {escape(row["label"])} ({row["total"]})</label>'
+            for row in filter_counts["fuel"]
+        )
+        discounts_json = json.dumps(
+            [
+                {
+                    "code": row["code"],
+                    "type": row["discount_type"],
+                    "value": row["value"],
+                    "validThrough": row["valid_through"],
+                    "status": row["status"],
+                }
+                for row in get_active_discounts()
+            ]
+        )
         body = render_template(
             "index.html",
             brand=escape(content["brand"]),
@@ -796,6 +933,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             services=services,
             cars=cars,
             car_count=escape(len(car_rows)),
+            location_options=location_options,
+            type_filters=type_filters,
+            fuel_filters=fuel_filters,
+            discounts_json=escape(discounts_json),
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
@@ -803,7 +944,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_car_card(self, row: sqlite3.Row) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         return f"""
-        <article class="car-card" data-category="{escape(row["category"])}" data-price="{row["daily_price"]}">
+        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}">
             <div class="car-art car-{escape(row["color"])}">
                 <span class="deal-badge">{escape(row["badge"])}</span>
                 <div class="car-shape"></div>
@@ -950,6 +1091,76 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         ensure_booking_for_user(verification["user_id"])
         self.set_session(verification["user_id"])
 
+    def update_user_booking(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.not_found()
+            return
+        form = self.read_form()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.not_found()
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET pickup_date = ?,
+                    pickup_time = ?,
+                    dropoff_date = ?,
+                    dropoff_time = ?,
+                    pickup_location = ?,
+                    dropoff_location = ?,
+                    return_location = ?,
+                    booking_status = 'MODIFIED',
+                    status = 'MODIFIED',
+                    cancellation_reason = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    form.get("pickup_date") or booking["pickup_date"],
+                    form.get("pickup_time") or booking["pickup_time"],
+                    form.get("return_date") or booking["dropoff_date"],
+                    form.get("return_time") or booking["dropoff_time"],
+                    form.get("pickup_location") or booking["pickup_location"],
+                    form.get("dropoff_location") or booking["dropoff_location"],
+                    form.get("dropoff_location") or booking["dropoff_location"],
+                    "Customer modified reservation",
+                    booking["id"],
+                    user["id"],
+                ),
+            )
+        self.send_json({"ok": True, "message": "Reservation changes saved and visible to admin."})
+
+    def cancel_user_booking(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.not_found()
+            return
+        form = self.read_form()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.not_found()
+            return
+        reason = form.get("reason") or "Customer cancellation"
+        note = form.get("note", "")
+        if note:
+            reason = f"{reason}: {note}"
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'CANCELLED',
+                    status = 'CANCELLED',
+                    payment_status = CASE WHEN payment_status = 'PAID' THEN 'REFUNDED' ELSE payment_status END,
+                    cancellation_reason = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (reason, booking["id"], user["id"]),
+            )
+            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+        self.send_json({"ok": True, "message": "Cancellation saved and visible to admin."})
+
     def dashboard(self) -> None:
         user = self.current_user()
         if not user:
@@ -977,6 +1188,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         metrics = get_admin_metrics()
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
         bookings = "\n".join(self.render_admin_booking_row(row) for row in get_admin_bookings())
+        discounts = "\n".join(self.render_discount_row(row) for row in get_all_discounts())
+        fleet_summary = "\n".join(self.render_fleet_summary_row(row) for row in get_fleet_summary())
         body = render_template(
             "admin.html",
             admin_name=escape(user["name"]),
@@ -986,6 +1199,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user_count=metrics["users"],
             cars=cars or '<tr><td colspan="8">No inventory yet.</td></tr>',
             bookings=bookings or '<tr><td colspan="7">No bookings yet.</td></tr>',
+            discounts=discounts or '<tr><td colspan="6">No discount codes yet.</td></tr>',
+            fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -1019,6 +1234,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
+        status_options = "".join(
+            f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{status}</option>'
+            for status in ("CONFIRMED", "MODIFIED", "CANCELLED", "PICKED_UP", "RETURNED")
+        )
+        payment_options = "".join(
+            f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{status}</option>'
+            for status in ("PENDING", "PAID", "FAILED", "REFUNDED")
+        )
         return f"""
         <tr>
             <td><b>{escape(row["booking_id"])}</b><span>{escape(row["booking_status"])}</span></td>
@@ -1026,8 +1249,56 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["car_name"])}</td>
             <td>{escape(row["pickup_date"])} - {escape(row["dropoff_date"])}</td>
             <td>${row["total_price"]:.2f}</td>
-            <td>{escape(row["payment_status"])}</td>
+            <td>
+                <form method="post" action="/admin/bookings/status" class="admin-stack-form">
+                    <input type="hidden" name="booking_id" value="{row["id"]}">
+                    <select name="booking_status">{status_options}</select>
+                    <select name="payment_status">{payment_options}</select>
+                    <input name="reason" value="{escape(row["cancellation_reason"])}" placeholder="Reason / notes">
+                    <button type="submit">Save</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/admin/pickup-documents" class="admin-stack-form">
+                    <input type="hidden" name="booking_id" value="{row["id"]}">
+                    <input type="hidden" name="user_id" value="{row["user_id"]}">
+                    <input name="license_number" placeholder="DL number">
+                    <input name="insurance_provider" placeholder="Insurance provider">
+                    <input name="payment_method" placeholder="Payment method">
+                    <button type="submit">Capture</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_discount_row(self, row: sqlite3.Row) -> str:
+        value = f'{row["value"]:.2f}%' if row["discount_type"] == "PERCENT" else f'${row["value"]:.2f}'
+        return f"""
+        <tr>
+            <td><b>{escape(row["code"])}</b><span>{escape(row["description"])}</span></td>
+            <td>{escape(row["discount_type"])}</td>
+            <td>{value}</td>
+            <td>{escape(row["valid_through"])}</td>
             <td>{escape(row["status"])}</td>
+            <td>
+                <form method="post" action="/admin/discounts/delete" class="inline-form">
+                    <input type="hidden" name="discount_id" value="{row["id"]}">
+                    <button class="danger-button" type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_fleet_summary_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+            <td><b>{escape(row["type"])}</b><span>{escape(row["fuel_types"] or "-")}</span></td>
+            <td>{row["total"]}</td>
+            <td>{row["available"]}</td>
+            <td>{row["booked"]}</td>
+            <td>{row["maintenance"]}</td>
+            <td>${float(row["avg_daily"] or 0):.2f}</td>
+            <td>Free maintenance tracking ready</td>
         </tr>
         """
 
@@ -1100,6 +1371,147 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE cars SET status = 'MAINTENANCE' WHERE id = ?", (form.get("car_id"),))
             else:
                 con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
+        self.redirect("/admin")
+
+    def update_admin_booking_status(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        booking_status = form.get("booking_status", "CONFIRMED")
+        payment_status = form.get("payment_status", "PAID")
+        if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLED", "PICKED_UP", "RETURNED"}:
+            booking_status = "CONFIRMED"
+        if payment_status not in {"PENDING", "PAID", "FAILED", "REFUNDED"}:
+            payment_status = "PAID"
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = ?,
+                    payment_status = ?,
+                    status = ?,
+                    cancellation_reason = ?
+                WHERE id = ?
+                """,
+                (booking_status, payment_status, booking_status, form.get("reason", ""), form.get("booking_id")),
+            )
+            if booking_status == "CANCELLED":
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'AVAILABLE'
+                    WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
+                    """,
+                    (form.get("booking_id"),),
+                )
+            elif booking_status in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'BOOKED'
+                    WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
+                    """,
+                    (form.get("booking_id"),),
+                )
+            elif booking_status == "RETURNED":
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'AVAILABLE'
+                    WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
+                    """,
+                    (form.get("booking_id"),),
+                )
+        self.redirect("/admin")
+
+    def create_admin_discount(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        code = form.get("code", "").upper()
+        if not code:
+            self.redirect("/admin")
+            return
+        discount_type = form.get("discount_type", "PERCENT")
+        if discount_type not in {"PERCENT", "AMOUNT"}:
+            discount_type = "PERCENT"
+        with db() as con:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO discounts
+                (code, description, discount_type, value, valid_through, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    code,
+                    form.get("description", ""),
+                    discount_type,
+                    float(form.get("value") or 0),
+                    form.get("valid_through") or "2026-12-31",
+                    form.get("status") or "ACTIVE",
+                ),
+            )
+        self.redirect("/admin")
+
+    def delete_admin_discount(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM discounts WHERE id = ?", (form.get("discount_id"),))
+        self.redirect("/admin")
+
+    def save_pickup_documents(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        booking_id = form.get("booking_id")
+        user_id = form.get("user_id")
+        with db() as con:
+            if form.get("license_number"):
+                con.execute(
+                    """
+                    INSERT INTO driver_licenses
+                    (user_id, license_number, state, expiry_date, verification_status)
+                    VALUES (?, ?, ?, ?, 'VERIFIED')
+                    """,
+                    (
+                        user_id,
+                        form.get("license_number"),
+                        form.get("license_state") or "CO",
+                        form.get("license_expiry") or "2028-12-31",
+                    ),
+                )
+            if form.get("insurance_provider"):
+                con.execute(
+                    """
+                    INSERT INTO insurances
+                    (booking_id, insurance_type, coverage_amount, insurance_provider, price)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        booking_id,
+                        form.get("insurance_type") or "Rental coverage",
+                        float(form.get("coverage_amount") or 0),
+                        form.get("insurance_provider"),
+                        float(form.get("insurance_price") or 0),
+                    ),
+                )
+            if form.get("payment_method"):
+                invoice_number = f"INV-{secrets.randbelow(900000) + 100000}"
+                amount = con.execute("SELECT total_price FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+                con.execute(
+                    """
+                    INSERT INTO transactions
+                    (booking_id, payment_method, amount, transaction_status, invoice_number)
+                    VALUES (?, ?, ?, 'PAID', ?)
+                    """,
+                    (booking_id, form.get("payment_method"), float(amount["total_price"] if amount else 0), invoice_number),
+                )
         self.redirect("/admin")
 
     def manage_booking(self) -> None:

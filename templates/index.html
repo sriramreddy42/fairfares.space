@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-20">
-  <script defer src="/static/js/app.js?v=16"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-25">
+  <script defer src="/static/js/app.js?v=20"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -38,10 +38,8 @@
           <div class="input-shell">
             <span>LOC</span>
             <select id="location">
-              <option>Denver International Airport (DEN)</option>
-              <option>Denver Union Station</option>
-              <option>Boulder Campus Center</option>
-              <option>Colorado Springs Airport</option>
+              <option value="">All available locations</option>
+              $location_options
             </select>
           </div>
         </label>
@@ -60,6 +58,7 @@
         <label>
           <span>Discount code <em>(Optional)</em></span>
           <input id="discountCode" placeholder="Enter code">
+          <small class="discount-message" id="discountMessage" aria-live="polite"></small>
         </label>
         <button type="submit">Search Cars</button>
       </form>
@@ -78,16 +77,11 @@
         <div class="filter-options" id="filterOptions">
         <fieldset>
           <legend>Car Type</legend>
-          <label><input type="checkbox" value="Economy" class="type-filter"> Economy (23)</label>
-          <label><input type="checkbox" value="Compact" class="type-filter"> Compact (35)</label>
-          <label><input type="checkbox" value="Midsize" class="type-filter"> Midsize (28)</label>
-          <label><input type="checkbox" value="SUV" class="type-filter"> SUV (42)</label>
+          $type_filters
         </fieldset>
         <fieldset>
-          <legend>Features</legend>
-          <label><input type="checkbox"> Unlimited Mileage</label>
-          <label><input type="checkbox"> Fuel Efficient</label>
-          <label><input type="checkbox"> Electric Options</label>
+          <legend>Fuel Type</legend>
+          $fuel_filters
         </fieldset>
         </div>
       </aside>
@@ -106,5 +100,6 @@
       </section>
     </section>
   </main>
+  <script type="application/json" id="discountData">$discounts_json</script>
 </body>
 </html>

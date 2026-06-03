@@ -192,6 +192,15 @@ input, select, textarea {
   padding: 10px 14px;
   width: 100%;
 }
+.discount-message {
+  color: #0e7d2c;
+  font-size: 0.78rem;
+  font-weight: 850;
+  min-height: 18px;
+}
+.discount-message.is-error {
+  color: var(--red);
+}
 .input-shell input, .input-shell select, .split-input input, .split-input select {
   border: 0;
   border-radius: 0;
@@ -683,6 +692,26 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .inline-form .danger-button {
   background: var(--red);
+}
+.admin-stack-form {
+  display: grid;
+  gap: 7px;
+  min-width: 180px;
+}
+.admin-stack-form input,
+.admin-stack-form select {
+  font-size: 0.8rem;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+.admin-stack-form button {
+  background: var(--navy);
+  border: 0;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  min-height: 34px;
 }
 .admin-modules {
   grid-template-columns: repeat(3, minmax(0, 1fr));
