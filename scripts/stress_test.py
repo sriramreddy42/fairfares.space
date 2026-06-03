@@ -155,6 +155,7 @@ def main() -> None:
     assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
+    assert_true("payment-confirmation" in dashboard_template and "$booking_payment_state" in dashboard_template, "manage booking should show payment pickup confirmation")
     assert_true('data-manage-tab="details" data-detail-jump="student"' in dashboard_template, "student verification link should open details/student")
     assert_true('data-manage-tab="details" data-detail-jump="saved"' in dashboard_template, "saved trips link should open details/saved")
     assert_true('data-manage-tab="support"' in dashboard_template, "support link should open support panel")
@@ -249,6 +250,8 @@ def main() -> None:
     for index, user in enumerate(users, start=1):
         booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"])
         assert_true(booking["booking_status"] == "CONFIRMED", "new booking should be confirmed")
+        assert_true(booking["payment_status"] == "PAY_AT_PICKUP", "new selected bookings should default to pay at pickup")
+        assert_true(app.payment_status_label(booking["payment_status"]) == "Pay at pickup", "pay at pickup label should be user friendly")
         booked_ids.append(booking["id"])
         with app.db() as con:
             con.execute(

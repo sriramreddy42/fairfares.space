@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-26">
-  <script defer src="/static/js/app.js?v=26"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-31">
+  <script defer src="/static/js/app.js?v=31"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -82,6 +82,14 @@
           <span>$days Days</span>
           <a href="#documents" data-manage-tab="documents">Price Details</a>
         </aside>
+        <div class="payment-confirmation">
+          <div>
+            <span>Payment</span>
+            <b>$payment_status_label</b>
+            <small>$payment_status_body</small>
+          </div>
+          <strong>$booking_payment_state</strong>
+        </div>
         <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
           <button class="active" type="button" data-manage-tab="modify">Modify Reservation</button>
           <button type="button" data-manage-tab="cancel">Cancel Reservation</button>

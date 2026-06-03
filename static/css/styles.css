@@ -1616,6 +1616,39 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   color: var(--navy);
   font-weight: 900;
 }
+.payment-confirmation {
+  align-items: center;
+  background: #eefaf0;
+  border: 1px solid #bfe6c6;
+  border-radius: 6px;
+  display: flex;
+  gap: 14px;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+.payment-confirmation span {
+  color: #0e7d2c;
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.payment-confirmation b {
+  color: var(--navy);
+  display: block;
+  font-size: 1.05rem;
+}
+.payment-confirmation small {
+  color: var(--muted);
+  display: block;
+  margin-top: 3px;
+}
+.payment-confirmation strong {
+  color: #0e7d2c;
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
 .trip-actions {
   display: grid;
   gap: 14px;
@@ -2910,6 +2943,15 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
   .price-summary a {
     justify-self: end;
+  }
+
+  .payment-confirmation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .payment-confirmation strong {
+    white-space: normal;
   }
 
   .trip-actions {
