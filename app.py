@@ -20,7 +20,7 @@ from string import Template
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "fairfares.sqlite3"
+DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DATA_DIR / "fairfares.sqlite3"))
 OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
@@ -40,6 +40,7 @@ def load_env_file() -> None:
 
 
 def db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
@@ -159,6 +160,7 @@ def send_activation_email(email: str, name: str, activation_link: str) -> tuple[
 
 def init_db() -> None:
     DATA_DIR.mkdir(exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
         con.executescript(
             """

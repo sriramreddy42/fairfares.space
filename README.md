@@ -16,7 +16,10 @@ For hosted environments, set:
 HOST=0.0.0.0
 PORT=8000
 PUBLIC_BASE_URL=https://your-live-site.example
+FAIRFARES_DB_PATH=/var/data/fairfares.sqlite3
 ```
+
+`FAIRFARES_DB_PATH` should point to persistent storage in production. If it is left on the app container filesystem, user accounts, bookings, discounts, and admin updates can disappear after redeploys or restarts.
 
 ## Signup Activation
 
@@ -51,9 +54,11 @@ The project includes `render.yaml` for Render hosting.
 1. Push this folder to a private GitHub repository.
 2. Create a new Render Blueprint from that repository.
 3. Set these Render environment variables:
+   - `FAIRFARES_DB_PATH=/var/data/fairfares.sqlite3`
    - `RESEND_API_KEY`
    - `RESEND_FROM=FairFares <hello@fairfare.space>`
    - `PUBLIC_BASE_URL=https://your-render-url`
-4. Deploy the web service.
+4. Keep the `fairfares-data` disk from `render.yaml` attached to the service.
+5. Deploy the web service.
 
 Do not commit `.env`; keep production secrets in the hosting provider's environment variables.

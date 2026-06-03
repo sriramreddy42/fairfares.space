@@ -4,7 +4,13 @@ services:
     env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "HOST=0.0.0.0 python3 app.py"
+    disk:
+      name: fairfares-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
+      - key: FAIRFARES_DB_PATH
+        value: /var/data/fairfares.sqlite3
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM
