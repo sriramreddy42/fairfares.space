@@ -96,8 +96,8 @@ function updateRentalRanges() {
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);
-    const dailyLow = daily * 0.9;
-    const dailyHigh = daily * 1.1;
+    const dailyLow = Math.max(25, daily * 0.85);
+    const dailyHigh = Math.min(52, daily * 1.1);
     const dailyTarget = card.querySelector("[data-price-range]");
     if (dailyTarget) dailyTarget.textContent = moneyRange(dailyLow, dailyHigh);
   });
@@ -456,7 +456,7 @@ function updateModifySummary() {
   const returnTime = document.getElementById("modifyReturnTime")?.value || "";
   const selectedVehicle = vehicleSelect?.value || vehicle?.value || "";
   summaryVehicle.textContent = selectedVehicle || "No vehicle change";
-  summaryPrice.textContent = selectedVehicle ? `$${Number(vehicleSelect?.selectedOptions?.[0]?.dataset.price || vehicle?.dataset.price || 0).toFixed(2)}` : "Current total";
+  summaryPrice.textContent = selectedVehicle ? (vehicle?.closest("label")?.querySelector("strong")?.textContent || "Estimated range") : "Current total";
   summaryPickup.textContent = pickup;
   summaryReturn.textContent = `${formatDate(returnDate)} | ${returnTime}`;
 }
@@ -515,6 +515,10 @@ modifyForm?.addEventListener("submit", (event) => {
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((payload) => {
       modifyStatus.textContent = payload.message || "Reservation changes saved for review.";
+      if (bookingStatusBadge) {
+        bookingStatusBadge.textContent = "Modified";
+        bookingStatusBadge.className = "status-badge status-confirmed";
+      }
     })
     .catch(() => {
       modifyStatus.textContent = "Reservation changes saved for review.";
@@ -689,6 +693,8 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
 
 const tripFilterButtons = [...document.querySelectorAll("[data-trip-filter]")];
 const tripRows = [...document.querySelectorAll("[data-trip-type]")];
+const tripDetailModal = document.getElementById("tripDetailModal");
+const tripDetailContent = document.getElementById("tripDetailContent");
 
 function filterTrips(type) {
   tripFilterButtons.forEach((button) => {
@@ -703,24 +709,47 @@ tripFilterButtons.forEach((button) => {
   button.addEventListener("click", () => filterTrips(button.dataset.tripFilter));
 });
 
-document.getElementById("saveCurrentTrip")?.addEventListener("click", () => {
-  fetch("/bookings/save", { method: "POST" })
+tripRows.forEach((row) => {
+  row.addEventListener("click", () => {
+    if (!tripDetailModal || !tripDetailContent) return;
+    const details = JSON.parse(row.dataset.tripDetails || "{}");
+    tripDetailContent.innerHTML = `
+      ${details.image ? `<img class="trip-modal-image" src="${details.image}" alt="${details.car || "Car"}">` : ""}
+      <p class="eyebrow">${details.statusText || details.status || "Trip"}</p>
+      <h2>${details.car || "Trip details"}</h2>
+      <dl>
+        <div><dt>Booking ID</dt><dd>${details.bookingId || "-"}</dd></div>
+        <div><dt>Provider</dt><dd>${details.provider || "-"}</dd></div>
+        <div><dt>Pickup</dt><dd>${details.pickup || "-"}</dd></div>
+        <div><dt>Drop-off</dt><dd>${details.dropoff || "-"}</dd></div>
+        <div><dt>Status / Request</dt><dd>${details.reason || details.status || "-"}</dd></div>
+      </dl>
+    `;
+    tripDetailModal.showModal();
+  });
+});
+
+document.getElementById("closeTripDetail")?.addEventListener("click", () => {
+  tripDetailModal?.close();
+});
+
+document.addEventListener("click", (event) => {
+  const saveButton = event.target.closest(".save-search-trip");
+  if (!saveButton) return;
+  saveButton.textContent = "Saved";
+  saveButton.disabled = true;
+});
+
+document.getElementById("cancelPendingRequest")?.addEventListener("click", () => {
+  fetch("/bookings/request-cancel", { method: "POST" })
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((payload) => {
-      document.querySelectorAll('[data-trip-type="upcoming"]').forEach((row) => {
-        row.dataset.tripType = `${row.dataset.tripType} favorites`;
-      });
-      filterTrips("favorites");
-      const savedPanel = document.getElementById("saved");
-      if (savedPanel) {
-        const status = document.createElement("p");
-        status.className = "modify-status";
-        status.textContent = payload.message || "Current trip saved.";
-        savedPanel.appendChild(status);
+      const notice = document.getElementById("requestNotice");
+      if (notice) notice.remove();
+      if (bookingStatusBadge && payload.status_label) {
+        bookingStatusBadge.textContent = payload.status_label;
+        bookingStatusBadge.className = `status-badge ${payload.status_class || "status-confirmed"}`;
       }
-    })
-    .catch(() => {
-      filterTrips("favorites");
     });
 });
 

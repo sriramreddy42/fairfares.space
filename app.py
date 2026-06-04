@@ -766,6 +766,15 @@ def format_money(value: object) -> str:
     return f"${float(value or 0):.2f}"
 
 
+def daily_price_range(price: object) -> tuple[int, int]:
+    daily = float(price or 0)
+    low = max(25, round(daily * 0.85))
+    high = min(52, round(daily * 1.1))
+    if high < low:
+        high = low
+    return low, high
+
+
 def time_select_options(selected: str = "10:00 AM") -> str:
     options = []
     for hour in range(0, 24):
@@ -958,7 +967,7 @@ def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
             """
-            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -979,13 +988,26 @@ def render_user_trip_rows(bookings: list[sqlite3.Row]) -> str:
         if row_value(booking, "saved_by_user"):
             trip_type = f"{trip_type} favorites"
         status_text = "Cancelled" if status == "CANCELLED" else ("Not picked up" if status not in {"PICKED_UP", "RETURNED"} else status.replace("_", " ").title())
+        details = {
+            "bookingId": booking["booking_id"],
+            "car": booking["car_name"],
+            "status": status,
+            "statusText": status_text,
+            "pickup": f"{booking['pickup_location']} | {booking['pickup_date']} {booking['pickup_time']}",
+            "dropoff": f"{booking['dropoff_location']} | {booking['dropoff_date']} {booking['dropoff_time']}",
+            "provider": booking["provider"],
+            "reason": row_value(booking, "cancellation_reason") or "No request notes saved.",
+            "image": row_value(booking, "image_url") or "",
+            "price": format_money(booking["total_price"]),
+        }
+        details_json = escape(json.dumps(details))
         rows.append(
             f"""
-            <div class="mini-trip" data-trip-type="{escape(trip_type)}">
-              <div class="mini-car"></div>
+            <button class="mini-trip" type="button" data-trip-type="{escape(trip_type)}" data-trip-details="{details_json}">
+              {'<img src="' + escape(details["image"]) + '" alt="' + escape(booking["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(booking["car_name"])}<br><small>{escape(booking["pickup_date"])} - {escape(booking["dropoff_date"])} · {escape(status)}</small></span>
               <b>{escape(status_text)}</b>
-            </div>
+            </button>
             """
         )
     return "\n".join(rows)
@@ -1657,6 +1679,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/signup": self.signup,
             "/bookings/modify": self.update_user_booking,
             "/bookings/cancel": self.cancel_user_booking,
+            "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
@@ -1877,6 +1900,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
+        low, high = daily_price_range(row["daily_price"])
         return f"""
         <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
             <div class="car-art car-{escape(row["color"])}">
@@ -1895,11 +1919,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <ul>{features}</ul>
             </div>
             <div class="price-box">
-                <strong data-price-range>${row["daily_price"] * 0.9:.0f}-${row["daily_price"] * 1.1:.0f}</strong><span>/day est.</span>
+                <strong data-price-range>${low}-${high}</strong><span>/day est.</span>
                 <small class="availability-note" data-availability-note></small>
                 <em>Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.</em>
-                <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
-                <a class="details-link" href="/api/cars">View Details</a>
+                <div class="card-actions-row">
+                    <button class="light-button save-search-trip" type="button" data-save-car="{escape(row["name"])}">Save Trip</button>
+                    <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
+                </div>
+                <details class="car-terms">
+                    <summary>View Details</summary>
+                    <p>Bring a lower quote for the same rental period from Avis, Enterprise, Hertz, or another major rental company. FairFares will match it and give you an additional 10% off after review. Terms and conditions apply.</p>
+                </details>
             </div>
         </article>
         """
@@ -2034,6 +2064,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.not_found()
             return
+        new_pickup_date = form.get("pickup_date") or booking["pickup_date"]
+        new_pickup_time = form.get("pickup_time") or booking["pickup_time"]
+        new_return_date = form.get("return_date") or booking["dropoff_date"]
+        new_return_time = form.get("return_time") or booking["dropoff_time"]
+        new_pickup_location = form.get("pickup_location") or booking["pickup_location"]
+        new_dropoff_location = form.get("dropoff_location") or booking["dropoff_location"]
+        changes = []
+        if new_pickup_date != booking["pickup_date"] or new_pickup_time != booking["pickup_time"]:
+            changes.append(f"Pickup changed to {new_pickup_date} at {new_pickup_time}")
+        if new_return_date != booking["dropoff_date"] or new_return_time != booking["dropoff_time"]:
+            changes.append(f"Return changed to {new_return_date} at {new_return_time}")
+        if new_pickup_location != booking["pickup_location"]:
+            changes.append(f"Pickup location changed to {new_pickup_location}")
+        if new_dropoff_location != booking["dropoff_location"]:
+            changes.append(f"Drop-off location changed to {new_dropoff_location}")
+        if form.get("driver_name"):
+            changes.append(f"Additional driver added: {form.get('driver_name')}")
+        change_note = "; ".join(changes) or "Timing/location review requested"
         with db() as con:
             con.execute(
                 """
@@ -2053,21 +2101,48 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 WHERE id = ? AND user_id = ?
                 """,
                 (
-                    form.get("pickup_date") or booking["pickup_date"],
-                    form.get("pickup_time") or booking["pickup_time"],
-                    form.get("return_date") or booking["dropoff_date"],
-                    form.get("return_time") or booking["dropoff_time"],
-                    form.get("pickup_location") or booking["pickup_location"],
-                    form.get("dropoff_location") or booking["dropoff_location"],
-                    form.get("dropoff_location") or booking["dropoff_location"],
+                    new_pickup_date,
+                    new_pickup_time,
+                    new_return_date,
+                    new_return_time,
+                    new_pickup_location,
+                    new_dropoff_location,
+                    new_dropoff_location,
                     form.get("driver_name", ""),
                     form.get("driver_age", "") if form.get("driver_name") else "",
-                    "Customer modified reservation",
+                    change_note,
                     booking["id"],
                     user["id"],
                 ),
             )
-        self.send_json({"ok": True, "message": "Reservation changes saved and visible to admin."})
+        self.send_json({"ok": True, "message": f"Modification request sent: {change_note}"})
+
+    def cancel_booking_request(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.not_found()
+            return
+        booking = get_booking_for_user(user["id"])
+        if not booking or booking["booking_status"] not in {"MODIFIED", "CANCELLATION_REQUESTED"}:
+            self.send_json({"ok": False, "message": "No pending request to cancel."})
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'CONFIRMED',
+                    status = 'CONFIRMED',
+                    cancellation_reason = ''
+                WHERE id = ? AND user_id = ?
+                """,
+                (booking["id"], user["id"]),
+            )
+        self.send_json({
+            "ok": True,
+            "message": "Pending request cancelled. Your booking is confirmed for pay at pickup.",
+            "status_label": booking_status_label("CONFIRMED", "PAY_AT_PICKUP"),
+            "status_class": booking_status_class("CONFIRMED"),
+        })
 
     def cancel_user_booking(self) -> None:
         user = self.current_user()
@@ -3132,15 +3207,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
         live_status = live_status_for_booking(booking)
-        upgrade_options = "\n".join(
+        no_upgrade_option = f"""
+            <label class="upgrade-current">
+                <input type="radio" name="vehicle" value="" data-price="0" checked>
+                <span><b>No upgrade</b><small>Keep current vehicle and change timing/location only</small></span>
+                <strong>Current total</strong>
+            </label>
+        """
+        upgrade_options = no_upgrade_option + "\n" + "\n".join(
             f"""
             <label>
-                <input type="radio" name="vehicle" value="{escape(car["name"])}" data-price="{car["total_price"]:.2f}" {"checked" if car["name"] == current_car_name else ""}>
-                <span><b>{escape(car["name"])}</b><small>{escape(car["category"])}{" | Current booking" if car["name"] == current_car_name else " | Upgrade option"}</small></span>
-                <strong>${car["total_price"]:.2f}</strong>
+                <input type="radio" name="vehicle" value="{escape(car["name"])}" data-price="{car["total_price"]:.2f}">
+                <span><b>{escape(car["name"])}</b><small>{escape(car["category"])} | Upgrade option</small></span>
+                <strong>${daily_price_range(car["daily_price"])[0]}-{daily_price_range(car["daily_price"])[1]}/day est.</strong>
             </label>
             """
-            for car in available_cars
+            for car in available_cars if car["name"] != current_car_name
         )
         upgrade_select_options = '<option value="" data-price="0">No vehicle change</option>\n' + "\n".join(
             f'<option value="{escape(car["name"])}" data-price="{car["total_price"]:.2f}">{escape(car["name"])} - {escape(car["category"])} - ${car["total_price"]:.2f}</option>'
@@ -3270,6 +3352,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </form>
             </section>
             """
+        request_notice = ""
+        if booking and booking["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}:
+            label = "Modification request" if booking["booking_status"] == "MODIFIED" else "Cancellation request"
+            request_notice = f"""
+            <div class="request-notice" id="requestNotice">
+                <div><b>{escape(label)} sent to admin</b><span>{escape(row_value(booking, "cancellation_reason") or "Admin review pending.")}</span></div>
+                <button class="light-button" type="button" id="cancelPendingRequest">Cancel Request</button>
+            </div>
+            """
         support_ticket_message = ""
         if latest_ticket:
             owner = row_value(latest_ticket, "claimed_by") or "FairFares dev team"
@@ -3299,6 +3390,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
+            request_notice=request_notice,
             trip_card_class="trip-card is-hidden" if show_start_experience else "trip-card",
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,

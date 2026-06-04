@@ -1800,13 +1800,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin: 0 0 16px;
 }
 .price-summary {
-  align-content: center;
+  align-items: center;
   background: #f5f7fb;
   border: 1px solid var(--line);
   border-radius: 6px;
-  display: grid;
-  gap: 9px;
-  justify-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  justify-content: center;
   padding: 16px;
   text-align: center;
 }
@@ -1816,6 +1817,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .price-summary a {
   color: var(--navy);
   font-weight: 900;
+}
+.price-summary em {
+  flex: 1 1 280px;
 }
 .trip-actions {
   display: grid;
@@ -2147,10 +2151,25 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 .mini-trip {
   align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
   display: grid;
   gap: 10px;
   grid-template-columns: 60px 1fr auto;
   padding: 10px 0;
+  text-align: left;
+  width: 100%;
+}
+.mini-trip:hover {
+  background: #f8fafc;
+}
+.mini-trip img {
+  border-radius: 6px;
+  height: 42px;
+  object-fit: contain;
+  width: 60px;
 }
 .mini-car {
   background: linear-gradient(180deg, #dfe5ec, #303744);
@@ -4721,6 +4740,120 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin: 0.5rem 0;
 }
 
+.request-notice {
+  align-items: center;
+  background: #fff8e5;
+  border: 1px solid #efd48b;
+  border-radius: 8px;
+  display: flex;
+  gap: 1rem;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+}
+
+.request-notice b {
+  color: #8a650b;
+  display: block;
+  font-weight: 900;
+}
+
+.request-notice span {
+  color: var(--muted);
+  display: block;
+  font-weight: 800;
+  margin-top: 0.25rem;
+}
+
+.card-actions-row {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.card-actions-row .select-button,
+.card-actions-row button {
+  width: 100%;
+}
+
+.car-terms {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.car-terms summary {
+  color: var(--red);
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.trip-detail-modal {
+  border: 0;
+  border-radius: 10px;
+  color: var(--navy);
+  max-width: min(620px, calc(100vw - 30px));
+  padding: 1.3rem;
+  width: 100%;
+}
+
+.trip-detail-modal::backdrop {
+  background: rgba(3, 14, 43, 0.48);
+}
+
+.modal-close {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--navy);
+  cursor: pointer;
+  font-weight: 900;
+  height: 34px;
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  width: 34px;
+}
+
+.trip-modal-image {
+  display: block;
+  height: 160px;
+  margin: 0 auto 1rem;
+  object-fit: contain;
+  width: 100%;
+}
+
+.trip-detail-modal h2 {
+  margin: 0.2rem 0 1rem;
+}
+
+.trip-detail-modal dl {
+  display: grid;
+  gap: 0.8rem;
+  margin: 0;
+}
+
+.trip-detail-modal dl div {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.25rem;
+  padding-top: 0.75rem;
+}
+
+.trip-detail-modal dt {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.trip-detail-modal dd {
+  font-weight: 900;
+  margin: 0;
+}
+
 .editor-panel summary {
   cursor: pointer;
   display: grid;
@@ -4833,4 +4966,15 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .booking-confirmation-actions {
     grid-template-columns: 1fr;
   }
+}
+
+.manage-screen .price-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  justify-content: center;
+}
+
+.manage-screen .price-summary a {
+  justify-self: auto;
 }

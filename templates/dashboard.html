@@ -79,7 +79,6 @@
         <aside class="price-summary">
           <small>Total Price</small>
           <strong>$price_text</strong>
-          <span>$days Days</span>
           <em>$price_match_note</em>
           <a href="#documents" data-manage-tab="documents">Price Details</a>
         </aside>
@@ -90,6 +89,7 @@
           <button type="button" data-manage-tab="details">View Details</button>
           <button type="button" data-manage-tab="support">Support Center</button>
         </div>
+        $request_notice
       </section>
       $booking_confirmation_card
 
@@ -220,7 +220,6 @@
               <div class="trip-list">
                 $trip_rows
               </div>
-              <button class="light-button" type="button" id="saveCurrentTrip">Save Current Trip</button>
             </article>
 
             <article class="manage-card detail-card is-hidden" id="status" data-detail-panel="status">
@@ -335,5 +334,9 @@
     </section>
   </main>
   <script type="application/json" id="bookingDocuments" data-locked="$documents_locked">$booking_documents_json</script>
+  <dialog class="trip-detail-modal" id="tripDetailModal">
+    <button class="modal-close" type="button" id="closeTripDetail" aria-label="Close trip details">x</button>
+    <div id="tripDetailContent"></div>
+  </dialog>
 </body>
 </html>
