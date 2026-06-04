@@ -242,6 +242,7 @@ def main() -> None:
     assert_true("Vehicle change requested from" in app_source and "get_car_by_name" in app_source, "modify vehicle requests should be stored instead of ignored")
     assert_true("Modification pending approval" in app_source and "MODIFIED" in app_source[app_source.index("def booking_status_class"):app_source.index("def payment_status_label")], "modified bookings should read as pending review")
     assert_true("${car[\"total_price\"]:.2f}" not in app_source[app_source.index("upgrade_select_options"):app_source.index("editable =")], "upgrade selector should show ranges, not fixed totals")
+    assert_true('if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}' in app_source and 'reason = "Cancelled by admin approval."' in app_source, "admin approvals should clear resolved request notes and default cancel reasons")
 
     with app.db() as con:
         con.execute(
@@ -365,6 +366,9 @@ def main() -> None:
     admin_row_html = app.FairFaresHandler.render_admin_booking_row(None, admin_bookings[0])
     assert_true('value="PAY_AT_PICKUP"' in admin_row_html, "admin booking row should keep pay at pickup")
     assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")), "admin payment dropdown should not show old payment options")
+    assert_true("admin-request-row" in admin_row_html and "admin-request-summary" in admin_row_html, "pending admin requests should be visually highlighted")
+    assert_true("Cancellation approval requested" in admin_row_html, "admin cancellation requests should include approval guidance")
+    assert_true("admin-request-row" in (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8"), "admin request rows should have dedicated styling")
     pickup_html = app.FairFaresHandler.render_pickup_record(None, admin_bookings[0])
     assert_true("Rental Agreement Builder" in pickup_html, "admin pickup should include agreement builder")
     assert_true('data-dl-camera="front"' in pickup_html and 'data-dl-camera="back"' in pickup_html, "admin pickup should allow taking DL pictures")
@@ -448,6 +452,13 @@ def main() -> None:
         pending = con.execute("SELECT COUNT(*) AS total FROM bookings WHERE booking_status = 'CANCELLATION_REQUESTED'").fetchone()["total"]
     assert_true(approved == 8, "admin approvals should cancel selected bookings")
     assert_true(pending == len(users) - 8, "remaining cancel requests should stay pending")
+    with app.db() as con:
+        con.execute(
+            "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAY_AT_PICKUP', cancellation_reason = '' WHERE id = ?",
+            (booked_ids[8],),
+        )
+        resolved = con.execute("SELECT * FROM bookings WHERE id = ?", (booked_ids[8],)).fetchone()
+    assert_true(resolved["cancellation_reason"] == "" and app.booking_status_label(resolved["booking_status"], resolved["payment_status"]) == "Confirmed / Pay at pickup", "admin confirmation should resolve old request notes")
 
     backup = app.create_db_backup("stress")
     assert_true(backup.exists() and backup.stat().st_size > 0, "backup should create a non-empty SQLite file")

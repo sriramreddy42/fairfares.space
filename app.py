@@ -2817,9 +2817,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
+        is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
         booking_status_options = (
             ("CONFIRMED", "Confirmed / Pay at pickup"),
-            ("MODIFIED", "Modified"),
+            ("MODIFIED", "Modification pending"),
             ("CANCELLATION_REQUESTED", "Cancellation requested"),
             ("CANCELLED", "Cancelled"),
             ("PICKED_UP", "Picked up"),
@@ -2831,16 +2832,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         payment_options = '<option value="PAY_AT_PICKUP" selected>Pay at pickup</option>'
         request_note = ""
-        if row["booking_status"] == "CANCELLATION_REQUESTED":
-            request_note = '<small class="approval-note">Approval requested: choose CANCELLED to approve, or CONFIRMED/MODIFIED to keep booking.</small>'
+        if is_request:
+            request_type = "Cancellation approval requested" if row["booking_status"] == "CANCELLATION_REQUESTED" else "Modification approval requested"
+            action_copy = "Choose CANCELLED to approve cancellation, or CONFIRMED to keep booking." if row["booking_status"] == "CANCELLATION_REQUESTED" else "Review requested changes, then choose CONFIRMED to approve or keep MODIFIED while pending."
+            request_note = f'<small class="approval-note"><b>{escape(request_type)}</b>{escape(action_copy)}</small>'
         return f"""
-        <tr>
+        <tr class="{'admin-request-row' if is_request else ''}">
             <td><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
             <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
             <td>{escape(row["car_name"])}</td>
             <td>{escape(row["pickup_date"])} - {escape(row["dropoff_date"])}</td>
             <td>${row["total_price"]:.2f}</td>
             <td>
+                {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
                 <form method="post" action="/admin/bookings/status" class="admin-stack-form">
                     <input type="hidden" name="booking_id" value="{row["id"]}">
                     <select name="booking_status">{status_options}</select>
@@ -3071,6 +3075,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_status = "CONFIRMED"
         if payment_status != "PAY_AT_PICKUP":
             payment_status = "PAY_AT_PICKUP"
+        reason = form.get("reason", "")
+        if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}:
+            reason = ""
+        if booking_status == "CANCELLED" and not reason:
+            reason = "Cancelled by admin approval."
         with db() as con:
             con.execute(
                 """
@@ -3081,7 +3090,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     cancellation_reason = ?
                 WHERE id = ?
                 """,
-                (booking_status, payment_status, booking_status, form.get("reason", ""), form.get("booking_id")),
+                (booking_status, payment_status, booking_status, reason, form.get("booking_id")),
             )
             if booking_status == "CANCELLED":
                 con.execute(

@@ -1129,6 +1129,24 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-weight: 800;
   line-height: 1.3;
 }
+.admin-request-row {
+  background: #fff9ed;
+  box-shadow: inset 5px 0 0 #f0a000;
+}
+.admin-request-summary {
+  background: #fff1cc;
+  border: 1px solid #f5d58d;
+  border-radius: 6px;
+  color: #6d4a00;
+  font-size: 0.8rem;
+  font-weight: 900;
+  line-height: 1.35;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+}
+.approval-note b {
+  display: block;
+}
 .admin-text-link {
   color: var(--red);
   font-weight: 900;
