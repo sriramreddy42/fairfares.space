@@ -1022,7 +1022,7 @@ def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
 def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.Row] | None = None) -> str:
     saved_cars = saved_cars or []
     if not bookings and not saved_cars:
-        return '<div class="mini-trip" data-trip-type="upcoming"><span>No trips yet<br><small>Book a car to see saved trips here.</small></span><b>Not picked up</b></div>'
+        return '<div class="mini-trip mini-trip-empty"><span>No trips yet<br><small>Book or save a car to see trip details here.</small></span><b>Empty</b></div>'
     rows = []
     for booking in bookings:
         status = booking["booking_status"]

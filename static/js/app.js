@@ -705,6 +705,15 @@ const tripRows = [...document.querySelectorAll("[data-trip-type]")];
 const tripDetailModal = document.getElementById("tripDetailModal");
 const tripDetailContent = document.getElementById("tripDetailContent");
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function filterTrips(type) {
   tripFilterButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tripFilter === type);
@@ -721,17 +730,26 @@ tripFilterButtons.forEach((button) => {
 tripRows.forEach((row) => {
   row.addEventListener("click", () => {
     if (!tripDetailModal || !tripDetailContent) return;
-    const details = JSON.parse(row.dataset.tripDetails || "{}");
+    if (!row.dataset.tripDetails) return;
+    let details = {};
+    try {
+      details = JSON.parse(row.dataset.tripDetails || "{}");
+    } catch {
+      return;
+    }
+    const image = escapeHtml(details.image || "");
+    const car = escapeHtml(details.car || "Trip details");
     tripDetailContent.innerHTML = `
-      ${details.image ? `<img class="trip-modal-image" src="${details.image}" alt="${details.car || "Car"}">` : ""}
-      <p class="eyebrow">${details.statusText || details.status || "Trip"}</p>
-      <h2>${details.car || "Trip details"}</h2>
+      ${image ? `<img class="trip-modal-image" src="${image}" alt="${car}">` : ""}
+      <p class="eyebrow">${escapeHtml(details.statusText || details.status || "Trip")}</p>
+      <h2>${car}</h2>
       <dl>
-        <div><dt>Booking ID</dt><dd>${details.bookingId || "-"}</dd></div>
-        <div><dt>Provider</dt><dd>${details.provider || "-"}</dd></div>
-        <div><dt>Pickup</dt><dd>${details.pickup || "-"}</dd></div>
-        <div><dt>Drop-off</dt><dd>${details.dropoff || "-"}</dd></div>
-        <div><dt>Status / Request</dt><dd>${details.reason || details.status || "-"}</dd></div>
+        <div><dt>Booking ID</dt><dd>${escapeHtml(details.bookingId || "-")}</dd></div>
+        <div><dt>Provider</dt><dd>${escapeHtml(details.provider || "-")}</dd></div>
+        <div><dt>Pickup</dt><dd>${escapeHtml(details.pickup || "-")}</dd></div>
+        <div><dt>Drop-off</dt><dd>${escapeHtml(details.dropoff || "-")}</dd></div>
+        <div><dt>Status / Request</dt><dd>${escapeHtml(details.reason || details.status || "-")}</dd></div>
+        <div><dt>Price</dt><dd>${escapeHtml(details.price || "-")}</dd></div>
       </dl>
     `;
     tripDetailModal.showModal();

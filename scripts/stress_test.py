@@ -180,6 +180,7 @@ def main() -> None:
     assert_true('fetch("/support/tickets"' in app_js and "save-search-trip" in first_card, "support tickets should use backend API and feed cards should expose save trip")
     assert_true('fetch("/saved-cars"' in app_js and '"/saved-cars": self.save_search_car' in (ROOT / "app.py").read_text(encoding="utf-8"), "save trip should persist saved cars")
     assert_true('fetch("/bookings/request-cancel"' in app_js and "tripDetailModal" in app_js, "user should cancel pending requests and open trip detail popups")
+    assert_true("function escapeHtml" in app_js and "details.price" in app_js, "trip detail modal should escape dynamic data and show price")
     assert_true("Our dev team" not in app_js and "Our dev team" not in (ROOT / "app.py").read_text(encoding="utf-8"), "customer support copy should not mention dev team")
     assert_true("saveCurrentTrip" not in app_js, "saved trips panel should not show old save current trip flow")
     assert_true('fetch("/profile/update"' in app_js, "booking confirmation details should save through profile API")
@@ -280,6 +281,7 @@ def main() -> None:
     assert_true(saved_rows and saved_rows[0]["car_name"], "saved cars should persist and join back to car data")
     saved_trip_html = app.render_user_trip_rows([], saved_rows)
     assert_true('data-trip-type="favorites"' in saved_trip_html and "Saved car" in saved_trip_html, "saved cars should render in saved trips modal list")
+    assert_true("data-trip-details" not in app.render_user_trip_rows([]) and "mini-trip-empty" in app.render_user_trip_rows([]), "empty trip state should not open a blank trip detail modal")
 
     same_day_user = create_verified_user(99)
     with app.db() as con:
