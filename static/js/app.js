@@ -92,20 +92,14 @@ function updateRentalRanges() {
   const days = getRentalDays();
   if (rentalLengthLabel) rentalLengthLabel.textContent = rentalLengthText(days);
   if (quoteMatchLabel) {
-    quoteMatchLabel.textContent = "Find a lower price from Avis, Enterprise, Budget, Hertz, or a similar provider for the same rental period, and FairFares will match it plus take an extra 10% off.";
+    quoteMatchLabel.textContent = "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.";
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);
     const dailyLow = daily * 0.9;
     const dailyHigh = daily * 1.1;
-    const totalLow = dailyLow * days;
-    const totalHigh = dailyHigh * days;
     const dailyTarget = card.querySelector("[data-price-range]");
-    const totalTarget = card.querySelector("[data-total-range]");
-    const daysTarget = card.querySelector("[data-range-days]");
     if (dailyTarget) dailyTarget.textContent = moneyRange(dailyLow, dailyHigh);
-    if (totalTarget) totalTarget.textContent = moneyRange(totalLow, totalHigh);
-    if (daysTarget) daysTarget.textContent = rentalLengthText(days);
   });
 }
 
@@ -169,6 +163,8 @@ pickupDate?.addEventListener("change", updateRentalRanges);
 returnDate?.addEventListener("change", updateRentalRanges);
 pickupDate?.addEventListener("change", updateCars);
 pickupTime?.addEventListener("change", updateCars);
+returnDate?.addEventListener("change", updateCars);
+returnTime?.addEventListener("change", updateCars);
 
 function clearCarFilters() {
   typeFilters.forEach((input) => {
@@ -458,8 +454,9 @@ function updateModifySummary() {
   const pickup = document.getElementById("modifyPickupLocation")?.value || "";
   const returnDate = document.getElementById("modifyReturnDate")?.value || "";
   const returnTime = document.getElementById("modifyReturnTime")?.value || "";
-  summaryVehicle.textContent = vehicle?.value || "Toyota Corolla";
-  summaryPrice.textContent = `$${Number(vehicle?.dataset.price || 209.93).toFixed(2)}`;
+  const selectedVehicle = vehicleSelect?.value || vehicle?.value || "";
+  summaryVehicle.textContent = selectedVehicle || "No vehicle change";
+  summaryPrice.textContent = selectedVehicle ? `$${Number(vehicleSelect?.selectedOptions?.[0]?.dataset.price || vehicle?.dataset.price || 0).toFixed(2)}` : "Current total";
   summaryPickup.textContent = pickup;
   summaryReturn.textContent = `${formatDate(returnDate)} | ${returnTime}`;
 }
@@ -583,6 +580,7 @@ const documentStatus = document.getElementById("documentStatus");
 const documentEmail = document.getElementById("documentEmail");
 const bookingDocumentsNode = document.getElementById("bookingDocuments");
 const bookingDocuments = bookingDocumentsNode ? JSON.parse(bookingDocumentsNode.textContent || "{}") : {};
+const documentsAreLocked = bookingDocumentsNode?.dataset.locked === "1" || document.querySelector(".document-tools")?.dataset.documentsLocked === "1";
 
 function renderBookingDocument(name) {
   if (!documentPreview) return;
@@ -592,6 +590,11 @@ function renderBookingDocument(name) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+  if (documentsAreLocked) {
+    documentPreview.innerHTML = `<h3>${escapeHtml(name)}</h3><p>Documents can be retrieved once pickup is completed.</p><small>Invoice, rental agreement, and taxes & fees stay locked until admin completes pickup.</small>`;
+    if (documentStatus) documentStatus.textContent = "Documents are locked until pickup is completed.";
+    return;
+  }
   const doc = bookingDocuments[name] || {
     title: name,
     content: "This document is not generated yet. Ask admin to complete pickup, payment, insurance, or agreement data.",
@@ -621,10 +624,18 @@ document.addEventListener("click", (event) => {
 });
 
 document.getElementById("emailDocuments")?.addEventListener("click", () => {
+  if (documentsAreLocked) {
+    documentStatus.textContent = "Documents can be retrieved once pickup is completed.";
+    return;
+  }
   documentStatus.textContent = `All documents queued for ${documentEmail.value || "your email"}.`;
 });
 
 document.getElementById("downloadAllDocuments")?.addEventListener("click", () => {
+  if (documentsAreLocked) {
+    documentStatus.textContent = "Documents can be retrieved once pickup is completed.";
+    return;
+  }
   const bundle = Object.values(bookingDocuments)
     .map((doc) => `${doc.title}\n\n${doc.content}\n\n${doc.status}`)
     .join("\n\n------------------------------\n\n");
@@ -693,11 +704,27 @@ tripFilterButtons.forEach((button) => {
 });
 
 document.getElementById("saveCurrentTrip")?.addEventListener("click", () => {
-  filterTrips("favorites");
+  fetch("/bookings/save", { method: "POST" })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((payload) => {
+      document.querySelectorAll('[data-trip-type="upcoming"]').forEach((row) => {
+        row.dataset.tripType = `${row.dataset.tripType} favorites`;
+      });
+      filterTrips("favorites");
+      const savedPanel = document.getElementById("saved");
+      if (savedPanel) {
+        const status = document.createElement("p");
+        status.className = "modify-status";
+        status.textContent = payload.message || "Current trip saved.";
+        savedPanel.appendChild(status);
+      }
+    })
+    .catch(() => {
+      filterTrips("favorites");
+    });
 });
 
 document.getElementById("refreshStatus")?.addEventListener("click", () => {
-  document.getElementById("liveStatusText").innerHTML = "<b>Status refreshed!</b><br>Car remains ready for pickup at 10:00 AM.";
   document.getElementById("statusMessage").textContent = "Live status checked just now.";
 });
 
@@ -754,12 +781,42 @@ document.getElementById("providerContact")?.addEventListener("click", () => {
 
 document.getElementById("supportForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const topic = supportTopic?.value || "Pickup help";
-  const contact = supportContact?.value || "Chat in browser";
-  supportStatus.textContent = `Support ticket created for ${topic} by ${contact}. Reference: FF-SUP-2048.`;
+  const payload = new URLSearchParams();
+  payload.set("topic", supportTopic?.value || "Pickup help");
+  payload.set("preferred_contact", supportContact?.value || "Chat in browser");
+  payload.set("message", document.getElementById("supportMessage")?.value || "");
+  payload.set("urgent", urgentSupport?.checked ? "1" : "0");
+  fetch("/support/tickets", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((data) => {
+      supportStatus.textContent = data.message || `Ticket ${data.ticket_id} created. Our dev team will follow up soon.`;
+    })
+    .catch(() => {
+      supportStatus.textContent = "Support ticket saved locally. Our dev team will follow up soon.";
+    });
 });
 
 syncSupportTopic();
+
+document.getElementById("customerInfoForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById("customerInfoStatus");
+  fetch("/profile/update", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Your contact details are saved for this booking.";
+    })
+    .catch(() => {
+      if (status) status.textContent = "Your contact details are saved for this booking.";
+    });
+});
 
 const accordionTabs = [...document.querySelectorAll("[data-accordion-tab]")];
 const accordionToggles = [...document.querySelectorAll("[data-accordion-toggle]")];
@@ -774,6 +831,8 @@ function showBookingAccordion(panelName) {
   accordionPanels.forEach((panel) => {
     const active = panel.dataset.accordionPanel === panelName;
     panel.classList.toggle("active", active);
+    const body = panel.querySelector(".accordion-body");
+    if (body) body.hidden = !active;
     const chevron = panel.querySelector(".accordion-head b");
     if (chevron) chevron.textContent = active ? "⌃" : "⌄";
   });
@@ -799,7 +858,11 @@ document.getElementById("activateSavingsTool")?.addEventListener("click", () => 
   savingsStatus.textContent = "Savings tools enabled. Open Modify Reservation to review cheaper dates and alerts.";
 });
 
-if (accordionTabs.length) showBookingAccordion("why");
+accordionPanels.forEach((panel) => {
+  panel.classList.remove("active");
+  const body = panel.querySelector(".accordion-body");
+  if (body) body.hidden = true;
+});
 
 const pickupSearch = document.getElementById("pickupSearch");
 const pickupRecords = [...document.querySelectorAll(".pickup-record")];

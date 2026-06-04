@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-31">
-  <script defer src="/static/js/app.js?v=31"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-36">
+  <script defer src="/static/js/app.js?v=36"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -80,20 +80,22 @@
           <small>Total Price</small>
           <strong>$price_text</strong>
           <span>$days Days</span>
+          <em>$price_match_note</em>
           <a href="#documents" data-manage-tab="documents">Price Details</a>
         </aside>
         <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
-          <button class="active" type="button" data-manage-tab="modify">Modify Reservation</button>
+          <button type="button" data-manage-tab="modify">Modify Reservation</button>
           <button type="button" data-manage-tab="cancel">Cancel Reservation</button>
-          <button type="button" data-manage-tab="documents">Download Invoice</button>
+          <button class="active" type="button" data-manage-tab="documents">Download Invoice</button>
           <button type="button" data-manage-tab="details">View Details</button>
           <button type="button" data-manage-tab="support">Support Center</button>
         </div>
       </section>
+      $booking_confirmation_card
 
       $first_time_manage_content
       <section class="$manage_panels_class">
-        <article class="manage-card manage-panel active" id="modify" data-manage-panel="modify">
+        <article class="manage-card manage-panel is-hidden" id="modify" data-manage-panel="modify">
           <h2>1. Modify Your Booking</h2>
           <p>Make changes to fit your plans</p>
           <form class="modify-form" id="modifyForm">
@@ -101,9 +103,9 @@
               <div class="section-heading"><b>Change Dates</b><span>Update pickup or drop-off dates</span></div>
               <div class="modify-grid">
                 <label><span>Pickup Date</span><input id="modifyPickupDate" name="pickup_date" type="date" value="2025-06-10"></label>
-                <label><span>Pickup Time</span><select id="modifyPickupTime" name="pickup_time"><option selected>10:00 AM</option><option>12:00 PM</option><option>02:00 PM</option><option>06:00 PM</option></select></label>
+                <label><span>Pickup Time</span><select id="modifyPickupTime" name="pickup_time">$pickup_time_options</select></label>
                 <label><span>Return Date</span><input id="modifyReturnDate" name="return_date" type="date" value="2025-06-20"></label>
-                <label><span>Return Time</span><select id="modifyReturnTime" name="return_time"><option selected>10:00 AM</option><option>12:00 PM</option><option>02:00 PM</option><option>06:00 PM</option></select></label>
+                <label><span>Return Time</span><select id="modifyReturnTime" name="return_time">$return_time_options</select></label>
               </div>
             </section>
 
@@ -165,10 +167,11 @@
           </form>
         </article>
 
-        <article class="manage-card manage-panel is-hidden" id="documents" data-manage-panel="documents">
+        <article class="manage-card manage-panel active" id="documents" data-manage-panel="documents">
           <h2>3. Download Documents</h2>
           <p>Access your important documents</p>
-          <div class="document-tools">
+          <div class="document-tools $documents_locked_class" data-documents-locked="$documents_locked">
+            <div class="documents-lock-message">$documents_locked_message</div>
             <label><span>Send documents to</span><input id="documentEmail" type="email" value="$document_email" placeholder="Sign in to use your email"></label>
             <div class="doc-actions">
               <button type="button" data-doc-name="Invoice / Receipt">Invoice / Receipt</button>
@@ -249,6 +252,7 @@
               <b>Pickup help selected</b>
               <span>We can help with counter location, pickup timing, and rental readiness.</span>
             </div>
+            $support_ticket_message
             <div class="modify-actions">
               <button type="button" class="light-button" id="providerContact">View Provider Contact</button>
               <button type="submit">Create Support Ticket</button>
@@ -260,7 +264,7 @@
 
       <section class="booking-accordions">
         <div class="accordion-tabs" role="tablist" aria-label="Booking benefits">
-          <button class="active" type="button" data-accordion-tab="why" aria-controls="whyCard">
+          <button type="button" data-accordion-tab="why" aria-controls="whyCard">
             <span class="tab-icon">tag</span>
             <span>Why Book With FairFares?</span>
             <b>›</b>
@@ -272,13 +276,13 @@
           </button>
         </div>
 
-        <article class="accordion-card active" id="whyCard" data-accordion-panel="why">
+        <article class="accordion-card" id="whyCard" data-accordion-panel="why">
           <button class="accordion-head" type="button" data-accordion-toggle="why">
             <span class="head-icon">shield</span>
             <span>Why Book With FairFares?</span>
             <b>⌃</b>
           </button>
-          <div class="accordion-body">
+          <div class="accordion-body" hidden>
             <div class="benefit-row">
               <span class="benefit-icon red">edu</span>
               <div><b>Best Student Prices</b><span>Verified students get exclusive rates and discounts.</span></div>
@@ -309,7 +313,7 @@
             <span>Smarter Booking. More Savings.</span>
             <b>⌄</b>
           </button>
-          <div class="accordion-body">
+          <div class="accordion-body" hidden>
             <div class="benefit-row">
               <span class="benefit-icon red">date</span>
               <div><b>AI Cheapest Date Suggestions</b><span>Shift pickup or return dates to compare lower student rates.</span></div>
@@ -330,6 +334,6 @@
       $admin_panel
     </section>
   </main>
-  <script type="application/json" id="bookingDocuments">$booking_documents_json</script>
+  <script type="application/json" id="bookingDocuments" data-locked="$documents_locked">$booking_documents_json</script>
 </body>
 </html>

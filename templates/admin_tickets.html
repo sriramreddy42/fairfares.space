@@ -3,16 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Booked Cars | FairFares Admin</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=admin-3">
+  <title>Tickets | FairFares Admin</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-7">
+  <script defer src="/static/js/app.js?v=36"></script>
 </head>
 <body class="admin-screen">
   <header class="admin-shell-header">
     <a class="logo-lockup" href="/admin"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
     <nav>
       <a href="/admin">Inventory</a>
+      <a href="/admin/bookings">Booked Cars</a>
       <a href="/admin/users">Users</a>
-      <a href="/admin/tickets">Tickets</a>
+      <a class="active" href="/admin/tickets">Tickets</a>
       <a href="/admin/discounts">Discounts</a>
       <a href="/admin/commercials">Commercials</a>
       <a href="/admin/pickup">User Pickup</a>
@@ -20,24 +22,24 @@
     </nav>
   </header>
   <main class="admin-layout">
-    <section class="admin-hero">
+    <section class="admin-hero ticket-hero">
       <div>
         <p class="eyebrow">Developer Portal</p>
-        <h1>Booked Cars</h1>
-        <span>Status, cancel/modify reason, payment status · $admin_name</span>
+        <h1>Support Tickets</h1>
+        <span>Claim ownership, send follow-ups, and close customer support requests · $admin_name</span>
       </div>
     </section>
     <section class="admin-card">
       <div class="admin-card-head">
         <div>
-          <h2>Booked Cars</h2>
-          <p>Update/cancel/modify details here. Changes reflect back into admin records and car availability.</p>
+          <h2>Open Customer Requests</h2>
+          <p>Bright rows need attention. Add your name to claim a ticket, then update status and comment.</p>
         </div>
       </div>
       <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead><tr><th>Booking</th><th>User</th><th>Car</th><th>Dates</th><th>Total</th><th>Status / Reason</th><th>Pickup Page</th></tr></thead>
-          <tbody>$bookings</tbody>
+        <table class="admin-table ticket-table">
+          <thead><tr><th>Ticket</th><th>Customer</th><th>Booking</th><th>Topic</th><th>Message</th><th>Action</th><th>Claimed By</th></tr></thead>
+          <tbody>$tickets</tbody>
         </table>
       </div>
     </section>

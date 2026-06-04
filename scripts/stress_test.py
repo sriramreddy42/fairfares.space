@@ -153,7 +153,8 @@ def main() -> None:
     assert_true(any(row["name"] == "Stress Fleet 1" for row in cars), "available status should be normalized for user feed queries")
     first_card = app.FairFaresHandler.render_car_card(None, cars[0])
     assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
-    assert_true("data-price-range" in first_card and "data-total-range" in first_card, "feed cards should render estimate ranges instead of one fixed quote")
+    assert_true("data-price-range" in first_card and "data-total-range" not in first_card, "feed cards should render daily estimate ranges without old total-range copy")
+    assert_true("Found a lower quote from Avis, Enterprise, Hertz" in first_card, "feed cards should use the new price-match terminology")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
     assert_true("payment-confirmation" not in dashboard_template and "$booking_payment_state" not in dashboard_template, "manage booking should use the booking badge for pay at pickup")
@@ -166,10 +167,15 @@ def main() -> None:
     app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     assert_true("rentalLengthLabel" in index_template and "quoteMatchLabel" in index_template, "homepage search should show rental days/months and quote-match message")
+    assert_true("$pickup_time_options" in index_template and "$return_time_options" in index_template, "homepage search should render full dynamic time selectors")
     assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
     assert_true("Available after" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
+    assert_true("data-total-range" not in app_js and "total range" not in app_js, "frontend should not restore removed total-range copy")
+    assert_true('document.getElementById("liveStatusText").innerHTML = "<b>Status refreshed!' not in app_js, "live status refresh should not overwrite dynamic booking status")
+    assert_true('fetch("/support/tickets"' in app_js and 'fetch("/bookings/save"' in app_js, "support tickets and saved trips should use backend APIs")
+    assert_true('fetch("/profile/update"' in app_js, "booking confirmation details should save through profile API")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
     assert_true("parseJsonData" in app_js and "textarea.innerHTML" in app_js, "frontend JSON parsing should not break all mobile controls")
     assert_true("fetch(heroFoldVideo.dataset.videoSrc" not in app_js, "hero video should not depend on fragile HEAD requests")
@@ -201,6 +207,11 @@ def main() -> None:
     active_live = app.get_active_commercial()
     assert_true(active_live["title"] == "Stress Live Commercial" and active_live["is_live"] == 1, "live commercials should take homepage priority")
     assert_true('"/admin/commercials": self.admin_commercials_page' in (ROOT / "app.py").read_text(encoding="utf-8"), "admin commercials route should be registered")
+    assert_true('"/admin/tickets": self.admin_tickets_page' in (ROOT / "app.py").read_text(encoding="utf-8"), "admin tickets route should be registered")
+    assert_true('"/profile/update": self.update_user_profile' in (ROOT / "app.py").read_text(encoding="utf-8"), "profile update route should be registered")
+    admin_tickets_template = (ROOT / "templates" / "admin_tickets.html").read_text(encoding="utf-8")
+    assert_true("Support Tickets" in admin_tickets_template and "ticket-table" in admin_tickets_template, "admin tickets page should render ticket table")
+    assert_true("/admin/tickets/update" in (ROOT / "app.py").read_text(encoding="utf-8"), "admin ticket rows should post update actions")
     buy_template = (ROOT / "templates" / "buy_cars.html").read_text(encoding="utf-8")
     assert_true("buy-cars-coming-soon.png" in buy_template, "Buy Cars page should render the coming-soon campaign")
     assert_true('class="top-brand"' in buy_template and 'href="/manage-booking"' in buy_template, "Buy Cars page should share main header navigation")
@@ -359,6 +370,7 @@ def main() -> None:
         )
     docs = app.get_booking_documents(admin_bookings[0]["id"])
     assert_true("42150" in docs["Rental Agreement"]["content"] and "POL-STRESS-123" in docs["Rental Agreement"]["content"], "user rental agreement document should use saved dynamic agreement data")
+    assert_true("FairFares price promise" in docs["Rental Agreement"]["content"], "agreement should include price-match promise")
     discount_docs = app.get_booking_documents(discounted_booking_id)
     assert_true("STRESS15" in discount_docs["Invoice / Receipt"]["content"], "invoice should show applied discount code")
     with app.db() as con:
@@ -372,10 +384,32 @@ def main() -> None:
         )
     admin_users_template = (ROOT / "templates" / "admin_users.html").read_text(encoding="utf-8")
     assert_true("adminUserSearch" in admin_users_template and "/admin/users" in admin_users_template, "admin users page should include search and nav")
+    dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert_true("$booking_confirmation_card" in dashboard_template and "customerInfoForm" in (ROOT / "app.py").read_text(encoding="utf-8"), "selected bookings should render customer confirmation form")
     admin_user_rows = app.get_admin_users()
     assert_true(any(row["booking_count"] > 0 for row in admin_user_rows), "admin users should aggregate booking counts")
     user_card = app.FairFaresHandler.render_admin_user_card(None, next(row for row in admin_user_rows if row["id"] == admin_bookings[0]["user_id"]))
     assert_true("Driver License" in user_card and "Front saved" in user_card and "Rental Agreements" in user_card, "admin user profile should show DL images and agreements")
+
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO support_tickets
+            (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent)
+            VALUES ('FF-SUP-STRESS', ?, ?, 'Pickup help', 'Email', 'stress ticket', 1)
+            """,
+            (admin_bookings[0]["id"], admin_bookings[0]["user_id"]),
+        )
+        ticket = con.execute("SELECT * FROM support_tickets WHERE ticket_id = 'FF-SUP-STRESS'").fetchone()
+        con.execute(
+            "UPDATE support_tickets SET claimed_by = 'Sriram', status = 'IN_PROGRESS', admin_comment = 'Checking pickup details.' WHERE id = ?",
+            (ticket["id"],),
+        )
+    ticket_row = app.get_admin_tickets()[0]
+    ticket_html = app.FairFaresHandler.render_ticket_row(None, ticket_row)
+    assert_true("Sriram" in ticket_html and "Checking pickup details." in ticket_html, "admin tickets should show claim owner and comments")
+    latest_ticket = app.get_latest_ticket_for_user(admin_bookings[0]["user_id"])
+    assert_true(latest_ticket["claimed_by"] == "Sriram", "user ticket state should read latest admin claim owner")
 
     for booking_id in booked_ids[:8]:
         admin_approve_cancel(booking_id)
