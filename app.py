@@ -11,7 +11,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -402,6 +402,22 @@ def init_db() -> None:
                 FOREIGN KEY(booking_id) REFERENCES bookings(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS saved_cars (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                car_id INTEGER NOT NULL,
+                pickup_location TEXT NOT NULL DEFAULT '',
+                pickup_date TEXT NOT NULL DEFAULT '',
+                pickup_time TEXT NOT NULL DEFAULT '',
+                return_date TEXT NOT NULL DEFAULT '',
+                return_time TEXT NOT NULL DEFAULT '',
+                discount_code TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, car_id, pickup_date, pickup_time, return_date, return_time),
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(car_id) REFERENCES cars(id)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -775,6 +791,21 @@ def daily_price_range(price: object) -> tuple[int, int]:
     return low, high
 
 
+def default_trip_dates() -> tuple[str, str]:
+    pickup = datetime.now().date() + timedelta(days=6)
+    dropoff = pickup + timedelta(days=10)
+    return pickup.isoformat(), dropoff.isoformat()
+
+
+def display_date_to_input(value: str, fallback: str) -> str:
+    for date_format in ("%Y-%m-%d", "%b %d, %Y"):
+        try:
+            return datetime.strptime(value, date_format).date().isoformat()
+        except ValueError:
+            continue
+    return fallback
+
+
 def time_select_options(selected: str = "10:00 AM") -> str:
     options = []
     for hour in range(0, 24):
@@ -978,8 +1009,9 @@ def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def render_user_trip_rows(bookings: list[sqlite3.Row]) -> str:
-    if not bookings:
+def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.Row] | None = None) -> str:
+    saved_cars = saved_cars or []
+    if not bookings and not saved_cars:
         return '<div class="mini-trip" data-trip-type="upcoming"><span>No trips yet<br><small>Book a car to see saved trips here.</small></span><b>Not picked up</b></div>'
     rows = []
     for booking in bookings:
@@ -1007,6 +1039,30 @@ def render_user_trip_rows(bookings: list[sqlite3.Row]) -> str:
               {'<img src="' + escape(details["image"]) + '" alt="' + escape(booking["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(booking["car_name"])}<br><small>{escape(booking["pickup_date"])} - {escape(booking["dropoff_date"])} · {escape(status)}</small></span>
               <b>{escape(status_text)}</b>
+            </button>
+            """
+        )
+    for saved in saved_cars:
+        low, high = daily_price_range(saved["daily_price"])
+        details = {
+            "bookingId": "Saved car",
+            "car": saved["car_name"],
+            "status": "SAVED",
+            "statusText": "Saved",
+            "pickup": f"{saved['pickup_location'] or saved['location']} | {saved['pickup_date'] or 'Choose dates'} {saved['pickup_time'] or ''}",
+            "dropoff": f"{saved['return_date'] or 'Choose return date'} {saved['return_time'] or ''}",
+            "provider": "FairFares",
+            "reason": "Saved from search. Select this car when you are ready to book.",
+            "image": row_value(saved, "image_url") or "",
+            "price": f"${low}-${high}/day est.",
+        }
+        details_json = escape(json.dumps(details))
+        rows.append(
+            f"""
+            <button class="mini-trip" type="button" data-trip-type="favorites" data-trip-details="{details_json}">
+              {'<img src="' + escape(details["image"]) + '" alt="' + escape(saved["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
+              <span>{escape(saved["car_name"])}<br><small>{escape(details["pickup"])} · Saved car</small></span>
+              <b>Saved</b>
             </button>
             """
         )
@@ -1199,15 +1255,22 @@ def create_booking_for_user(
     return_date: str = "",
     pickup_time: str = "10:00 AM",
     return_time: str = "10:00 AM",
+    pickup_location: str = "",
+    return_location: str = "",
 ) -> sqlite3.Row:
     requested_car = get_car(car_id)
-    requested_start = parse_booking_datetime(pickup_date or "2025-06-10", pickup_time)
-    candidates = []
-    if requested_car:
-        candidates.append(requested_car)
-    candidates.extend(row for row in get_cars() if not requested_car or row["id"] != requested_car["id"])
+    default_pickup, default_return = default_trip_dates()
+    pickup_date = pickup_date or default_pickup
+    return_date = return_date or default_return
+    requested_start = parse_booking_datetime(pickup_date, pickup_time)
+    requested_end = parse_booking_datetime(return_date, return_time)
+    if requested_start and requested_end and requested_end <= requested_start:
+        raise ValueError("Return date and time must be after pickup date and time.")
+    candidates = [requested_car] if requested_car else get_cars()
     car = None
     for candidate in candidates:
+        if not candidate:
+            continue
         if candidate["status"].strip().upper() == "MAINTENANCE":
             continue
         active_booking = active_booking_for_car(candidate["id"])
@@ -1225,7 +1288,7 @@ def create_booking_for_user(
         car = candidate
         break
     if not car:
-        raise RuntimeError("No available cars in inventory")
+        raise RuntimeError("Selected car is not available for that pickup time.")
     with db() as con:
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
@@ -1249,11 +1312,11 @@ def create_booking_for_user(
                 user_id,
                 car["id"],
                 "AVIS",
-                "Denver International Airport (DEN)",
-                format_booking_date(pickup_date, "Jun 10, 2025"),
+                pickup_location or car["location"] or "Denver International Airport (DEN)",
+                format_booking_date(pickup_date, format_booking_date(default_pickup, "Upcoming pickup")),
                 pickup_time or "10:00 AM",
-                "Denver International Airport (DEN)",
-                format_booking_date(return_date, "Jun 20, 2025"),
+                return_location or pickup_location or car["location"] or "Denver International Airport (DEN)",
+                format_booking_date(return_date, format_booking_date(default_return, "Upcoming return")),
                 return_time or "10:00 AM",
                 rental_days,
                 subtotal,
@@ -1281,6 +1344,8 @@ def ensure_booking_for_user(
     return_date: str = "",
     pickup_time: str = "10:00 AM",
     return_time: str = "10:00 AM",
+    pickup_location: str = "",
+    return_location: str = "",
 ) -> sqlite3.Row | None:
     existing = get_booking_for_user(user_id)
     if existing and not car_id:
@@ -1288,12 +1353,31 @@ def ensure_booking_for_user(
     if car_id:
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
-            return create_booking_for_user(user_id, car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time)
+            try:
+                return create_booking_for_user(user_id, car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+            except (RuntimeError, ValueError):
+                return existing
         return None
     cars = get_cars()
     if not cars:
         return None
-    return create_booking_for_user(user_id, cars[0]["id"], discount_code, days, pickup_date, return_date, pickup_time, return_time)
+    return create_booking_for_user(user_id, cars[0]["id"], discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+
+
+def get_saved_cars_for_user(user_id: int) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT saved_cars.*, cars.name AS car_name, cars.category, cars.image_url,
+                   cars.location, cars.daily_price
+            FROM saved_cars
+            JOIN cars ON cars.id = saved_cars.car_id
+            WHERE saved_cars.user_id = ?
+            ORDER BY saved_cars.id DESC
+            LIMIT 50
+            """,
+            (user_id,),
+        ).fetchall()
 
 
 AGREEMENT_FIELD_GROUPS = (
@@ -1681,6 +1765,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
+            "/saved-cars": self.save_search_car,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
             "/student-verification": self.update_student_verification,
@@ -1701,9 +1786,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         }
         handler = routes.get(parsed.path)
         if handler:
+            if not self.allow_post_from_same_origin(parsed.path):
+                self.send_json({"ok": False, "message": "Request origin not allowed."}, 403)
+                return
             handler()
         else:
             self.not_found()
+
+    def allow_post_from_same_origin(self, path: str) -> bool:
+        if path in {"/login", "/signup"}:
+            return True
+        expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
+        for header_name in ("Origin", "Referer"):
+            value = self.headers.get(header_name)
+            if not value:
+                continue
+            parsed = urllib.parse.urlparse(value)
+            if parsed.hostname and parsed.hostname != expected_host:
+                return False
+        return True
 
     def read_form(self) -> dict[str, str]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -1764,7 +1865,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
         self.send_response(303)
         self.send_header("Location", "/dashboard")
-        self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/")
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
+        self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
 
     def activation_url(self, token: str) -> str:
@@ -1813,6 +1915,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         car_rows = get_cars()
         cars = "\n".join(self.render_car_card(row) for row in car_rows)
+        default_pickup, default_return = default_trip_dates()
         filter_counts = get_filter_counts()
         location_options = "\n".join(
             f"<option>{escape(location)}</option>"
@@ -1857,6 +1960,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             services=services,
             cars=cars,
             car_count=escape(len(car_rows)),
+            default_pickup_date=escape(default_pickup),
+            default_return_date=escape(default_return),
             location_options=location_options,
             pickup_time_options=time_select_options("10:00 AM"),
             return_time_options=time_select_options("10:00 AM"),
@@ -1923,7 +2028,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <small class="availability-note" data-availability-note></small>
                 <em>Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.</em>
                 <div class="card-actions-row">
-                    <button class="light-button save-search-trip" type="button" data-save-car="{escape(row["name"])}">Save Trip</button>
+                    <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}">Save Trip</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
                 <details class="car-terms">
@@ -2191,6 +2296,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE bookings SET saved_by_user = 1 WHERE id = ? AND user_id = ?", (booking["id"], user["id"]))
         self.send_json({"ok": True, "message": "Current trip saved."})
 
+    def save_search_car(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to save this car to your trips."}, 401)
+            return
+        form = self.read_form()
+        try:
+            car_id = int(form.get("car_id", "0"))
+        except ValueError:
+            car_id = 0
+        if not get_car(car_id):
+            self.send_json({"ok": False, "message": "Car not found."}, 404)
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT OR IGNORE INTO saved_cars
+                (user_id, car_id, pickup_location, pickup_date, pickup_time, return_date, return_time, discount_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user["id"],
+                    car_id,
+                    form.get("pickup_location", ""),
+                    form.get("pickup_date", ""),
+                    form.get("pickup_time", ""),
+                    form.get("return_date", ""),
+                    form.get("return_time", ""),
+                    form.get("discount_code", ""),
+                ),
+            )
+        self.send_json({"ok": True, "message": "Saved to your trips."})
+
     def update_user_profile(self) -> None:
         user = self.current_user()
         if not user:
@@ -2248,7 +2386,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({
             "ok": True,
             "ticket_id": ticket_id,
-            "message": f"Ticket {ticket_id} created. Our dev team will claim it and follow up soon.",
+            "message": f"Ticket {ticket_id} created. FairFares support will claim it and follow up soon.",
         })
 
     def generate_referral_code(self) -> None:
@@ -3177,6 +3315,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             query.get("return_date", [""])[0],
             query.get("pickup_time", ["10:00 AM"])[0],
             query.get("return_time", ["10:00 AM"])[0],
+            query.get("pickup_location", [""])[0],
+            query.get("return_location", [""])[0],
         )
 
     def render_manage_booking(
@@ -3189,9 +3329,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return_date: str = "",
         pickup_time: str = "10:00 AM",
         return_time: str = "10:00 AM",
+        pickup_location: str = "",
+        return_location: str = "",
     ) -> None:
         if user and selected_car_id:
-            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time)
+            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
         elif user:
             booking = get_booking_for_user(user["id"])
         else:
@@ -3200,13 +3342,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
         user_bookings = get_bookings_for_user(user["id"]) if user else []
+        saved_cars = get_saved_cars_for_user(user["id"]) if user else []
         latest_ticket = get_latest_ticket_for_user(user["id"]) if user else None
         is_first_time_user = bool(user and not user_bookings)
         show_start_experience = not user or is_first_time_user
-        trip_rows = render_user_trip_rows(user_bookings)
+        trip_rows = render_user_trip_rows(user_bookings, saved_cars)
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
         live_status = live_status_for_booking(booking)
+        default_pickup, default_return = default_trip_dates()
+        modify_pickup_date = display_date_to_input(booking["pickup_date"] if booking else "", default_pickup)
+        modify_return_date = display_date_to_input(booking["dropoff_date"] if booking else "", default_return)
         no_upgrade_option = f"""
             <label class="upgrade-current">
                 <input type="radio" name="vehicle" value="" data-price="0" checked>
@@ -3363,7 +3509,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
         support_ticket_message = ""
         if latest_ticket:
-            owner = row_value(latest_ticket, "claimed_by") or "FairFares dev team"
+            owner = row_value(latest_ticket, "claimed_by") or "FairFares support"
             comment = row_value(latest_ticket, "admin_comment")
             status = row_value(latest_ticket, "status").replace("_", " ").title()
             support_ticket_message = (
@@ -3416,6 +3562,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             upgrade_options=upgrade_options,
             upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),
+            modify_pickup_date=escape(modify_pickup_date),
+            modify_return_date=escape(modify_return_date),
             booking_documents_json=booking_documents_json,
             documents_locked="1" if documents_locked else "0",
             documents_locked_class="documents-locked" if documents_locked else "",
@@ -3436,7 +3584,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             trip_rows=trip_rows,
             upcoming_count=upcoming_count,
             past_count=past_count,
-            favorite_count=sum(1 for row in user_bookings if row_value(row, "saved_by_user")),
+            favorite_count=sum(1 for row in user_bookings if row_value(row, "saved_by_user")) + len(saved_cars),
             live_status_title=escape(live_status["title"]),
             live_status_body=escape(live_status["body"]),
             live_status_instructions=escape(live_status["instructions"]),
@@ -3480,7 +3628,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def api_cars(self) -> None:
-        payload = {"cars": [dict(row) for row in get_cars()]}
+        public_fields = (
+            "id", "name", "brand", "model", "year", "category", "type", "fuel_type",
+            "seats", "bags", "doors", "transmission", "daily_price", "badge",
+            "features", "location", "image_url", "booked_until_date", "booked_until_time",
+        )
+        payload = {"cars": [{field: row_value(row, field) for field in public_fields} for row in get_cars()]}
         body = json.dumps(payload, indent=2).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

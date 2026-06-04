@@ -47,7 +47,7 @@ function getRentalDays() {
   const pickup = new Date(`${pickupDate.value}T00:00:00`);
   const dropoff = new Date(`${returnDate.value}T00:00:00`);
   const diff = Math.ceil((dropoff - pickup) / 86400000);
-  return Number.isFinite(diff) && diff > 0 ? diff : 1;
+  return Number.isFinite(diff) && diff > 0 ? diff : 0;
 }
 
 function timeTo24(timeText) {
@@ -90,7 +90,7 @@ function rentalLengthText(days) {
 
 function updateRentalRanges() {
   const days = getRentalDays();
-  if (rentalLengthLabel) rentalLengthLabel.textContent = rentalLengthText(days);
+  if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
   if (quoteMatchLabel) {
     quoteMatchLabel.textContent = "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.";
   }
@@ -216,6 +216,13 @@ discountCode?.addEventListener("input", validateDiscount);
 document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").forEach((button) => {
   button.addEventListener("click", (event) => {
     event.preventDefault();
+    if (getRentalDays() <= 0) {
+      if (discountMessage) {
+        discountMessage.textContent = "Return date and time must be after pickup date and time.";
+        discountMessage.classList.add("is-error");
+      }
+      return;
+    }
     const url = new URL(button.getAttribute("href"), window.location.origin);
     const card = button.closest(".car-card");
     const selectedPickup = selectedPickupDateTime();
@@ -224,6 +231,8 @@ document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").for
       ? card.dataset.bookedUntilTime
       : pickupTime?.value;
     url.searchParams.set("days", String(getRentalDays()));
+    if (locationSelect?.value) url.searchParams.set("pickup_location", locationSelect.value);
+    if (locationSelect?.value) url.searchParams.set("return_location", locationSelect.value);
     if (pickupDate?.value) url.searchParams.set("pickup_date", pickupDate.value);
     if (returnDate?.value) url.searchParams.set("return_date", returnDate.value);
     if (adjustedPickupTime) url.searchParams.set("pickup_time", adjustedPickupTime);
@@ -736,8 +745,27 @@ document.getElementById("closeTripDetail")?.addEventListener("click", () => {
 document.addEventListener("click", (event) => {
   const saveButton = event.target.closest(".save-search-trip");
   if (!saveButton) return;
-  saveButton.textContent = "Saved";
-  saveButton.disabled = true;
+  const card = saveButton.closest(".car-card");
+  const payload = new URLSearchParams();
+  payload.set("car_id", saveButton.dataset.carId || "");
+  payload.set("pickup_location", locationSelect?.value || card?.dataset.location || "");
+  payload.set("pickup_date", pickupDate?.value || "");
+  payload.set("pickup_time", pickupTime?.value || "");
+  payload.set("return_date", returnDate?.value || "");
+  payload.set("return_time", returnTime?.value || "");
+  payload.set("discount_code", discountCode?.value || "");
+  fetch("/saved-cars", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(data)))
+    .then((data) => {
+      saveButton.textContent = data.message || "Saved";
+      saveButton.disabled = true;
+    })
+    .catch((data) => {
+      saveButton.textContent = data?.login_required ? "Sign in to save" : "Try again";
+    });
 });
 
 document.getElementById("cancelPendingRequest")?.addEventListener("click", () => {
@@ -821,10 +849,10 @@ document.getElementById("supportForm")?.addEventListener("submit", (event) => {
   })
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((data) => {
-      supportStatus.textContent = data.message || `Ticket ${data.ticket_id} created. Our dev team will follow up soon.`;
+      supportStatus.textContent = data.message || `Ticket ${data.ticket_id} created. FairFares support will follow up soon.`;
     })
     .catch(() => {
-      supportStatus.textContent = "Support ticket saved locally. Our dev team will follow up soon.";
+      supportStatus.textContent = "Support ticket saved locally. FairFares support will follow up soon.";
     });
 });
 

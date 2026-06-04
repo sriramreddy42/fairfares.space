@@ -168,14 +168,18 @@ def main() -> None:
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     assert_true("rentalLengthLabel" in index_template and "quoteMatchLabel" in index_template, "homepage search should show rental days/months and quote-match message")
     assert_true("$pickup_time_options" in index_template and "$return_time_options" in index_template, "homepage search should render full dynamic time selectors")
+    assert_true("2025-06-10" not in index_template and "$default_pickup_date" in index_template, "homepage should not ship stale 2025 default dates")
     assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
+    assert_true("pickup_location" in app_js and "return_location" in app_js, "select flow should carry selected locations")
     assert_true("Available after" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
     assert_true("data-total-range" not in app_js and "total range" not in app_js, "frontend should not restore removed total-range copy")
     assert_true('document.getElementById("liveStatusText").innerHTML = "<b>Status refreshed!' not in app_js, "live status refresh should not overwrite dynamic booking status")
     assert_true('fetch("/support/tickets"' in app_js and "save-search-trip" in first_card, "support tickets should use backend API and feed cards should expose save trip")
+    assert_true('fetch("/saved-cars"' in app_js and '"/saved-cars": self.save_search_car' in (ROOT / "app.py").read_text(encoding="utf-8"), "save trip should persist saved cars")
     assert_true('fetch("/bookings/request-cancel"' in app_js and "tripDetailModal" in app_js, "user should cancel pending requests and open trip detail popups")
+    assert_true("Our dev team" not in app_js and "Our dev team" not in (ROOT / "app.py").read_text(encoding="utf-8"), "customer support copy should not mention dev team")
     assert_true("saveCurrentTrip" not in app_js, "saved trips panel should not show old save current trip flow")
     assert_true('fetch("/profile/update"' in app_js, "booking confirmation details should save through profile API")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
@@ -231,6 +235,10 @@ def main() -> None:
     assert_true(sum(row["total"] for row in counts["types"]) == len(cars), "type filter counts should match available feed")
     assert_true(sum(row["total"] for row in counts["fuel"]) == len(cars), "fuel filter counts should match available feed")
 
+    app_source = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def serve_static")], "public cars API should not expose license plates")
+    assert_true("allow_post_from_same_origin" in app_source and "Request origin not allowed" in app_source, "POST routes should have same-origin guard")
+
     with app.db() as con:
         con.execute(
             """
@@ -254,6 +262,19 @@ def main() -> None:
     emails = {user["email"] for user in users}
     assert_true(len(emails) == 15, "multiple unique signups should persist")
     assert_true(all("StressPass" not in user["password_hash"] for user in users), "passwords must be hashed, not plaintext")
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO saved_cars
+            (user_id, car_id, pickup_location, pickup_date, pickup_time, return_date, return_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (users[0]["id"], cars[0]["id"], "Denver Union Station", "2026-06-10", "9:30 AM", "2026-06-12", "3:30 PM"),
+        )
+    saved_rows = app.get_saved_cars_for_user(users[0]["id"])
+    assert_true(saved_rows and saved_rows[0]["car_name"], "saved cars should persist and join back to car data")
+    saved_trip_html = app.render_user_trip_rows([], saved_rows)
+    assert_true('data-trip-type="favorites"' in saved_trip_html and "Saved car" in saved_trip_html, "saved cars should render in saved trips modal list")
 
     same_day_user = create_verified_user(99)
     with app.db() as con:
