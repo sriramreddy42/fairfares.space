@@ -521,16 +521,16 @@ modifyForm?.addEventListener("submit", (event) => {
     method: "POST",
     body: new URLSearchParams(new FormData(modifyForm)),
   })
-    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
       modifyStatus.textContent = payload.message || "Reservation changes saved for review.";
       if (bookingStatusBadge) {
-        bookingStatusBadge.textContent = "Modified";
-        bookingStatusBadge.className = "status-badge status-confirmed";
+        bookingStatusBadge.textContent = payload.status_label || "Modification sent to admin";
+        bookingStatusBadge.className = `status-badge ${payload.status_class || "status-confirmed"}`;
       }
     })
-    .catch(() => {
-      modifyStatus.textContent = "Reservation changes saved for review.";
+    .catch((payload) => {
+      modifyStatus.textContent = payload?.message || "Unable to save this modification.";
     });
 });
 

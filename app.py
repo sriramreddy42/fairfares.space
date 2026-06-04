@@ -851,6 +851,16 @@ def get_car(car_id: int) -> sqlite3.Row | None:
         return con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
 
 
+def get_car_by_name(name: str) -> sqlite3.Row | None:
+    if not name.strip():
+        return None
+    with db() as con:
+        return con.execute(
+            "SELECT * FROM cars WHERE name = ? AND UPPER(TRIM(status)) != 'MAINTENANCE'",
+            (name.strip(),),
+        ).fetchone()
+
+
 def get_admin_bookings() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -1075,7 +1085,7 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
     labels = {
         "CANCELLATION_REQUESTED": "Request sent to admin",
         "CANCELLED": "Cancelled",
-        "MODIFIED": "Modified",
+        "MODIFIED": "Modification sent to admin",
         "PICKED_UP": "Picked up",
         "RETURNED": "Returned",
     }
@@ -1083,7 +1093,7 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
 
 
 def booking_status_class(status: str) -> str:
-    if status == "CANCELLATION_REQUESTED":
+    if status in {"CANCELLATION_REQUESTED", "MODIFIED"}:
         return "status-pending"
     if status in {"CANCELLED", "RETURNED"}:
         return "status-muted"
@@ -1127,8 +1137,8 @@ def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
         title = "Vehicle returned"
         body = "This trip is complete. Documents remain available in your portal."
     elif status == "MODIFIED":
-        title = "Booking updated"
-        body = f"Your updated pickup is {booking['pickup_date']} at {booking['pickup_time']}."
+        title = "Modification pending approval"
+        body = f"Admin is reviewing your requested change: {booking['cancellation_reason'] or 'Trip modification'}"
     else:
         title = "Car is ready for pickup"
         body = f"Your {booking['car_name']} is scheduled for {booking['pickup_time']} on {booking['pickup_date']}."
@@ -2175,29 +2185,67 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         new_return_time = form.get("return_time") or booking["dropoff_time"]
         new_pickup_location = form.get("pickup_location") or booking["pickup_location"]
         new_dropoff_location = form.get("dropoff_location") or booking["dropoff_location"]
+        requested_vehicle = (form.get("vehicle") or "").strip()
+        requested_car = get_car_by_name(requested_vehicle)
+        if requested_vehicle and not requested_car:
+            self.send_json({"ok": False, "message": "Selected vehicle is no longer available."}, 400)
+            return
+        requested_start = parse_booking_datetime(new_pickup_date, new_pickup_time)
+        requested_end = parse_booking_datetime(new_return_date, new_return_time)
+        if requested_start and requested_end and requested_end <= requested_start:
+            self.send_json({"ok": False, "message": "Return date and time must be after pickup date and time."}, 400)
+            return
+        if requested_car and requested_car["id"] != booking["car_id"]:
+            active_booking = active_booking_for_car(requested_car["id"])
+            active_return = parse_booking_datetime(active_booking["dropoff_date"], active_booking["dropoff_time"]) if active_booking else None
+            if requested_start and active_return and requested_start < active_return:
+                self.send_json(
+                    {
+                        "ok": False,
+                        "message": f"{requested_car['name']} is available after {active_return.strftime('%-I:%M %p') if os.name != 'nt' else active_return.strftime('%I:%M %p').lstrip('0')} on {active_return.strftime('%b %d, %Y')}.",
+                    },
+                    409,
+                )
+                return
+        current_pickup_iso = display_date_to_input(booking["pickup_date"], new_pickup_date)
+        current_return_iso = display_date_to_input(booking["dropoff_date"], new_return_date)
         changes = []
-        if new_pickup_date != booking["pickup_date"] or new_pickup_time != booking["pickup_time"]:
-            changes.append(f"Pickup changed to {new_pickup_date} at {new_pickup_time}")
-        if new_return_date != booking["dropoff_date"] or new_return_time != booking["dropoff_time"]:
-            changes.append(f"Return changed to {new_return_date} at {new_return_time}")
+        if new_pickup_date != current_pickup_iso or new_pickup_time != booking["pickup_time"]:
+            changes.append(f"Pickup changed to {format_booking_date(new_pickup_date, new_pickup_date)} at {new_pickup_time}")
+        if new_return_date != current_return_iso or new_return_time != booking["dropoff_time"]:
+            changes.append(f"Return changed to {format_booking_date(new_return_date, new_return_date)} at {new_return_time}")
         if new_pickup_location != booking["pickup_location"]:
             changes.append(f"Pickup location changed to {new_pickup_location}")
         if new_dropoff_location != booking["dropoff_location"]:
             changes.append(f"Drop-off location changed to {new_dropoff_location}")
+        if requested_car and requested_car["id"] != booking["car_id"]:
+            changes.append(f"Vehicle change requested from {booking['car_name']} to {requested_car['name']}")
         if form.get("driver_name"):
             changes.append(f"Additional driver added: {form.get('driver_name')}")
         change_note = "; ".join(changes) or "Timing/location review requested"
+        car_id = requested_car["id"] if requested_car and requested_car["id"] != booking["car_id"] else booking["car_id"]
+        subtotal = float(booking["subtotal_price"] or booking["total_price"])
+        discount_amount = float(booking["discount_amount"] or 0)
+        total_price = float(booking["total_price"])
+        if requested_car and requested_car["id"] != booking["car_id"]:
+            subtotal = round(float(requested_car["daily_price"]) * int(booking["days"] or 1), 2)
+            discount_amount = calculate_discount_amount(subtotal, get_valid_discount(booking["discount_code"]))
+            total_price = round(subtotal - discount_amount, 2)
         with db() as con:
             con.execute(
                 """
                 UPDATE bookings
-                SET pickup_date = ?,
+                SET car_id = ?,
+                    pickup_date = ?,
                     pickup_time = ?,
                     dropoff_date = ?,
                     dropoff_time = ?,
                     pickup_location = ?,
                     dropoff_location = ?,
                     return_location = ?,
+                    subtotal_price = ?,
+                    discount_amount = ?,
+                    total_price = ?,
                     additional_driver_name = ?,
                     additional_driver_age = ?,
                     booking_status = 'MODIFIED',
@@ -2206,13 +2254,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 WHERE id = ? AND user_id = ?
                 """,
                 (
-                    new_pickup_date,
+                    car_id,
+                    format_booking_date(new_pickup_date, new_pickup_date),
                     new_pickup_time,
-                    new_return_date,
+                    format_booking_date(new_return_date, new_return_date),
                     new_return_time,
                     new_pickup_location,
                     new_dropoff_location,
                     new_dropoff_location,
+                    subtotal,
+                    discount_amount,
+                    total_price,
                     form.get("driver_name", ""),
                     form.get("driver_age", "") if form.get("driver_name") else "",
                     change_note,
@@ -2220,7 +2272,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     user["id"],
                 ),
             )
-        self.send_json({"ok": True, "message": f"Modification request sent: {change_note}"})
+            if requested_car and requested_car["id"] != booking["car_id"]:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+                con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car["id"],))
+        self.send_json(
+            {
+                "ok": True,
+                "message": f"Modification request sent: {change_note}",
+                "status_label": booking_status_label("MODIFIED"),
+                "status_class": booking_status_class("MODIFIED"),
+            }
+        )
 
     def cancel_booking_request(self) -> None:
         user = self.current_user()
@@ -3371,8 +3433,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for car in available_cars if car["name"] != current_car_name
         )
         upgrade_select_options = '<option value="" data-price="0">No vehicle change</option>\n' + "\n".join(
-            f'<option value="{escape(car["name"])}" data-price="{car["total_price"]:.2f}">{escape(car["name"])} - {escape(car["category"])} - ${car["total_price"]:.2f}</option>'
-            for car in available_cars
+            f'<option value="{escape(car["name"])}" data-price="{daily_price_range(car["daily_price"])[0]}-{daily_price_range(car["daily_price"])[1]}">{escape(car["name"])} - {escape(car["category"])} - ${daily_price_range(car["daily_price"])[0]}-{daily_price_range(car["daily_price"])[1]}/day est.</option>'
+            for car in available_cars if car["name"] != current_car_name
         )
         editable = ["hero_kicker", "hero_title", "hero_body", "primary_cta", "secondary_cta", "poster_image", "poster_caption", "offer_title", "offer_body", "contact_email"]
         fields = "\n".join(

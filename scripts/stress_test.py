@@ -171,6 +171,7 @@ def main() -> None:
     assert_true("2025-06-10" not in index_template and "$default_pickup_date" in index_template, "homepage should not ship stale 2025 default dates")
     assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
     assert_true("pickup_location" in app_js and "return_location" in app_js, "select flow should carry selected locations")
+    assert_true("Modification sent to admin" in app_js and "response.json().then((payload) => Promise.reject(payload))" in app_js, "modify flow should show pending status and server validation errors")
     assert_true("Available after" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
@@ -238,6 +239,9 @@ def main() -> None:
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def serve_static")], "public cars API should not expose license plates")
     assert_true("allow_post_from_same_origin" in app_source and "Request origin not allowed" in app_source, "POST routes should have same-origin guard")
+    assert_true("Vehicle change requested from" in app_source and "get_car_by_name" in app_source, "modify vehicle requests should be stored instead of ignored")
+    assert_true("Modification pending approval" in app_source and "MODIFIED" in app_source[app_source.index("def booking_status_class"):app_source.index("def payment_status_label")], "modified bookings should read as pending review")
+    assert_true("${car[\"total_price\"]:.2f}" not in app_source[app_source.index("upgrade_select_options"):app_source.index("editable =")], "upgrade selector should show ranges, not fixed totals")
 
     with app.db() as con:
         con.execute(
