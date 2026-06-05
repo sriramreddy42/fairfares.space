@@ -192,7 +192,7 @@ def main() -> None:
     assert_true("function escapeHtml" in app_js and "details.price" in app_js, "trip detail modal should escape dynamic data and show price")
     assert_true("Our dev team" not in app_js and "Our dev team" not in (ROOT / "app.py").read_text(encoding="utf-8"), "customer support copy should not mention dev team")
     assert_true("saveCurrentTrip" not in app_js, "saved trips panel should not show old save current trip flow")
-    assert_true('fetch("/profile/update"' in app_js, "booking confirmation details should save through profile API")
+    assert_true('const endpoint = form.dataset.guestBooking === "true" ? "/guest-booking" : "/profile/update"' in app_js, "booking confirmation details should choose guest or profile API")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
     assert_true("parseJsonData" in app_js and "textarea.innerHTML" in app_js, "frontend JSON parsing should not break all mobile controls")
     assert_true('...document.querySelectorAll(".nav-actions > a")' in app_js, "mobile menu should include account links like logout/sign in")
@@ -615,6 +615,31 @@ def main() -> None:
     assert_true("adminUserSearch" in admin_users_template and "/admin/users" in admin_users_template, "admin users page should include search and nav")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true("$booking_confirmation_card" in dashboard_template and "customerInfoForm" in (ROOT / "app.py").read_text(encoding="utf-8"), "selected bookings should render customer confirmation form")
+    assert_true("/guest-booking" in app_source and "build_booking_preview" in app_source, "signed-out selected cars should use guest booking preview flow")
+    assert_true("data-guest-booking" in app_source and "guest_account = 0" in app_source, "guest bookings should be claimable during signup")
+    guest_user_id = app.find_or_create_guest_user("Guest Booker", "guest.booker@example.com", "5557779999")
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+            VALUES ('Guest Flow Car', 'Honda', 'Civic', 2026, 'Midsize', 'Sedan', 'Gasoline', 5, 2, 4, 'Automatic',
+                    31.99, 319.90, 'Guest Ready', 'silver', 'Free Cancellation|Unlimited Mileage',
+                    'Denver International Airport (DEN)', '/static/img/cars/honda-civic.png', 'AVAILABLE', 500)
+            """
+        )
+        guest_car_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    guest_car = app.get_car(guest_car_id)
+    preview = app.build_booking_preview(guest_car["id"], "", 5, "2026-06-11", "2026-06-16", "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
+    assert_true(preview is not None and preview["booking_id"] == "Pending details" and preview["pickup_time"] == "09:30 AM", "guest preview should show selected trip before account login")
+    guest_booking = app.create_booking_for_user(guest_user_id, guest_car["id"], "", 5, "2026-06-11", "2026-06-16", "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
+    app.save_booking_contact_and_send_confirmation(guest_user_id, "Guest", "Booker", "guest.booker@example.com", "5557779999", "http://stress.local", True, False)
+    with app.db() as con:
+        guest_user = con.execute("SELECT * FROM users WHERE id = ?", (guest_user_id,)).fetchone()
+        guest_booking_row = con.execute("SELECT * FROM bookings WHERE id = ?", (guest_booking["id"],)).fetchone()
+    assert_true(guest_user["guest_account"] == 1 and guest_booking_row["user_id"] == guest_user_id, "guest booking should persist against a guest user")
+    assert_true(guest_user["email"] == "guest.booker@example.com" and guest_user["phone"] == "5557779999", "guest booking should store matching email and phone")
     assert_true("Save Current Trip" not in dashboard_template and "tripDetailModal" in dashboard_template, "saved trips should use clickable rows and modal details")
     assert_true('"/bookings/request-cancel": self.cancel_booking_request' in (ROOT / "app.py").read_text(encoding="utf-8"), "request cancel route should be registered")
     assert_true("No upgrade" in (ROOT / "app.py").read_text(encoding="utf-8") and "Current total" in (ROOT / "app.py").read_text(encoding="utf-8"), "modify vehicle should include visible no-upgrade option")

@@ -601,6 +601,7 @@ def init_db() -> None:
                 text_opt_in INTEGER NOT NULL DEFAULT 0,
                 marketing_token TEXT,
                 marketing_unsubscribed_at TEXT,
+                guest_account INTEGER NOT NULL DEFAULT 0,
                 is_verified INTEGER NOT NULL DEFAULT 0,
                 verified_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -840,6 +841,7 @@ def init_db() -> None:
         ensure_column(con, "users", "text_opt_in", "text_opt_in INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "marketing_token", "marketing_token TEXT")
         ensure_column(con, "users", "marketing_unsubscribed_at", "marketing_unsubscribed_at TEXT")
+        ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
         ensure_column(con, "bookings", "contact_name", "contact_name TEXT NOT NULL DEFAULT ''")
@@ -1769,6 +1771,91 @@ def create_booking_for_user(
     return booking
 
 
+def build_booking_preview(
+    car_id: int,
+    discount_code: str = "",
+    days: int = 10,
+    pickup_date: str = "",
+    return_date: str = "",
+    pickup_time: str = "10:00 AM",
+    return_time: str = "10:00 AM",
+    pickup_location: str = "",
+    return_location: str = "",
+) -> dict[str, object] | None:
+    car = get_car(car_id)
+    if not car:
+        return None
+    default_pickup, default_return = default_trip_dates()
+    rental_days = max(1, min(int(days or 1), 366))
+    subtotal = round(float(car["daily_price"]) * rental_days, 2)
+    discount = get_valid_discount(discount_code)
+    discount_amount = calculate_discount_amount(subtotal, discount)
+    return {
+        "id": None,
+        "booking_id": "Pending details",
+        "car_id": car["id"],
+        "provider": "AVIS",
+        "pickup_location": pickup_location or car["location"] or "Denver International Airport (DEN)",
+        "pickup_date": format_booking_date(pickup_date or default_pickup, "Upcoming pickup"),
+        "pickup_time": pickup_time or "10:00 AM",
+        "dropoff_location": return_location or pickup_location or car["location"] or "Denver International Airport (DEN)",
+        "dropoff_date": format_booking_date(return_date or default_return, "Upcoming return"),
+        "dropoff_time": return_time or "10:00 AM",
+        "days": rental_days,
+        "subtotal_price": subtotal,
+        "discount_code": discount["code"] if discount else "",
+        "discount_amount": discount_amount,
+        "total_price": round(subtotal - discount_amount, 2),
+        "status": "CONFIRMED",
+        "booking_status": "CONFIRMED",
+        "payment_status": "PAY_AT_PICKUP",
+        "car_name": car["name"],
+        "category": car["category"],
+        "seats": car["seats"],
+        "bags": car["bags"],
+        "doors": car["doors"],
+        "transmission": car["transmission"],
+        "color": car["color"],
+        "image_url": car["image_url"],
+    }
+
+
+def find_or_create_guest_user(full_name: str, email: str, phone: str) -> int:
+    clean_email = email.strip().lower()
+    clean_phone = phone.strip()
+    with db() as con:
+        existing = con.execute("SELECT * FROM users WHERE email = ?", (clean_email,)).fetchone()
+        if existing and row_value(existing, "guest_account") not in {"1", "True", "true"}:
+            raise ValueError("An account already exists for this email. Please sign in to add this booking.")
+        if not existing and clean_phone:
+            existing = con.execute(
+                "SELECT * FROM users WHERE phone = ? AND guest_account = 1 ORDER BY id DESC LIMIT 1",
+                (clean_phone,),
+            ).fetchone()
+        if existing:
+            con.execute(
+                """
+                UPDATE users
+                SET name = COALESCE(NULLIF(?, ''), name),
+                    email = COALESCE(NULLIF(?, ''), email),
+                    phone = COALESCE(NULLIF(?, ''), phone),
+                    promo_email_opt_in = 1
+                WHERE id = ?
+                """,
+                (full_name, clean_email, clean_phone, existing["id"]),
+            )
+            return int(existing["id"])
+        con.execute(
+            """
+            INSERT INTO users
+            (name, email, phone, password_hash, is_verified, guest_account, promo_email_opt_in)
+            VALUES (?, ?, ?, ?, 0, 1, 1)
+            """,
+            (full_name or "FairFares Guest", clean_email, clean_phone, hash_password(secrets.token_urlsafe(18))),
+        )
+        return int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
 def ensure_booking_for_user(
     user_id: int,
     car_id: int | None = None,
@@ -1977,7 +2064,10 @@ AGREEMENT_FIELD_GROUPS = (
 AGREEMENT_FIELD_KEYS = tuple(field for _, _, fields in AGREEMENT_FIELD_GROUPS for field, _ in fields)
 
 
-def row_value(row: sqlite3.Row, key: str, default: str = "") -> str:
+def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "") -> str:
+    if isinstance(row, dict):
+        value = row.get(key, default)
+        return str(value if value is not None else default)
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
@@ -2363,6 +2453,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/save": self.save_current_booking,
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
+            "/guest-booking": self.create_guest_booking,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
             "/student-verification": self.update_student_verification,
@@ -2673,6 +2764,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <span>Name</span>
           <input name="name" autocomplete="name">
         </label>
+        <label>
+          <span>Phone Number <small>(optional)</small></span>
+          <input name="phone" autocomplete="tel" placeholder="Used to find guest bookings">
+        </label>
         """
         self.send_html(
             render_template(
@@ -2713,18 +2808,50 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def signup(self) -> None:
         form = self.read_form()
         name = form.get("name") or "FairFares Member"
-        email = form.get("email", "").lower()
+        email = form.get("email", "").lower().strip()
+        phone = form.get("phone", "").strip()
         password = form.get("password", "")
         if "@" not in email or len(password) < 8:
             self.signup_page("Use a valid email and a password with at least 8 characters.")
             return
         try:
             with db() as con:
-                con.execute(
-                    "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 0)",
-                    (name, email, hash_password(password)),
-                )
-                user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+                guest = con.execute(
+                    "SELECT * FROM users WHERE email = ? AND guest_account = 1 LIMIT 1",
+                    (email,),
+                ).fetchone()
+                if not guest and phone:
+                    guest = con.execute(
+                        "SELECT * FROM users WHERE phone = ? AND guest_account = 1 ORDER BY id DESC LIMIT 1",
+                        (phone,),
+                    ).fetchone()
+                if guest:
+                    email_owner = con.execute(
+                        "SELECT * FROM users WHERE email = ? AND id != ? LIMIT 1",
+                        (email, guest["id"]),
+                    ).fetchone()
+                    if email_owner:
+                        raise sqlite3.IntegrityError
+                    con.execute(
+                        """
+                        UPDATE users
+                        SET name = ?,
+                            email = ?,
+                            phone = COALESCE(NULLIF(?, ''), phone),
+                            password_hash = ?,
+                            is_verified = 0,
+                            guest_account = 0
+                        WHERE id = ?
+                        """,
+                        (name, email, phone, hash_password(password), guest["id"]),
+                    )
+                    user_id = guest["id"]
+                else:
+                    con.execute(
+                        "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
+                        (name, email, phone, hash_password(password)),
+                    )
+                    user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         except sqlite3.IntegrityError:
             self.signup_page("An account with that email already exists.")
             return
@@ -3063,6 +3190,59 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             form.get("text_opt_in") == "on",
         )
         self.send_json(result, 200 if result["ok"] else 400)
+
+    def create_guest_booking(self) -> None:
+        form = self.read_form()
+        first_name = form.get("first_name", "").strip()
+        last_name = form.get("last_name", "").strip()
+        full_name = " ".join(part for part in (first_name, last_name) if part).strip()
+        email = form.get("email", "").strip().lower()
+        phone = form.get("phone", "").strip()
+        if not full_name or "@" not in email or len(phone) < 7:
+            self.send_json({"ok": False, "message": "Please enter your full name, valid email, and phone number."}, 400)
+            return
+        try:
+            car_id = int(form.get("car_id", "0"))
+            days = int(form.get("days", "10"))
+        except ValueError:
+            self.send_json({"ok": False, "message": "Please select a valid vehicle."}, 400)
+            return
+        try:
+            user_id = find_or_create_guest_user(full_name, email, phone)
+        except ValueError as error:
+            self.send_json({"ok": False, "message": str(error)}, 400)
+            return
+        try:
+            booking = create_booking_for_user(
+                user_id,
+                car_id,
+                form.get("discount_code", ""),
+                max(1, min(days, 366)),
+                form.get("pickup_date", ""),
+                form.get("return_date", ""),
+                form.get("pickup_time", "10:00 AM"),
+                form.get("return_time", "10:00 AM"),
+                form.get("pickup_location", ""),
+                form.get("return_location", ""),
+            )
+        except (RuntimeError, ValueError) as error:
+            self.send_json({"ok": False, "message": str(error)}, 400)
+            return
+        result = save_booking_contact_and_send_confirmation(
+            user_id,
+            first_name,
+            last_name,
+            email,
+            phone,
+            self.public_origin(),
+            form.get("promo_email_opt_in") == "on",
+            form.get("text_opt_in") == "on",
+        )
+        self.send_json({
+            "ok": True,
+            "booking_id": booking["booking_id"],
+            "message": result.get("message") or "Booking details saved. Create an account with this email to see this trip later.",
+        })
 
     def create_support_ticket(self) -> None:
         user = self.current_user()
@@ -4215,6 +4395,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     ) -> None:
         if user and selected_car_id:
             booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+        elif not user and selected_car_id:
+            booking = build_booking_preview(selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
         elif user:
             booking = get_booking_for_user(user["id"])
         else:
@@ -4226,7 +4408,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         saved_cars = get_saved_cars_for_user(user["id"]) if user else []
         latest_ticket = get_latest_ticket_for_user(user["id"]) if user else None
         is_first_time_user = bool(user and not user_bookings)
-        show_start_experience = not user or is_first_time_user
+        is_guest_checkout = bool(not user and booking and selected_car_id)
+        show_start_experience = bool(user and is_first_time_user and not selected_car_id)
+        show_signed_out_empty = bool(not user and not selected_car_id)
         trip_rows = render_user_trip_rows(user_bookings, saved_cars)
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
@@ -4288,12 +4472,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         first_booking_promo = ""
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
-        if show_start_experience:
+        if is_guest_checkout:
+            dashboard_booking_title = "Complete Your Booking"
+            dashboard_booking_body = "Enter your contact details and we will save this trip under your email and phone."
+        elif show_signed_out_empty:
+            dashboard_booking_title = "Start Booking"
+            dashboard_booking_body = "Select a vehicle first, then enter your details to save the trip."
+        elif show_start_experience:
             dashboard_booking_title = "Start Your First Trip"
             dashboard_booking_body = (
-                "Sign in or create an account to save your trip, documents, live status, and student deals."
-                if not user
-                else "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
+                "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
             )
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
@@ -4301,10 +4489,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             dashboard_booking_title = "Last Booking"
             dashboard_booking_body = "You do not have a current booking. Your most recent trip details are saved here."
-        sidebar_title = "Start Booking" if show_start_experience else "Manage Booking"
-        sidebar_primary_label = "Find Your First Car" if show_start_experience else "Upcoming Trips"
-        sidebar_primary_body = "Login to save trip tools and documents" if not user else ("Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings")
-        booking_link_class = "is-hidden" if show_start_experience else ""
+        sidebar_title = "Start Booking" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else "Manage Booking"
+        sidebar_primary_label = "Complete Booking" if is_guest_checkout else ("Find Your First Car" if (show_start_experience or show_signed_out_empty) else "Upcoming Trips")
+        sidebar_primary_body = (
+            "Add your name, email, and phone to reserve this vehicle."
+            if is_guest_checkout
+            else ("Select a car to begin booking" if show_signed_out_empty else ("Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings"))
+        )
+        booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
         if booking and booking["image_url"]:
             booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
@@ -4312,11 +4504,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         first_time_manage_content = ""
         if show_start_experience:
-            login_prompt = (
-                '<div class="start-login-prompt"><a class="select-button" href="/login">Login / Create Account</a><span>After login, your bookings, documents, and live status stay connected to your real email.</span></div>'
-                if not user
-                else ""
-            )
             first_time_manage_content = """
             <section class="first-time-founder-card">
                 <img src="/static/img/founders-note-fairfares.png" alt="FairFares founders note">
@@ -4328,17 +4515,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <a class="select-button" href="/#results">Browse Cars</a>
                 </div>
-                {login_prompt}
             </section>
-            """.format(login_prompt=login_prompt)
+            """
             upgrade_options = ""
             upgrade_select_options = ""
         if show_start_experience:
-            promo_login_prompt = (
-                '<a class="select-button light-button" href="/login">Login</a>'
-                if not user
-                else ""
-            )
             first_booking_promo = f"""
             <section class="first-booking-promo" id="upcoming">
                 <img src="/static/img/referral-deals-denver.jpeg" alt="FairFares Denver referral deal">
@@ -4346,43 +4527,64 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <div>
                         <p class="eyebrow">First trip offer</p>
                         <h2>Start with a Denver student deal.</h2>
-                        <p>{"Login to save this deal and keep your documents under your real email." if not user else "No booking yet. Use the referral code when you search and your trip details will appear here after checkout."}</p>
+                        <p>No booking yet. Use the referral code when you search and your trip details will appear here after checkout.</p>
                     </div>
                     <div class="promo-code-box">
                         <span>Deal code</span>
                         <b>REFER_DUDE143</b>
                     </div>
                     <a class="select-button" href="/#results">Search Cars</a>
-                    {promo_login_prompt}
                 </div>
             </section>
             """
-        if user and booking and selected_car_id:
-            name_parts = (user["name"] or "").split(" ", 1)
+        if booking and selected_car_id:
+            name_parts = ((user["name"] if user else "") or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
             promo_checked = " checked" if (
-                row_value(user, "promo_email_opt_in") in {1, "1", True}
+                not user
+                or row_value(user, "promo_email_opt_in") in {1, "1", True}
                 or (not row_value(user, "marketing_unsubscribed_at") and not row_value(user, "phone"))
             ) else ""
-            text_checked = " checked" if row_value(user, "text_opt_in") in {1, "1", True} else ""
+            text_checked = " checked" if user and row_value(user, "text_opt_in") in {1, "1", True} else ""
+            submit_endpoint_hint = " data-guest-booking=\"true\"" if is_guest_checkout else ""
+            hidden_guest_fields = ""
+            guest_account_note = ""
+            student_button = ""
+            if is_guest_checkout:
+                hidden_guest_fields = f"""
+                    <input type="hidden" name="car_id" value="{escape(booking["car_id"])}">
+                    <input type="hidden" name="days" value="{escape(booking["days"])}">
+                    <input type="hidden" name="pickup_date" value="{escape(pickup_date)}">
+                    <input type="hidden" name="return_date" value="{escape(return_date)}">
+                    <input type="hidden" name="pickup_time" value="{escape(pickup_time)}">
+                    <input type="hidden" name="return_time" value="{escape(return_time)}">
+                    <input type="hidden" name="pickup_location" value="{escape(booking["pickup_location"])}">
+                    <input type="hidden" name="return_location" value="{escape(booking["dropoff_location"])}">
+                    <input type="hidden" name="discount_code" value="{escape(discount_code)}">
+                """
+                guest_account_note = "<p class=\"guest-booking-note\">Create an account later with this same email or phone and this trip will appear in your dashboard.</p>"
+            else:
+                student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
                     <p class="eyebrow">Confirmed / Pay at pickup</p>
                     <h2>Your car is booked.</h2>
                     <p>We promise a fair rental price. If you show us a lower quote from Avis, Enterprise, Hertz, or another major rental company, we'll match it and give you an additional 10% off.</p>
+                    {guest_account_note}
                 </div>
-                <form class="customer-info-form" id="customerInfoForm">
+                <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
+                    {hidden_guest_fields}
                     <label><span>First Name *</span><input name="first_name" value="{escape(first_name)}" required></label>
                     <label><span>Last Name *</span><input name="last_name" value="{escape(last_name)}" required></label>
-                    <label><span>Email Address *</span><input name="email" type="email" value="{escape(user["email"])}" required></label>
-                    <label><span>Mobile Number *</span><input name="phone" value="{escape(user["phone"] or "")}" required></label>
+                    <label><span>Email Address *</span><input name="email" type="email" value="{escape(user["email"] if user else "")}" required></label>
+                    <label><span>Mobile Number *</span><input name="phone" value="{escape((user["phone"] if user else "") or "")}" required></label>
                     <label class="toggle-row"><input name="promo_email_opt_in" type="checkbox"{promo_checked}> I want to receive emails for promotional offers and upcoming rentals</label>
                     <label class="toggle-row"><input name="text_opt_in" type="checkbox"{text_checked}> Yes, send text updates about my current and upcoming rentals</label>
                     <div class="booking-confirmation-actions">
                         <button type="submit">Save Details</button>
-                        <button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>
+                        {student_button}
                     </div>
                     <p class="modify-status" id="customerInfoStatus" aria-live="polite"></p>
                 </form>
@@ -4427,11 +4629,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
             request_notice=request_notice,
-            trip_card_class="trip-card is-hidden" if show_start_experience else "trip-card",
+            trip_card_class="trip-card" if booking else "trip-card is-hidden",
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,
             support_ticket_message=support_ticket_message,
-            manage_panels_class="manage-panels is-hidden" if show_start_experience else "manage-panels",
+            manage_panels_class="manage-panels" if (user and booking and not show_start_experience) else "manage-panels is-hidden",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),

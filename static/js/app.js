@@ -990,13 +990,18 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
   event.preventDefault();
   const form = event.currentTarget;
   const status = document.getElementById("customerInfoStatus");
-  fetch("/profile/update", {
+  const endpoint = form.dataset.guestBooking === "true" ? "/guest-booking" : "/profile/update";
+  fetch(endpoint, {
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
       if (status) status.textContent = payload.message || "Your contact details are saved for this booking.";
+      if (payload.booking_id) {
+        const bookingId = document.querySelector("[data-booking-id-label]");
+        if (bookingId) bookingId.textContent = payload.booking_id;
+      }
     })
     .catch((payload) => {
       if (status) status.textContent = payload?.message || "Please check your details and try again.";
