@@ -5142,3 +5142,228 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     justify-self: stretch;
   }
 }
+
+/* Final mobile repair pass for Manage Booking. Keep this at the end so it wins over
+   the older carousel/card experiments above. */
+.manage-screen {
+  overflow-x: hidden;
+}
+
+.manage-screen .trip-card,
+.manage-screen .booking-confirmation-card,
+.manage-screen .manage-card,
+.manage-screen .page-heading {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.documents-locked .doc-actions,
+.documents-locked .document-preview,
+.documents-locked .modify-actions {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .manage-screen .main-nav {
+    align-items: center !important;
+    grid-template-columns: minmax(0, 1fr) 44px !important;
+  }
+
+  .manage-screen .main-nav .nav-actions > a:not(.user-chip) {
+    display: none !important;
+  }
+
+  .manage-screen .main-nav .nav-actions > .user-chip {
+    max-width: min(260px, calc(100vw - 92px));
+  }
+
+  .manage-screen .main-nav .nav-actions > .user-chip b {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .manage-screen .mobile-menu {
+    width: 100%;
+  }
+
+  .manage-screen .page-heading {
+    display: grid;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .manage-screen .page-heading h1,
+  .manage-screen .page-heading p,
+  .manage-screen .booking-confirmation-card p,
+  .manage-screen .trip-route h3,
+  .manage-screen .trip-route p,
+  .manage-screen .trip-details p {
+    overflow-wrap: anywhere;
+  }
+
+  .manage-screen .trip-card {
+    display: grid !important;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) !important;
+    padding: 16px;
+  }
+
+  .manage-screen .trip-car,
+  .manage-screen .trip-details,
+  .manage-screen .trip-route,
+  .manage-screen .price-summary,
+  .manage-screen .trip-actions,
+  .manage-screen .request-notice {
+    grid-column: 1 / -1 !important;
+    min-width: 0;
+  }
+
+  .manage-screen .trip-car {
+    display: grid;
+    justify-items: stretch;
+  }
+
+  .manage-screen .trip-car-image {
+    height: auto;
+    max-height: 160px;
+    object-fit: contain;
+    width: 100%;
+  }
+
+  .manage-screen .trip-car p {
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .manage-screen .trip-details h2 {
+    font-size: clamp(1.15rem, 8vw, 1.65rem);
+    letter-spacing: 0;
+    line-height: 1.05;
+    margin: 4px 0 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .manage-screen .trip-details p {
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+
+  .manage-screen .specs {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .manage-screen .specs span {
+    white-space: normal;
+  }
+
+  .manage-screen .trip-route {
+    border-left: 0 !important;
+    border-top: 1px solid var(--line);
+    padding-left: 0 !important;
+    padding-top: 14px;
+  }
+
+  .manage-screen .price-summary {
+    align-items: start;
+    display: grid !important;
+    gap: 6px;
+    grid-template-columns: 1fr !important;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .manage-screen .price-summary strong {
+    font-size: 1.45rem;
+  }
+
+  .manage-screen .price-summary em {
+    max-width: none;
+  }
+
+  .manage-screen .trip-actions {
+    display: grid !important;
+    gap: 10px;
+    grid-auto-flow: row !important;
+    grid-template-columns: 1fr !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .manage-screen .trip-actions button {
+    filter: none !important;
+    min-height: 48px !important;
+    opacity: 1 !important;
+    padding: 12px !important;
+    transform: none !important;
+    width: 100%;
+  }
+
+  .manage-screen .booking-confirmation-card {
+    gap: 14px;
+    margin-top: 14px;
+    overflow: hidden;
+    padding: 16px;
+  }
+
+  .manage-screen .booking-confirmation-card h2 {
+    font-size: 1.45rem;
+  }
+
+  .manage-screen .customer-info-form,
+  .manage-screen .booking-confirmation-actions {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .manage-screen .customer-info-form input {
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .manage-screen .booking-confirmation-actions button,
+  .manage-screen .modify-actions button,
+  .manage-screen .workflow-form button,
+  .manage-screen .document-tools button {
+    appearance: none;
+    border-radius: 7px !important;
+    font: inherit;
+    font-weight: 900;
+    min-height: 48px;
+    text-align: center;
+    width: 100%;
+  }
+
+  .manage-screen .booking-confirmation-actions .light-button {
+    border: 1px solid var(--line) !important;
+  }
+
+  .manage-screen .toggle-row {
+    align-items: start !important;
+    grid-template-columns: 24px minmax(0, 1fr) !important;
+    overflow: hidden;
+  }
+
+  .manage-screen .toggle-row input[type="checkbox"] {
+    margin-top: 1px;
+  }
+
+  .manage-screen .document-tools {
+    overflow: hidden;
+  }
+
+  .manage-screen .documents-lock-message {
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (min-width: 761px) {
+  .manage-screen .trip-actions button {
+    filter: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

@@ -355,6 +355,7 @@ if (mainNav && menuButton) {
 
   const hiddenNavItems = [
     ...document.querySelectorAll(".nav-links a"),
+    ...document.querySelectorAll(".nav-actions > a"),
   ];
 
   hiddenNavItems.forEach((item) => {
