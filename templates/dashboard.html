@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-37">
-  <script defer src="/static/js/app.js?v=37"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=mobile-38">
+  <script defer src="/static/js/app.js?v=38"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -81,6 +81,12 @@
           <strong>$price_text</strong>
           <em>$price_match_note</em>
         </aside>
+        $request_notice
+      </section>
+      $booking_confirmation_card
+
+      $first_time_manage_content
+      <section class="$manage_panels_class">
         <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
           <button type="button" data-manage-tab="modify">Modify Reservation</button>
           <button type="button" data-manage-tab="cancel">Cancel Reservation</button>
@@ -88,12 +94,6 @@
           <button type="button" data-manage-tab="details">View Details</button>
           <button type="button" data-manage-tab="support">Support Center</button>
         </div>
-        $request_notice
-      </section>
-      $booking_confirmation_card
-
-      $first_time_manage_content
-      <section class="$manage_panels_class">
         <article class="manage-card manage-panel is-hidden" id="modify" data-manage-panel="modify">
           <h2>1. Modify Your Booking</h2>
           <p>Make changes to fit your plans</p>
@@ -172,6 +172,7 @@
           <div class="document-tools $documents_locked_class" data-documents-locked="$documents_locked">
             <div class="documents-lock-message">$documents_locked_message</div>
             <label><span>Send documents to</span><input id="documentEmail" type="email" value="$document_email" placeholder="Sign in to use your email"></label>
+            <div class="document-history" id="documentHistory" aria-label="Booking document history"></div>
             <div class="doc-actions">
               <button type="button" data-doc-name="Invoice / Receipt">Invoice / Receipt</button>
               <button type="button" data-doc-name="Rental Agreement">Rental Agreement</button>

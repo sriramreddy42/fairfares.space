@@ -1822,11 +1822,13 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
     tax_amount = float(booking["total_price"]) * 0.0825
     fee_amount = float(booking["total_price"]) * 0.045
     base_amount = float(booking["total_price"]) - tax_amount - fee_amount
+    status_line = f"Trip status: {booking_status_label(booking['booking_status'], booking['payment_status'])}"
 
     return {
         "Invoice / Receipt": {
             "title": "Invoice / Receipt",
             "content": (
+                f"{status_line}\n"
                 f"Invoice: {invoice_number}\n"
                 f"Booking: {booking['booking_id']}\n"
                 f"Customer: {booking['user_name']} · {booking['user_email']}\n"
@@ -1842,6 +1844,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
         "Rental Agreement": {
             "title": "Rental Agreement",
             "content": (
+                f"{status_line}\n\n"
                 f"{agreement_text}\n\n"
                 f"DL: {license_line}\n"
                 f"Insurance: {insurance_line}\n"
@@ -1852,6 +1855,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
         "Taxes & Fees Breakdown": {
             "title": "Taxes & Fees Breakdown",
             "content": (
+                f"{status_line}\n"
                 f"Booking: {booking['booking_id']}\n"
                 f"Rental subtotal: ${base_amount:.2f}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
@@ -1863,6 +1867,37 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "status": "Generated from booking total, insurance, and invoice records.",
         },
     }
+
+
+def get_user_document_sets(user_id: int | None, active_booking_id: int | None = None) -> list[dict[str, object]]:
+    if not user_id:
+        return []
+    document_sets: list[dict[str, object]] = []
+    for booking in get_bookings_for_user(user_id):
+        status = row_value(booking, "booking_status")
+        payment_status = row_value(booking, "payment_status")
+        locked = status not in {"PICKED_UP", "RETURNED", "CANCELLED"}
+        if locked:
+            lock_message = "Documents can be retrieved once pickup is completed."
+        elif status == "CANCELLED":
+            lock_message = "This booking was cancelled. Documents are shown for recordkeeping."
+        else:
+            lock_message = ""
+        document_sets.append(
+            {
+                "id": booking["id"],
+                "bookingId": row_value(booking, "booking_id"),
+                "vehicle": row_value(booking, "car_name") or "Booked vehicle",
+                "dates": f"{row_value(booking, 'pickup_date')} - {row_value(booking, 'dropoff_date')}",
+                "status": status,
+                "statusLabel": booking_status_label(status, payment_status),
+                "locked": locked,
+                "lockMessage": lock_message,
+                "docs": get_booking_documents(booking["id"]),
+            }
+        )
+    document_sets.sort(key=lambda item: (0 if item["id"] == active_booking_id else 1, str(item["bookingId"])))
+    return document_sets
 
 
 def render_template(template_name: str, **context: object) -> bytes:
@@ -3613,8 +3648,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </form>
             </details>
             """
-        booking_documents_json = json.dumps(get_booking_documents(booking["id"] if booking else None)).replace("</", "<\\/")
-        documents_locked = bool(not booking or booking["booking_status"] not in {"PICKED_UP", "RETURNED"})
+        booking_document_sets = get_user_document_sets(user["id"] if user else None, booking["id"] if booking else None)
+        booking_documents_json = json.dumps(
+            {"activeId": booking["id"] if booking else None, "sets": booking_document_sets}
+        ).replace("</", "<\\/")
+        active_document_set = booking_document_sets[0] if booking_document_sets else None
+        documents_locked = bool(not active_document_set or active_document_set.get("locked"))
         first_booking_promo = ""
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
@@ -3782,7 +3821,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_documents_json=booking_documents_json,
             documents_locked="1" if documents_locked else "0",
             documents_locked_class="documents-locked" if documents_locked else "",
-            documents_locked_message=("Book a car first, then documents can be retrieved once pickup is completed." if not booking else "Documents can be retrieved once pickup is completed.") if documents_locked else "",
+            documents_locked_message=(
+                active_document_set.get("lockMessage")
+                if active_document_set
+                else "Book a car first, then documents can be retrieved once pickup is completed."
+            ) if documents_locked else "",
             document_email=escape(user["email"] if user else ""),
             pickup_time_options=time_select_options(booking["pickup_time"] if booking else "10:00 AM"),
             return_time_options=time_select_options(booking["dropoff_time"] if booking else "10:00 AM"),

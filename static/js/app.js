@@ -593,29 +593,90 @@ const documentPreview = document.getElementById("documentPreview");
 const documentStatus = document.getElementById("documentStatus");
 const documentEmail = document.getElementById("documentEmail");
 const bookingDocumentsNode = document.getElementById("bookingDocuments");
-const bookingDocuments = bookingDocumentsNode ? JSON.parse(bookingDocumentsNode.textContent || "{}") : {};
-const documentsAreLocked = bookingDocumentsNode?.dataset.locked === "1" || document.querySelector(".document-tools")?.dataset.documentsLocked === "1";
+const documentTools = document.querySelector(".document-tools");
+const documentHistory = document.getElementById("documentHistory");
+const bookingDocumentPayload = bookingDocumentsNode ? JSON.parse(bookingDocumentsNode.textContent || "{}") : {};
+const legacyDocumentsLocked = bookingDocumentsNode?.dataset.locked === "1" || documentTools?.dataset.documentsLocked === "1";
+const bookingDocumentSets = Array.isArray(bookingDocumentPayload.sets)
+  ? bookingDocumentPayload.sets
+  : [{
+    id: "current",
+    bookingId: "Current booking",
+    vehicle: "Current booking",
+    dates: "",
+    statusLabel: legacyDocumentsLocked ? "Not picked up" : "Ready",
+    locked: legacyDocumentsLocked,
+    lockMessage: "Documents can be retrieved once pickup is completed.",
+    docs: bookingDocumentPayload || {},
+  }];
+let activeDocumentSet = bookingDocumentSets.find((set) => String(set.id) === String(bookingDocumentPayload.activeId))
+  || bookingDocumentSets[0]
+  || { docs: {}, locked: true, lockMessage: "Book a car first, then documents can be retrieved once pickup is completed." };
+let activeDocumentName = "Invoice / Receipt";
 
-function renderBookingDocument(name) {
-  if (!documentPreview) return;
-  const escapeHtml = (value) => String(value)
+function escapeHtml(value) {
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-  if (documentsAreLocked) {
-    documentPreview.innerHTML = `<h3>${escapeHtml(name)}</h3><p>Documents can be retrieved once pickup is completed.</p><small>Invoice, rental agreement, and taxes & fees stay locked until admin completes pickup.</small>`;
-    if (documentStatus) documentStatus.textContent = "Documents are locked until pickup is completed.";
+}
+
+function activeDocumentsAreLocked() {
+  return Boolean(activeDocumentSet?.locked);
+}
+
+function syncDocumentLockState() {
+  const locked = activeDocumentsAreLocked();
+  if (documentTools) {
+    documentTools.classList.toggle("documents-locked", locked);
+    documentTools.dataset.documentsLocked = locked ? "1" : "0";
+  }
+  const lockMessage = documentTools?.querySelector(".documents-lock-message");
+  if (lockMessage) {
+    lockMessage.textContent = activeDocumentSet?.lockMessage || "Documents can be retrieved once pickup is completed.";
+  }
+}
+
+function renderDocumentHistory() {
+  if (!documentHistory) return;
+  if (!bookingDocumentSets.length) {
+    documentHistory.innerHTML = "";
     return;
   }
-  const doc = bookingDocuments[name] || {
+  documentHistory.innerHTML = bookingDocumentSets.map((set) => {
+    const active = String(set.id) === String(activeDocumentSet?.id);
+    const state = set.locked ? "Locked until pickup" : (set.statusLabel || "Documents ready");
+    return `
+      <button type="button" class="document-booking-button ${active ? "active" : ""}" data-document-set-id="${escapeHtml(set.id)}">
+        <b>${escapeHtml(set.bookingId || "Booking")}</b>
+        <span>${escapeHtml(set.vehicle || "Vehicle")} · ${escapeHtml(set.dates || "")}</span>
+        <small>${escapeHtml(state)}</small>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderBookingDocument(name) {
+  if (!documentPreview) return;
+  activeDocumentName = name;
+  syncDocumentLockState();
+  renderDocumentHistory();
+  if (activeDocumentsAreLocked()) {
+    if (documentStatus) {
+      documentStatus.textContent = `${activeDocumentSet?.bookingId || "This booking"} is locked until pickup is completed.`;
+    }
+    return;
+  }
+  const docs = activeDocumentSet?.docs || {};
+  const doc = docs[name] || {
     title: name,
     content: "This document is not generated yet. Ask admin to complete pickup, payment, insurance, or agreement data.",
     status: "Waiting for admin data.",
   };
   documentPreview.innerHTML = `<h3>${escapeHtml(doc.title)}</h3><p>${escapeHtml(doc.content).replaceAll("\n", "<br>")}</p><small>${escapeHtml(doc.status)}</small>`;
-  if (documentStatus) documentStatus.textContent = `${doc.title} generated from saved booking records.`;
+  if (documentStatus) documentStatus.textContent = `${doc.title} generated for ${activeDocumentSet?.bookingId || "this booking"}.`;
 }
 
 function downloadTextFile(filename, content) {
@@ -637,26 +698,37 @@ document.addEventListener("click", (event) => {
   renderBookingDocument(name);
 });
 
+documentHistory?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-document-set-id]");
+  if (!button) return;
+  const nextSet = bookingDocumentSets.find((set) => String(set.id) === String(button.dataset.documentSetId));
+  if (!nextSet) return;
+  activeDocumentSet = nextSet;
+  renderBookingDocument(activeDocumentName);
+});
+
 document.getElementById("emailDocuments")?.addEventListener("click", () => {
-  if (documentsAreLocked) {
-    documentStatus.textContent = "Documents can be retrieved once pickup is completed.";
+  if (activeDocumentsAreLocked()) {
+    documentStatus.textContent = activeDocumentSet?.lockMessage || "Documents can be retrieved once pickup is completed.";
     return;
   }
-  documentStatus.textContent = `All documents queued for ${documentEmail.value || "your email"}.`;
+  documentStatus.textContent = `Documents for ${activeDocumentSet?.bookingId || "this booking"} queued for ${documentEmail.value || "your email"}.`;
 });
 
 document.getElementById("downloadAllDocuments")?.addEventListener("click", () => {
-  if (documentsAreLocked) {
-    documentStatus.textContent = "Documents can be retrieved once pickup is completed.";
+  if (activeDocumentsAreLocked()) {
+    documentStatus.textContent = activeDocumentSet?.lockMessage || "Documents can be retrieved once pickup is completed.";
     return;
   }
-  const bundle = Object.values(bookingDocuments)
+  const bundle = Object.values(activeDocumentSet?.docs || {})
     .map((doc) => `${doc.title}\n\n${doc.content}\n\n${doc.status}`)
     .join("\n\n------------------------------\n\n");
-  if (bundle) downloadTextFile("fairfares-booking-documents.txt", bundle);
-  documentStatus.textContent = "All booking documents are ready to download.";
+  if (bundle) downloadTextFile(`fairfares-${activeDocumentSet?.bookingId || "booking"}-documents.txt`, bundle);
+  documentStatus.textContent = `Documents for ${activeDocumentSet?.bookingId || "this booking"} are ready to download.`;
 });
 
+syncDocumentLockState();
+renderDocumentHistory();
 renderBookingDocument("Invoice / Receipt");
 
 const detailTabs = [...document.querySelectorAll("[data-detail-tab]")];

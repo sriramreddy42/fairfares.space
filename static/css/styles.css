@@ -1845,6 +1845,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   grid-column: 1 / -1;
   grid-template-columns: repeat(5, 1fr);
 }
+.manage-panels > .trip-actions {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
 .trip-actions a,
 .trip-actions button {
   background: #fff;
@@ -1884,6 +1890,32 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   display: grid;
   gap: 16px;
   margin-top: 14px;
+}
+.document-history {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.document-booking-button {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--navy);
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+}
+.document-booking-button.active {
+  border-color: var(--red);
+  box-shadow: inset 4px 0 0 var(--red);
+}
+.document-booking-button span,
+.document-booking-button small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.25;
 }
 .modify-section {
   border-top: 1px solid var(--line);
@@ -4742,10 +4774,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .documents-locked .doc-actions,
 .documents-locked .document-preview,
 .documents-locked .modify-actions {
-  filter: blur(2.5px);
-  opacity: 0.45;
-  pointer-events: none;
-  user-select: none;
+  display: none !important;
 }
 
 .price-summary em {

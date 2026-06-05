@@ -203,6 +203,7 @@ def main() -> None:
     assert_true("Final mobile repair pass for Manage Booking" in styles and "grid-template-columns: minmax(0, 1fr) !important" in styles, "mobile manage booking trip card should not collapse into overlapping columns")
     assert_true(".documents-locked .doc-actions" in styles and "display: none !important" in styles, "locked documents should hide disabled controls instead of showing blurred content")
     assert_true(".manage-screen .trip-actions button" in styles and "filter: none !important" in styles, "mobile trip action buttons should not stay blurred")
+    assert_true(".manage-panels > .trip-actions" in styles and "document-booking-button" in styles, "manage actions and document history should live in the lower workflow area")
     assert_true("perspective-origin: left center" in styles and "rotateY(-86deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should fold toward the left with reduced-motion fallback")
     assert_true("background-size: auto 100%" in styles and "background-position: left center" in styles, "desktop hero artwork should keep natural height alignment")
     assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")
@@ -254,7 +255,7 @@ def main() -> None:
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def serve_static")], "public cars API should not expose license plates")
     assert_true("allow_post_from_same_origin" in app_source and "Request origin not allowed" in app_source, "POST routes should have same-origin guard")
-    assert_true("bool(not booking or booking[\"booking_status\"] not in" in app_source, "documents should stay locked when there is no booking")
+    assert_true("bool(not active_document_set or active_document_set.get(\"locked\"))" in app_source, "documents should stay locked when there is no booking document set")
     assert_true('"login_required": True, "message": "Sign in to create a support ticket."' in app_source, "signed-out support should return a login-required JSON response")
     assert_true("Vehicle change requested from" in app_source and "get_car_by_name" in app_source, "modify vehicle requests should be stored instead of ignored")
     assert_true("Modification pending approval" in app_source and "MODIFIED" in app_source[app_source.index("def booking_status_class"):app_source.index("def payment_status_label")], "modified bookings should read as pending review")
@@ -445,8 +446,11 @@ def main() -> None:
     docs = app.get_booking_documents(admin_bookings[0]["id"])
     assert_true("42150" in docs["Rental Agreement"]["content"] and "POL-STRESS-123" in docs["Rental Agreement"]["content"], "user rental agreement document should use saved dynamic agreement data")
     assert_true("FairFares price promise" in docs["Rental Agreement"]["content"], "agreement should include price-match promise")
+    assert_true("Trip status:" in docs["Rental Agreement"]["content"], "documents should label booking status at the top")
     discount_docs = app.get_booking_documents(discounted_booking_id)
     assert_true("STRESS15" in discount_docs["Invoice / Receipt"]["content"], "invoice should show applied discount code")
+    user_document_sets = app.get_user_document_sets(admin_bookings[0]["user_id"], admin_bookings[0]["id"])
+    assert_true(user_document_sets and "docs" in user_document_sets[0] and "lockMessage" in user_document_sets[0], "dashboard should expose per-booking document sets")
     with app.db() as con:
         con.execute(
             """
