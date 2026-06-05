@@ -4979,6 +4979,23 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.booking-confirmation-actions button {
+  background: var(--red);
+  border: 1px solid var(--red);
+  border-radius: 7px;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  min-height: 48px;
+  padding: 0.8rem 1rem;
+}
+
+.booking-confirmation-actions .light-button {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--navy);
+}
+
 @media (max-width: 760px) {
   .customer-info-form,
   .booking-confirmation-actions {
@@ -5041,11 +5058,6 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .trip-card .price-summary em {
   flex: 1 1 360px;
   margin: 0;
-}
-
-.trip-card .price-summary a {
-  min-width: 130px;
-  text-align: center;
 }
 
 .request-notice {

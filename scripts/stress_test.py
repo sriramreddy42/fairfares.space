@@ -12,10 +12,14 @@ TMP = tempfile.TemporaryDirectory(prefix="fairfares-stress-")
 os.environ["FAIRFARES_DB_PATH"] = str(Path(TMP.name) / "fairfares.sqlite3")
 os.environ["FAIRFARES_BACKUP_DIR"] = str(Path(TMP.name) / "backups")
 os.environ["FAIRFARES_BACKUP_KEEP"] = "5"
+os.environ["RESEND_API_KEY"] = ""
+os.environ["SMTP_HOST"] = ""
 
 sys.path.insert(0, str(ROOT))
 
 import app  # noqa: E402
+
+app.OUTBOX_DIR = Path(TMP.name) / "outbox"
 
 
 def assert_true(condition: bool, message: str) -> None:
@@ -347,6 +351,31 @@ def main() -> None:
             assert_true(booking["discount_code"] == "STRESS15", "selected discount code should save on booking")
             assert_true(booking["days"] == 45, "booking should store selected rental length")
             assert_true(float(booking["discount_amount"]) > 0 and float(booking["total_price"]) < float(booking["subtotal_price"]), "discount should reduce booking total")
+            confirmation = app.save_booking_contact_and_send_confirmation(
+                user["id"],
+                "Stress",
+                "Customer",
+                user["email"],
+                "9372518688",
+                "https://fairfares.test",
+            )
+            assert_true(confirmation["ok"], "save details should update profile and send booking confirmation")
+            confirmed_booking = app.get_booking_for_user(user["id"])
+            assert_true(
+                confirmed_booking["contact_name"] == "Stress Customer"
+                and confirmed_booking["contact_email"] == user["email"]
+                and confirmed_booking["contact_phone"] == "9372518688"
+                and confirmed_booking["confirmation_email_sent_at"],
+                "booking should store customer contact snapshot and confirmation timestamp",
+            )
+            outbox_text = Path(str(confirmation["outbox_file"])).read_text(encoding="utf-8")
+            assert_true(
+                booking["booking_id"] in outbox_text
+                and "booking-confirmation-promise.png" in outbox_text
+                and "9372518688" in outbox_text
+                and "We'll match it and give you an additional 10% off" in outbox_text,
+                "booking confirmation email should include poster, booking details, query phone, and price-match promise",
+            )
         booked_ids.append(booking["id"])
         with app.db() as con:
             con.execute(

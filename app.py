@@ -203,6 +203,143 @@ def send_activation_email(email: str, name: str, activation_link: str) -> tuple[
     return outbox_file, delivery_status
 
 
+def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row, origin: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = f"FairFares booking confirmed: {booking['booking_id']}"
+    support_phone = "9372518688"
+    poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
+    price_match = (
+        "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? "
+        "We'll match it and give you an additional 10% off. Terms and conditions apply."
+    )
+    booking_summary = (
+        f"Booking ID: {booking['booking_id']}\n"
+        f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
+        f"Pickup: {booking['pickup_location']} on {booking['pickup_date']} at {booking['pickup_time']}\n"
+        f"Drop-off: {booking['dropoff_location']} on {booking['dropoff_date']} at {booking['dropoff_time']}\n"
+        f"Total due at pickup: {format_money(booking['total_price'])}\n"
+        f"Payment: {payment_status_label(booking['payment_status'])}\n"
+        f"Questions: {support_phone}\n"
+    )
+    text_body = (
+        f"Dear {name},\n\n"
+        "Your FairFares booking is confirmed.\n\n"
+        f"{booking_summary}\n"
+        f"{price_match}\n\n"
+        f"Booking poster: {poster_url}\n\n"
+        "Thank you for choosing FairFares.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <h2>Your car is booked.</h2>
+          <p>Dear {html.escape(name)}, thank you for choosing FairFares.</p>
+          <img src="{html.escape(poster_url)}" alt="FairFares price match promise" style="max-width:100%;border-radius:10px;margin:12px 0">
+          <table style="border-collapse:collapse;width:100%;max-width:680px">
+            <tr><td><b>Booking ID</b></td><td>{html.escape(booking['booking_id'])}</td></tr>
+            <tr><td><b>Vehicle</b></td><td>{html.escape(booking['category'])} | {html.escape(booking['car_name'])} or similar</td></tr>
+            <tr><td><b>Pickup</b></td><td>{html.escape(booking['pickup_location'])}<br>{html.escape(booking['pickup_date'])} at {html.escape(booking['pickup_time'])}</td></tr>
+            <tr><td><b>Drop-off</b></td><td>{html.escape(booking['dropoff_location'])}<br>{html.escape(booking['dropoff_date'])} at {html.escape(booking['dropoff_time'])}</td></tr>
+            <tr><td><b>Total due</b></td><td>{html.escape(format_money(booking['total_price']))}</td></tr>
+            <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
+          </table>
+          <p><b>Price match promise:</b> {html.escape(price_match)}</p>
+          <p>Questions? Call {support_phone}.</p>
+        </div>
+    """
+
+    outbox_file = OUTBOX_DIR / f"booking-confirmation-{booking['booking_id'].lower()}-{secrets.token_hex(6)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        poster_path = STATIC_DIR / "img" / "booking-confirmation-promise.png"
+        if poster_path.exists():
+            message.add_attachment(
+                poster_path.read_bytes(),
+                maintype="image",
+                subtype="png",
+                filename="fairfares-price-match-promise.png",
+            )
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
+        encoding="utf-8",
+    )
+
+    return outbox_file, delivery_status
+
+
+def save_booking_contact_and_send_confirmation(
+    user_id: int,
+    first_name: str,
+    last_name: str,
+    email: str,
+    phone: str,
+    origin: str,
+) -> dict[str, str | bool]:
+    full_name = " ".join(part for part in (first_name.strip(), last_name.strip()) if part).strip()
+    clean_email = email.strip().lower()
+    clean_phone = phone.strip()
+    if not full_name or "@" not in clean_email or len(clean_phone) < 7:
+        return {"ok": False, "message": "Please enter your full name, valid email, and phone number."}
+    booking = get_booking_for_user(user_id)
+    with db() as con:
+        con.execute(
+            """
+            UPDATE users
+            SET name = ?,
+                email = ?,
+                phone = ?
+            WHERE id = ?
+            """,
+            (full_name, clean_email, clean_phone, user_id),
+        )
+        if booking:
+            con.execute(
+                """
+                UPDATE bookings
+                SET contact_name = ?,
+                    contact_email = ?,
+                    contact_phone = ?,
+                    confirmation_email_sent_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+                """,
+                (full_name, clean_email, clean_phone, booking["id"], user_id),
+            )
+    delivery_status = "not sent"
+    outbox_file: Path | None = None
+    if booking and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
+        refreshed_booking = get_booking_for_user(user_id)
+        if refreshed_booking:
+            outbox_file, delivery_status = send_booking_confirmation_email(clean_email, full_name, refreshed_booking, origin)
+    message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
+    if delivery_status != "not sent" and not delivery_status.startswith("sent"):
+        message = "Details saved. A local confirmation email copy was created for this booking."
+    return {
+        "ok": True,
+        "message": message,
+        "delivery_status": delivery_status,
+        "outbox_file": str(outbox_file) if outbox_file else "",
+    }
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -429,6 +566,10 @@ def init_db() -> None:
         ensure_column(con, "users", "student_verified", "student_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "bookings", "contact_name", "contact_name TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "contact_email", "contact_email TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "contact_phone", "contact_phone TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "confirmation_email_sent_at", "confirmation_email_sent_at TEXT")
         ensure_column(con, "cars", "brand", "brand TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "model", "model TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "year", "year INTEGER")
@@ -1300,6 +1441,7 @@ def create_booking_for_user(
     if not car:
         raise RuntimeError("Selected car is not available for that pickup time.")
     with db() as con:
+        user = con.execute("SELECT name, email, phone FROM users WHERE id = ?", (user_id,)).fetchone()
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
             booking_id = make_booking_id()
@@ -1314,8 +1456,8 @@ def create_booking_for_user(
             INSERT INTO bookings
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
-             total_price, status, booking_status, payment_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP')
+             total_price, status, booking_status, payment_status, contact_name, contact_email, contact_phone)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP', ?, ?, ?)
             """,
             (
                 booking_id,
@@ -1334,6 +1476,9 @@ def create_booking_for_user(
                 discount_amount,
                 final_total,
                 "CONFIRMED",
+                (user["name"] or "") if user else "",
+                (user["email"] or "") if user else "",
+                (user["phone"] or "") if user else "",
             ),
         )
         if applied_code:
@@ -1887,6 +2032,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
         return f"{scheme}://{host}/activate?token={urllib.parse.quote(token)}"
 
+    def public_origin(self) -> str:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        if public_base_url:
+            return public_base_url
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "127.0.0.1:8000"
+        scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return f"{scheme}://{host}"
+
     def activation_pending_page(self, email: str, outbox_file: Path, activation_link: str, message: str = "", delivery_status: str = "") -> None:
         self.send_html(
             render_template(
@@ -2399,24 +2552,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         first_name = form.get("first_name", "").strip()
         last_name = form.get("last_name", "").strip()
-        full_name = " ".join(part for part in (first_name, last_name) if part).strip()
-        with db() as con:
-            con.execute(
-                """
-                UPDATE users
-                SET name = COALESCE(NULLIF(?, ''), name),
-                    email = COALESCE(NULLIF(?, ''), email),
-                    phone = COALESCE(NULLIF(?, ''), phone)
-                WHERE id = ?
-                """,
-                (
-                    full_name,
-                    form.get("email", "").strip(),
-                    form.get("phone", "").strip(),
-                    user["id"],
-                ),
-            )
-        self.send_json({"ok": True, "message": "Your contact details are saved for this booking."})
+        result = save_booking_contact_and_send_confirmation(
+            user["id"],
+            first_name,
+            last_name,
+            form.get("email", ""),
+            form.get("phone", ""),
+            self.public_origin(),
+        )
+        self.send_json(result, 200 if result["ok"] else 400)
 
     def create_support_ticket(self) -> None:
         user = self.current_user()

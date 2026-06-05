@@ -884,12 +884,12 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
-    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
       if (status) status.textContent = payload.message || "Your contact details are saved for this booking.";
     })
-    .catch(() => {
-      if (status) status.textContent = "Your contact details are saved for this booking.";
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Please check your details and try again.";
     });
 });
 
