@@ -114,6 +114,7 @@ def admin_approve_cancel(booking_id: int) -> None:
 
 def main() -> None:
     app.init_db()
+    app_source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     cars = app.get_cars()
     assert_true(len(cars) >= 4, "seed cars should be available")
@@ -216,6 +217,66 @@ def main() -> None:
     assert_true("data-hero-fold" in index_template and "$commercial_embed_url" in index_template, "homepage hero should wire dynamic commercial embeds")
     admin_commercials_template = (ROOT / "templates" / "admin_commercials.html").read_text(encoding="utf-8")
     assert_true("/admin/commercials" in admin_commercials_template and "Live feature" in admin_commercials_template, "admin should manage commercials and live links")
+    admin_email_template = (ROOT / "templates" / "admin_email_marketing.html").read_text(encoding="utf-8")
+    assert_true(
+        "Email Marketing Calendar" in admin_email_template
+        and "$draft_cards" in admin_email_template
+        and "$campaign_rows" in admin_email_template
+        and "$seasonal_rows" in admin_email_template,
+        "admin email marketing page should render poster, draft library, seasonal rows, and planner rows",
+    )
+    assert_true(
+        "email_campaigns" in app_source
+        and "EMAIL_MARKETING_DRAFTS" in app_source
+        and "get_email_campaigns" in app_source
+        and '"/admin/email-marketing": self.admin_email_marketing_page' in app_source
+        and '"/admin/email-marketing": self.create_email_campaign' in app_source
+        and '"/admin/email-marketing/delete": self.delete_email_campaign' in app_source,
+        "admin email marketing database, drafts, and routes should be registered",
+    )
+    assert_true(
+        ".email-calendar-poster" in styles
+        and ".email-poster-grid" in styles
+        and ".email-draft-card" in styles
+        and "@media (max-width: 760px)" in styles,
+        "admin email marketing poster and drafts should have responsive styling",
+    )
+    for nav_template in (
+        "admin.html",
+        "admin_bookings.html",
+        "admin_users.html",
+        "admin_tickets.html",
+        "admin_discounts.html",
+        "admin_commercials.html",
+        "admin_email_marketing.html",
+        "admin_pickup.html",
+    ):
+        nav_text = (ROOT / "templates" / nav_template).read_text(encoding="utf-8")
+        assert_true('/admin/email-marketing' in nav_text, f"{nav_template} should link to email marketing")
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO email_campaigns
+            (campaign_date, campaign_type, audience, trigger_rule, subject_line, headline, message_body, cta_label, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-07-01",
+                "Seasonal",
+                "Denver students",
+                "Before July travel",
+                "Stress subject",
+                "Stress headline",
+                "Stress body",
+                "Book Now",
+                "DRAFT",
+                "Add poster and final approval",
+            ),
+        )
+    campaign_rows = app.get_email_campaigns()
+    assert_true(any(row["subject_line"] == "Stress subject" for row in campaign_rows), "saved email campaigns should persist and read back")
+    email_row_html = app.FairFaresHandler.render_email_campaign_row(None, next(row for row in campaign_rows if row["subject_line"] == "Stress subject"))
+    assert_true("Stress subject" in email_row_html and "/admin/email-marketing/delete" in email_row_html, "email planner rows should render subject and delete action")
     assert_true(not (ROOT / "static" / "video" / "fairfares-hero.mp4").exists(), "homepage should no longer depend on uploaded static MP4")
     active_commercial = app.get_active_commercial()
     assert_true(active_commercial is not None, "default active commercial should be seeded")
@@ -255,7 +316,6 @@ def main() -> None:
     assert_true(sum(row["total"] for row in counts["types"]) == len(cars), "type filter counts should match available feed")
     assert_true(sum(row["total"] for row in counts["fuel"]) == len(cars), "fuel filter counts should match available feed")
 
-    app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def serve_static")], "public cars API should not expose license plates")
     assert_true("allow_post_from_same_origin" in app_source and "Request origin not allowed" in app_source, "POST routes should have same-origin guard")
     assert_true("bool(not active_document_set or active_document_set.get(\"locked\"))" in app_source, "documents should stay locked when there is no booking document set")

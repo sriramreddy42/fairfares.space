@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Email Marketing | FairFares Admin</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=admin-email-1">
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <nav>
+      <a href="/admin">Inventory</a>
+      <a href="/admin/bookings">Booked Cars</a>
+      <a href="/admin/users">Users</a>
+      <a href="/admin/tickets">Tickets</a>
+      <a href="/admin/discounts">Discounts</a>
+      <a href="/admin/commercials">Commercials</a>
+      <a class="active" href="/admin/email-marketing">Email Marketing</a>
+      <a href="/admin/pickup">User Pickup</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Developer Portal</p>
+        <h1>Email Marketing Calendar</h1>
+        <span>The right message at the right time · $admin_name</span>
+      </div>
+    </section>
+
+    <section class="email-calendar-poster">
+      <div class="email-poster-title">
+        <p class="eyebrow">FairFares lifecycle messaging</p>
+        <h2>Email Marketing Calendar</h2>
+        <span>One email, one message, one button. Keep every campaign mobile-friendly and action-focused.</span>
+      </div>
+      <div class="email-poster-grid">
+        <article class="email-poster-column email-blue">
+          <h3>Transactional Emails</h3>
+          <ul>
+            <li><b>Immediately after booking</b><span>Confirmation + documents reminder</span></li>
+            <li><b>24 hours before pickup</b><span>Trip reminder and pickup checklist</span></li>
+            <li><b>2 hours before pickup</b><span>Final arrival reminder</span></li>
+            <li><b>After trip completion</b><span>Thank you and document access</span></li>
+            <li><b>24 hours after trip</b><span>Review request</span></li>
+          </ul>
+        </article>
+        <article class="email-poster-column email-teal">
+          <h3>Re-engagement</h3>
+          <ul>
+            <li><b>30 days inactive</b><span>Friendly reminder</span></li>
+            <li><b>60 days inactive</b><span>Exclusive offer</span></li>
+            <li><b>90 days inactive</b><span>Come back and save</span></li>
+          </ul>
+        </article>
+        <article class="email-poster-column email-purple">
+          <h3>Seasonal Campaigns</h3>
+          <ul class="seasonal-list">$seasonal_rows</ul>
+        </article>
+        <article class="email-poster-column email-orange">
+          <h3>Behavioral Emails</h3>
+          <ul>
+            <li><b>Birthday</b><span>Birthday discount</span></li>
+            <li><b>Price drop detected</b><span>Lower price available</span></li>
+            <li><b>Abandoned booking</b><span>Complete your booking</span></li>
+            <li><b>Repeat customer</b><span>Welcome-back offer</span></li>
+            <li><b>Location-based offers</b><span>Monthly popular destinations</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="admin-grid">
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Add Campaign Plan</h2>
+            <p>Use this to plan what goes out, when, to whom, and what must be added before sending.</p>
+          </div>
+        </div>
+        <form class="admin-form" method="post" action="/admin/email-marketing">
+          <label><span>Send Date</span><input name="campaign_date" type="date" value="$today"></label>
+          <label><span>Email Type</span><select name="campaign_type"><option>Transactional</option><option>Reminder</option><option>Re-engagement</option><option>Seasonal</option><option>Behavioral</option><option>Referral</option></select></label>
+          <label><span>Audience</span><input name="audience" placeholder="Upcoming trips, inactive users, Denver students"></label>
+          <label><span>Trigger / Timing</span><input name="trigger_rule" placeholder="24 hours before pickup"></label>
+          <label><span>Subject Line</span><input name="subject_line" required placeholder="Your FairFares trip starts tomorrow"></label>
+          <label><span>Headline</span><input name="headline" placeholder="Pickup is almost here."></label>
+          <label><span>Message Body</span><textarea name="message_body" rows="4" placeholder="Short, clear, personalized message"></textarea></label>
+          <label><span>CTA Label</span><input name="cta_label" placeholder="View Trip"></label>
+          <label><span>Status</span><select name="status"><option>DRAFT</option><option>READY</option><option>SCHEDULED</option><option>SENT</option></select></label>
+          <label><span>What needs to be added</span><textarea name="notes" rows="3" placeholder="Poster, discount code, segment, send test, final approval"></textarea></label>
+          <button type="submit">Save Campaign Plan</button>
+        </form>
+      </article>
+
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Email Draft Library</h2>
+            <p>Copy-ready FairFares draft emails for booking, documents, reminders, reviews, referral, and re-engagement.</p>
+          </div>
+        </div>
+        <div class="email-draft-grid">$draft_cards</div>
+      </article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Campaign Planner</h2>
+          <p>Saved campaign ideas and send calendar. Keep status as DRAFT until creative, audience, and test email are ready.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Date</th><th>Type / Audience</th><th>Trigger</th><th>Subject / Headline</th><th>CTA</th><th>Needs Added</th><th>Action</th></tr></thead>
+          <tbody>$campaign_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

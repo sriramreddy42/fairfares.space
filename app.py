@@ -11,7 +11,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from email.message import EmailMessage
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -626,6 +626,21 @@ def init_db() -> None:
                 UNIQUE(user_id, car_id, pickup_date, pickup_time, return_date, return_time),
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(car_id) REFERENCES cars(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS email_campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_date TEXT NOT NULL,
+                campaign_type TEXT NOT NULL,
+                audience TEXT NOT NULL,
+                trigger_rule TEXT NOT NULL DEFAULT '',
+                subject_line TEXT NOT NULL,
+                headline TEXT NOT NULL DEFAULT '',
+                message_body TEXT NOT NULL DEFAULT '',
+                cta_label TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -1617,6 +1632,107 @@ def get_saved_car_ids_for_user(user_id: int | None) -> set[int]:
         }
 
 
+EMAIL_MARKETING_DRAFTS = [
+    {
+        "type": "Transactional",
+        "timing": "Immediately after booking",
+        "audience": "New booking customers",
+        "subject": "Your FairFares booking is confirmed: {booking_id}",
+        "headline": "Your car is booked.",
+        "body": "Thanks for choosing FairFares. Your trip is confirmed for {pickup_date}. Bring a lower quote from Avis, Enterprise, Hertz, or another major rental company and we will match it plus give an additional 10% off after review.",
+        "cta": "Manage Booking",
+    },
+    {
+        "type": "Transactional",
+        "timing": "When pickup is completed",
+        "audience": "Picked-up customers",
+        "subject": "Your FairFares documents are ready",
+        "headline": "Download your trip documents anytime.",
+        "body": "Your invoice, rental agreement, and taxes & fees breakdown are ready in your FairFares portal. Keep them for your records or email them to yourself.",
+        "cta": "Download Documents",
+    },
+    {
+        "type": "Reminder",
+        "timing": "24 hours before pickup",
+        "audience": "Upcoming trips",
+        "subject": "Your FairFares trip starts tomorrow",
+        "headline": "Pickup is almost here.",
+        "body": "Your FairFares car is scheduled for pickup at {pickup_location}. Please bring your driver license, insurance details, and any lower quote you want us to review.",
+        "cta": "View Trip",
+    },
+    {
+        "type": "Reminder",
+        "timing": "2 hours before pickup",
+        "audience": "Same-day pickup customers",
+        "subject": "Your FairFares pickup starts in 2 hours",
+        "headline": "We are getting your car ready.",
+        "body": "Your pickup window is coming up. If plans changed, open Manage Booking or contact support before arrival.",
+        "cta": "Open Live Status",
+    },
+    {
+        "type": "Post-trip",
+        "timing": "After return is completed",
+        "audience": "Returned customers",
+        "subject": "Thank you for choosing FairFares",
+        "headline": "We appreciate your trip.",
+        "body": "Thank you for renting with FairFares. We hope the ride was fair, clean, and simple. Your documents stay saved in your portal.",
+        "cta": "Book Again",
+    },
+    {
+        "type": "Review",
+        "timing": "24 hours after trip",
+        "audience": "Completed trips",
+        "subject": "How was your FairFares experience?",
+        "headline": "Tell us how we did.",
+        "body": "Your feedback helps us keep prices transparent and service reliable for students and travelers.",
+        "cta": "Leave Feedback",
+    },
+    {
+        "type": "Re-engagement",
+        "timing": "30 days inactive",
+        "audience": "Inactive users",
+        "subject": "We miss you: student-ready rentals are waiting",
+        "headline": "Your next FairFares trip can still cost less.",
+        "body": "Need a ride again? Search FairFares and bring us a lower quote from a major rental company. We will match it and add 10% off after review.",
+        "cta": "Search Cars",
+    },
+    {
+        "type": "Referral",
+        "timing": "7 days after trip",
+        "audience": "Happy customers",
+        "subject": "Invite friends and earn FairFares rewards",
+        "headline": "Share fair prices with friends.",
+        "body": "Give friends your referral code. Referral codes can be limited in Admin Discounts, including max uses and valid-through dates.",
+        "cta": "Get Referral Code",
+    },
+]
+
+
+EMAIL_SEASONAL_PLAN = [
+    ("January", "New Year travel deals", "Jan 1-15"),
+    ("March", "Spring break specials", "Mar 1-20"),
+    ("May", "Summer travel begins", "May 1-31"),
+    ("July", "Independence Day travel", "Jun 15-Jul 4"),
+    ("August", "Back-to-school offers", "Aug 1-31"),
+    ("September", "Labor Day travel", "Aug 15-Sep 5"),
+    ("October", "Fall travel deals", "Oct 1-31"),
+    ("November", "Thanksgiving travel", "Nov 1-25"),
+    ("December", "Holiday and New Year travel", "Dec 1-31"),
+]
+
+
+def get_email_campaigns() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM email_campaigns
+            ORDER BY campaign_date ASC, id DESC
+            LIMIT 100
+            """
+        ).fetchall()
+
+
 AGREEMENT_FIELD_GROUPS = (
     (
         "Customer",
@@ -2016,6 +2132,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/tickets": self.admin_tickets_page,
             "/admin/discounts": self.admin_discounts_page,
             "/admin/commercials": self.admin_commercials_page,
+            "/admin/email-marketing": self.admin_email_marketing_page,
             "/admin/pickup": self.admin_pickup_page,
             "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
@@ -2053,6 +2170,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/commercials": self.create_admin_commercial,
             "/admin/commercials/status": self.update_admin_commercial_status,
             "/admin/commercials/delete": self.delete_admin_commercial,
+            "/admin/email-marketing": self.create_email_campaign,
+            "/admin/email-marketing/delete": self.delete_email_campaign,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
@@ -3057,6 +3176,55 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def admin_email_marketing_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        draft_cards = "\n".join(self.render_email_draft_card(draft) for draft in EMAIL_MARKETING_DRAFTS)
+        seasonal_rows = "\n".join(
+            f"<li><b>{escape(month)}</b><span>{escape(title)}</span><small>{escape(window)}</small></li>"
+            for month, title, window in EMAIL_SEASONAL_PLAN
+        )
+        campaign_rows = "\n".join(self.render_email_campaign_row(row) for row in get_email_campaigns())
+        today = date.today().isoformat()
+        body = render_template(
+            "admin_email_marketing.html",
+            admin_name=escape(user["name"]),
+            draft_cards=draft_cards,
+            seasonal_rows=seasonal_rows,
+            campaign_rows=campaign_rows or '<tr><td colspan="7">No planned campaigns yet.</td></tr>',
+            today=escape(today),
+        )
+        self.send_html(body)
+
+    def render_email_draft_card(self, draft: dict[str, str]) -> str:
+        return f"""
+        <article class="email-draft-card">
+          <div><span>{escape(draft["type"])}</span><b>{escape(draft["timing"])}</b></div>
+          <h3>{escape(draft["subject"])}</h3>
+          <p><strong>{escape(draft["headline"])}</strong><br>{escape(draft["body"])}</p>
+          <small>Audience: {escape(draft["audience"])} · CTA: {escape(draft["cta"])}</small>
+        </article>
+        """
+
+    def render_email_campaign_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row["campaign_date"])}</b><span>{escape(row["status"])}</span></td>
+          <td>{escape(row["campaign_type"])}<span>{escape(row["audience"])}</span></td>
+          <td>{escape(row["trigger_rule"] or "Manual send")}</td>
+          <td><b>{escape(row["subject_line"])}</b><span>{escape(row["headline"])}</span></td>
+          <td>{escape(row["cta_label"] or "No CTA")}</td>
+          <td>{escape(row["notes"] or "-")}</td>
+          <td>
+            <form method="post" action="/admin/email-marketing/delete" class="inline-form">
+              <input type="hidden" name="campaign_id" value="{row["id"]}">
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        """
+
     def admin_pickup_page(self) -> None:
         user = self.require_admin()
         if not user:
@@ -3574,6 +3742,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute("DELETE FROM commercials WHERE id = ?", (form.get("commercial_id"),))
         self.redirect("/admin/commercials")
+
+    def create_email_campaign(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO email_campaigns
+                (campaign_date, campaign_type, audience, trigger_rule, subject_line, headline, message_body, cta_label, status, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    form.get("campaign_date") or date.today().isoformat(),
+                    form.get("campaign_type", "Transactional"),
+                    form.get("audience", "All customers"),
+                    form.get("trigger_rule", ""),
+                    form.get("subject_line", "FairFares update"),
+                    form.get("headline", ""),
+                    form.get("message_body", ""),
+                    form.get("cta_label", ""),
+                    form.get("status", "DRAFT"),
+                    form.get("notes", ""),
+                ),
+            )
+        self.redirect("/admin/email-marketing")
+
+    def delete_email_campaign(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM email_campaigns WHERE id = ?", (form.get("campaign_id"),))
+        self.redirect("/admin/email-marketing")
 
     def save_pickup_documents(self) -> None:
         user = self.require_admin()

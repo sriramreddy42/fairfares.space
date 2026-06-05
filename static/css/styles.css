@@ -1080,6 +1080,135 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-weight: 700;
   margin-top: 3px;
 }
+.email-calendar-poster {
+  background: linear-gradient(180deg, #fff, #f4f9ff);
+  border: 1px solid #cdddf3;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(7, 20, 63, 0.08);
+  padding: 20px;
+}
+.email-poster-title {
+  text-align: center;
+}
+.email-poster-title h2 {
+  color: var(--navy);
+  font-size: clamp(1.8rem, 5vw, 3.4rem);
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 2px 0 6px;
+  text-transform: uppercase;
+}
+.email-poster-title span {
+  color: var(--muted);
+  font-weight: 850;
+}
+.email-poster-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 18px;
+}
+.email-poster-column {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.email-poster-column h3 {
+  color: #fff;
+  font-size: 0.9rem;
+  margin: 0;
+  padding: 12px 14px;
+  text-transform: uppercase;
+}
+.email-blue h3 { background: #0b3c8b; }
+.email-teal h3 { background: #008b89; }
+.email-purple h3 { background: #6950aa; }
+.email-orange h3 { background: #ed7b16; }
+.email-poster-column ul {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 10px 14px;
+}
+.email-poster-column li {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+}
+.email-poster-column li:last-child {
+  border-bottom: 0;
+}
+.email-poster-column b {
+  color: var(--navy);
+  font-size: 0.86rem;
+}
+.email-poster-column span,
+.email-poster-column small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.email-draft-grid {
+  display: grid;
+  gap: 12px;
+}
+.email-draft-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+.email-draft-card div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.email-draft-card div span {
+  color: var(--red);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.email-draft-card h3 {
+  color: var(--navy);
+  font-size: 0.98rem;
+  margin: 0;
+}
+.email-draft-card p {
+  line-height: 1.45;
+}
+.email-draft-card small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+  .email-poster-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .email-calendar-poster {
+    padding: 14px;
+  }
+
+  .email-poster-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .email-poster-title h2 {
+    font-size: 1.7rem;
+  }
+
+  .email-draft-card div {
+    display: grid;
+    justify-content: stretch;
+  }
+}
 .inline-form {
   align-items: center;
   display: flex;
