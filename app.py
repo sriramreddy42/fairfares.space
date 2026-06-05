@@ -358,6 +358,159 @@ def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, do
     return outbox_file, delivery_status
 
 
+def render_campaign_text(template: str, user: sqlite3.Row, origin: str) -> str:
+    first_name = (user["name"] or "FairFares Member").split(" ", 1)[0]
+    values = {
+        "name": user["name"] or "FairFares Member",
+        "first_name": first_name,
+        "email": user["email"],
+        "today": date.today().strftime("%b %d, %Y"),
+        "manage_url": f"{origin.rstrip('/')}/manage-booking",
+    }
+    rendered = template or ""
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", str(value))
+    return rendered
+
+
+def ensure_marketing_token(user_id: int) -> str:
+    with db() as con:
+        row = con.execute("SELECT marketing_token FROM users WHERE id = ?", (user_id,)).fetchone()
+        token = row["marketing_token"] if row and row["marketing_token"] else ""
+        if not token:
+            token = secrets.token_urlsafe(24)
+            con.execute("UPDATE users SET marketing_token = ? WHERE id = ?", (token, user_id))
+    return token
+
+
+def get_marketing_recipients(audience: str = "") -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM users
+            WHERE is_admin = 0
+              AND is_verified = 1
+              AND promo_email_opt_in = 1
+              AND marketing_unsubscribed_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 500
+            """
+        ).fetchall()
+
+
+def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, origin: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    token = ensure_marketing_token(user["id"])
+    unsubscribe_url = f"{origin.rstrip('/')}/unsubscribe?token={urllib.parse.quote(token)}"
+    subject = render_campaign_text(campaign["subject_line"], user, origin)
+    headline = render_campaign_text(campaign["headline"] or "A FairFares update for you.", user, origin)
+    message_body = render_campaign_text(campaign["message_body"] or campaign["notes"] or "Open FairFares to view the latest update.", user, origin)
+    cta_label = campaign["cta_label"] or "Open FairFares"
+    cta_url = f"{origin.rstrip('/')}/manage-booking"
+    text_body = (
+        f"Hi {user['name']},\n\n"
+        f"{headline}\n\n"
+        f"{message_body}\n\n"
+        f"{cta_label}: {cta_url}\n\n"
+        f"Unsubscribe: {unsubscribe_url}\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.5;background:#f5f7fb;padding:24px">
+          <div style="max-width:680px;margin:auto;background:#fff;border:1px solid #d9deea;border-radius:12px;overflow:hidden">
+            <div style="background:#07143f;color:#fff;padding:22px 24px">
+              <h1 style="margin:0;font-size:26px">FairFares</h1>
+              <p style="margin:6px 0 0">Fair prices. Better rides. For students.</p>
+            </div>
+            <div style="padding:24px">
+              <p style="font-size:14px;color:#5d6474;text-transform:uppercase;font-weight:700">{html.escape(campaign['campaign_type'])}</p>
+              <h2 style="font-size:28px;margin:0 0 12px">{html.escape(headline)}</h2>
+              <p style="font-size:16px">{html.escape(message_body)}</p>
+              <p style="margin:24px 0"><a href="{html.escape(cta_url)}" style="background:#ec0016;color:#fff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:800">{html.escape(cta_label)}</a></p>
+              <p style="font-size:13px;color:#5d6474">You are receiving this because you subscribed to FairFares promotional emails.</p>
+              <p style="font-size:13px"><a href="{html.escape(unsubscribe_url)}">Unsubscribe from marketing emails</a></p>
+            </div>
+          </div>
+        </div>
+    """
+    outbox_file = OUTBOX_DIR / f"marketing-{campaign['id']}-{user['id']}-{secrets.token_hex(6)}.txt"
+    delivery_status = send_with_resend(user["email"], subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = user["email"]
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+    outbox_file.write_text(
+        f"To: {user['email']}\nSubject: {subject}\nDelivery: {delivery_status}\nUnsubscribe: {unsubscribe_url}\n\n{text_body}",
+        encoding="utf-8",
+    )
+    return outbox_file, delivery_status
+
+
+def send_marketing_campaign(campaign_id: int, origin: str, test_email: str = "") -> dict[str, str | int | bool]:
+    with db() as con:
+        campaign = con.execute("SELECT * FROM email_campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    if not campaign:
+        return {"ok": False, "message": "Campaign not found.", "sent": 0}
+    if test_email:
+        test_user = {
+            "id": 0,
+            "name": "FairFares Test",
+            "email": test_email.strip().lower(),
+            "marketing_token": "test",
+        }
+        outbox_file, delivery_status = send_marketing_campaign_email(campaign, test_user, origin)  # type: ignore[arg-type]
+        return {
+            "ok": True,
+            "message": f"Test marketing email prepared for {test_email}.",
+            "sent": 1,
+            "delivery_status": delivery_status,
+            "outbox_file": str(outbox_file),
+        }
+    recipients = get_marketing_recipients(campaign["audience"])
+    sent = 0
+    last_status = "no opted-in recipients"
+    with db() as con:
+        for user in recipients:
+            outbox_file, delivery_status = send_marketing_campaign_email(campaign, user, origin)
+            sent += 1
+            last_status = delivery_status
+            con.execute(
+                """
+                INSERT INTO marketing_email_sends
+                (campaign_id, user_id, email, delivery_status, outbox_file)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (campaign_id, user["id"], user["email"], delivery_status, str(outbox_file)),
+            )
+        con.execute(
+            """
+            UPDATE email_campaigns
+            SET status = CASE WHEN ? > 0 THEN 'SENT' ELSE status END,
+                sent_at = CASE WHEN ? > 0 THEN CURRENT_TIMESTAMP ELSE sent_at END,
+                sent_count = sent_count + ?,
+                last_delivery_status = ?
+            WHERE id = ?
+            """,
+            (sent, sent, sent, last_status, campaign_id),
+        )
+    return {"ok": True, "message": f"Marketing campaign sent to {sent} subscribed user(s).", "sent": sent, "delivery_status": last_status}
+
+
 def save_booking_contact_and_send_confirmation(
     user_id: int,
     first_name: str,
@@ -365,6 +518,8 @@ def save_booking_contact_and_send_confirmation(
     email: str,
     phone: str,
     origin: str,
+    promo_email_opt_in: bool | None = None,
+    text_opt_in: bool | None = None,
 ) -> dict[str, str | bool]:
     full_name = " ".join(part for part in (first_name.strip(), last_name.strip()) if part).strip()
     clean_email = email.strip().lower()
@@ -378,10 +533,21 @@ def save_booking_contact_and_send_confirmation(
             UPDATE users
             SET name = ?,
                 email = ?,
-                phone = ?
+                phone = ?,
+                promo_email_opt_in = COALESCE(?, promo_email_opt_in),
+                text_opt_in = COALESCE(?, text_opt_in),
+                marketing_unsubscribed_at = CASE WHEN ? = 1 THEN NULL ELSE marketing_unsubscribed_at END
             WHERE id = ?
             """,
-            (full_name, clean_email, clean_phone, user_id),
+            (
+                full_name,
+                clean_email,
+                clean_phone,
+                None if promo_email_opt_in is None else int(promo_email_opt_in),
+                None if text_opt_in is None else int(text_opt_in),
+                int(bool(promo_email_opt_in)),
+                user_id,
+            ),
         )
         if booking:
             con.execute(
@@ -431,6 +597,10 @@ def init_db() -> None:
                 student_email TEXT,
                 student_id TEXT,
                 student_verified INTEGER NOT NULL DEFAULT 0,
+                promo_email_opt_in INTEGER NOT NULL DEFAULT 0,
+                text_opt_in INTEGER NOT NULL DEFAULT 0,
+                marketing_token TEXT,
+                marketing_unsubscribed_at TEXT,
                 is_verified INTEGER NOT NULL DEFAULT 0,
                 verified_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -640,7 +810,22 @@ def init_db() -> None:
                 cta_label TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'DRAFT',
                 notes TEXT NOT NULL DEFAULT '',
+                sent_at TEXT,
+                sent_count INTEGER NOT NULL DEFAULT 0,
+                last_delivery_status TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS marketing_email_sends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL,
+                user_id INTEGER,
+                email TEXT NOT NULL,
+                delivery_status TEXT NOT NULL DEFAULT '',
+                outbox_file TEXT NOT NULL DEFAULT '',
+                sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(campaign_id) REFERENCES email_campaigns(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
             """
         )
@@ -651,6 +836,10 @@ def init_db() -> None:
         ensure_column(con, "users", "student_email", "student_email TEXT")
         ensure_column(con, "users", "student_id", "student_id TEXT")
         ensure_column(con, "users", "student_verified", "student_verified INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "promo_email_opt_in", "promo_email_opt_in INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "text_opt_in", "text_opt_in INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "marketing_token", "marketing_token TEXT")
+        ensure_column(con, "users", "marketing_unsubscribed_at", "marketing_unsubscribed_at TEXT")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
         ensure_column(con, "bookings", "contact_name", "contact_name TEXT NOT NULL DEFAULT ''")
@@ -684,6 +873,9 @@ def init_db() -> None:
         ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "email_campaigns", "sent_at", "sent_at TEXT")
+        ensure_column(con, "email_campaigns", "sent_count", "sent_count INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "email_campaigns", "last_delivery_status", "last_delivery_status TEXT NOT NULL DEFAULT ''")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
@@ -1733,6 +1925,20 @@ def get_email_campaigns() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_marketing_subscriber_count() -> int:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM users
+            WHERE is_admin = 0
+              AND is_verified = 1
+              AND promo_email_opt_in = 1
+              AND marketing_unsubscribed_at IS NULL
+            """
+        ).fetchone()["total"]
+
+
 AGREEMENT_FIELD_GROUPS = (
     (
         "Customer",
@@ -2121,6 +2327,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/activate": self.activate_account,
+            "/unsubscribe": self.unsubscribe_marketing,
             "/healthz": self.healthz,
             "/login": self.login_page,
             "/signup": self.signup_page,
@@ -2172,6 +2379,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/commercials/delete": self.delete_admin_commercial,
             "/admin/email-marketing": self.create_email_campaign,
             "/admin/email-marketing/delete": self.delete_email_campaign,
+            "/admin/email-marketing/send": self.send_email_campaign_now,
+            "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
@@ -2850,6 +3059,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             form.get("email", ""),
             form.get("phone", ""),
             self.public_origin(),
+            form.get("promo_email_opt_in") == "on",
+            form.get("text_opt_in") == "on",
         )
         self.send_json(result, 200 if result["ok"] else 400)
 
@@ -3194,6 +3405,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             seasonal_rows=seasonal_rows,
             campaign_rows=campaign_rows or '<tr><td colspan="7">No planned campaigns yet.</td></tr>',
             today=escape(today),
+            subscriber_count=escape(str(get_marketing_subscriber_count())),
         )
         self.send_html(body)
 
@@ -3215,8 +3427,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <td>{escape(row["trigger_rule"] or "Manual send")}</td>
           <td><b>{escape(row["subject_line"])}</b><span>{escape(row["headline"])}</span></td>
           <td>{escape(row["cta_label"] or "No CTA")}</td>
-          <td>{escape(row["notes"] or "-")}</td>
+          <td>{escape(row["notes"] or "-")}<span>Sent: {escape(str(row["sent_count"]))}{(" · " + escape(row["last_delivery_status"])) if row["last_delivery_status"] else ""}</span></td>
           <td>
+            <form method="post" action="/admin/email-marketing/test" class="inline-form">
+              <input type="hidden" name="campaign_id" value="{row["id"]}">
+              <input name="test_email" type="email" placeholder="test@email.com" required>
+              <button type="submit">Send Test</button>
+            </form>
+            <form method="post" action="/admin/email-marketing/send" class="inline-form">
+              <input type="hidden" name="campaign_id" value="{row["id"]}">
+              <button type="submit">Send to Subscribers</button>
+            </form>
             <form method="post" action="/admin/email-marketing/delete" class="inline-form">
               <input type="hidden" name="campaign_id" value="{row["id"]}">
               <button type="submit">Delete</button>
@@ -3779,6 +4000,75 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("DELETE FROM email_campaigns WHERE id = ?", (form.get("campaign_id"),))
         self.redirect("/admin/email-marketing")
 
+    def send_email_campaign_now(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            campaign_id = int(form.get("campaign_id", "0"))
+        except ValueError:
+            campaign_id = 0
+        send_marketing_campaign(campaign_id, self.public_origin())
+        self.redirect("/admin/email-marketing")
+
+    def send_email_campaign_test(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            campaign_id = int(form.get("campaign_id", "0"))
+        except ValueError:
+            campaign_id = 0
+        send_marketing_campaign(campaign_id, self.public_origin(), form.get("test_email", ""))
+        self.redirect("/admin/email-marketing")
+
+    def unsubscribe_marketing(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        token = urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
+        updated = False
+        if token:
+            with db() as con:
+                result = con.execute(
+                    """
+                    UPDATE users
+                    SET promo_email_opt_in = 0,
+                        marketing_unsubscribed_at = CURRENT_TIMESTAMP
+                    WHERE marketing_token = ?
+                    """,
+                    (token,),
+                )
+                updated = result.rowcount > 0
+        title = "You are unsubscribed" if updated else "Unsubscribe link not found"
+        message = (
+            "You will no longer receive FairFares marketing emails. Booking confirmations and important trip emails may still be sent."
+            if updated
+            else "This unsubscribe link is invalid or already expired."
+        )
+        self.send_html(
+            f"""
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>{escape(title)} | FairFares</title>
+              <link rel="stylesheet" href="/static/css/styles.css">
+            </head>
+            <body>
+              <main class="auth-main">
+                <section class="auth-card">
+                  <h1>{escape(title)}</h1>
+                  <p>{escape(message)}</p>
+                  <a class="select-button" href="/">Back to FairFares</a>
+                </section>
+              </main>
+            </body>
+            </html>
+            """
+        )
+
     def save_pickup_documents(self) -> None:
         user = self.require_admin()
         if not user:
@@ -4071,6 +4361,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             name_parts = (user["name"] or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
+            promo_checked = " checked" if (
+                row_value(user, "promo_email_opt_in") in {1, "1", True}
+                or (not row_value(user, "marketing_unsubscribed_at") and not row_value(user, "phone"))
+            ) else ""
+            text_checked = " checked" if row_value(user, "text_opt_in") in {1, "1", True} else ""
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
@@ -4083,8 +4378,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <label><span>Last Name *</span><input name="last_name" value="{escape(last_name)}" required></label>
                     <label><span>Email Address *</span><input name="email" type="email" value="{escape(user["email"])}" required></label>
                     <label><span>Mobile Number *</span><input name="phone" value="{escape(user["phone"] or "")}" required></label>
-                    <label class="toggle-row"><input name="promo_email_opt_in" type="checkbox" checked> I want to receive emails for promotional offers and upcoming rentals</label>
-                    <label class="toggle-row"><input name="text_opt_in" type="checkbox"> Yes, send text updates about my current and upcoming rentals</label>
+                    <label class="toggle-row"><input name="promo_email_opt_in" type="checkbox"{promo_checked}> I want to receive emails for promotional offers and upcoming rentals</label>
+                    <label class="toggle-row"><input name="text_opt_in" type="checkbox"{text_checked}> Yes, send text updates about my current and upcoming rentals</label>
                     <div class="booking-confirmation-actions">
                         <button type="submit">Save Details</button>
                         <button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>

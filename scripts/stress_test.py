@@ -235,6 +235,13 @@ def main() -> None:
         "admin email marketing database, drafts, and routes should be registered",
     )
     assert_true(
+        '"/admin/email-marketing/send": self.send_email_campaign_now' in app_source
+        and '"/admin/email-marketing/test": self.send_email_campaign_test' in app_source
+        and '"/unsubscribe": self.unsubscribe_marketing' in app_source
+        and "marketing_email_sends" in app_source,
+        "admin email marketing should support subscriber sends, test sends, history, and unsubscribe",
+    )
+    assert_true(
         ".email-calendar-poster" in styles
         and ".email-poster-grid" in styles
         and ".email-draft-card" in styles
@@ -276,7 +283,13 @@ def main() -> None:
     campaign_rows = app.get_email_campaigns()
     assert_true(any(row["subject_line"] == "Stress subject" for row in campaign_rows), "saved email campaigns should persist and read back")
     email_row_html = app.FairFaresHandler.render_email_campaign_row(None, next(row for row in campaign_rows if row["subject_line"] == "Stress subject"))
-    assert_true("Stress subject" in email_row_html and "/admin/email-marketing/delete" in email_row_html, "email planner rows should render subject and delete action")
+    assert_true(
+        "Stress subject" in email_row_html
+        and "/admin/email-marketing/delete" in email_row_html
+        and "/admin/email-marketing/send" in email_row_html
+        and "/admin/email-marketing/test" in email_row_html,
+        "email planner rows should render subject, test, subscriber send, and delete actions",
+    )
     assert_true(not (ROOT / "static" / "video" / "fairfares-hero.mp4").exists(), "homepage should no longer depend on uploaded static MP4")
     active_commercial = app.get_active_commercial()
     assert_true(active_commercial is not None, "default active commercial should be seeded")
@@ -426,6 +439,8 @@ def main() -> None:
                 user["email"],
                 "9372518688",
                 "https://fairfares.test",
+                True,
+                True,
             )
             assert_true(confirmation["ok"], "save details should update profile and send booking confirmation")
             confirmed_booking = app.get_booking_for_user(user["id"])
@@ -435,6 +450,12 @@ def main() -> None:
                 and confirmed_booking["contact_phone"] == "9372518688"
                 and confirmed_booking["confirmation_email_sent_at"],
                 "booking should store customer contact snapshot and confirmation timestamp",
+            )
+            with app.db() as con:
+                subscribed_user = con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+            assert_true(
+                subscribed_user["promo_email_opt_in"] == 1 and subscribed_user["text_opt_in"] == 1,
+                "booking confirmation details should save email and text subscription choices",
             )
             outbox_text = Path(str(confirmation["outbox_file"])).read_text(encoding="utf-8")
             assert_true(
@@ -466,6 +487,49 @@ def main() -> None:
         requested = app.get_booking_for_user(user["id"])
         assert_true(requested["booking_status"] == "CANCELLATION_REQUESTED", "cancel request should be visible to user")
         assert_true(app.booking_status_label(requested["booking_status"]) == "Request sent to admin", "user card label should be friendly")
+
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO email_campaigns
+            (campaign_date, campaign_type, audience, trigger_rule, subject_line, headline, message_body, cta_label, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-08-01",
+                "Seasonal",
+                "Subscribed customers",
+                "Manual send",
+                "FairFares summer savings for {first_name}",
+                "Your next FairFares ride can cost less.",
+                "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.",
+                "Search Cars",
+                "READY",
+                "Stress marketing send",
+            ),
+        )
+        marketing_campaign_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    marketing_result = app.send_marketing_campaign(marketing_campaign_id, "https://fairfares.test")
+    assert_true(marketing_result["ok"] and marketing_result["sent"] == 1, "marketing campaign should send only to subscribed verified users")
+    with app.db() as con:
+        send_rows = con.execute("SELECT * FROM marketing_email_sends WHERE campaign_id = ?", (marketing_campaign_id,)).fetchall()
+        sent_campaign = con.execute("SELECT * FROM email_campaigns WHERE id = ?", (marketing_campaign_id,)).fetchone()
+    assert_true(len(send_rows) == 1 and sent_campaign["sent_count"] == 1 and sent_campaign["status"] == "SENT", "marketing send should record history and update campaign status")
+    marketing_outbox = Path(send_rows[0]["outbox_file"]).read_text(encoding="utf-8")
+    assert_true("Unsubscribe:" in marketing_outbox and "FairFares summer savings" in marketing_outbox, "marketing email should include subject and unsubscribe link")
+    token = app.ensure_marketing_token(users[0]["id"])
+    with app.db() as con:
+        con.execute(
+            """
+            UPDATE users
+            SET promo_email_opt_in = 0,
+                marketing_unsubscribed_at = CURRENT_TIMESTAMP
+            WHERE marketing_token = ?
+            """,
+            (token,),
+        )
+    second_result = app.send_marketing_campaign(marketing_campaign_id, "https://fairfares.test")
+    assert_true(second_result["sent"] == 0, "unsubscribed users should not receive future marketing campaigns")
 
     admin_bookings = app.get_admin_bookings()
     requested_count = sum(1 for row in admin_bookings if row["booking_status"] == "CANCELLATION_REQUESTED")

@@ -1214,6 +1214,13 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   display: flex;
   gap: 8px;
 }
+.inline-form input[type="email"] {
+  min-height: 38px;
+  min-width: 180px;
+}
+.admin-table td .inline-form {
+  margin: 4px 0;
+}
 .inline-form select {
   min-height: 36px;
   padding: 6px 8px;
