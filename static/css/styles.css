@@ -110,7 +110,7 @@ input, select, textarea, button {
 .menu-button {
   background: none;
   border: 0;
-  display: grid;
+  display: none;
   gap: 6px;
   padding: 6px;
   width: 34px;
@@ -4995,4 +4995,138 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .manage-screen .price-summary a {
   justify-self: auto;
+}
+
+/* Final customer QA polish: keep operational surfaces quiet and predictable. */
+.car-card {
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(240px, 300px);
+}
+
+.price-box {
+  align-content: center;
+  min-width: 0;
+}
+
+.price-box em {
+  max-width: 260px;
+}
+
+.card-actions-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  max-width: 100%;
+}
+
+.card-actions-row .select-button,
+.card-actions-row button,
+.price-box .select-button {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.car-terms {
+  max-width: 280px;
+}
+
+.trip-card {
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1.1fr) minmax(280px, 1fr);
+}
+
+.trip-card .price-summary {
+  align-items: center;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.trip-card .price-summary em {
+  flex: 1 1 360px;
+  margin: 0;
+}
+
+.trip-card .price-summary a {
+  min-width: 130px;
+  text-align: center;
+}
+
+.request-notice {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+}
+
+.request-notice .light-button {
+  justify-self: end;
+  width: 100%;
+}
+
+.manage-screen .tabs {
+  gap: 12px;
+}
+
+.manage-screen .tabs button,
+.manage-screen .detail-tabs button,
+.manage-screen .doc-actions button {
+  background: #fff !important;
+  border: 1px solid var(--line) !important;
+  color: var(--navy) !important;
+}
+
+.manage-screen .tabs button:hover,
+.manage-screen .detail-tabs button:hover,
+.manage-screen .doc-actions button:hover,
+.manage-screen .tabs button.active,
+.manage-screen .detail-tabs button.active,
+.manage-screen .doc-actions button.active {
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+.manage-screen .mini-trip {
+  background: #fff !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 7px;
+  color: var(--navy) !important;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+}
+
+.manage-screen .mini-trip:hover {
+  border-color: var(--red) !important;
+  box-shadow: inset 4px 0 0 var(--red);
+}
+
+.manage-screen .mini-trip b {
+  color: var(--navy) !important;
+}
+
+.manage-screen .mini-trip:hover b {
+  color: var(--red) !important;
+}
+
+.booking-accordions,
+.editor-panel {
+  display: none !important;
+}
+
+@media (max-width: 1240px) {
+  .price-box {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
+    text-align: center;
+  }
+  .price-box em,
+  .car-terms {
+    max-width: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .trip-card .price-summary,
+  .request-notice {
+    grid-template-columns: 1fr;
+    text-align: left;
+  }
+  .request-notice .light-button {
+    justify-self: stretch;
+  }
 }
