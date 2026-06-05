@@ -286,6 +286,78 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     return outbox_file, delivery_status
 
 
+def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, documents: dict[str, dict[str, str]], origin: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = f"FairFares documents ready: {booking['booking_id']}"
+    poster_url = f"{origin.rstrip('/')}/static/img/download-documents-poster.png"
+    document_text = "\n\n".join(
+        f"{doc['title']}\n{doc['content']}\n{doc['status']}"
+        for doc in documents.values()
+    )
+    text_body = (
+        f"Hi {name},\n\n"
+        f"Your FairFares documents for booking {booking['booking_id']} are ready.\n\n"
+        f"Vehicle: {booking['car_name']}\n"
+        f"Pickup: {booking['pickup_location']} on {booking['pickup_date']} at {booking['pickup_time']}\n"
+        f"Drop-off: {booking['dropoff_location']} on {booking['dropoff_date']} at {booking['dropoff_time']}\n\n"
+        f"{document_text}\n\n"
+        f"Documents poster: {poster_url}\n"
+    )
+    html_docs = "".join(
+        f"<section style='border:1px solid #d9deea;border-radius:8px;padding:14px;margin:12px 0'>"
+        f"<h3>{html.escape(doc['title'])}</h3>"
+        f"<p style='white-space:pre-line'>{html.escape(doc['content'])}</p>"
+        f"<small>{html.escape(doc['status'])}</small>"
+        f"</section>"
+        for doc in documents.values()
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <h2>Your FairFares documents are ready.</h2>
+          <p>Hi {html.escape(name)}, here are the saved documents for booking <b>{html.escape(booking['booking_id'])}</b>.</p>
+          <img src="{html.escape(poster_url)}" alt="Download your FairFares documents" style="max-width:100%;border-radius:10px;margin:12px 0">
+          {html_docs}
+        </div>
+    """
+
+    outbox_file = OUTBOX_DIR / f"documents-{booking['booking_id'].lower()}-{secrets.token_hex(6)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        poster_path = STATIC_DIR / "img" / "download-documents-poster.png"
+        if poster_path.exists():
+            message.add_attachment(
+                poster_path.read_bytes(),
+                maintype="image",
+                subtype="png",
+                filename="fairfares-download-documents.png",
+            )
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
+        encoding="utf-8",
+    )
+    return outbox_file, delivery_status
+
+
 def save_booking_contact_and_send_confirmation(
     user_id: int,
     first_name: str,
@@ -1210,11 +1282,11 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
         details_json = escape(json.dumps(details))
         rows.append(
             f"""
-            <button class="mini-trip" type="button" data-trip-type="favorites" data-trip-details="{details_json}">
+            <div class="mini-trip saved-mini-trip" role="button" tabindex="0" data-trip-type="favorites" data-trip-details="{details_json}">
               {'<img src="' + escape(details["image"]) + '" alt="' + escape(saved["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(saved["car_name"])}<br><small>{escape(details["pickup"])} · Saved car</small></span>
-              <b>Saved</b>
-            </button>
+              <button class="light-button mini-trip-remove" type="button" data-unsave-car-id="{saved["car_id"]}">Remove saved</button>
+            </div>
             """
         )
     return "\n".join(rows)
@@ -1533,6 +1605,16 @@ def get_saved_cars_for_user(user_id: int) -> list[sqlite3.Row]:
             """,
             (user_id,),
         ).fetchall()
+
+
+def get_saved_car_ids_for_user(user_id: int | None) -> set[int]:
+    if not user_id:
+        return set()
+    with db() as con:
+        return {
+            row["car_id"]
+            for row in con.execute("SELECT DISTINCT car_id FROM saved_cars WHERE user_id = ?", (user_id,)).fetchall()
+        }
 
 
 AGREEMENT_FIELD_GROUPS = (
@@ -1956,6 +2038,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
             "/saved-cars": self.save_search_car,
+            "/documents/email": self.email_booking_documents,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
             "/student-verification": self.update_student_verification,
@@ -2112,7 +2195,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for row in get_services()
         )
         car_rows = get_cars()
-        cars = "\n".join(self.render_car_card(row) for row in car_rows)
+        saved_car_ids = get_saved_car_ids_for_user(user["id"] if user else None)
+        cars = "\n".join(self.render_car_card(row, saved_car_ids) for row in car_rows)
         default_pickup, default_return = default_trip_dates()
         filter_counts = get_filter_counts()
         location_options = "\n".join(
@@ -2194,7 +2278,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
-    def render_car_card(self, row: sqlite3.Row) -> str:
+    def render_car_card(self, row: sqlite3.Row, saved_car_ids: set[int] | None = None) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         car_visual = (
             f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(row["name"])}">'
@@ -2204,6 +2288,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
         low, high = daily_price_range(row["daily_price"])
+        is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
+        save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
         <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
             <div class="car-art car-{escape(row["color"])}">
@@ -2226,7 +2312,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <small class="availability-note" data-availability-note></small>
                 <em>Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.</em>
                 <div class="card-actions-row">
-                    <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}">Save Trip</button>
+                    <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
                 <details class="car-terms">
@@ -2559,7 +2645,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not get_car(car_id):
             self.send_json({"ok": False, "message": "Car not found."}, 404)
             return
+        action = form.get("action", "toggle")
         with db() as con:
+            existing = con.execute(
+                "SELECT id FROM saved_cars WHERE user_id = ? AND car_id = ? LIMIT 1",
+                (user["id"], car_id),
+            ).fetchone()
+            if action == "unsave" or (action == "toggle" and existing):
+                con.execute("DELETE FROM saved_cars WHERE user_id = ? AND car_id = ?", (user["id"], car_id))
+                self.send_json({"ok": True, "saved": False, "message": "Save Trip"})
+                return
             con.execute(
                 """
                 INSERT OR IGNORE INTO saved_cars
@@ -2577,7 +2672,49 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("discount_code", ""),
                 ),
             )
-        self.send_json({"ok": True, "message": "Saved to your trips."})
+        self.send_json({"ok": True, "saved": True, "message": "Unsave"})
+
+    def email_booking_documents(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to email documents."}, 401)
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id", "0"))
+        except ValueError:
+            booking_id = 0
+        email = (form.get("email") or user["email"] or "").strip()
+        with db() as con:
+            booking = con.execute(
+                """
+                SELECT bookings.*, cars.name AS car_name, cars.category, cars.image_url
+                FROM bookings
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ? AND bookings.user_id = ?
+                """,
+                (booking_id, user["id"]),
+            ).fetchone()
+        if not booking:
+            self.send_json({"ok": False, "message": "Booking documents not found."}, 404)
+            return
+        if booking["booking_status"] not in {"PICKED_UP", "RETURNED", "CANCELLED"}:
+            self.send_json({"ok": False, "message": "Documents can be retrieved once pickup is completed."}, 400)
+            return
+        documents = get_booking_documents(booking["id"])
+        if not documents:
+            self.send_json({"ok": False, "message": "Documents are not generated yet."}, 404)
+            return
+        outbox_file, delivery_status = send_booking_documents_email(email, user["name"], booking, documents, self.public_origin())
+        message = f"Documents emailed to {email}."
+        if not delivery_status.startswith("sent"):
+            message = f"Documents email copy saved for {email}."
+        self.send_json({
+            "ok": True,
+            "message": message,
+            "delivery_status": delivery_status,
+            "outbox_file": str(outbox_file),
+        })
 
     def update_user_profile(self) -> None:
         user = self.current_user()

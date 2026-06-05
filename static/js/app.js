@@ -712,7 +712,21 @@ document.getElementById("emailDocuments")?.addEventListener("click", () => {
     documentStatus.textContent = activeDocumentSet?.lockMessage || "Documents can be retrieved once pickup is completed.";
     return;
   }
-  documentStatus.textContent = `Documents for ${activeDocumentSet?.bookingId || "this booking"} queued for ${documentEmail.value || "your email"}.`;
+  const payload = new URLSearchParams();
+  payload.set("booking_id", activeDocumentSet?.id || "");
+  payload.set("email", documentEmail.value || "");
+  documentStatus.textContent = `Sending documents for ${activeDocumentSet?.bookingId || "this booking"}...`;
+  fetch("/documents/email", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(data)))
+    .then((data) => {
+      documentStatus.textContent = data.message || `Documents emailed to ${documentEmail.value || "your email"}.`;
+    })
+    .catch((data) => {
+      documentStatus.textContent = data?.message || "Unable to send documents right now.";
+    });
 });
 
 document.getElementById("downloadAllDocuments")?.addEventListener("click", () => {
@@ -801,7 +815,8 @@ tripFilterButtons.forEach((button) => {
 });
 
 tripRows.forEach((row) => {
-  row.addEventListener("click", () => {
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("[data-unsave-car-id]")) return;
     if (!tripDetailModal || !tripDetailContent) return;
     if (!row.dataset.tripDetails) return;
     let details = {};
@@ -845,17 +860,39 @@ document.addEventListener("click", (event) => {
   payload.set("return_date", returnDate?.value || "");
   payload.set("return_time", returnTime?.value || "");
   payload.set("discount_code", discountCode?.value || "");
+  payload.set("action", saveButton.dataset.saved === "true" ? "unsave" : "save");
   fetch("/saved-cars", {
     method: "POST",
     body: payload,
   })
     .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(data)))
     .then((data) => {
-      saveButton.textContent = data.message || "Saved";
-      saveButton.disabled = true;
+      saveButton.dataset.saved = data.saved ? "true" : "false";
+      saveButton.textContent = data.message || (data.saved ? "Unsave" : "Save Trip");
     })
     .catch((data) => {
       saveButton.textContent = data?.login_required ? "Sign in to save" : "Try again";
+    });
+});
+
+document.addEventListener("click", (event) => {
+  const removeButton = event.target.closest("[data-unsave-car-id]");
+  if (!removeButton) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const payload = new URLSearchParams();
+  payload.set("car_id", removeButton.dataset.unsaveCarId || "");
+  payload.set("action", "unsave");
+  fetch("/saved-cars", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(data)))
+    .then(() => {
+      removeButton.closest(".mini-trip")?.remove();
+    })
+    .catch((data) => {
+      removeButton.textContent = data?.login_required ? "Sign in required" : "Try again";
     });
 });
 

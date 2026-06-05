@@ -2218,6 +2218,11 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   object-fit: contain;
   width: 60px;
 }
+.mini-trip-remove {
+  min-height: 36px;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
 .mini-car {
   background: linear-gradient(180deg, #dfe5ec, #303744);
   border-radius: 30px 34px 10px 10px;

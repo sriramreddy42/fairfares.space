@@ -185,6 +185,8 @@ def main() -> None:
     assert_true('fetch("/support/tickets"' in app_js and "save-search-trip" in first_card, "support tickets should use backend API and feed cards should expose save trip")
     assert_true("Sign in to create a support ticket" in app_js and "Sign in to update student verification" in app_js, "signed-out account actions should request login")
     assert_true('fetch("/saved-cars"' in app_js and '"/saved-cars": self.save_search_car' in (ROOT / "app.py").read_text(encoding="utf-8"), "save trip should persist saved cars")
+    assert_true('payload.set("action", saveButton.dataset.saved === "true" ? "unsave" : "save")' in app_js and "data-unsave-car-id" in (ROOT / "app.py").read_text(encoding="utf-8"), "save buttons should toggle and saved rows should remove saved cars")
+    assert_true('fetch("/documents/email"' in app_js and '"/documents/email": self.email_booking_documents' in (ROOT / "app.py").read_text(encoding="utf-8"), "document email button should call backend email route")
     assert_true('fetch("/bookings/request-cancel"' in app_js and "tripDetailModal" in app_js, "user should cancel pending requests and open trip detail popups")
     assert_true("function escapeHtml" in app_js and "details.price" in app_js, "trip detail modal should escape dynamic data and show price")
     assert_true("Our dev team" not in app_js and "Our dev team" not in (ROOT / "app.py").read_text(encoding="utf-8"), "customer support copy should not mention dev team")
@@ -204,6 +206,7 @@ def main() -> None:
     assert_true(".documents-locked .doc-actions" in styles and "display: none !important" in styles, "locked documents should hide disabled controls instead of showing blurred content")
     assert_true(".manage-screen .trip-actions button" in styles and "filter: none !important" in styles, "mobile trip action buttons should not stay blurred")
     assert_true(".manage-panels > .trip-actions" in styles and "document-booking-select" in styles, "manage actions and document history should live in the lower workflow area")
+    assert_true(".mini-trip-remove" in styles, "saved trip rows should expose a styled remove action")
     assert_true("perspective-origin: left center" in styles and "rotateY(-86deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should fold toward the left with reduced-motion fallback")
     assert_true("background-size: auto 100%" in styles and "background-position: left center" in styles, "desktop hero artwork should keep natural height alignment")
     assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")
@@ -451,6 +454,30 @@ def main() -> None:
     assert_true("STRESS15" in discount_docs["Invoice / Receipt"]["content"], "invoice should show applied discount code")
     user_document_sets = app.get_user_document_sets(admin_bookings[0]["user_id"], admin_bookings[0]["id"])
     assert_true(user_document_sets and "docs" in user_document_sets[0] and "lockMessage" in user_document_sets[0], "dashboard should expose per-booking document sets")
+    original_document_status = admin_bookings[0]["booking_status"]
+    with app.db() as con:
+        con.execute("UPDATE bookings SET booking_status = 'PICKED_UP' WHERE id = ?", (admin_bookings[0]["id"],))
+        email_booking = con.execute(
+            """
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.image_url
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.id = ?
+            """,
+            (admin_bookings[0]["id"],),
+        ).fetchone()
+    outbox_file, delivery_status = app.send_booking_documents_email(
+        "docs-stress@example.com",
+        "Docs Stress",
+        email_booking,
+        app.get_booking_documents(admin_bookings[0]["id"]),
+        "https://fairfares.test",
+    )
+    with app.db() as con:
+        con.execute("UPDATE bookings SET booking_status = ? WHERE id = ?", (original_document_status, admin_bookings[0]["id"]))
+    assert_true(outbox_file.exists() and "download-documents-poster.png" in outbox_file.read_text(encoding="utf-8"), "document email should create an outbox copy with poster reference")
+    assert_true(delivery_status, "document email should report delivery status")
+    assert_true((ROOT / "static" / "img" / "download-documents-poster.png").exists(), "document email poster should be available as a static asset")
     with app.db() as con:
         con.execute(
             """
