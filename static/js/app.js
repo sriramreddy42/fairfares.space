@@ -683,7 +683,7 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
-    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
       document.getElementById("studentStatus").textContent = payload.message || "Student verification details updated.";
       const verifiedBox = document.getElementById("studentVerifiedBox");
@@ -695,8 +695,8 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
       if (verifiedChecks && payload.checks_html) verifiedChecks.innerHTML = payload.checks_html;
       verifiedBox?.classList.toggle("is-pending", !payload.verified);
     })
-    .catch(() => {
-      document.getElementById("studentStatus").textContent = "Student verification details updated.";
+    .catch((payload) => {
+      document.getElementById("studentStatus").textContent = payload?.message || "Sign in to update student verification.";
     });
 });
 
@@ -865,12 +865,12 @@ document.getElementById("supportForm")?.addEventListener("submit", (event) => {
     method: "POST",
     body: payload,
   })
-    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((data) => {
       supportStatus.textContent = data.message || `Ticket ${data.ticket_id} created. FairFares support will follow up soon.`;
     })
-    .catch(() => {
-      supportStatus.textContent = "Support ticket saved locally. FairFares support will follow up soon.";
+    .catch((payload) => {
+      supportStatus.textContent = payload?.message || "Sign in to create a support ticket.";
     });
 });
 

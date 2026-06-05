@@ -2421,7 +2421,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def create_support_ticket(self) -> None:
         user = self.current_user()
         if not user:
-            self.not_found()
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to create a support ticket."}, 401)
             return
         form = self.read_form()
         booking = get_booking_for_user(user["id"])
@@ -2463,7 +2463,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def update_student_verification(self) -> None:
         user = self.current_user()
         if not user:
-            self.not_found()
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to update student verification."}, 401)
             return
         form = self.read_form()
         student_email = form.get("student_email", "")
@@ -3470,7 +3470,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </details>
             """
         booking_documents_json = json.dumps(get_booking_documents(booking["id"] if booking else None)).replace("</", "<\\/")
-        documents_locked = bool(booking and booking["booking_status"] not in {"PICKED_UP", "RETURNED"})
+        documents_locked = bool(not booking or booking["booking_status"] not in {"PICKED_UP", "RETURNED"})
         first_booking_promo = ""
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
@@ -3638,7 +3638,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_documents_json=booking_documents_json,
             documents_locked="1" if documents_locked else "0",
             documents_locked_class="documents-locked" if documents_locked else "",
-            documents_locked_message="Documents can be retrieved once pickup is completed." if documents_locked else "",
+            documents_locked_message=("Book a car first, then documents can be retrieved once pickup is completed." if not booking else "Documents can be retrieved once pickup is completed.") if documents_locked else "",
             document_email=escape(user["email"] if user else ""),
             pickup_time_options=time_select_options(booking["pickup_time"] if booking else "10:00 AM"),
             return_time_options=time_select_options(booking["dropoff_time"] if booking else "10:00 AM"),
