@@ -396,17 +396,48 @@ def main() -> None:
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, total_price, status, booking_status, payment_status)
             VALUES ('FFSAMEDAY1', ?, ?, 'AVIS', 'Denver International Airport (DEN)', 'Jun 1, 2026', '10:00 AM',
-                    'Denver International Airport (DEN)', 'Jun 15, 2026', '12:00 PM', 14, 700, 700,
+                    'Denver International Airport (DEN)', 'Jun 15, 2026', '4:00 PM', 14, 700, 700,
                     'CONFIRMED', 'CONFIRMED', 'PAY_AT_PICKUP')
             """,
             (same_day_user["id"], same_day_car["id"]),
         )
     same_day_row = next(row for row in app.get_cars() if row["name"] == "Same Day Return Test")
     same_day_card = app.FairFaresHandler.render_car_card(None, same_day_row)
-    assert_true('data-booked-until-date="Jun 15, 2026"' in same_day_card and 'data-booked-until-time="12:00 PM"' in same_day_card, "booked cars returning same day should remain in feed with return time")
+    assert_true('data-booked-until-date="Jun 15, 2026"' in same_day_card and 'data-booked-until-time="4:00 PM"' in same_day_card, "booked cars returning same day should remain in feed with return time")
+    assert_true("Available after" in app_js and "sameCalendarDay" in app_js, "frontend should show same-day cars with available-after messaging instead of hiding them")
     adjusted_user = create_verified_user(100)
     adjusted_booking = app.create_booking_for_user(adjusted_user["id"], same_day_car["id"], "", 5, "2026-06-15", "2026-06-20", "10:00 AM", "10:00 AM")
-    assert_true(adjusted_booking["pickup_date"] == "Jun 15, 2026" and adjusted_booking["pickup_time"] == "12:00 PM", "same-day pickup should adjust to car return time")
+    assert_true(adjusted_booking["pickup_date"] == "Jun 15, 2026" and adjusted_booking["pickup_time"] == "4:00 PM", "same-day pickup should adjust to car return time")
+
+    with app.db() as con:
+        con.execute(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+            VALUES ('Manual Available Test', 'Toyota', 'Prius', 2026, 'Hybrid', 'Sedan', 'Gasoline',
+                    5, 2, 4, 'Automatic', 35, 350, 'Available Now', 'white',
+                    'Free Cancellation|Quote Match', 'Denver International Airport (DEN)',
+                    '/static/img/car-toyota-corolla.png', 'AVAILABLE', 99)
+            """
+        )
+        manual_car = con.execute("SELECT id FROM cars WHERE name = 'Manual Available Test'").fetchone()
+        con.execute(
+            """
+            INSERT INTO bookings
+            (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
+             dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, total_price, status, booking_status, payment_status)
+            VALUES ('FFMANUAL1', ?, ?, 'AVIS', 'Denver International Airport (DEN)', 'Jun 1, 2026', '10:00 AM',
+                    'Denver International Airport (DEN)', 'Jun 15, 2026', '4:00 PM', 14, 490, 490,
+                    'CONFIRMED', 'CONFIRMED', 'PAY_AT_PICKUP')
+            """,
+            (same_day_user["id"], manual_car["id"]),
+        )
+    manual_row = next(row for row in app.get_cars() if row["name"] == "Manual Available Test")
+    assert_true(not app.row_value(manual_row, "booked_until_date") and not app.row_value(manual_row, "booked_until_time"), "admin AVAILABLE inventory should not carry stale booking blockers into feed")
+    manual_user = create_verified_user(101)
+    manual_booking = app.create_booking_for_user(manual_user["id"], manual_car["id"], "", 5, "2026-06-15", "2026-06-20", "12:00 PM", "10:00 AM")
+    assert_true(manual_booking["pickup_time"] == "12:00 PM", "admin AVAILABLE inventory should book at requested time without stale active booking adjustment")
 
     duplicate_failed = False
     try:

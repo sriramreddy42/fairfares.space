@@ -1114,6 +1114,7 @@ def get_cars() -> list[sqlite3.Row]:
                     GROUP BY car_id
                 ) latest ON latest.latest_id = b.id
             ) active ON active.car_id = cars.id
+                    AND UPPER(TRIM(cars.status)) = 'BOOKED'
             WHERE UPPER(TRIM(cars.status)) != 'MAINTENANCE'
             ORDER BY sort_order, daily_price, id
             """
@@ -1667,11 +1668,13 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
     with db() as con:
         return con.execute(
             """
-            SELECT *
+            SELECT bookings.*
             FROM bookings
-            WHERE car_id = ?
-              AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
-            ORDER BY id DESC
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.car_id = ?
+              AND UPPER(TRIM(cars.status)) = 'BOOKED'
+              AND bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+            ORDER BY bookings.id DESC
             LIMIT 1
             """,
             (car_id,),
