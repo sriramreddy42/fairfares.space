@@ -203,7 +203,7 @@ def main() -> None:
     assert_true("Final mobile repair pass for Manage Booking" in styles and "grid-template-columns: minmax(0, 1fr) !important" in styles, "mobile manage booking trip card should not collapse into overlapping columns")
     assert_true(".documents-locked .doc-actions" in styles and "display: none !important" in styles, "locked documents should hide disabled controls instead of showing blurred content")
     assert_true(".manage-screen .trip-actions button" in styles and "filter: none !important" in styles, "mobile trip action buttons should not stay blurred")
-    assert_true(".manage-panels > .trip-actions" in styles and "document-booking-button" in styles, "manage actions and document history should live in the lower workflow area")
+    assert_true(".manage-panels > .trip-actions" in styles and "document-booking-select" in styles, "manage actions and document history should live in the lower workflow area")
     assert_true("perspective-origin: left center" in styles and "rotateY(-86deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should fold toward the left with reduced-motion fallback")
     assert_true("background-size: auto 100%" in styles and "background-position: left center" in styles, "desktop hero artwork should keep natural height alignment")
     assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")

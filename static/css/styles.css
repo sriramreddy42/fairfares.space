@@ -1892,30 +1892,27 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin-top: 14px;
 }
 .document-history {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  display: block;
 }
-.document-booking-button {
+.document-booking-select {
+  display: grid;
+  gap: 7px;
+}
+.document-booking-select span {
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+.document-booking-select select {
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--navy);
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  text-align: left;
-}
-.document-booking-button.active {
-  border-color: var(--red);
-  box-shadow: inset 4px 0 0 var(--red);
-}
-.document-booking-button span,
-.document-booking-button small {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-  line-height: 1.25;
+  font: inherit;
+  font-weight: 900;
+  min-height: 54px;
+  padding: 0 14px;
+  width: 100%;
 }
 .modify-section {
   border-top: 1px solid var(--line);

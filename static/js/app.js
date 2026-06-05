@@ -645,17 +645,17 @@ function renderDocumentHistory() {
     documentHistory.innerHTML = "";
     return;
   }
-  documentHistory.innerHTML = bookingDocumentSets.map((set) => {
-    const active = String(set.id) === String(activeDocumentSet?.id);
+  const options = bookingDocumentSets.map((set) => {
     const state = set.locked ? "Locked until pickup" : (set.statusLabel || "Documents ready");
-    return `
-      <button type="button" class="document-booking-button ${active ? "active" : ""}" data-document-set-id="${escapeHtml(set.id)}">
-        <b>${escapeHtml(set.bookingId || "Booking")}</b>
-        <span>${escapeHtml(set.vehicle || "Vehicle")} · ${escapeHtml(set.dates || "")}</span>
-        <small>${escapeHtml(state)}</small>
-      </button>
-    `;
+    const selected = String(set.id) === String(activeDocumentSet?.id) ? "selected" : "";
+    return `<option value="${escapeHtml(set.id)}" ${selected}>${escapeHtml(set.bookingId || "Booking")} · ${escapeHtml(set.vehicle || "Vehicle")} · ${escapeHtml(set.dates || "")} · ${escapeHtml(state)}</option>`;
   }).join("");
+  documentHistory.innerHTML = `
+    <label class="document-booking-select">
+      <span>Choose booking documents</span>
+      <select id="documentBookingSelect">${options}</select>
+    </label>
+  `;
 }
 
 function renderBookingDocument(name) {
@@ -698,10 +698,10 @@ document.addEventListener("click", (event) => {
   renderBookingDocument(name);
 });
 
-documentHistory?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-document-set-id]");
-  if (!button) return;
-  const nextSet = bookingDocumentSets.find((set) => String(set.id) === String(button.dataset.documentSetId));
+documentHistory?.addEventListener("change", (event) => {
+  const select = event.target.closest("#documentBookingSelect");
+  if (!select) return;
+  const nextSet = bookingDocumentSets.find((set) => String(set.id) === String(select.value));
   if (!nextSet) return;
   activeDocumentSet = nextSet;
   renderBookingDocument(activeDocumentName);
