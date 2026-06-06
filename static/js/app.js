@@ -37,6 +37,71 @@ function parseJsonData(node, fallback = []) {
 }
 
 const activeDiscounts = parseJsonData(discountDataNode);
+const guestOfferModal = document.getElementById("guestOfferModal");
+
+function showGuestOfferModal(nextHref = "") {
+  if (!guestOfferModal) return false;
+  guestOfferModal.dataset.nextHref = nextHref;
+  guestOfferModal.hidden = false;
+  document.body.classList.add("modal-open");
+  guestOfferModal.querySelector("[data-offer-apply]")?.focus();
+  return true;
+}
+
+function closeGuestOfferModal(continueToNext = false) {
+  if (!guestOfferModal) return;
+  const nextHref = guestOfferModal.dataset.nextHref || "";
+  guestOfferModal.hidden = true;
+  document.body.classList.remove("modal-open");
+  guestOfferModal.dataset.nextHref = "";
+  if (continueToNext && nextHref) {
+    window.location.href = nextHref;
+  }
+}
+
+if (guestOfferModal?.dataset.autoShow === "true") {
+  window.setTimeout(() => showGuestOfferModal(), 350);
+}
+
+document.querySelectorAll('a[href="/login"], a[href="/signup"]').forEach((link) => {
+  if (link.closest(".guest-offer-modal")) return;
+  link.addEventListener("click", (event) => {
+    if (!guestOfferModal) return;
+    event.preventDefault();
+    showGuestOfferModal(link.getAttribute("href") || "");
+  });
+});
+
+guestOfferModal?.querySelector("[data-offer-apply]")?.addEventListener("click", () => {
+  if (discountCode) {
+    discountCode.value = "REFER_DUDE143";
+    discountCode.dispatchEvent(new Event("input", { bubbles: true }));
+    discountCode.dispatchEvent(new Event("change", { bubbles: true }));
+    discountMessage.textContent = "Referral deal loaded. Use this code when you search.";
+    closeGuestOfferModal(false);
+    document.getElementById("searchForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  closeGuestOfferModal(true);
+});
+
+guestOfferModal?.querySelector("[data-offer-decline]")?.addEventListener("click", () => {
+  closeGuestOfferModal(true);
+});
+
+guestOfferModal?.querySelector("[data-offer-close]")?.addEventListener("click", () => {
+  closeGuestOfferModal(false);
+});
+
+guestOfferModal?.addEventListener("click", (event) => {
+  if (event.target === guestOfferModal) closeGuestOfferModal(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && guestOfferModal && !guestOfferModal.hidden) {
+    closeGuestOfferModal(false);
+  }
+});
 
 function moneyRange(low, high) {
   return `$${Math.round(low)}-${Math.round(high)}`;

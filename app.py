@@ -906,6 +906,14 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO site_content (key, value) VALUES (?, ?)",
                 (key, value),
             )
+        con.execute(
+            """
+            INSERT OR IGNORE INTO discounts
+            (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, 'PERCENT', 10, '2026-12-31', 'ACTIVE', 3, 0)
+            """,
+            ("REFER_DUDE143", "Default referral offer shown before sign in or sign up"),
+        )
 
         service_count = con.execute("SELECT COUNT(*) AS total FROM services").fetchone()["total"]
         if service_count == 0:
@@ -2407,6 +2415,27 @@ def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def guest_offer_modal(auto_show: bool = False) -> str:
+    return f"""
+  <section class="guest-offer-backdrop" id="guestOfferModal" data-auto-show="{str(auto_show).lower()}" hidden>
+    <div class="guest-offer-modal" role="dialog" aria-modal="true" aria-labelledby="guestOfferTitle">
+      <button class="guest-offer-close" type="button" data-offer-close aria-label="Close offer">x</button>
+      <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+      <p class="eyebrow">Referral student deal</p>
+      <h2 id="guestOfferTitle">Claim 10% off before you sign in.</h2>
+      <p>Use the FairFares referral deal on an eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
+      <div class="guest-offer-code" aria-label="Referral deal code">
+        <span>Deal code</span>
+        <b>REFER_DUDE143</b>
+      </div>
+      <button class="guest-offer-primary" type="button" data-offer-apply>Claim 10% off</button>
+      <button class="guest-offer-decline" type="button" data-offer-decline>Continue without deal</button>
+      <a class="guest-offer-terms" href="/deals">Terms apply</a>
+    </div>
+  </section>
+"""
+
+
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
 
@@ -2678,6 +2707,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             commercial_live=escape("1" if commercial and commercial["is_live"] else "0"),
             commercial_badge=escape("Live now" if commercial and commercial["is_live"] else "Play feature"),
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            guest_offer_modal="" if user else guest_offer_modal(False),
         )
         self.send_html(body)
 
@@ -2689,6 +2719,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             generated_code=escape(code),
             referral_message=escape(message),
             generated_class="" if code else "is-hidden",
+            guest_offer_modal="" if user else guest_offer_modal(False),
         )
         self.send_html(body)
 
@@ -2697,6 +2728,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "buy_cars.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            guest_offer_modal="" if user else guest_offer_modal(False),
         )
         self.send_html(body)
 
@@ -2758,6 +2790,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 error=escape(error),
                 name_field="",
                 password_autocomplete="current-password",
+                guest_offer_modal=guest_offer_modal(True),
             )
         )
 
@@ -2784,6 +2817,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 error=escape(error),
                 name_field=name_field,
                 password_autocomplete="new-password",
+                guest_offer_modal=guest_offer_modal(True),
             )
         )
 
