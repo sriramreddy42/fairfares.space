@@ -1095,7 +1095,7 @@ function showBookingReferralModal(form, payload = {}) {
   const code = payload.referral_code || `${referralNameSlug(form)}_REFER_COUPON`;
   const signupUrl = new URL("/signup", window.location.origin);
   signupUrl.searchParams.set("referral_code", code);
-  const message = `I booked with FairFares. Sign up with my referral code ${code} so I can unlock a 10% FairFares coupon: ${signupUrl.toString()}`;
+  const message = `FairFares gives students fair car rental pricing with no hidden-fee surprises. Use my referral link to create your account and get 10% off your first booking. After three friends sign up, FairFares also sends me a thank-you coupon. ${signupUrl.toString()}`;
   const codeTarget = document.getElementById("bookingReferralCode");
   const whatsapp = document.getElementById("shareReferralWhatsapp");
   const email = document.getElementById("shareReferralEmail");
@@ -1105,7 +1105,7 @@ function showBookingReferralModal(form, payload = {}) {
   if (phone) phone.value = form?.querySelector("[name='phone']")?.value || phone.value || "";
   if (whatsapp) whatsapp.href = `https://wa.me/?text=${encodeURIComponent(message)}`;
   if (email) {
-    email.href = `mailto:?subject=${encodeURIComponent("Try FairFares for your next rental")}&body=${encodeURIComponent(message)}`;
+    email.href = `mailto:?subject=${encodeURIComponent("Get 10% off your first FairFares booking")}&body=${encodeURIComponent(message)}`;
   }
   if (signup) signup.href = "/signup";
   bookingReferralModal.hidden = false;

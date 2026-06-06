@@ -1312,6 +1312,31 @@ def referral_reward_code(name: str, email: str = "") -> str:
     return f"{cleaned[:34]}_REFER_COUPON"
 
 
+def referral_signup_discount_code(name: str, email: str = "") -> str:
+    base = name.strip() or email.split("@")[0] or "FairFares"
+    cleaned = "".join(char if char.isalnum() else "_" for char in base.upper())
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    if not cleaned:
+        cleaned = "FAIRFARES"
+    return f"{cleaned[:34]}_SIGNUP10"
+
+
+def create_referred_signup_discount(user_id: int, name: str, email: str) -> str:
+    code = referral_signup_discount_code(name, email)
+    holder = name.strip() or email.strip().lower() or f"User {user_id}"
+    with db() as con:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO discounts
+            (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, 'PERCENT', 10, '2027-12-31', 'ACTIVE', 1,
+                    COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
+            """,
+            (code, f"Referral signup bonus for {holder} · first booking", code),
+        )
+    return code
+
+
 def ensure_referral_reward(user_id: int | None, name: str, email: str, phone: str = "") -> sqlite3.Row | None:
     clean_email = email.strip().lower()
     clean_phone = phone.strip()
@@ -1370,7 +1395,7 @@ def attach_referral_rewards_to_user(user_id: int, email: str, phone: str, name: 
         )
 
 
-def record_referral_signup(referral_code: str, referred_user_id: int, referred_email: str) -> dict[str, object]:
+def record_referral_signup(referral_code: str, referred_user_id: int, referred_email: str, referred_name: str = "") -> dict[str, object]:
     code = referral_code.strip().upper()
     if not code:
         return {"ok": False, "message": "No referral code supplied."}
@@ -1398,7 +1423,14 @@ def record_referral_signup(referral_code: str, referred_user_id: int, referred_e
             "UPDATE referral_rewards SET referred_signups = ?, status = ? WHERE id = ?",
             (count, status, reward["id"]),
         )
-    return {"ok": True, "message": f"Referral credited. {count}/3 signups complete.", "count": count, "status": status}
+    signup_discount = create_referred_signup_discount(referred_user_id, referred_name, clean_email)
+    return {
+        "ok": True,
+        "message": f"Referral credited. {count}/3 signups complete. Signup coupon {signup_discount} is ready for the new customer.",
+        "count": count,
+        "status": status,
+        "signup_discount": signup_discount,
+    }
 
 
 def get_ready_referral_reward(user_id: int) -> sqlite3.Row | None:
@@ -3093,7 +3125,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         attach_referral_rewards_to_user(user_id, email, phone, name)
         if referral_code:
-            record_referral_signup(referral_code, user_id, email)
+            record_referral_signup(referral_code, user_id, email, name)
         token = create_verification(user_id, email)
         link = self.activation_url(token)
         outbox_file, delivery_status = send_activation_email(email, name, link)
