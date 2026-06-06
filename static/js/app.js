@@ -1107,7 +1107,7 @@ function showBookingReferralModal(form, payload = {}) {
   if (email) {
     email.href = `mailto:?subject=${encodeURIComponent("Try FairFares for your next rental")}&body=${encodeURIComponent(message)}`;
   }
-  if (signup) signup.href = `${signupUrl.pathname}${signupUrl.search}`;
+  if (signup) signup.href = "/signup";
   bookingReferralModal.hidden = false;
   document.body.classList.add("modal-open");
   whatsapp?.focus();

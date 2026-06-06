@@ -682,6 +682,37 @@ def main() -> None:
     assert_true(preview is not None and preview["booking_id"] == "Pending details" and preview["pickup_time"] == "09:30 AM", "guest preview should show selected trip before account login")
     guest_booking = app.create_booking_for_user(guest_user_id, guest_car["id"], "", 5, "2026-06-11", "2026-06-16", "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
     app.save_booking_contact_and_send_confirmation(guest_user_id, "Guest", "Booker", "guest.booker@example.com", "5557779999", "http://stress.local", True, False)
+    guest_reward = app.ensure_referral_reward(guest_user_id, "Guest Booker", "guest.booker@example.com", "5557779999")
+    assert_true(guest_reward is not None and guest_reward["code"] == "GUEST_BOOKER_REFER_COUPON", "guest booking should create a shareable referral reward code")
+    assert_true('if (signup) signup.href = "/signup";' in app_js, "booking owner signup should not carry their own referral code")
+    app.attach_referral_rewards_to_user(guest_user_id, "guest.booker@example.com", "5557779999", "Guest Booker")
+    for referral_index in range(3):
+        friend_id = app.find_or_create_guest_user(f"Referral Friend {referral_index}", f"referral.friend{referral_index}@example.com", f"55588800{referral_index}")
+        credit = app.record_referral_signup(guest_reward["code"], friend_id, f"referral.friend{referral_index}@example.com")
+        assert_true(credit["ok"], f"referral signup {referral_index + 1} should credit the reward")
+    ready_reward = app.get_ready_referral_reward(guest_user_id)
+    assert_true(ready_reward is not None and ready_reward["referred_signups"] == 3 and ready_reward["status"] == "READY", "three referred signups should make the reward claimable")
+    claim = app.claim_referral_reward(guest_user_id)
+    assert_true(claim["ok"] and claim["code"] == guest_reward["code"], "ready referral reward should create a claimable discount")
+    for referral_use in range(3):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO cars
+                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+                 daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+                VALUES (?, 'Toyota', 'Corolla', 2026, 'Economy', 'Sedan', 'Gasoline', 5, 2, 4, 'Automatic',
+                        29.99, 299.90, 'Referral', 'white', 'Free Cancellation|Unlimited Mileage',
+                        'Denver International Airport (DEN)', '/static/img/cars/toyota-corolla.png', 'AVAILABLE', ?)
+                """,
+                (f"Referral Use Car {referral_use}", 600 + referral_use),
+            )
+            referral_car_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        app.create_booking_for_user(guest_user_id, referral_car_id, guest_reward["code"], 2, f"2026-07-{10 + referral_use}", f"2026-07-{12 + referral_use}", "10:00 AM", "10:00 AM")
+    with app.db() as con:
+        referral_discount = con.execute("SELECT * FROM discounts WHERE code = ?", (guest_reward["code"],)).fetchone()
+    assert_true(referral_discount["used_count"] == 3 and referral_discount["max_uses"] == 3, "referral coupon should track 3/3 uses")
+    assert_true(app.get_valid_discount(guest_reward["code"]) is None, "referral coupon should expire after three uses")
     with app.db() as con:
         guest_user = con.execute("SELECT * FROM users WHERE id = ?", (guest_user_id,)).fetchone()
         guest_booking_row = con.execute("SELECT * FROM bookings WHERE id = ?", (guest_booking["id"],)).fetchone()

@@ -4864,7 +4864,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
                     <p class="eyebrow">Referral bonus</p>
                     <h2 id="bookingReferralTitle">Refer 3 friends. Unlock 10% off future bookings.</h2>
-                    <p>Share FairFares through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>
+                    <p>Create your account with the same email or phone used on this booking. Share this code with friends through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>
                     <label class="referral-phone-field"><span>Your phone number</span><input id="referralSharePhone" inputmode="tel" placeholder="Phone number for referral follow-up"></label>
                     <div class="guest-offer-code">
                         <span>Your future coupon</span>
