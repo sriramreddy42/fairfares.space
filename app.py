@@ -919,6 +919,10 @@ def init_db() -> None:
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
+        seed_defaults = os.environ.get("FAIRFARES_SEED_DEFAULTS", "0").strip() == "1"
+        if not seed_defaults:
+            return
+
         defaults = {
             "brand": "FairFares",
             "hero_title": "Fair prices. Better rides. For students.",
@@ -1084,9 +1088,22 @@ def init_db() -> None:
 
 
 def get_content() -> dict[str, str]:
+    defaults = {
+        "brand": "FairFares",
+        "hero_title": "Fair prices. Better rides. For students.",
+        "hero_kicker": "Smart travel booking",
+        "hero_body": "Affordable car rentals made for students. Wherever you go, we've got you covered.",
+        "primary_cta": "Search Cars",
+        "secondary_cta": "View Details",
+        "poster_image": "/static/img/fairfares-poster.svg",
+        "poster_caption": "Poster artwork can be replaced with your supplied campaign design.",
+        "offer_title": "Cars available",
+        "offer_body": "Add inventory in the admin portal to publish vehicles for students.",
+        "contact_email": "hello@fairfares.com",
+    }
     with db() as con:
         rows = con.execute("SELECT key, value FROM site_content").fetchall()
-    return {row["key"]: row["value"] for row in rows}
+    return {**defaults, **{row["key"]: row["value"] for row in rows}}
 
 
 def commercial_embed_url(video_url: str) -> str:

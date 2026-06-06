@@ -12,6 +12,7 @@ TMP = tempfile.TemporaryDirectory(prefix="fairfares-stress-")
 os.environ["FAIRFARES_DB_PATH"] = str(Path(TMP.name) / "fairfares.sqlite3")
 os.environ["FAIRFARES_BACKUP_DIR"] = str(Path(TMP.name) / "backups")
 os.environ["FAIRFARES_BACKUP_KEEP"] = "5"
+os.environ["FAIRFARES_SEED_DEFAULTS"] = "1"
 os.environ["RESEND_API_KEY"] = ""
 os.environ["SMTP_HOST"] = ""
 
