@@ -38,6 +38,8 @@ function parseJsonData(node, fallback = []) {
 
 const activeDiscounts = parseJsonData(discountDataNode);
 const guestOfferModal = document.getElementById("guestOfferModal");
+const bookingReferralModal = document.getElementById("bookingReferralModal");
+const referralClaimModal = document.getElementById("referralClaimModal");
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -59,27 +61,21 @@ function closeGuestOfferModal(continueToNext = false) {
   }
 }
 
-if (guestOfferModal?.dataset.autoShow === "true") {
-  window.setTimeout(() => showGuestOfferModal(), 350);
-}
-
-document.querySelectorAll('a[href="/login"], a[href="/signup"]').forEach((link) => {
-  if (link.closest(".guest-offer-modal")) return;
-  link.addEventListener("click", (event) => {
-    if (!guestOfferModal) return;
-    event.preventDefault();
-    showGuestOfferModal(link.getAttribute("href") || "");
-  });
-});
-
 guestOfferModal?.querySelector("[data-offer-apply]")?.addEventListener("click", () => {
   if (discountCode) {
     discountCode.value = "REFER_DUDE143";
     discountCode.dispatchEvent(new Event("input", { bubbles: true }));
     discountCode.dispatchEvent(new Event("change", { bubbles: true }));
     discountMessage.textContent = "Referral deal loaded. Use this code when you search.";
+    const nextHref = guestOfferModal.dataset.nextHref || "";
+    if (nextHref) {
+      const url = new URL(nextHref, window.location.origin);
+      url.searchParams.set("discount_code", "REFER_DUDE143");
+      guestOfferModal.dataset.nextHref = `${url.pathname}${url.search}`;
+      closeGuestOfferModal(true);
+      return;
+    }
     closeGuestOfferModal(false);
-    document.getElementById("searchForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
   closeGuestOfferModal(true);
@@ -100,6 +96,12 @@ guestOfferModal?.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && guestOfferModal && !guestOfferModal.hidden) {
     closeGuestOfferModal(false);
+  }
+  if (event.key === "Escape" && bookingReferralModal && !bookingReferralModal.hidden) {
+    closeBookingReferralModal();
+  }
+  if (event.key === "Escape" && referralClaimModal && !referralClaimModal.hidden) {
+    closeReferralClaimModal();
   }
 });
 
@@ -308,6 +310,10 @@ document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").for
       if (discount && !discountMessage?.classList.contains("is-error")) {
         url.searchParams.set("discount_code", code);
       }
+    }
+    if (guestOfferModal) {
+      showGuestOfferModal(`${url.pathname}${url.search}`);
+      return;
     }
     window.location.href = `${url.pathname}${url.search}`;
   });
@@ -1067,10 +1073,96 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
         const bookingId = document.querySelector("[data-booking-id-label]");
         if (bookingId) bookingId.textContent = payload.booking_id;
       }
+      const guestActions = document.getElementById("guestAfterSaveActions");
+      if (guestActions) guestActions.hidden = false;
+      showBookingReferralModal(form, payload);
     })
     .catch((payload) => {
       if (status) status.textContent = payload?.message || "Please check your details and try again.";
     });
+});
+
+function referralNameSlug(form) {
+  const firstName = form?.querySelector("[name='first_name']")?.value || "";
+  const lastName = form?.querySelector("[name='last_name']")?.value || "";
+  const email = form?.querySelector("[name='email']")?.value || "";
+  const base = `${firstName}_${lastName}`.trim() || email.split("@")[0] || "FAIRFARES";
+  return base.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase() || "FAIRFARES";
+}
+
+function showBookingReferralModal(form, payload = {}) {
+  if (!bookingReferralModal) return;
+  const code = payload.referral_code || `${referralNameSlug(form)}_REFER_COUPON`;
+  const signupUrl = new URL("/signup", window.location.origin);
+  signupUrl.searchParams.set("referral_code", code);
+  const message = `I booked with FairFares. Sign up with my referral code ${code} so I can unlock a 10% FairFares coupon: ${signupUrl.toString()}`;
+  const codeTarget = document.getElementById("bookingReferralCode");
+  const whatsapp = document.getElementById("shareReferralWhatsapp");
+  const email = document.getElementById("shareReferralEmail");
+  const signup = document.getElementById("bookingReferralSignup");
+  const phone = document.getElementById("referralSharePhone");
+  if (codeTarget) codeTarget.textContent = code;
+  if (phone) phone.value = form?.querySelector("[name='phone']")?.value || phone.value || "";
+  if (whatsapp) whatsapp.href = `https://wa.me/?text=${encodeURIComponent(message)}`;
+  if (email) {
+    email.href = `mailto:?subject=${encodeURIComponent("Try FairFares for your next rental")}&body=${encodeURIComponent(message)}`;
+  }
+  if (signup) signup.href = `${signupUrl.pathname}${signupUrl.search}`;
+  bookingReferralModal.hidden = false;
+  document.body.classList.add("modal-open");
+  whatsapp?.focus();
+}
+
+function closeBookingReferralModal() {
+  if (!bookingReferralModal) return;
+  bookingReferralModal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+bookingReferralModal?.querySelectorAll("[data-referral-close]").forEach((button) => {
+  button.addEventListener("click", closeBookingReferralModal);
+});
+
+bookingReferralModal?.addEventListener("click", (event) => {
+  if (event.target === bookingReferralModal) closeBookingReferralModal();
+});
+
+function showReferralClaimModal() {
+  if (!referralClaimModal) return;
+  referralClaimModal.hidden = false;
+  document.body.classList.add("modal-open");
+  document.getElementById("claimReferralReward")?.focus();
+}
+
+function closeReferralClaimModal() {
+  if (!referralClaimModal) return;
+  referralClaimModal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+if (referralClaimModal?.dataset.autoShow === "true") {
+  window.setTimeout(showReferralClaimModal, 450);
+}
+
+document.getElementById("claimReferralReward")?.addEventListener("click", () => {
+  const status = document.getElementById("referralClaimStatus");
+  fetch("/referrals/claim", { method: "POST", body: new URLSearchParams() })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Referral coupon claimed.";
+      window.setTimeout(closeReferralClaimModal, 1400);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "We could not claim this coupon yet.";
+    });
+});
+
+referralClaimModal?.querySelectorAll("[data-claim-close]").forEach((button) => {
+  button.addEventListener("click", closeReferralClaimModal);
+});
+
+referralClaimModal?.addEventListener("click", (event) => {
+  if (event.target === referralClaimModal) closeReferralClaimModal();
 });
 
 const accordionTabs = [...document.querySelectorAll("[data-accordion-tab]")];

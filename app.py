@@ -828,6 +828,34 @@ def init_db() -> None:
                 FOREIGN KEY(campaign_id) REFERENCES email_campaigns(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS referral_rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_user_id INTEGER,
+                referrer_name TEXT NOT NULL DEFAULT '',
+                referrer_email TEXT NOT NULL DEFAULT '',
+                referrer_phone TEXT NOT NULL DEFAULT '',
+                code TEXT NOT NULL UNIQUE,
+                referred_signups INTEGER NOT NULL DEFAULT 0,
+                required_signups INTEGER NOT NULL DEFAULT 3,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                discount_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                claimed_at TEXT,
+                FOREIGN KEY(referrer_user_id) REFERENCES users(id),
+                FOREIGN KEY(discount_id) REFERENCES discounts(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS referral_reward_signups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reward_id INTEGER NOT NULL,
+                referred_user_id INTEGER NOT NULL,
+                referred_email TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(reward_id, referred_user_id),
+                FOREIGN KEY(reward_id) REFERENCES referral_rewards(id),
+                FOREIGN KEY(referred_user_id) REFERENCES users(id)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -878,6 +906,9 @@ def init_db() -> None:
         ensure_column(con, "email_campaigns", "sent_at", "sent_at TEXT")
         ensure_column(con, "email_campaigns", "sent_count", "sent_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "email_campaigns", "last_delivery_status", "last_delivery_status TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "referral_rewards", "referrer_phone", "referrer_phone TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "referral_rewards", "discount_id", "discount_id INTEGER")
+        ensure_column(con, "referral_rewards", "claimed_at", "claimed_at TEXT")
 
         admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
         if not admin_exists:
@@ -912,7 +943,7 @@ def init_db() -> None:
             (code, description, discount_type, value, valid_through, status, max_uses, used_count)
             VALUES (?, ?, 'PERCENT', 10, '2026-12-31', 'ACTIVE', 3, 0)
             """,
-            ("REFER_DUDE143", "Default referral offer shown before sign in or sign up"),
+            ("REFER_DUDE143", "Default referral offer shown during booking"),
         )
 
         service_count = con.execute("SELECT COUNT(*) AS total FROM services").fetchone()["total"]
@@ -1270,6 +1301,168 @@ def create_referral_discount(username: str) -> str:
             (code, description, code),
         )
     return code
+
+
+def referral_reward_code(name: str, email: str = "") -> str:
+    base = name.strip() or email.split("@")[0] or "FairFares"
+    cleaned = "".join(char if char.isalnum() else "_" for char in base.upper())
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    if not cleaned:
+        cleaned = "FAIRFARES"
+    return f"{cleaned[:34]}_REFER_COUPON"
+
+
+def ensure_referral_reward(user_id: int | None, name: str, email: str, phone: str = "") -> sqlite3.Row | None:
+    clean_email = email.strip().lower()
+    clean_phone = phone.strip()
+    if not clean_email and not clean_phone:
+        return None
+    code = referral_reward_code(name, clean_email)
+    with db() as con:
+        existing = con.execute(
+            """
+            SELECT * FROM referral_rewards
+            WHERE code = ?
+               OR (? != '' AND LOWER(referrer_email) = ?)
+               OR (? != '' AND referrer_phone = ?)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (code, clean_email, clean_email, clean_phone, clean_phone),
+        ).fetchone()
+        if existing:
+            con.execute(
+                """
+                UPDATE referral_rewards
+                SET referrer_user_id = COALESCE(referrer_user_id, ?),
+                    referrer_name = COALESCE(NULLIF(?, ''), referrer_name),
+                    referrer_email = COALESCE(NULLIF(?, ''), referrer_email),
+                    referrer_phone = COALESCE(NULLIF(?, ''), referrer_phone)
+                WHERE id = ?
+                """,
+                (user_id, name.strip(), clean_email, clean_phone, existing["id"]),
+            )
+            return con.execute("SELECT * FROM referral_rewards WHERE id = ?", (existing["id"],)).fetchone()
+        con.execute(
+            """
+            INSERT INTO referral_rewards
+            (referrer_user_id, referrer_name, referrer_email, referrer_phone, code)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, name.strip(), clean_email, clean_phone, code),
+        )
+        return con.execute("SELECT * FROM referral_rewards WHERE code = ?", (code,)).fetchone()
+
+
+def attach_referral_rewards_to_user(user_id: int, email: str, phone: str, name: str) -> None:
+    clean_email = email.strip().lower()
+    clean_phone = phone.strip()
+    with db() as con:
+        con.execute(
+            """
+            UPDATE referral_rewards
+            SET referrer_user_id = ?,
+                referrer_name = COALESCE(NULLIF(?, ''), referrer_name)
+            WHERE referrer_user_id IS NULL
+              AND ((? != '' AND LOWER(referrer_email) = ?) OR (? != '' AND referrer_phone = ?))
+            """,
+            (user_id, name.strip(), clean_email, clean_email, clean_phone, clean_phone),
+        )
+
+
+def record_referral_signup(referral_code: str, referred_user_id: int, referred_email: str) -> dict[str, object]:
+    code = referral_code.strip().upper()
+    if not code:
+        return {"ok": False, "message": "No referral code supplied."}
+    clean_email = referred_email.strip().lower()
+    with db() as con:
+        reward = con.execute("SELECT * FROM referral_rewards WHERE UPPER(code) = ?", (code,)).fetchone()
+        if not reward:
+            return {"ok": False, "message": "Referral code not found."}
+        if reward["referrer_user_id"] == referred_user_id or reward["referrer_email"].lower() == clean_email:
+            return {"ok": False, "message": "Referral owner cannot use their own referral code."}
+        con.execute(
+            """
+            INSERT OR IGNORE INTO referral_reward_signups
+            (reward_id, referred_user_id, referred_email)
+            VALUES (?, ?, ?)
+            """,
+            (reward["id"], referred_user_id, clean_email),
+        )
+        count = con.execute(
+            "SELECT COUNT(*) AS total FROM referral_reward_signups WHERE reward_id = ?",
+            (reward["id"],),
+        ).fetchone()["total"]
+        status = "READY" if count >= int(reward["required_signups"] or 3) and reward["status"] == "PENDING" else reward["status"]
+        con.execute(
+            "UPDATE referral_rewards SET referred_signups = ?, status = ? WHERE id = ?",
+            (count, status, reward["id"]),
+        )
+    return {"ok": True, "message": f"Referral credited. {count}/3 signups complete.", "count": count, "status": status}
+
+
+def get_ready_referral_reward(user_id: int) -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM referral_rewards
+            WHERE referrer_user_id = ? AND status = 'READY'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+
+
+def claim_referral_reward(user_id: int) -> dict[str, object]:
+    with db() as con:
+        reward = con.execute(
+            "SELECT * FROM referral_rewards WHERE referrer_user_id = ? AND status = 'READY' ORDER BY created_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if not reward:
+            return {"ok": False, "message": "No referral bonus is ready to claim yet."}
+        con.execute(
+            """
+            INSERT OR REPLACE INTO discounts
+            (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, 'PERCENT', 10, '2027-12-31', 'ACTIVE', 3,
+                    COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
+            """,
+            (
+                reward["code"],
+                f"Referral bonus for {reward['referrer_name'] or reward['referrer_email']} · 3 uses",
+                reward["code"],
+            ),
+        )
+        discount = con.execute("SELECT * FROM discounts WHERE code = ?", (reward["code"],)).fetchone()
+        con.execute(
+            "UPDATE referral_rewards SET status = 'CLAIMED', discount_id = ?, claimed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (discount["id"], reward["id"]),
+        )
+    return {"ok": True, "message": f"Coupon {reward['code']} is ready. Use it on your next booking, up to 3 times.", "code": reward["code"]}
+
+
+def referral_claim_modal(reward: sqlite3.Row | None) -> str:
+    if not reward:
+        return ""
+    return f"""
+  <section class="booking-referral-backdrop" id="referralClaimModal" data-auto-show="true" hidden>
+    <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="referralClaimTitle">
+      <button class="guest-offer-close" type="button" data-claim-close aria-label="Close referral claim">x</button>
+      <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+      <p class="eyebrow">Referral bonus ready</p>
+      <h2 id="referralClaimTitle">You referred 3 people.</h2>
+      <p>Your referral reward is ready. Claim it now and use this 10% coupon on up to 3 future bookings.</p>
+      <div class="guest-offer-code">
+        <span>Coupon code</span>
+        <b>{escape(reward["code"])}</b>
+      </div>
+      <button class="guest-offer-primary" type="button" id="claimReferralReward">Claim Coupon</button>
+      <p class="modify-status" id="referralClaimStatus" aria-live="polite"></p>
+    </div>
+  </section>
+"""
 
 
 def get_admin_cars() -> list[sqlite3.Row]:
@@ -2415,15 +2608,15 @@ def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def guest_offer_modal(auto_show: bool = False) -> str:
-    return f"""
-  <section class="guest-offer-backdrop" id="guestOfferModal" data-auto-show="{str(auto_show).lower()}" hidden>
+def guest_offer_modal() -> str:
+    return """
+  <section class="guest-offer-backdrop" id="guestOfferModal" hidden>
     <div class="guest-offer-modal" role="dialog" aria-modal="true" aria-labelledby="guestOfferTitle">
       <button class="guest-offer-close" type="button" data-offer-close aria-label="Close offer">x</button>
       <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
       <p class="eyebrow">Referral student deal</p>
-      <h2 id="guestOfferTitle">Claim 10% off before you sign in.</h2>
-      <p>Use the FairFares referral deal on an eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
+      <h2 id="guestOfferTitle">Claim 10% off before booking.</h2>
+      <p>Use the FairFares referral deal on this eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
       <div class="guest-offer-code" aria-label="Referral deal code">
         <span>Deal code</span>
         <b>REFER_DUDE143</b>
@@ -2490,6 +2683,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/support/tickets": self.create_support_ticket,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
+            "/referrals/claim": self.claim_referral_bonus,
             "/admin/content": self.update_content,
             "/admin/cars": self.create_admin_car,
             "/admin/cars/status": self.update_admin_car_status,
@@ -2707,7 +2901,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             commercial_live=escape("1" if commercial and commercial["is_live"] else "0"),
             commercial_badge=escape("Live now" if commercial and commercial["is_live"] else "Play feature"),
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
-            guest_offer_modal="" if user else guest_offer_modal(False),
+            guest_offer_modal="" if user else guest_offer_modal(),
+            referral_claim_modal=referral_claim_modal(get_ready_referral_reward(user["id"]) if user else None),
         )
         self.send_html(body)
 
@@ -2719,7 +2914,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             generated_code=escape(code),
             referral_message=escape(message),
             generated_class="" if code else "is-hidden",
-            guest_offer_modal="" if user else guest_offer_modal(False),
         )
         self.send_html(body)
 
@@ -2728,7 +2922,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "buy_cars.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
-            guest_offer_modal="" if user else guest_offer_modal(False),
         )
         self.send_html(body)
 
@@ -2790,11 +2983,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 error=escape(error),
                 name_field="",
                 password_autocomplete="current-password",
-                guest_offer_modal=guest_offer_modal(True),
             )
         )
 
     def signup_page(self, error: str = "") -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        referral_prefill = query.get("referral_code", [""])[0]
         name_field = """
         <label>
           <span>Name</span>
@@ -2804,7 +2999,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <span>Phone Number <small>(optional)</small></span>
           <input name="phone" autocomplete="tel" placeholder="Used to find guest bookings">
         </label>
-        """
+        <label>
+          <span>Referral Code <small>(optional)</small></span>
+          <input name="referral_code" autocomplete="off" placeholder="Friend referral code" value="%s">
+        </label>
+        """ % escape(referral_prefill)
         self.send_html(
             render_template(
                 "auth.html",
@@ -2817,7 +3016,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 error=escape(error),
                 name_field=name_field,
                 password_autocomplete="new-password",
-                guest_offer_modal=guest_offer_modal(True),
             )
         )
 
@@ -2847,6 +3045,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name = form.get("name") or "FairFares Member"
         email = form.get("email", "").lower().strip()
         phone = form.get("phone", "").strip()
+        referral_code = form.get("referral_code", "").strip()
         password = form.get("password", "")
         if "@" not in email or len(password) < 8:
             self.signup_page("Use a valid email and a password with at least 8 characters.")
@@ -2892,6 +3091,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except sqlite3.IntegrityError:
             self.signup_page("An account with that email already exists.")
             return
+        attach_referral_rewards_to_user(user_id, email, phone, name)
+        if referral_code:
+            record_referral_signup(referral_code, user_id, email)
         token = create_verification(user_id, email)
         link = self.activation_url(token)
         outbox_file, delivery_status = send_activation_email(email, name, link)
@@ -3226,6 +3428,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             form.get("promo_email_opt_in") == "on",
             form.get("text_opt_in") == "on",
         )
+        reward = None
+        if result.get("ok"):
+            reward = ensure_referral_reward(user["id"], " ".join(part for part in (first_name, last_name) if part), form.get("email", ""), form.get("phone", ""))
+            if reward:
+                result["referral_code"] = reward["code"]
+                result["referral_status"] = reward["status"]
         self.send_json(result, 200 if result["ok"] else 400)
 
     def create_guest_booking(self) -> None:
@@ -3275,10 +3483,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             form.get("promo_email_opt_in") == "on",
             form.get("text_opt_in") == "on",
         )
+        reward = ensure_referral_reward(user_id, full_name, email, phone)
         self.send_json({
             "ok": True,
             "booking_id": booking["booking_id"],
             "message": result.get("message") or "Booking details saved. Create an account with this email to see this trip later.",
+            "referral_code": reward["code"] if reward else referral_reward_code(full_name, email),
+            "referral_status": reward["status"] if reward else "PENDING",
         })
 
     def create_support_ticket(self) -> None:
@@ -3322,6 +3533,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             code,
             "Referral code generated and saved in Admin Discounts. Use is limited to 3 referrals.",
         )
+
+    def claim_referral_bonus(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "message": "Please sign in to claim your referral coupon."}, 401)
+            return
+        result = claim_referral_reward(user["id"])
+        self.send_json(result, 200 if result.get("ok") else 400)
 
     def update_student_verification(self) -> None:
         user = self.current_user()
@@ -4540,7 +4759,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         first_time_manage_content = ""
-        if show_start_experience:
+        if show_start_experience or show_signed_out_empty:
             first_time_manage_content = """
             <section class="first-time-founder-card">
                 <img src="/static/img/founders-note-fairfares.png" alt="FairFares founders note">
@@ -4556,7 +4775,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
             upgrade_options = ""
             upgrade_select_options = ""
-        if show_start_experience:
+        if show_start_experience or show_signed_out_empty:
             first_booking_promo = f"""
             <section class="first-booking-promo" id="upcoming">
                 <img src="/static/img/referral-deals-denver.jpeg" alt="FairFares Denver referral deal">
@@ -4564,7 +4783,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <div>
                         <p class="eyebrow">First trip offer</p>
                         <h2>Start with a Denver student deal.</h2>
-                        <p>No booking yet. Use the referral code when you search and your trip details will appear here after checkout.</p>
+                        <p>{"Login to save this deal and keep your documents under your real email." if show_signed_out_empty else "No booking yet. Use the referral code when you search and your trip details will appear here after checkout."}</p>
                     </div>
                     <div class="promo-code-box">
                         <span>Deal code</span>
@@ -4588,6 +4807,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             hidden_guest_fields = ""
             guest_account_note = ""
             student_button = ""
+            guest_after_save_actions = ""
             if is_guest_checkout:
                 hidden_guest_fields = f"""
                     <input type="hidden" name="car_id" value="{escape(booking["car_id"])}">
@@ -4601,8 +4821,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <input type="hidden" name="discount_code" value="{escape(discount_code)}">
                 """
                 guest_account_note = "<p class=\"guest-booking-note\">Create an account later with this same email or phone and this trip will appear in your dashboard.</p>"
+                guest_after_save_actions = """
+                    <div class="guest-after-save-actions" id="guestAfterSaveActions" hidden>
+                        <a class="light-button" href="/signup">Modify Reservation</a>
+                        <a class="light-button" href="/signup">Cancel Reservation</a>
+                        <a class="select-button" href="/signup">Download Invoice</a>
+                        <a class="light-button" href="/signup">View Details</a>
+                        <a class="light-button" href="/signup">Support Center</a>
+                        <small>Create your account with this same email or phone to manage this booking, download documents after pickup, or contact support.</small>
+                    </div>
+                """
             else:
                 student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
+            referral_share_url = f"{self.public_origin()}/deals"
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
@@ -4623,8 +4854,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <button type="submit">Save Details</button>
                         {student_button}
                     </div>
+                    {guest_after_save_actions}
                     <p class="modify-status" id="customerInfoStatus" aria-live="polite"></p>
                 </form>
+            </section>
+            <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
+                <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
+                    <button class="guest-offer-close" type="button" data-referral-close aria-label="Close referral offer">x</button>
+                    <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+                    <p class="eyebrow">Referral bonus</p>
+                    <h2 id="bookingReferralTitle">Refer 3 friends. Unlock 10% off future bookings.</h2>
+                    <p>Share FairFares through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>
+                    <label class="referral-phone-field"><span>Your phone number</span><input id="referralSharePhone" inputmode="tel" placeholder="Phone number for referral follow-up"></label>
+                    <div class="guest-offer-code">
+                        <span>Your future coupon</span>
+                        <b id="bookingReferralCode">YOURNAME_REFER_COUPON</b>
+                    </div>
+                    <div class="booking-referral-actions">
+                        <a class="guest-offer-primary" id="shareReferralWhatsapp" href="#" target="_blank" rel="noopener">Share on WhatsApp</a>
+                        <a class="light-button" id="shareReferralEmail" href="#">Share by Email</a>
+                        <a class="light-button" id="bookingReferralSignup" href="/signup">Create Account</a>
+                    </div>
+                    <button class="guest-offer-decline" type="button" data-referral-close>Maybe later</button>
+                </div>
             </section>
             """
         request_notice = ""

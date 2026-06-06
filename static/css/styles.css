@@ -5163,9 +5163,41 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   color: var(--navy);
 }
 
+.guest-after-save-actions {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.75rem;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 0.4rem;
+  padding-top: 1rem;
+}
+
+.guest-after-save-actions[hidden] {
+  display: none !important;
+}
+
+.guest-after-save-actions a {
+  align-items: center;
+  border-radius: 7px;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 52px;
+  text-align: center;
+  text-decoration: none;
+}
+
+.guest-after-save-actions small {
+  color: #5a6373;
+  font-weight: 800;
+  grid-column: 1 / -1;
+  line-height: 1.35;
+}
+
 @media (max-width: 760px) {
   .customer-info-form,
-  .booking-confirmation-actions {
+  .booking-confirmation-actions,
+  .guest-after-save-actions {
     grid-template-columns: 1fr;
   }
 }
@@ -5341,7 +5373,19 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   z-index: 2000;
 }
 
-.guest-offer-backdrop[hidden] {
+.booking-referral-backdrop {
+  align-items: center;
+  background: rgba(4, 10, 25, 0.72);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 2000;
+}
+
+.guest-offer-backdrop[hidden],
+.booking-referral-backdrop[hidden] {
   display: none !important;
 }
 
@@ -5364,6 +5408,23 @@ body.modal-open {
   position: relative;
   text-align: center;
   width: min(100%, 520px);
+}
+
+.booking-referral-modal {
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 22px 70px rgba(5, 15, 38, 0.28);
+  color: var(--navy);
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  max-height: min(90vh, 760px);
+  max-width: 560px;
+  overflow: auto;
+  padding: 30px;
+  position: relative;
+  text-align: center;
+  width: min(100%, 560px);
 }
 
 .guest-offer-close {
@@ -5391,7 +5452,8 @@ body.modal-open {
   object-fit: contain;
 }
 
-.guest-offer-modal .eyebrow {
+.guest-offer-modal .eyebrow,
+.booking-referral-modal .eyebrow {
   color: var(--red);
   font-size: 0.88rem;
   font-weight: 900;
@@ -5400,14 +5462,16 @@ body.modal-open {
   text-transform: uppercase;
 }
 
-.guest-offer-modal h2 {
+.guest-offer-modal h2,
+.booking-referral-modal h2 {
   font-size: clamp(2rem, 5vw, 3rem);
   letter-spacing: 0;
   line-height: 1.02;
   margin: 0;
 }
 
-.guest-offer-modal p {
+.guest-offer-modal p,
+.booking-referral-modal p {
   color: #4b5565;
   font-size: 1.03rem;
   line-height: 1.42;
@@ -5466,13 +5530,61 @@ body.modal-open {
   font-size: 0.9rem;
 }
 
+.booking-referral-actions {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 520px);
+}
+
+.booking-referral-actions a {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.booking-referral-actions .light-button {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--navy);
+  font-weight: 900;
+  min-height: 54px;
+  padding: 14px 24px;
+}
+
+.referral-phone-field {
+  display: grid;
+  gap: 0.45rem;
+  text-align: left;
+  width: min(100%, 440px);
+}
+
+.referral-phone-field span {
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.referral-phone-field input {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--navy);
+  font: inherit;
+  min-height: 48px;
+  padding: 0.8rem 1rem;
+}
+
 @media (max-width: 760px) {
-  .guest-offer-backdrop {
+  .guest-offer-backdrop,
+  .booking-referral-backdrop {
     align-items: end;
     padding: 12px;
   }
 
-  .guest-offer-modal {
+  .guest-offer-modal,
+  .booking-referral-modal {
     border-radius: 10px;
     gap: 12px;
     max-height: 88vh;
@@ -5483,8 +5595,13 @@ body.modal-open {
     height: 46px;
   }
 
-  .guest-offer-modal p {
+  .guest-offer-modal p,
+  .booking-referral-modal p {
     font-size: 0.96rem;
+  }
+
+  .booking-referral-actions {
+    grid-template-columns: 1fr;
   }
 
   .manage-screen .main-nav {
