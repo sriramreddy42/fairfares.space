@@ -6,6 +6,7 @@ import html
 import json
 import math
 import os
+import re
 import secrets
 import smtplib
 import sqlite3
@@ -114,12 +115,12 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
         con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
-def create_verification(user_id: int, email: str) -> str:
+def create_verification(user_id: int, email: str, purpose: str = "ACCOUNT") -> str:
     token = secrets.token_urlsafe(32)
     with db() as con:
         con.execute(
-            "INSERT INTO email_verifications (token, user_id, email) VALUES (?, ?, ?)",
-            (token, user_id, email),
+            "INSERT INTO email_verifications (token, user_id, email, purpose) VALUES (?, ?, ?, ?)",
+            (token, user_id, email, purpose),
         )
     return token
 
@@ -201,6 +202,94 @@ def send_activation_email(email: str, name: str, activation_link: str) -> tuple[
         encoding="utf-8",
     )
 
+    return outbox_file, delivery_status
+
+
+def send_student_verification_email(email: str, name: str, verification_link: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = "Verify your FairFares student email"
+    text_body = (
+        f"Hi {name},\n\n"
+        "Click the link below to verify your .edu email and unlock your FairFares student discount:\n"
+        f"{verification_link}\n\n"
+        "This protects the student discount so it only goes to verified school email owners.\n"
+    )
+    html_body = (
+        f"<p>Hi {html.escape(name)},</p>"
+        "<p>Click below to verify your .edu email and unlock your FairFares student discount.</p>"
+        f'<p><a href="{html.escape(verification_link)}">Verify student email</a></p>'
+        "<p>This protects the student discount so it only goes to verified school email owners.</p>"
+    )
+    outbox_file = OUTBOX_DIR / f"student-verification-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
+    return outbox_file, delivery_status
+
+
+def send_student_verified_email(email: str, name: str, code: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = "Your FairFares student discount is active"
+    text_body = (
+        f"Hi {name},\n\n"
+        "Your student email is verified. Your FairFares student discount is now active.\n\n"
+        f"Student discount code: {code}\n\n"
+        "Use it on eligible future bookings. Terms and conditions apply.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <h2>Your student discount is active</h2>
+          <p>Hi {html.escape(name)}, your student email is verified.</p>
+          <p style="font-size:18px"><b>Student discount code:</b> {html.escape(code)}</p>
+          <p>Use it on eligible future bookings. Terms and conditions apply.</p>
+        </div>
+    """
+    outbox_file = OUTBOX_DIR / f"student-verified-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
     return outbox_file, delivery_status
 
 
@@ -619,6 +708,7 @@ def init_db() -> None:
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 email TEXT NOT NULL,
+                purpose TEXT NOT NULL DEFAULT 'ACCOUNT',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 used_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id)
@@ -701,6 +791,7 @@ def init_db() -> None:
                 front_image_url TEXT NOT NULL DEFAULT '',
                 back_image_url TEXT NOT NULL DEFAULT '',
                 verification_status TEXT NOT NULL DEFAULT 'PENDING',
+                verification_notes TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
@@ -721,8 +812,11 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_id INTEGER NOT NULL,
                 payment_method TEXT NOT NULL,
+                cardholder_name TEXT NOT NULL DEFAULT '',
                 amount REAL NOT NULL,
                 transaction_status TEXT NOT NULL DEFAULT 'PAID',
+                billing_verification_status TEXT NOT NULL DEFAULT 'NOT_CHECKED',
+                billing_verification_notes TEXT NOT NULL DEFAULT '',
                 invoice_number TEXT NOT NULL UNIQUE,
                 invoice_pdf_url TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -783,6 +877,17 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(booking_id) REFERENCES bookings(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS support_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                priority TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                destination TEXT NOT NULL DEFAULT '',
+                delivery_status TEXT NOT NULL DEFAULT 'QUEUED',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(ticket_id) REFERENCES support_tickets(id)
             );
 
             CREATE TABLE IF NOT EXISTS saved_cars (
@@ -874,6 +979,11 @@ def init_db() -> None:
         ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
+        ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "transactions", "cardholder_name", "cardholder_name TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "transactions", "billing_verification_status", "billing_verification_status TEXT NOT NULL DEFAULT 'NOT_CHECKED'")
+        ensure_column(con, "transactions", "billing_verification_notes", "billing_verification_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "contact_name", "contact_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "contact_email", "contact_email TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "contact_phone", "contact_phone TEXT NOT NULL DEFAULT ''")
@@ -1315,6 +1425,56 @@ def time_select_options(selected: str = "10:00 AM") -> str:
     return "".join(options)
 
 
+def evaluate_driver_license(
+    license_number: str,
+    state: str,
+    expiry_date: str,
+    front_image_url: str,
+    back_image_url: str,
+) -> tuple[str, str]:
+    notes: list[str] = []
+    cleaned_number = license_number.strip()
+    cleaned_state = state.strip().upper()
+    if not cleaned_number or cleaned_number == "PHOTO_CAPTURED_PENDING_NUMBER":
+        notes.append("license number missing")
+    elif not re.fullmatch(r"[A-Z0-9 -]{5,32}", cleaned_number.upper()):
+        notes.append("license number format needs review")
+    if len(cleaned_state) != 2 or not cleaned_state.isalpha():
+        notes.append("state must be a 2-letter code")
+    try:
+        expiry = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+        if expiry < date.today():
+            notes.append("license is expired")
+    except ValueError:
+        notes.append("expiry date is invalid")
+    if not front_image_url.strip():
+        notes.append("front DL picture missing")
+    if not back_image_url.strip():
+        notes.append("back DL picture missing")
+    if notes:
+        return "REVIEW_REQUIRED", "; ".join(notes)
+    return "BASIC_CHECK_PASSED", "Number, state, expiry, and front/back DL images captured. Use a licensed ID verification provider for real/fake document authentication."
+
+
+def normalize_person_name(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+def evaluate_billing_name(payment_method: str, cardholder_name: str, customer_name: str, signer_name: str = "") -> tuple[str, str]:
+    method = payment_method.strip().lower()
+    if "card" not in method and "cc" not in method and "credit" not in method and "debit" not in method:
+        return "NOT_REQUIRED", "Cardholder name match is only required for card payments."
+    card_name = normalize_person_name(cardholder_name)
+    customer = normalize_person_name(customer_name)
+    signer = normalize_person_name(signer_name)
+    if not card_name:
+        return "REVIEW_REQUIRED", "Cardholder name is required for card payments."
+    allowed_names = {name for name in (customer, signer) if name}
+    if card_name in allowed_names:
+        return "MATCHED", "Cardholder name matches customer/signature name."
+    return "REJECTED", "Cardholder name does not match the customer or agreement signer. Do not accept this card."
+
+
 def referral_code_for_username(username: str) -> str:
     cleaned = username.strip().lstrip("@").lower()
     cleaned = "".join(char if char.isalnum() else "_" for char in cleaned)
@@ -1371,6 +1531,29 @@ def create_referred_signup_discount(user_id: int, name: str, email: str) -> str:
                     COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
             """,
             (code, f"Referral signup bonus for {holder} · first booking", code),
+        )
+    return code
+
+
+def student_discount_code(name: str, email: str) -> str:
+    base = email.split("@")[0] or name or "student"
+    cleaned = "".join(char if char.isalnum() else "_" for char in base.upper())
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    return f"STUDENT_{(cleaned or 'VERIFIED')[:30]}_15"
+
+
+def create_student_discount(user_id: int, name: str, student_email: str) -> str:
+    code = student_discount_code(name, student_email)
+    holder = name.strip() or student_email.strip().lower() or f"User {user_id}"
+    with db() as con:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO discounts
+            (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+            VALUES (?, ?, 'PERCENT', 15, '2027-12-31', 'ACTIVE', 0,
+                    COALESCE((SELECT used_count FROM discounts WHERE code = ?), 0))
+            """,
+            (code, f"Verified student discount for {holder} · .edu verified", code),
         )
     return code
 
@@ -1851,16 +2034,127 @@ def make_ticket_id() -> str:
     return f"FF-SUP-{secrets.randbelow(900000) + 100000}"
 
 
+SUPPORT_PRIORITY_RULES = {
+    "P0": {
+        "label": "P0 urgent pager",
+        "sla": "Immediate pager alert",
+        "minutes": 15,
+        "channels": "Pager / phone / email / text",
+    },
+    "P1": {
+        "label": "P1 emergency",
+        "sla": "Response within 1 hour",
+        "minutes": 60,
+        "channels": "Text / email / call",
+    },
+    "P2": {
+        "label": "P2 high priority",
+        "sla": "Response within 2 hours",
+        "minutes": 120,
+        "channels": "Email / dashboard alert",
+    },
+    "P3": {
+        "label": "P3 normal support",
+        "sla": "Response within 1-2 hours",
+        "minutes": 120,
+        "channels": "Email / dashboard alert",
+    },
+}
+
+
+def normalize_support_priority(priority: str) -> str:
+    priority = (priority or "").strip().upper()
+    return priority if priority in SUPPORT_PRIORITY_RULES else "P3"
+
+
+def support_sla_text(priority: str) -> str:
+    return SUPPORT_PRIORITY_RULES[normalize_support_priority(priority)]["sla"]
+
+
+def support_due_at(priority: str) -> str:
+    rule = SUPPORT_PRIORITY_RULES[normalize_support_priority(priority)]
+    return (datetime.now() + timedelta(minutes=int(rule["minutes"]))).strftime("%Y-%m-%d %I:%M %p")
+
+
+def classify_support_priority(topic: str, urgent: bool, message: str = "") -> str:
+    text = f"{topic} {message}".lower()
+    if "p0" in text or "unsafe" in text or "accident" in text or "stranded" in text:
+        return "P0"
+    if urgent or "emergency" in text or "roadside" in text:
+        return "P1"
+    if "billing" in text or "payment" in text or "vehicle issue" in text or "provider contact" in text:
+        return "P2"
+    return "P3"
+
+
+def alert_channels_for_priority(priority: str) -> list[str]:
+    priority = normalize_support_priority(priority)
+    if priority == "P0":
+        return ["pager", "phone", "text", "email"]
+    if priority == "P1":
+        return ["text", "email", "phone"]
+    if priority in {"P2", "P3"}:
+        return ["email"]
+    return ["email"]
+
+
+def support_alert_destination(channel: str) -> str:
+    env_map = {
+        "email": "SUPPORT_ALERT_EMAIL",
+        "text": "SUPPORT_ALERT_PHONE",
+        "phone": "SUPPORT_ALERT_PHONE",
+        "pager": "SUPPORT_PAGER_PHONE",
+    }
+    defaults = {
+        "email": os.environ.get("SMTP_FROM", "support@fairfares.com"),
+        "text": "",
+        "phone": "",
+        "pager": "",
+    }
+    return os.environ.get(env_map.get(channel, ""), defaults.get(channel, ""))
+
+
+def queue_support_alerts(con: sqlite3.Connection, ticket_pk: int, ticket_id: str, priority: str, subject: str, body: str) -> None:
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    for channel in alert_channels_for_priority(priority):
+        destination = support_alert_destination(channel)
+        if channel == "email" and destination:
+            delivery_status = send_with_resend(destination, subject, body, f"<pre>{html.escape(body)}</pre>")
+        elif destination:
+            delivery_status = f"queued for {channel} provider"
+        else:
+            delivery_status = f"{channel} destination not configured"
+        con.execute(
+            """
+            INSERT INTO support_alerts
+            (ticket_id, priority, channel, destination, delivery_status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ticket_pk, normalize_support_priority(priority), channel, destination, delivery_status),
+        )
+        outbox_file = OUTBOX_DIR / f"support-alert-{ticket_id}-{channel}-{secrets.token_hex(4)}.txt"
+        outbox_file.write_text(
+            f"Ticket: {ticket_id}\nPriority: {priority}\nChannel: {channel}\nDestination: {destination or 'not configured'}\nDelivery: {delivery_status}\n\n{body}",
+            encoding="utf-8",
+        )
+
+
 def get_admin_tickets() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
             """
             SELECT support_tickets.*, users.name AS user_name, users.email AS user_email,
-                   bookings.booking_id
+                   bookings.booking_id,
+                   (
+                       SELECT GROUP_CONCAT(channel || ': ' || delivery_status, ' | ')
+                       FROM support_alerts
+                       WHERE support_alerts.ticket_id = support_tickets.id
+                   ) AS alert_summary
             FROM support_tickets
             JOIN users ON users.id = support_tickets.user_id
             LEFT JOIN bookings ON bookings.id = support_tickets.booking_id
             ORDER BY CASE support_tickets.status WHEN 'OPEN' THEN 0 WHEN 'IN_PROGRESS' THEN 1 WHEN 'FOLLOWUP' THEN 2 ELSE 3 END,
+                     CASE support_tickets.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                      support_tickets.urgent DESC,
                      support_tickets.id DESC
             LIMIT 100
@@ -1994,6 +2288,8 @@ def make_cancellation_task(
         """,
         (ticket_id, booking["id"], user["id"], message),
     )
+    ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    queue_support_alerts(con, ticket_pk, ticket_id, "P3", f"P3 FairFares cancellation task {ticket_id}", message)
     return ticket_id
 
 
@@ -2774,6 +3070,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/activate": self.activate_account,
+            "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
             "/healthz": self.healthz,
             "/login": self.login_page,
@@ -2926,6 +3223,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         host = self.headers.get("Host") or "127.0.0.1:8000"
         scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
         return f"{scheme}://{host}/activate?token={urllib.parse.quote(token)}"
+
+    def student_verification_url(self, token: str) -> str:
+        return f"{self.public_origin().rstrip('/')}/student-verify?token={urllib.parse.quote(token)}"
 
     def public_origin(self) -> str:
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -3247,7 +3547,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 SELECT email_verifications.*, users.is_verified
                 FROM email_verifications
                 JOIN users ON users.id = email_verifications.user_id
-                WHERE token = ?
+                WHERE token = ? AND purpose = 'ACCOUNT'
                 """,
                 (token,),
             ).fetchone()
@@ -3643,29 +3943,48 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking = get_booking_for_user(user["id"])
         ticket_id = make_ticket_id()
+        topic = form.get("topic") or "Pickup help"
+        message = form.get("message") or ""
+        urgent = form.get("urgent") == "1"
+        priority = classify_support_priority(topic, urgent, message)
+        due_at = support_due_at(priority)
         with db() as con:
             while con.execute("SELECT 1 FROM support_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone():
                 ticket_id = make_ticket_id()
             con.execute(
                 """
                 INSERT INTO support_tickets
-                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ticket_id,
                     booking["id"] if booking else None,
                     user["id"],
-                    form.get("topic") or "Pickup help",
+                    topic,
                     form.get("preferred_contact") or "Chat in browser",
-                    form.get("message") or "",
-                    1 if form.get("urgent") == "1" else 0,
+                    message,
+                    1 if urgent else 0,
+                    priority,
                 ),
             )
+            ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            alert_body = (
+                f"{priority} support ticket created\n"
+                f"SLA: {support_sla_text(priority)}\n"
+                f"Ticket: {ticket_id}\n"
+                f"Customer: {user['name']} · {user['email']} · {user['phone'] or 'No phone'}\n"
+                f"Topic: {topic}\n"
+                f"Preferred contact: {form.get('preferred_contact') or 'Chat in browser'}\n"
+                f"Message: {message or '-'}"
+            )
+            queue_support_alerts(con, ticket_pk, ticket_id, priority, f"{priority} FairFares support ticket {ticket_id}", alert_body)
         self.send_json({
             "ok": True,
             "ticket_id": ticket_id,
-            "message": f"Ticket {ticket_id} created. FairFares support will claim it and follow up soon.",
+            "priority": priority,
+            "sla": support_sla_text(priority),
+            "message": f"Ticket {ticket_id} created as {priority}. SLA: {support_sla_text(priority)}. Target response by {due_at}.",
         })
 
     def generate_referral_code(self) -> None:
@@ -3692,32 +4011,87 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         student_email = form.get("student_email", "").strip().lower()
-        student_id = form.get("student_id", "")
-        verified = 1 if student_email.endswith(".edu") and len(student_id) >= 4 else 0
+        student_id = form.get("student_id", "").strip()
+        if "@" not in student_email or not student_email.endswith(".edu") or len(student_id) < 4:
+            self.send_json({
+                "ok": False,
+                "message": "Use your real .edu email and a valid student ID. Gmail or personal emails cannot unlock student pricing.",
+                "verified": False,
+                "verified_label": "Student Verification Pending",
+                "discount_label": "Verify to unlock student discount",
+                "checks_html": "<li>Student ID pending</li><li>University email pending</li><li>Discount pending <b>0% OFF</b></li>",
+            }, 400)
+            return
         with db() as con:
             con.execute(
                 """
                 UPDATE users
                 SET student_email = ?,
                     student_id = ?,
-                    student_verified = ?
+                    student_verified = 0
                 WHERE id = ?
                 """,
-                (student_email, student_id, verified, user["id"]),
+                (student_email, student_id, user["id"]),
             )
-        message = "Student verification saved. Student discount applied." if verified else "Use a valid .edu student email and student ID."
+        token = create_verification(user["id"], student_email, "STUDENT")
+        link = self.student_verification_url(token)
+        _outbox_file, delivery_status = send_student_verification_email(student_email, user["name"], link)
+        message = "Verification email sent to your .edu inbox. Click the link there to activate the student discount."
+        if not delivery_status.startswith("sent"):
+            message = "Your .edu verification link is ready, but the email provider did not deliver it. Check local outbox for the backup link."
         self.send_json({
-            "ok": bool(verified),
+            "ok": True,
             "message": message,
-            "verified": bool(verified),
-            "verified_label": "Verified Student" if verified else "Student Verification Pending",
-            "discount_label": "15% discount applied" if verified else "Verify to unlock student discount",
-            "checks_html": (
-                "<li>Student ID Verified</li><li>University Email Verified</li><li>Discount Applied <b>15% OFF</b></li>"
-                if verified
-                else "<li>Student ID pending</li><li>University email pending</li><li>Discount pending <b>0% OFF</b></li>"
-            ),
+            "verified": False,
+            "verified_label": "Check your .edu inbox",
+            "discount_label": "Student discount pending email verification",
+            "checks_html": "<li>Student ID saved</li><li>University email verification sent</li><li>Discount pending <b>0% OFF</b></li>",
         })
+
+    def verify_student_email(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        token = query.get("token", [""])[0]
+        if not token:
+            self.activation_message_page("Student verification link missing", "Please use the student verification link from your FairFares email.", "Open Dashboard", "/dashboard")
+            return
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.name, users.student_id
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'STUDENT'
+                """,
+                (token,),
+            ).fetchone()
+            if not verification:
+                self.activation_message_page("Student verification link invalid", "That student verification link is not valid. Please request a fresh link from your dashboard.", "Open Dashboard", "/dashboard")
+                return
+            if verification["used_at"]:
+                self.activation_message_page("Student email already verified", "Your FairFares student discount is already active.", "Open Dashboard", "/dashboard")
+                return
+            if not verification["email"].lower().endswith(".edu"):
+                self.activation_message_page("School email required", "Only verified .edu inboxes can unlock student pricing.", "Open Dashboard", "/dashboard")
+                return
+            con.execute(
+                """
+                UPDATE users
+                SET student_email = ?,
+                    student_verified = 1
+                WHERE id = ?
+                """,
+                (verification["email"].lower(), verification["user_id"]),
+            )
+            con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+        code = create_student_discount(verification["user_id"], verification["name"], verification["email"])
+        send_student_verified_email(verification["email"], verification["name"], code)
+        self.activation_message_page(
+            "Student email verified",
+            f"Your FairFares student discount is active. Use code {code} on eligible bookings.",
+            "Open Dashboard",
+            "/dashboard",
+        )
 
     def dashboard(self) -> None:
         user = self.current_user()
@@ -3807,7 +4181,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_tickets.html",
             admin_name=escape(user["name"]),
-            tickets=tickets or '<tr><td colspan="7">No support tickets yet.</td></tr>',
+            tickets=tickets or '<tr><td colspan="8">No support tickets yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -3816,12 +4190,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status.replace("_", " ").title()}</option>'
             for status in ("OPEN", "IN_PROGRESS", "FOLLOWUP", "CLOSED")
         )
-        urgent = '<span class="ticket-urgent">URGENT</span>' if row["urgent"] else ""
+        priority = normalize_support_priority(row["priority"] if "priority" in row.keys() else "")
+        urgent = '<span class="ticket-urgent">URGENT</span>' if row["urgent"] or priority in {"P0", "P1"} else ""
+        priority_badge = f'<span class="ticket-priority ticket-priority-{priority.lower()}">{escape(priority)}</span>'
+        sla = support_sla_text(priority)
         return f"""
-        <tr class="{'ticket-open' if row["status"] != "CLOSED" else ''}">
+        <tr class="{'ticket-open ticket-critical' if row["status"] != "CLOSED" and priority in {"P0", "P1"} else 'ticket-open' if row["status"] != "CLOSED" else ''}">
             <td><b>{escape(row["ticket_id"])}</b><span>{escape(row["created_at"])}</span>{urgent}</td>
             <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
             <td>{escape(row["booking_id"] or "No booking")}</td>
+            <td>{priority_badge}<span>{escape(sla)}</span><span>{escape(row["alert_summary"] or "Dashboard alert queued")}</span></td>
             <td>{escape(row["topic"])}<span>{escape(row["preferred_contact"])}</span></td>
             <td>{escape(row["message"] or "-")}</td>
             <td>
@@ -3871,7 +4249,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <tr>
                 <td>{escape(license_row["state"])} · {escape(license_row["license_number"])}</td>
                 <td>{escape(license_row["expiry_date"])}</td>
-                <td>{escape(license_row["verification_status"])}</td>
+                <td>{escape(license_row["verification_status"])}<span>{escape(license_row["verification_notes"] if "verification_notes" in license_row.keys() else "")}</span></td>
                 <td>{'Front saved' if license_row["front_image_url"] else 'No front'} / {'Back saved' if license_row["back_image_url"] else 'No back'}</td>
             </tr>
             """
@@ -3883,12 +4261,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <td>{escape(transaction["invoice_number"])}</td>
                 <td>{escape(transaction["booking_id"])}</td>
                 <td>{escape(transaction["payment_method"])}</td>
+                <td>{escape(transaction["cardholder_name"] if "cardholder_name" in transaction.keys() else "")}</td>
                 <td>{format_money(transaction["amount"])}</td>
-                <td>{escape(transaction["transaction_status"])}</td>
+                <td>{escape(transaction["transaction_status"])}<span>{escape((transaction["billing_verification_status"] if "billing_verification_status" in transaction.keys() else "") or "")}</span></td>
             </tr>
             """
             for transaction in transactions
-        ) or '<tr><td colspan="5">No transactions.</td></tr>'
+        ) or '<tr><td colspan="6">No transactions.</td></tr>'
         insurance_rows = "".join(
             f"""
             <tr>
@@ -4171,6 +4550,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         actual_pickup_time = row["actual_pickup_time"] or row["pickup_time"]
         actual_return_time = row["actual_return_time"] or row["dropoff_time"]
         status_summary = booking_status_label(row["booking_status"], row["payment_status"])
+        dl_status = license_row["verification_status"] if license_row else "Not captured"
+        dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
+        billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
+        billing_note = transaction["billing_verification_notes"] if transaction and "billing_verification_notes" in transaction.keys() else ""
 
         def capture_field(name: str, label: str, value: str, saved_copy: str = "Photo saved") -> str:
             legacy_dl_attr = ""
@@ -4195,9 +4578,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <b>Open pickup / return file</b>
             </summary>
             <div class="pickup-status-grid">
-                <span><b>DL</b>{escape(license_row["verification_status"] if license_row else "Not captured")}</span>
+                <span><b>DL</b>{escape(dl_status)}{f'<small>{escape(dl_note)}</small>' if dl_note else ''}</span>
                 <span><b>Insurance</b>{escape(insurance["insurance_provider"] if insurance else "Not captured")}</span>
-                <span><b>Payment</b>{escape(transaction["transaction_status"] if transaction else row["payment_status"])}</span>
+                <span><b>Payment</b>{escape(transaction["transaction_status"] if transaction else row["payment_status"])}{f'<small>{escape(billing_status)} · {escape(billing_note)}</small>' if billing_status else ''}</span>
                 <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
                 <span><b>Total</b>{escape(format_money(row["total_price"]))}</span>
                 <span><b>Late fee</b>{escape(format_money(row["late_fee_amount"])) if row["late_fee_amount"] else "None"}</span>
@@ -4220,6 +4603,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
                 {capture_field("insurance_document_url", "Insurance Scan", insurance_scan, "Insurance image saved")}
                 <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
+                <label><span>Cardholder Name</span><input name="cardholder_name" value="{escape(transaction["cardholder_name"] if transaction and "cardholder_name" in transaction.keys() else "")}" placeholder="Required for card payments"></label>
                 <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
                 <label><span>Actual Pickup Date</span><input name="actual_pickup_date" type="date" value="{escape(actual_pickup_date)}"></label>
                 <label><span>Actual Pickup Time</span><select name="actual_pickup_time">{time_select_options(actual_pickup_time)}</select></label>
@@ -4728,20 +5112,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
             )
             if form.get("license_number") or form.get("front_image_url") or form.get("back_image_url"):
+                license_number = form.get("license_number") or "PHOTO_CAPTURED_PENDING_NUMBER"
+                license_state = form.get("license_state") or "CO"
+                license_expiry = form.get("license_expiry") or "2028-12-31"
+                front_image_url = form.get("front_image_url", "")
+                back_image_url = form.get("back_image_url", "")
+                dl_status, dl_notes = evaluate_driver_license(
+                    license_number,
+                    license_state,
+                    license_expiry,
+                    front_image_url,
+                    back_image_url,
+                )
                 con.execute(
                     """
                     INSERT INTO driver_licenses
-                    (user_id, license_number, state, expiry_date, front_image_url, back_image_url, verification_status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (user_id, license_number, state, expiry_date, front_image_url, back_image_url, verification_status, verification_notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
-                        form.get("license_number") or "PHOTO_CAPTURED_PENDING_NUMBER",
-                        form.get("license_state") or "CO",
-                        form.get("license_expiry") or "2028-12-31",
-                        form.get("front_image_url", ""),
-                        form.get("back_image_url", ""),
-                        "VERIFIED" if form.get("license_number") else "PHOTO_CAPTURED",
+                        license_number,
+                        license_state,
+                        license_expiry,
+                        front_image_url,
+                        back_image_url,
+                        dl_status,
+                        dl_notes,
                     ),
                 )
             if form.get("insurance_provider"):
@@ -4833,13 +5230,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if form.get("payment_method"):
                 invoice_number = f"INV-{secrets.randbelow(900000) + 100000}"
                 amount = con.execute("SELECT total_price FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+                billing_status, billing_notes = evaluate_billing_name(
+                    form.get("payment_method", ""),
+                    form.get("cardholder_name", ""),
+                    form.get("customer_name", ""),
+                    form.get("signer_name", ""),
+                )
+                transaction_status = "PAID" if billing_status in {"MATCHED", "NOT_REQUIRED"} else "BILLING_REVIEW"
                 con.execute(
                     """
                     INSERT INTO transactions
-                    (booking_id, payment_method, amount, transaction_status, invoice_number)
-                    VALUES (?, ?, ?, 'PAID', ?)
+                    (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (booking_id, form.get("payment_method"), float(amount["total_price"] if amount else 0), invoice_number),
+                    (
+                        booking_id,
+                        form.get("payment_method"),
+                        form.get("cardholder_name", ""),
+                        float(amount["total_price"] if amount else 0),
+                        transaction_status,
+                        billing_status,
+                        billing_notes,
+                        invoice_number,
+                    ),
                 )
             agreement_data = {key: form.get(f"agreement_{key}", "").strip() for key in AGREEMENT_FIELD_KEYS}
             if form.get("signature_text") and not agreement_data.get("customer_signature"):
