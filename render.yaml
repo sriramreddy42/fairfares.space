@@ -21,3 +21,9 @@ services:
         value: "FairFares <hello@fairfare.space>"
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
