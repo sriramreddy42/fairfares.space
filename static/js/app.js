@@ -938,7 +938,7 @@ function updateExplorerProfile(xpEarned) {
   if (explorerXpProgressLabel) explorerXpProgressLabel.textContent = `${xp % 250 || (xp ? 250 : 0)} / 250 XP`;
 }
 
-function renderExplorerGoogleMap(quest) {
+function renderExplorerGoogleMap(quest, attempt = 0) {
   const mapCanvas = document.getElementById("questMapCanvas");
   if (!mapCanvas) return;
   const visibleStops = (quest.stops || []).filter((stop) => !stop.is_secret && Number(stop.lat) && Number(stop.lng));
@@ -947,7 +947,15 @@ function renderExplorerGoogleMap(quest) {
     return;
   }
   if (!window.google?.maps) {
-    mapCanvas.innerHTML = "<b>Map ready on Render</b><span>Google Maps will render here when GOOGLE_MAPS_API_KEY is available for this deployment.</span>";
+    const mapsEnabled = window.FAIRFARES_EXPLORER_MAPS_ENABLED === true;
+    if (mapsEnabled && attempt < 20) {
+      mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Explorer is connecting your route pins.</span>";
+      window.setTimeout(() => renderExplorerGoogleMap(quest, attempt + 1), 350);
+      return;
+    }
+    mapCanvas.innerHTML = mapsEnabled
+      ? "<b>Map could not load</b><span>Google Maps is enabled, but the browser did not finish loading it. Refresh once or check the Maps key restrictions.</span>"
+      : "<b>Map ready on Render</b><span>Google Maps will render here when GOOGLE_MAPS_API_KEY is available for this deployment.</span>";
     return;
   }
   const center = {
