@@ -54,7 +54,16 @@ const explorerLevel = document.getElementById("explorerLevel");
 const explorerBadges = document.getElementById("explorerBadges");
 const detectExplorerLocation = document.getElementById("detectExplorerLocation");
 const explorerCity = document.getElementById("explorerCity");
+const explorerCityLat = document.getElementById("explorerCityLat");
+const explorerCityLng = document.getElementById("explorerCityLng");
 const explorerLocationStatus = document.getElementById("explorerLocationStatus");
+const explorerBonusCard = document.getElementById("explorerBonusCard");
+const explorerXpMeter = document.getElementById("explorerXpMeter");
+const explorerXpProgressLabel = document.getElementById("explorerXpProgressLabel");
+const questDescription = document.getElementById("questDescription");
+const questDifficulty = document.getElementById("questDifficulty");
+const questReward = document.getElementById("questReward");
+const questStopCount = document.getElementById("questStopCount");
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -891,8 +900,10 @@ detectExplorerLocation?.addEventListener("click", () => {
   }
   explorerLocationStatus.textContent = "Checking location...";
   navigator.geolocation.getCurrentPosition(
-    () => {
+    (position) => {
       if (explorerCity) explorerCity.value = "Denver, Colorado";
+      if (explorerCityLat) explorerCityLat.value = String(position.coords.latitude || 0);
+      if (explorerCityLng) explorerCityLng.value = String(position.coords.longitude || 0);
       explorerLocationStatus.textContent = "Location detected near Denver. You can change it anytime.";
     },
     () => {
@@ -901,6 +912,17 @@ detectExplorerLocation?.addEventListener("click", () => {
     { enableHighAccuracy: false, timeout: 6000 },
   );
 });
+
+function updateExplorerBonusCard() {
+  if (!explorerBonusCard) return;
+  const selected = document.querySelector("input[name='fairfares_booked']:checked")?.value;
+  explorerBonusCard.hidden = selected !== "yes";
+}
+
+document.querySelectorAll("input[name='fairfares_booked']").forEach((input) => {
+  input.addEventListener("change", updateExplorerBonusCard);
+});
+updateExplorerBonusCard();
 
 function explorerProfileValue(node) {
   return Number(node?.textContent || 0) || 0;
@@ -912,13 +934,19 @@ function updateExplorerProfile(xpEarned) {
   explorerXp.textContent = String(xp);
   if (explorerLevel) explorerLevel.textContent = String(Math.max(1, Math.floor(xp / 250) + 1));
   if (explorerBadges && xp >= 250) explorerBadges.textContent = String(Math.max(2, explorerProfileValue(explorerBadges)));
+  if (explorerXpMeter) explorerXpMeter.value = String(Math.min(250, xp % 250 || (xp ? 250 : 0)));
+  if (explorerXpProgressLabel) explorerXpProgressLabel.textContent = `${xp % 250 || (xp ? 250 : 0)} / 250 XP`;
 }
 
 function renderExplorerQuest(quest) {
   if (!questOutput || !questStops || !questMap) return;
   questOutput.hidden = false;
   if (questTitle) questTitle.textContent = quest.title;
-  if (questMeta) questMeta.textContent = `${quest.stops.length} stops · ${quest.total_hours} hours · ${quest.total_miles} miles · ${quest.total_xp} XP`;
+  if (questDescription) questDescription.textContent = quest.description || "Complete the route, unlock the mystery stop, and collect XP.";
+  if (questMeta) questMeta.textContent = `${quest.stops.length} stops · ${quest.total_hours} hours · ${quest.total_miles} miles`;
+  if (questDifficulty) questDifficulty.textContent = `${"★".repeat(Number(quest.difficulty || 2))}${"☆".repeat(Math.max(0, 5 - Number(quest.difficulty || 2)))}`;
+  if (questReward) questReward.textContent = `${quest.total_xp} XP`;
+  if (questStopCount) questStopCount.textContent = String(quest.stop_count || quest.stops.length);
   questMap.innerHTML = quest.stops.map((stop, index) => `
     <span class="${stop.is_secret ? "is-secret" : ""}">
       ${stop.is_secret ? "?" : index + 1}
@@ -933,10 +961,12 @@ function renderExplorerQuest(quest) {
       <div>
         <small>${stop.is_secret ? "Mystery Stop" : `Stop ${index + 1}`}</small>
         <h3>${stop.is_secret ? "Unlock after previous stop" : stopName}</h3>
-        <p>${stop.is_secret ? "Complete the earlier stops to reveal this hidden gem." : stopChallenge}</p>
+        <p><b>Mission:</b> ${stop.is_secret ? "Complete the earlier stops to reveal this hidden gem." : stopChallenge}</p>
+        <p><b>Tips:</b> ${stop.is_secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Sprint 2 will connect Google Places tips here.")}</p>
+        <div class="quest-photo-placeholder">${stop.reference_photo_url ? `<img src="${escapeHtml(stop.reference_photo_url)}" alt="">` : "Reference photo placeholder"}</div>
         <span>${stop.xp_reward} XP</span>
       </div>
-      <button type="button" ${stop.is_secret ? "disabled" : ""}>Check In</button>
+      <button type="button" ${stop.is_secret || stop.locked ? "disabled" : ""}>${stop.is_secret || stop.locked ? "Locked" : "Start Mission"}</button>
     </article>
   `;
   }).join("");
@@ -977,6 +1007,7 @@ questStops?.addEventListener("click", (event) => {
     next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
     next.querySelector("p").textContent = next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.";
     next.querySelector("button").disabled = false;
+    next.querySelector("button").textContent = "Start Mission";
   }
   const xp = Number(stop.querySelector("span")?.textContent?.match(/\d+/)?.[0] || 20);
   updateExplorerProfile(xp);

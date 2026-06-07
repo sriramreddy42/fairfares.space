@@ -51,6 +51,31 @@ SMTP_HOST=smtp.example.com SMTP_PORT=587 SMTP_USER=user SMTP_PASSWORD=password S
 
 Use the dashboard to update homepage copy and the poster image path. Drop supplied poster files into `static/posters/` and set `poster_image` to a path like `/static/posters/my-poster.jpg`.
 
+## FairFares Explorer Sprint 1
+
+Explorer is implemented at `/explorer` in the current Python + SQLite app stack. This repository is not currently a Next.js/Prisma codebase, so no Prisma migration is required for this sprint. The app creates the Explorer tables automatically on startup.
+
+Sprint 1 includes:
+
+- Location state with browser detection and manual city fallback.
+- FairFares booking check with `+100 XP` bonus messaging.
+- Mood tags, preferences, mock quest generation, mystery stop, stop cards, XP progress, and badge preview.
+- API-shaped placeholders:
+  - `POST /api/explorer/quests`
+  - `GET /api/explorer/quests/{id}`
+  - `POST /api/explorer/checkins`
+  - `POST /api/explorer/xp`
+
+Future Sprint 2 environment hooks:
+
+```bash
+GOOGLE_MAPS_API_KEY=your_google_maps_key
+GOOGLE_PLACES_API_KEY=your_google_places_key
+OPENAI_API_KEY=your_openai_key
+```
+
+These keys are not used in Sprint 1. They are reserved for real place search, route rendering, and AI quest generation later.
+
 ## Deploy
 
 The project includes `render.yaml` for Render hosting.

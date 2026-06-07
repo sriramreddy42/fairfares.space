@@ -5243,6 +5243,28 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-size: 1.8rem;
 }
 
+.explorer-xp-meter {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.explorer-xp-meter div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.explorer-xp-meter meter {
+  height: 16px;
+  width: 100%;
+}
+
 .explorer-builder {
   align-items: start;
   display: grid;
@@ -5335,6 +5357,20 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   min-height: auto;
 }
 
+.explorer-bonus-card {
+  background: #f0fff2;
+  border: 1px solid #aee6b8;
+  border-radius: 8px;
+  color: #276b2f;
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+}
+
+.explorer-bonus-card[hidden] {
+  display: none;
+}
+
 .explorer-side {
   position: sticky;
   top: 16px;
@@ -5354,6 +5390,22 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   padding-bottom: 12px;
 }
 
+.badge-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.badge-preview span {
+  background: #fff5d8;
+  border: 1px solid #f5c84b;
+  border-radius: 999px;
+  color: #7a5600;
+  font-weight: 950;
+  padding: 8px 10px;
+}
+
 .quest-output {
   display: grid;
   gap: 20px;
@@ -5368,6 +5420,29 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   display: flex;
   gap: 16px;
   justify-content: space-between;
+}
+
+.quest-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quest-stats span {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: grid;
+  font-weight: 850;
+  min-width: 120px;
+  padding: 10px 12px;
+}
+
+.quest-stats b {
+  color: var(--navy);
+  font-size: 1.2rem;
 }
 
 .quest-map {
@@ -5443,6 +5518,26 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .quest-stop p {
   color: var(--muted);
   margin: 4px 0;
+}
+
+.quest-photo-placeholder {
+  align-items: center;
+  background: linear-gradient(135deg, #eef3fb, #fff);
+  border: 1px dashed #b7c1d4;
+  border-radius: 8px;
+  color: #626b7a;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 900;
+  justify-content: center;
+  min-height: 84px;
+  overflow: hidden;
+}
+
+.quest-photo-placeholder img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .quest-stop button,

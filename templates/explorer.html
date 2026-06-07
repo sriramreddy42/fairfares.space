@@ -43,6 +43,10 @@
           <span><b id="explorerTrips">$trips</b>Trips</span>
           <span><b id="explorerBadges">$badges</b>Badges</span>
         </div>
+        <div class="explorer-xp-meter" aria-label="Explorer XP progress">
+          <div><strong>Level 1 Explorer</strong><span id="explorerXpProgressLabel">$xp / 250 XP</span></div>
+          <meter id="explorerXpMeter" min="0" max="250" value="$xp"></meter>
+        </div>
       </div>
       <img src="/static/img/fairfares-explorer-button.png" alt="FairFares Explorer adventure badge">
     </section>
@@ -54,6 +58,8 @@
           <h2>Where are you exploring?</h2>
           <div class="explorer-location-row">
             <label><span>City</span><input name="city" id="explorerCity" value="Denver, Colorado" autocomplete="address-level2"></label>
+            <input type="hidden" name="city_lat" id="explorerCityLat" value="0">
+            <input type="hidden" name="city_lng" id="explorerCityLng" value="0">
             <button type="button" class="light-button" id="detectExplorerLocation">Use My Location</button>
           </div>
           <p class="modify-status" id="explorerLocationStatus" aria-live="polite"></p>
@@ -66,6 +72,10 @@
             <label><input type="radio" name="fairfares_booked" value="yes" $booked_checked> Yes</label>
             <label><input type="radio" name="fairfares_booked" value="no"> No</label>
             <label><input type="radio" name="fairfares_booked" value="exploring" $exploring_checked> I'm just exploring</label>
+          </div>
+          <div class="explorer-bonus-card" id="explorerBonusCard" hidden>
+            <b>Explorer Bonus Active</b>
+            <span>+100 XP added because you booked through FairFares.</span>
           </div>
         </div>
 
@@ -106,6 +116,11 @@
           <li>Photo and story challenges earn XP</li>
           <li>Badges build your Explorer profile</li>
         </ul>
+        <div class="badge-preview">
+          <span>First Explorer</span>
+          <span>Hidden Gem Hunter</span>
+          <span>Road Warrior</span>
+        </div>
       </aside>
     </section>
 
@@ -114,7 +129,14 @@
         <div>
           <p class="eyebrow">Generated Quest</p>
           <h2 id="questTitle">Denver Sunset Adventure</h2>
+          <p id="questDescription">A city quest will appear here after you generate your route.</p>
           <p id="questMeta">5 stops · 4 hours · 36 miles · 250 XP</p>
+          <div class="quest-stats">
+            <span><b id="questDifficulty">★★☆☆☆</b>Difficulty</span>
+            <span><b id="questReward">350 XP</b>Reward</span>
+            <span><b id="questStopCount">5</b>Stops</span>
+            <span><b>Locked</b>Mystery Stop</span>
+          </div>
         </div>
         <button type="button" class="light-button" id="resetQuest">Plan Another</button>
       </div>
