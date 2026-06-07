@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-1">
-  <script defer src="/static/js/app.js?v=explorer-1"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-2">
+  $maps_loader
+  <script defer src="/static/js/app.js?v=explorer-2"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -139,6 +140,10 @@
           </div>
         </div>
         <button type="button" class="light-button" id="resetQuest">Plan Another</button>
+      </div>
+      <div class="quest-map-canvas" id="questMapCanvas">
+        <b>Map preview</b>
+        <span>Generate a quest to see your route, pins, and nearby stops.</span>
       </div>
       <div class="quest-map" id="questMap"></div>
       <div class="quest-stops" id="questStops"></div>

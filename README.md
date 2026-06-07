@@ -59,14 +59,17 @@ Sprint 1 includes:
 
 - Location state with browser detection and manual city fallback.
 - FairFares booking check with `+100 XP` bonus messaging.
-- Mood tags, preferences, mock quest generation, mystery stop, stop cards, XP progress, and badge preview.
+- Mood tags, preferences, quest generation, mystery stop, stop cards, XP progress, and badge preview.
+- Google Places-backed stop names, addresses, ratings, review snippets, and reference photos when `GOOGLE_PLACES_API_KEY` is set.
+- Google Maps route preview when `GOOGLE_MAPS_API_KEY` is set. Restrict this browser key to your FairFares domains in Google Cloud.
 - API-shaped placeholders:
   - `POST /api/explorer/quests`
   - `GET /api/explorer/quests/{id}`
   - `POST /api/explorer/checkins`
   - `POST /api/explorer/xp`
+  - `GET /api/explorer/place-photo?ref=...`
 
-Future Sprint 2 environment hooks:
+Explorer environment hooks:
 
 ```bash
 GOOGLE_MAPS_API_KEY=your_google_maps_key
@@ -74,7 +77,7 @@ GOOGLE_PLACES_API_KEY=your_google_places_key
 OPENAI_API_KEY=your_openai_key
 ```
 
-These keys are not used in Sprint 1. They are reserved for real place search, route rendering, and AI quest generation later.
+`OPENAI_API_KEY` is reserved for a later AI route-writing sprint. The current app uses deterministic quest copy plus Google Places data.
 
 ## Deploy
 

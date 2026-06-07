@@ -5484,6 +5484,23 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   background: #111827;
 }
 
+.quest-map-canvas {
+  background: #eef3fb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: grid;
+  min-height: 320px;
+  overflow: hidden;
+  place-content: center;
+  text-align: center;
+}
+
+.quest-map-canvas b {
+  color: var(--navy);
+  font-size: 1.35rem;
+}
+
 .quest-stops {
   display: grid;
   gap: 12px;
@@ -5520,6 +5537,29 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin: 4px 0;
 }
 
+.quest-place-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 6px 0 10px;
+}
+
+.quest-place-meta span,
+.quest-place-meta a {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 850;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+.quest-place-meta a {
+  color: var(--red);
+}
+
 .quest-photo-placeholder {
   align-items: center;
   background: linear-gradient(135deg, #eef3fb, #fff);
@@ -5538,6 +5578,26 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   height: 100%;
   object-fit: cover;
   width: 100%;
+}
+
+.quest-place-reviews {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quest-place-reviews blockquote {
+  background: #fbfcff;
+  border-left: 4px solid var(--red);
+  color: var(--muted);
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.quest-place-reviews b {
+  color: var(--navy);
 }
 
 .quest-stop button,
@@ -5635,6 +5695,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .quest-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .quest-map-canvas {
+    min-height: 240px;
   }
 
   .quest-stop {

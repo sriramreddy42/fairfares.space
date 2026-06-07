@@ -938,6 +938,70 @@ function updateExplorerProfile(xpEarned) {
   if (explorerXpProgressLabel) explorerXpProgressLabel.textContent = `${xp % 250 || (xp ? 250 : 0)} / 250 XP`;
 }
 
+function renderExplorerGoogleMap(quest) {
+  const mapCanvas = document.getElementById("questMapCanvas");
+  if (!mapCanvas) return;
+  const visibleStops = (quest.stops || []).filter((stop) => !stop.is_secret && Number(stop.lat) && Number(stop.lng));
+  if (!visibleStops.length) {
+    mapCanvas.innerHTML = "<b>Map preview</b><span>Stops will appear here after the quest has location data.</span>";
+    return;
+  }
+  if (!window.google?.maps) {
+    mapCanvas.innerHTML = "<b>Map ready on Render</b><span>Google Maps will render here when GOOGLE_MAPS_API_KEY is available for this deployment.</span>";
+    return;
+  }
+  const center = {
+    lat: Number(visibleStops[0].lat),
+    lng: Number(visibleStops[0].lng),
+  };
+  mapCanvas.innerHTML = "";
+  const map = new google.maps.Map(mapCanvas, {
+    center,
+    zoom: 12,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: true,
+  });
+  const bounds = new google.maps.LatLngBounds();
+  const path = [];
+  visibleStops.forEach((stop, index) => {
+    const position = { lat: Number(stop.lat), lng: Number(stop.lng) };
+    bounds.extend(position);
+    path.push(position);
+    new google.maps.Marker({
+      map,
+      position,
+      label: String(index + 1),
+      title: stop.name || `Stop ${index + 1}`,
+    });
+  });
+  if (path.length > 1) {
+    new google.maps.Polyline({
+      map,
+      path,
+      strokeColor: "#ed001c",
+      strokeOpacity: 0.9,
+      strokeWeight: 4,
+    });
+  }
+  map.fitBounds(bounds);
+}
+
+function renderExplorerReviews(stop) {
+  const reviews = Array.isArray(stop.reviews) ? stop.reviews : [];
+  if (!reviews.length) return "";
+  return `
+    <div class="quest-place-reviews">
+      ${reviews.map((review) => `
+        <blockquote>
+          <b>${escapeHtml(review.author || "Google reviewer")} ${review.rating ? `· ${escapeHtml(review.rating)}★` : ""}</b>
+          <span>${escapeHtml(review.text || "")}</span>
+        </blockquote>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderExplorerQuest(quest) {
   if (!questOutput || !questStops || !questMap) return;
   questOutput.hidden = false;
@@ -952,18 +1016,31 @@ function renderExplorerQuest(quest) {
       ${stop.is_secret ? "?" : index + 1}
     </span>
   `).join("");
+  renderExplorerGoogleMap(quest);
   questStops.innerHTML = quest.stops.map((stop, index) => {
     const stopName = escapeHtml(stop.name);
     const stopChallenge = escapeHtml(stop.challenge);
+    const address = escapeHtml(stop.address || "");
+    const rating = Number(stop.rating || 0);
+    const reviewCount = Number(stop.review_count || 0);
+    const placeMeta = !stop.is_secret && (rating || address || stop.google_url) ? `
+      <div class="quest-place-meta">
+        ${rating ? `<span>${rating.toFixed(1)}★ · ${reviewCount || 0} Google reviews</span>` : ""}
+        ${address ? `<span>${address}</span>` : ""}
+        ${stop.google_url ? `<a href="${escapeHtml(stop.google_url)}" target="_blank" rel="noopener">Open in Google Maps</a>` : ""}
+      </div>
+    ` : "";
     return `
     <article class="quest-stop ${stop.is_secret ? "is-locked" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}">
       <div class="quest-stop-order">${stop.is_secret ? "?" : index + 1}</div>
       <div>
         <small>${stop.is_secret ? "Mystery Stop" : `Stop ${index + 1}`}</small>
         <h3>${stop.is_secret ? "Unlock after previous stop" : stopName}</h3>
+        ${placeMeta}
         <p><b>Mission:</b> ${stop.is_secret ? "Complete the earlier stops to reveal this hidden gem." : stopChallenge}</p>
         <p><b>Tips:</b> ${stop.is_secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Sprint 2 will connect Google Places tips here.")}</p>
         <div class="quest-photo-placeholder">${stop.reference_photo_url ? `<img src="${escapeHtml(stop.reference_photo_url)}" alt="">` : "Reference photo placeholder"}</div>
+        ${stop.is_secret ? "" : renderExplorerReviews(stop)}
         <span>${stop.xp_reward} XP</span>
       </div>
       <button type="button" ${stop.is_secret || stop.locked ? "disabled" : ""}>${stop.is_secret || stop.locked ? "Locked" : "Start Mission"}</button>
@@ -1005,7 +1082,8 @@ questStops?.addEventListener("click", (event) => {
     next.querySelector(".quest-stop-order").textContent = Number(next.dataset.stopIndex || 0) + 1;
     next.querySelector("small").textContent = `Stop ${Number(next.dataset.stopIndex || 0) + 1}`;
     next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
-    next.querySelector("p").textContent = next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.";
+    const mission = next.querySelector("p");
+    if (mission) mission.innerHTML = `<b>Mission:</b> ${escapeHtml(next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.")}`;
     next.querySelector("button").disabled = false;
     next.querySelector("button").textContent = "Start Mission";
   }

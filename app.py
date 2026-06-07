@@ -1142,6 +1142,13 @@ def init_db() -> None:
         ensure_column(con, "explorer_stops", "tips", "tips TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_stops", "reference_photo_url", "reference_photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_stops", "locked", "locked INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "explorer_stops", "place_id", "place_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "explorer_stops", "address", "address TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "explorer_stops", "rating", "rating REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "explorer_stops", "review_count", "review_count INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "explorer_stops", "reviews_json", "reviews_json TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(con, "explorer_stops", "google_url", "google_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "explorer_stops", "source", "source TEXT NOT NULL DEFAULT 'LOCAL'")
 
         for badge in (
             ("First Explorer", "compass", "Complete your first FairFares city quest.", 0),
@@ -1901,9 +1908,181 @@ def get_explorer_profile(user_id: int | None) -> dict[str, int]:
     }
 
 
+EXPLORER_PLACE_QUERIES = {
+    "Food": ["best student friendly food near {city}", "popular restaurants near {city}"],
+    "Adventure": ["outdoor adventure near {city}", "unique activities near {city}"],
+    "Nature": ["parks and nature near {city}", "scenic nature spots near {city}"],
+    "Photography": ["best photo spots near {city}", "instagrammable places near {city}"],
+    "Date Night": ["date night spots near {city}", "romantic places near {city}"],
+    "Coffee": ["best coffee shops near {city}", "student coffee near {city}"],
+    "Scenic Drive": ["scenic overlook near {city}", "scenic drive stops near {city}"],
+    "Sunset": ["best sunset viewpoint near {city}", "sunset overlook near {city}"],
+    "Hidden Gems": ["hidden gems near {city}", "unique local places near {city}"],
+    "Music": ["live music near {city}", "music venues near {city}"],
+    "Shopping": ["shopping district near {city}", "local shops near {city}"],
+    "Surprise Me": ["top things to do near {city}", "best attractions near {city}"],
+}
+
+
+def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
+    request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+
+def explorer_photo_url(photo_reference: str) -> str:
+    if not photo_reference:
+        return ""
+    return f"/api/explorer/place-photo?ref={urllib.parse.quote(photo_reference)}"
+
+
+def normalize_google_review(review: dict[str, object]) -> dict[str, str | int]:
+    text = str(review.get("text") or "").strip()
+    if len(text) > 220:
+        text = f"{text[:217].rstrip()}..."
+    return {
+        "author": str(review.get("author_name") or "Google reviewer"),
+        "rating": int(review.get("rating") or 0),
+        "text": text,
+    }
+
+
+def google_place_details(place_id: str, api_key: str) -> dict[str, object]:
+    fields = ",".join(
+        [
+            "place_id",
+            "name",
+            "formatted_address",
+            "geometry",
+            "rating",
+            "user_ratings_total",
+            "photos",
+            "reviews",
+            "types",
+            "url",
+            "website",
+            "opening_hours",
+        ]
+    )
+    query = urllib.parse.urlencode({"place_id": place_id, "fields": fields, "key": api_key})
+    details = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{query}")
+    if details.get("status") not in {"OK", "ZERO_RESULTS"}:
+        raise RuntimeError(str(details.get("error_message") or details.get("status") or "Google Places details failed"))
+    return dict(details.get("result") or {})
+
+
+def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool) -> dict[str, object] | None:
+    place_id = str(place.get("place_id") or "")
+    if not place_id:
+        return None
+    try:
+        detail = google_place_details(place_id, api_key)
+    except Exception:
+        detail = place
+    geometry = dict(detail.get("geometry") or place.get("geometry") or {})
+    location = dict(geometry.get("location") or {})
+    lat = float(location.get("lat") or 0)
+    lng = float(location.get("lng") or 0)
+    if not lat or not lng:
+        return None
+    name = str(detail.get("name") or place.get("name") or "Explorer Stop")
+    rating = float(detail.get("rating") or place.get("rating") or 0)
+    review_count = int(detail.get("user_ratings_total") or place.get("user_ratings_total") or 0)
+    photos = detail.get("photos") if isinstance(detail.get("photos"), list) else []
+    photo_reference = ""
+    if photos:
+        photo_reference = str(dict(photos[0]).get("photo_reference") or "")
+    reviews = []
+    for review in detail.get("reviews") or []:
+        if isinstance(review, dict):
+            normalized = normalize_google_review(review)
+            if normalized["text"]:
+                reviews.append(normalized)
+        if len(reviews) >= 2:
+            break
+    mission = f"Check in at {name}, capture the moment, and rate whether it matched your {mood.lower()} vibe."
+    if mood in {"Food", "Coffee"}:
+        mission = f"Try one signature item at {name}, take a quick photo, and share whether it is worth the stop."
+    elif mood in {"Sunset", "Photography", "Scenic Drive"}:
+        mission = f"Find the best view at {name}, capture a photo, and log your favorite angle."
+    elif mood in {"Music", "Shopping"}:
+        mission = f"Explore {name}, note the best find, and check in to earn XP."
+    return {
+        "order": order,
+        "name": name,
+        "lat": lat,
+        "lng": lng,
+        "xp_reward": 90 if secret else 55 + (order * 10),
+        "mission": mission,
+        "challenge": mission,
+        "tips": "Live Google Places result. Check current hours, parking, and safety before you go.",
+        "reference_photo_url": explorer_photo_url(photo_reference),
+        "is_secret": 1 if secret else 0,
+        "locked": 1 if secret else 0,
+        "place_id": str(detail.get("place_id") or place_id),
+        "address": str(detail.get("formatted_address") or place.get("formatted_address") or ""),
+        "rating": rating,
+        "review_count": review_count,
+        "reviews": reviews,
+        "google_url": str(detail.get("url") or ""),
+        "source": "GOOGLE_PLACES",
+    }
+
+
+def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, city_lng: float) -> list[dict[str, object]]:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    if not api_key:
+        return []
+    title_city = city.split(",", 1)[0].strip() or "Denver"
+    query_moods = moods[:3] or ["Scenic Drive", "Hidden Gems", "Food"]
+    seen_place_ids: set[str] = set()
+    stops: list[dict[str, object]] = []
+    for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
+        for template in EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"]):
+            params = {
+                "query": template.format(city=title_city),
+                "key": api_key,
+            }
+            if city_lat and city_lng:
+                params["location"] = f"{city_lat},{city_lng}"
+                params["radius"] = "35000"
+            url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+            try:
+                payload = google_api_get(url)
+            except Exception:
+                continue
+            if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+                continue
+            for place in payload.get("results") or []:
+                if not isinstance(place, dict):
+                    continue
+                place_id = str(place.get("place_id") or "")
+                if not place_id or place_id in seen_place_ids:
+                    continue
+                seen_place_ids.add(place_id)
+                stop = google_place_to_stop(place, api_key, len(stops) + 1, mood, len(stops) == 4)
+                if stop:
+                    stops.append(stop)
+                if len(stops) >= 5:
+                    return stops
+    return stops
+
+
+def explorer_maps_loader() -> str:
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    if not api_key:
+        return '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=false;</script>'
+    escaped_key = html.escape(urllib.parse.quote(api_key, safe=""), quote=True)
+    return (
+        '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=true;</script>'
+        f'<script async defer src="https://maps.googleapis.com/maps/api/js?key={escaped_key}"></script>'
+    )
+
+
 def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool, city_lat: float = 0, city_lng: float = 0) -> dict[str, object]:
     mood_order = moods[:3] or ["Scenic Drive"]
     selected_moods = set(mood_order)
+    google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng)
     scored = []
     for stop in EXPLORER_DENVER_STOPS:
         score = len(selected_moods & stop["tags"])
@@ -1920,25 +2099,60 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
     title_mood = "Sunset" if "Sunset" in selected_moods else "Hidden Gem" if "Hidden Gems" in selected_moods else next(iter(selected_moods))
     title_city = city.split(",", 1)[0].strip() or "Denver"
     difficulty = 1 if duration == "2 Hours" else 2 if duration == "Half Day" else 3
-    payload_stops = [
-        {
-            "order": index + 1,
-            "name": stop["name"],
-            "lat": stop["lat"],
-            "lng": stop["lng"],
-            "xp_reward": stop["xp"],
-            "mission": stop["challenge"],
-            "challenge": stop["challenge"],
-            "tips": "Real Google Places details will connect in Sprint 2. For now, arrive safely, check in, and capture the moment.",
-            "reference_photo_url": "",
-            "is_secret": 1 if index == len(stops) - 1 else 0,
-            "locked": 1 if index == len(stops) - 1 else 0,
-        }
-        for index, stop in enumerate(stops)
-    ]
+    if len(google_stops) >= 3:
+        while len(google_stops) < 5:
+            fallback = EXPLORER_DENVER_STOPS[len(google_stops) % len(EXPLORER_DENVER_STOPS)]
+            google_stops.append(
+                {
+                    "order": len(google_stops) + 1,
+                    "name": fallback["name"],
+                    "lat": fallback["lat"],
+                    "lng": fallback["lng"],
+                    "xp_reward": fallback["xp"],
+                    "mission": fallback["challenge"],
+                    "challenge": fallback["challenge"],
+                    "tips": "Local fallback stop added because Google Places returned fewer route options.",
+                    "reference_photo_url": "",
+                    "is_secret": 1 if len(google_stops) == 4 else 0,
+                    "locked": 1 if len(google_stops) == 4 else 0,
+                    "place_id": "",
+                    "address": "",
+                    "rating": 0,
+                    "review_count": 0,
+                    "reviews": [],
+                    "google_url": "",
+                    "source": "LOCAL_FALLBACK",
+                }
+            )
+        payload_stops = google_stops[:5]
+    else:
+        payload_stops = [
+            {
+                "order": index + 1,
+                "name": stop["name"],
+                "lat": stop["lat"],
+                "lng": stop["lng"],
+                "xp_reward": stop["xp"],
+                "mission": stop["challenge"],
+                "challenge": stop["challenge"],
+                "tips": "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
+                "reference_photo_url": "",
+                "is_secret": 1 if index == len(stops) - 1 else 0,
+                "locked": 1 if index == len(stops) - 1 else 0,
+                "place_id": "",
+                "address": "",
+                "rating": 0,
+                "review_count": 0,
+                "reviews": [],
+                "google_url": "",
+                "source": "LOCAL",
+            }
+            for index, stop in enumerate(stops)
+        ]
+    total_xp = sum(int(stop["xp_reward"]) for stop in payload_stops) + (100 if fairfares_booked else 0)
     return {
-        "title": f"{title_city} {title_mood} Adventure",
-        "description": f"A {duration.lower()} {quest_type.lower()} route for {travel_with.lower()} travelers in {title_city}. Complete stops, unlock the mystery location, and collect XP.",
+        "title": f"{title_city} {title_mood} Explorer Quest",
+        "description": f"A {duration.lower()} {quest_type.lower()} route for {travel_with.lower()} travelers in {title_city}. Google Places details, reviews, photos, check-ins, and XP all flow through this quest.",
         "city": city,
         "city_lat": city_lat,
         "city_lng": city_lng,
@@ -1953,6 +2167,7 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
         "total_xp": total_xp,
         "stop_count": len(payload_stops),
         "fairfares_bonus": 100 if fairfares_booked else 0,
+        "source": "GOOGLE_PLACES" if len(google_stops) >= 3 else "LOCAL",
         "stops": payload_stops,
     }
 
@@ -1990,6 +2205,13 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
                 "is_secret": int(row_value(stop, "is_secret", 0) or 0),
                 "locked": int(row_value(stop, "locked", 0) or 0),
                 "completed": int(row_value(stop, "completed", 0) or 0),
+                "place_id": row_value(stop, "place_id"),
+                "address": row_value(stop, "address"),
+                "rating": float(row_value(stop, "rating", 0) or 0),
+                "review_count": int(row_value(stop, "review_count", 0) or 0),
+                "reviews": json.loads(row_value(stop, "reviews_json", "[]") or "[]"),
+                "google_url": row_value(stop, "google_url"),
+                "source": row_value(stop, "source", "LOCAL"),
             }
             for stop in stops
         ],
@@ -2028,8 +2250,8 @@ def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int
             con.execute(
                 """
                 INSERT INTO explorer_stops
-                (quest_id, stop_order, name, lat, lng, xp_reward, challenge, tips, reference_photo_url, is_secret, locked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (quest_id, stop_order, name, lat, lng, xp_reward, challenge, tips, reference_photo_url, is_secret, locked, place_id, address, rating, review_count, reviews_json, google_url, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     quest_id,
@@ -2043,6 +2265,13 @@ def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int
                     stop.get("reference_photo_url", ""),
                     stop.get("is_secret", 0),
                     stop.get("locked", stop.get("is_secret", 0)),
+                    stop.get("place_id", ""),
+                    stop.get("address", ""),
+                    stop.get("rating", 0),
+                    stop.get("review_count", 0),
+                    json.dumps(stop.get("reviews", [])),
+                    stop.get("google_url", ""),
+                    stop.get("source", "LOCAL"),
                 ),
             )
             stop["stop_id"] = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
@@ -3420,6 +3649,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path)
             return
+        if parsed.path == "/api/explorer/place-photo":
+            self.api_explorer_place_photo(parsed)
+            return
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
             return
@@ -3715,8 +3947,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             badges=escape(str(profile["badges"])),
             booked_checked="checked" if has_booking else "",
             exploring_checked="" if has_booking else "checked",
+            maps_loader=explorer_maps_loader(),
         )
         self.send_html(body)
+
+    def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult) -> None:
+        api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+        ref = (urllib.parse.parse_qs(parsed.query).get("ref") or [""])[0].strip()
+        if not api_key or not ref:
+            self.send_json({"ok": False, "message": "Place photo is not available."}, 404)
+            return
+        query = urllib.parse.urlencode({"maxwidth": "900", "photo_reference": ref, "key": api_key})
+        url = f"https://maps.googleapis.com/maps/api/place/photo?{query}"
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
+            with urllib.request.urlopen(request, timeout=8) as response:
+                body = response.read()
+                content_type = response.headers.get("Content-Type") or "image/jpeg"
+        except Exception:
+            self.send_json({"ok": False, "message": "Unable to load place photo."}, 502)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def create_explorer_quest(self) -> None:
         user = self.current_user()
