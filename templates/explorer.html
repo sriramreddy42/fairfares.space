@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explorer | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-1">
+  <script defer src="/static/js/app.js?v=explorer-1"></script>
+</head>
+<body class="explorer-screen">
+  <header class="top-brand">
+    <a class="logo-lockup" href="/"><img src="/static/img/logo-dark-header.png" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">map</span><strong>City Quests</strong><span>Routes & stops</span></div>
+      <div class="benefit-pill"><span class="circle-icon">xp</span><strong>Earn XP</strong><span>Badges & rewards</span></div>
+      <div class="benefit-pill"><span class="circle-icon">gem</span><strong>Hidden Gems</strong><span>Secret stops</span></div>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Book</a>
+      <a class="active" href="/explorer">Explorer</a>
+      <a href="/manage-booking">Profile</a>
+      <a href="/deals">Deals</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="explorer-page">
+    <section class="explorer-hero">
+      <div>
+        <p class="eyebrow">FairFares Explorer</p>
+        <h1>Rent a car. Pick your mood. Unlock an adventure.</h1>
+        <p>Explorer turns a booking into a city quest with hidden stops, check-ins, XP, badges, and memories worth sharing.</p>
+        <div class="explorer-profile-strip">
+          <span><b id="explorerLevel">$level</b>Level</span>
+          <span><b id="explorerXp">$xp</b>XP</span>
+          <span><b id="explorerTrips">$trips</b>Trips</span>
+          <span><b id="explorerBadges">$badges</b>Badges</span>
+        </div>
+      </div>
+      <img src="/static/img/fairfares-explorer-button.png" alt="FairFares Explorer adventure badge">
+    </section>
+
+    <section class="explorer-builder">
+      <form id="explorerForm" class="explorer-form">
+        <div class="explorer-step">
+          <small>Step 1</small>
+          <h2>Where are you exploring?</h2>
+          <div class="explorer-location-row">
+            <label><span>City</span><input name="city" id="explorerCity" value="Denver, Colorado" autocomplete="address-level2"></label>
+            <button type="button" class="light-button" id="detectExplorerLocation">Use My Location</button>
+          </div>
+          <p class="modify-status" id="explorerLocationStatus" aria-live="polite"></p>
+        </div>
+
+        <div class="explorer-step">
+          <small>Step 2</small>
+          <h2>Did you book through FairFares?</h2>
+          <div class="segmented-choice">
+            <label><input type="radio" name="fairfares_booked" value="yes" $booked_checked> Yes</label>
+            <label><input type="radio" name="fairfares_booked" value="no"> No</label>
+            <label><input type="radio" name="fairfares_booked" value="exploring" $exploring_checked> I'm just exploring</label>
+          </div>
+        </div>
+
+        <div class="explorer-step">
+          <small>Step 3</small>
+          <h2>What's today's vibe?</h2>
+          <p>Choose up to 3.</p>
+          <div class="mood-grid" id="moodGrid">
+            <label><input type="checkbox" name="moods" value="Food">Food</label>
+            <label><input type="checkbox" name="moods" value="Adventure">Adventure</label>
+            <label><input type="checkbox" name="moods" value="Nature">Nature</label>
+            <label><input type="checkbox" name="moods" value="Photography">Photography</label>
+            <label><input type="checkbox" name="moods" value="Date Night">Date Night</label>
+            <label><input type="checkbox" name="moods" value="Coffee">Coffee</label>
+            <label><input type="checkbox" name="moods" value="Scenic Drive">Scenic Drive</label>
+            <label><input type="checkbox" name="moods" value="Sunset">Sunset</label>
+            <label><input type="checkbox" name="moods" value="Hidden Gems">Hidden Gems</label>
+            <label><input type="checkbox" name="moods" value="Music">Music</label>
+            <label><input type="checkbox" name="moods" value="Shopping">Shopping</label>
+            <label><input type="checkbox" name="moods" value="Surprise Me">Surprise Me</label>
+          </div>
+        </div>
+
+        <div class="explorer-step explorer-preferences">
+          <label><span>How much time?</span><select name="duration"><option>2 Hours</option><option selected>Half Day</option><option>Full Day</option><option>Weekend</option></select></label>
+          <label><span>Budget</span><select name="budget"><option>$</option><option selected>$$</option><option>$$$</option></select></label>
+          <label><span>Traveling with</span><select name="travel_with"><option>Solo</option><option>Couple</option><option selected>Friends</option><option>Family</option></select></label>
+        </div>
+
+        <button class="select-button" type="submit">Generate Explorer Quest</button>
+      </form>
+
+      <aside class="explorer-side">
+        <h2>Explorer unlocks</h2>
+        <ul>
+          <li>FairFares booking bonus: +100 XP</li>
+          <li>Mystery stops unlock as you check in</li>
+          <li>Photo and story challenges earn XP</li>
+          <li>Badges build your Explorer profile</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="quest-output" id="questOutput" hidden>
+      <div class="quest-head">
+        <div>
+          <p class="eyebrow">Generated Quest</p>
+          <h2 id="questTitle">Denver Sunset Adventure</h2>
+          <p id="questMeta">5 stops · 4 hours · 36 miles · 250 XP</p>
+        </div>
+        <button type="button" class="light-button" id="resetQuest">Plan Another</button>
+      </div>
+      <div class="quest-map" id="questMap"></div>
+      <div class="quest-stops" id="questStops"></div>
+      <div class="quest-complete" id="questComplete" hidden>
+        <b>Adventure complete</b>
+        <span>Rate the route, share your favorite photo, and come back for your next city quest.</span>
+        <div class="quest-rating" aria-label="Rate this quest"><button type="button">1</button><button type="button">2</button><button type="button">3</button><button type="button">4</button><button type="button">5</button></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

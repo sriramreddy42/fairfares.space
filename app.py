@@ -906,6 +906,57 @@ def init_db() -> None:
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
 
+            CREATE TABLE IF NOT EXISTS explorer_profiles (
+                user_id INTEGER PRIMARY KEY,
+                xp INTEGER NOT NULL DEFAULT 0,
+                level INTEGER NOT NULL DEFAULT 1,
+                trips INTEGER NOT NULL DEFAULT 0,
+                badges INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS explorer_quests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                city TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                quest_type TEXT NOT NULL DEFAULT '',
+                duration TEXT NOT NULL DEFAULT '',
+                budget TEXT NOT NULL DEFAULT '',
+                travel_with TEXT NOT NULL DEFAULT '',
+                total_hours REAL NOT NULL DEFAULT 0,
+                total_miles REAL NOT NULL DEFAULT 0,
+                total_xp INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS explorer_stops (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quest_id INTEGER NOT NULL,
+                stop_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL DEFAULT 0,
+                lng REAL NOT NULL DEFAULT 0,
+                xp_reward INTEGER NOT NULL DEFAULT 0,
+                challenge TEXT NOT NULL DEFAULT '',
+                is_secret INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(quest_id) REFERENCES explorer_quests(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS explorer_checkins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                stop_id INTEGER NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(stop_id) REFERENCES explorer_stops(id)
+            );
+
             CREATE TABLE IF NOT EXISTS email_campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 campaign_date TEXT NOT NULL,
@@ -1716,6 +1767,118 @@ def referral_claim_modal(reward: sqlite3.Row | None) -> str:
     </div>
   </section>
 """
+
+
+EXPLORER_DENVER_STOPS = [
+    {
+        "name": "Union Station",
+        "lat": 39.7530,
+        "lng": -105.0008,
+        "tags": {"Food", "Coffee", "Photography", "Hidden Gems"},
+        "challenge": "Snap your starting point and write one line about the vibe.",
+        "xp": 25,
+    },
+    {
+        "name": "Confluence Park",
+        "lat": 39.7547,
+        "lng": -105.0087,
+        "tags": {"Nature", "Scenic Drive", "Photography"},
+        "challenge": "Check in near the water and capture a skyline angle.",
+        "xp": 35,
+    },
+    {
+        "name": "RiNo Art District",
+        "lat": 39.7690,
+        "lng": -104.9794,
+        "tags": {"Food", "Music", "Hidden Gems", "Photography"},
+        "challenge": "Find a mural and upload the most FairFares-looking shot.",
+        "xp": 40,
+    },
+    {
+        "name": "City Park Overlook",
+        "lat": 39.7475,
+        "lng": -104.9481,
+        "tags": {"Sunset", "Nature", "Date Night", "Photography"},
+        "challenge": "Capture the mountain line or sunset light.",
+        "xp": 50,
+    },
+    {
+        "name": "Red Rocks Trading Post",
+        "lat": 39.6654,
+        "lng": -105.2057,
+        "tags": {"Adventure", "Scenic Drive", "Music", "Sunset"},
+        "challenge": "Take one scenic photo and rate the drive.",
+        "xp": 60,
+    },
+    {
+        "name": "Lookout Mountain Pull-Off",
+        "lat": 39.7320,
+        "lng": -105.2399,
+        "tags": {"Adventure", "Nature", "Scenic Drive", "Hidden Gems", "Sunset"},
+        "challenge": "Pull over safely, capture the overlook, and rate the scenic drive.",
+        "xp": 75,
+    },
+]
+
+
+def get_explorer_profile(user_id: int | None) -> dict[str, int]:
+    if not user_id:
+        return {"xp": 0, "level": 1, "trips": 0, "badges": 0}
+    with db() as con:
+        profile = con.execute("SELECT * FROM explorer_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        if not profile:
+            con.execute("INSERT OR IGNORE INTO explorer_profiles (user_id) VALUES (?)", (user_id,))
+            profile = con.execute("SELECT * FROM explorer_profiles WHERE user_id = ?", (user_id,)).fetchone()
+    return {
+        "xp": int(profile["xp"] or 0),
+        "level": int(profile["level"] or 1),
+        "trips": int(profile["trips"] or 0),
+        "badges": int(profile["badges"] or 0),
+    }
+
+
+def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool) -> dict[str, object]:
+    selected_moods = set(moods[:3]) or {"Scenic Drive"}
+    scored = []
+    for stop in EXPLORER_DENVER_STOPS:
+        score = len(selected_moods & stop["tags"])
+        scored.append((score, stop))
+    scored.sort(key=lambda item: (-item[0], item[1]["name"]))
+    visible_stops = [item[1] for item in scored[:4]]
+    remaining_stops = [stop for stop in EXPLORER_DENVER_STOPS if stop not in visible_stops]
+    secret_stop = next((stop for stop in remaining_stops if "Hidden Gems" in stop["tags"]), remaining_stops[0] if remaining_stops else EXPLORER_DENVER_STOPS[-1])
+    stops = visible_stops + [secret_stop]
+    quest_type = " + ".join(list(selected_moods)[:2])
+    total_xp = sum(int(stop["xp"]) for stop in stops) + (100 if fairfares_booked else 0)
+    duration_hours = {"2 Hours": 2, "Half Day": 4, "Full Day": 8, "Weekend": 18}.get(duration, 4)
+    total_miles = 14 if duration == "2 Hours" else 36 if duration == "Half Day" else 72 if duration == "Full Day" else 140
+    title_mood = "Sunset" if "Sunset" in selected_moods else "Hidden Gem" if "Hidden Gems" in selected_moods else next(iter(selected_moods))
+    title_city = city.split(",", 1)[0].strip() or "Denver"
+    payload_stops = [
+        {
+            "order": index + 1,
+            "name": stop["name"],
+            "lat": stop["lat"],
+            "lng": stop["lng"],
+            "xp_reward": stop["xp"],
+            "challenge": stop["challenge"],
+            "is_secret": 1 if index == len(stops) - 1 else 0,
+        }
+        for index, stop in enumerate(stops)
+    ]
+    return {
+        "title": f"{title_city} {title_mood} Adventure",
+        "city": city,
+        "quest_type": quest_type,
+        "duration": duration,
+        "budget": budget,
+        "travel_with": travel_with,
+        "total_hours": duration_hours,
+        "total_miles": total_miles,
+        "total_xp": total_xp,
+        "fairfares_bonus": 100 if fairfares_booked else 0,
+        "stops": payload_stops,
+    }
 
 
 def get_admin_cars() -> list[sqlite3.Row]:
@@ -3069,6 +3232,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/": self.home,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
+            "/explorer": self.explorer_page,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
@@ -3108,6 +3272,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
             "/guest-booking": self.create_guest_booking,
+            "/explorer/quest": self.create_explorer_quest,
+            "/explorer/checkin": self.checkin_explorer_stop,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
             "/student-verification": self.update_student_verification,
@@ -3337,6 +3503,129 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             referral_claim_modal=referral_claim_modal(get_ready_referral_reward(user["id"]) if user else None),
         )
         self.send_html(body)
+
+    def explorer_page(self) -> None:
+        user = self.current_user()
+        profile = get_explorer_profile(user["id"] if user else None)
+        has_booking = bool(get_booking_for_user(user["id"])) if user else False
+        body = render_template(
+            "explorer.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            level=escape(str(profile["level"])),
+            xp=escape(str(profile["xp"])),
+            trips=escape(str(profile["trips"])),
+            badges=escape(str(profile["badges"])),
+            booked_checked="checked" if has_booking else "",
+            exploring_checked="" if has_booking else "checked",
+        )
+        self.send_html(body)
+
+    def create_explorer_quest(self) -> None:
+        user = self.current_user()
+        form = self.read_form()
+        moods = [item.strip() for item in form.get("moods", "").split(",") if item.strip()]
+        city = form.get("city", "Denver, Colorado") or "Denver, Colorado"
+        fairfares_booked = form.get("fairfares_booked") == "yes"
+        quest = generate_explorer_quest(
+            city,
+            moods,
+            form.get("duration", "Half Day"),
+            form.get("budget", "$$"),
+            form.get("travel_with", "Friends"),
+            fairfares_booked,
+        )
+        quest_id = None
+        if user:
+            with db() as con:
+                con.execute(
+                    """
+                    INSERT INTO explorer_quests
+                    (user_id, city, title, quest_type, duration, budget, travel_with, total_hours, total_miles, total_xp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user["id"],
+                        quest["city"],
+                        quest["title"],
+                        quest["quest_type"],
+                        quest["duration"],
+                        quest["budget"],
+                        quest["travel_with"],
+                        quest["total_hours"],
+                        quest["total_miles"],
+                        quest["total_xp"],
+                    ),
+                )
+                quest_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                for stop in quest["stops"]:
+                    con.execute(
+                        """
+                        INSERT INTO explorer_stops
+                        (quest_id, stop_order, name, lat, lng, xp_reward, challenge, is_secret)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            quest_id,
+                            stop["order"],
+                            stop["name"],
+                            stop["lat"],
+                            stop["lng"],
+                            stop["xp_reward"],
+                            stop["challenge"],
+                            stop["is_secret"],
+                        ),
+                    )
+                    stop["stop_id"] = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                if fairfares_booked:
+                    con.execute(
+                        """
+                        INSERT INTO explorer_profiles (user_id, xp, level, trips, badges)
+                        VALUES (?, 100, 1, 0, 1)
+                        ON CONFLICT(user_id) DO UPDATE SET
+                            xp = xp + 100,
+                            level = MAX(1, ((xp + 100) / 250) + 1),
+                            badges = MAX(badges, 1),
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (user["id"],),
+                    )
+        quest["quest_id"] = quest_id
+        self.send_json({"ok": True, "quest": quest})
+
+    def checkin_explorer_stop(self) -> None:
+        user = self.current_user()
+        form = self.read_form()
+        try:
+            stop_id = int(form.get("stop_id", "0"))
+        except ValueError:
+            stop_id = 0
+        if not user or not stop_id:
+            self.send_json({"ok": True, "message": "Guest check-in saved locally.", "xp": 20})
+            return
+        with db() as con:
+            stop = con.execute("SELECT * FROM explorer_stops WHERE id = ?", (stop_id,)).fetchone()
+            if not stop:
+                self.send_json({"ok": False, "message": "Explorer stop not found."}, 404)
+                return
+            con.execute("UPDATE explorer_stops SET completed = 1 WHERE id = ?", (stop_id,))
+            con.execute(
+                "INSERT INTO explorer_checkins (user_id, stop_id) VALUES (?, ?)",
+                (user["id"], stop_id),
+            )
+            earned = int(stop["xp_reward"] or 20)
+            con.execute(
+                """
+                INSERT INTO explorer_profiles (user_id, xp, level, trips, badges)
+                VALUES (?, ?, 1, 0, 1)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    xp = xp + ?,
+                    level = MAX(1, ((xp + ?) / 250) + 1),
+                    badges = MAX(badges, CASE WHEN xp + ? >= 250 THEN 2 ELSE badges END),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user["id"], earned, earned, earned, earned),
+            )
+        self.send_json({"ok": True, "message": f"Check-in complete. +{earned} XP", "xp": earned})
 
     def deals_page(self, code: str = "", message: str = "") -> None:
         user = self.current_user()

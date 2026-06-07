@@ -41,6 +41,21 @@ const guestOfferModal = document.getElementById("guestOfferModal");
 const bookingReferralModal = document.getElementById("bookingReferralModal");
 const referralClaimModal = document.getElementById("referralClaimModal");
 
+const explorerForm = document.getElementById("explorerForm");
+const moodGrid = document.getElementById("moodGrid");
+const questOutput = document.getElementById("questOutput");
+const questTitle = document.getElementById("questTitle");
+const questMeta = document.getElementById("questMeta");
+const questMap = document.getElementById("questMap");
+const questStops = document.getElementById("questStops");
+const questComplete = document.getElementById("questComplete");
+const explorerXp = document.getElementById("explorerXp");
+const explorerLevel = document.getElementById("explorerLevel");
+const explorerBadges = document.getElementById("explorerBadges");
+const detectExplorerLocation = document.getElementById("detectExplorerLocation");
+const explorerCity = document.getElementById("explorerCity");
+const explorerLocationStatus = document.getElementById("explorerLocationStatus");
+
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
   guestOfferModal.dataset.nextHref = nextHref;
@@ -856,6 +871,129 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
     .catch((payload) => {
       document.getElementById("studentStatus").textContent = payload?.message || "Sign in to update student verification.";
     });
+});
+
+function selectedExplorerMoods() {
+  return [...document.querySelectorAll("#moodGrid input[name='moods']:checked")].map((input) => input.value);
+}
+
+moodGrid?.addEventListener("change", (event) => {
+  const moods = selectedExplorerMoods();
+  if (moods.length > 3 && event.target?.checked) {
+    event.target.checked = false;
+  }
+});
+
+detectExplorerLocation?.addEventListener("click", () => {
+  if (!navigator.geolocation) {
+    explorerLocationStatus.textContent = "Location is not available in this browser. Enter your city instead.";
+    return;
+  }
+  explorerLocationStatus.textContent = "Checking location...";
+  navigator.geolocation.getCurrentPosition(
+    () => {
+      if (explorerCity) explorerCity.value = "Denver, Colorado";
+      explorerLocationStatus.textContent = "Location detected near Denver. You can change it anytime.";
+    },
+    () => {
+      explorerLocationStatus.textContent = "Permission denied. Enter a city to keep exploring.";
+    },
+    { enableHighAccuracy: false, timeout: 6000 },
+  );
+});
+
+function explorerProfileValue(node) {
+  return Number(node?.textContent || 0) || 0;
+}
+
+function updateExplorerProfile(xpEarned) {
+  if (!explorerXp || !xpEarned) return;
+  const xp = explorerProfileValue(explorerXp) + xpEarned;
+  explorerXp.textContent = String(xp);
+  if (explorerLevel) explorerLevel.textContent = String(Math.max(1, Math.floor(xp / 250) + 1));
+  if (explorerBadges && xp >= 250) explorerBadges.textContent = String(Math.max(2, explorerProfileValue(explorerBadges)));
+}
+
+function renderExplorerQuest(quest) {
+  if (!questOutput || !questStops || !questMap) return;
+  questOutput.hidden = false;
+  if (questTitle) questTitle.textContent = quest.title;
+  if (questMeta) questMeta.textContent = `${quest.stops.length} stops · ${quest.total_hours} hours · ${quest.total_miles} miles · ${quest.total_xp} XP`;
+  questMap.innerHTML = quest.stops.map((stop, index) => `
+    <span class="${stop.is_secret ? "is-secret" : ""}">
+      ${stop.is_secret ? "?" : index + 1}
+    </span>
+  `).join("");
+  questStops.innerHTML = quest.stops.map((stop, index) => {
+    const stopName = escapeHtml(stop.name);
+    const stopChallenge = escapeHtml(stop.challenge);
+    return `
+    <article class="quest-stop ${stop.is_secret ? "is-locked" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}">
+      <div class="quest-stop-order">${stop.is_secret ? "?" : index + 1}</div>
+      <div>
+        <small>${stop.is_secret ? "Mystery Stop" : `Stop ${index + 1}`}</small>
+        <h3>${stop.is_secret ? "Unlock after previous stop" : stopName}</h3>
+        <p>${stop.is_secret ? "Complete the earlier stops to reveal this hidden gem." : stopChallenge}</p>
+        <span>${stop.xp_reward} XP</span>
+      </div>
+      <button type="button" ${stop.is_secret ? "disabled" : ""}>Check In</button>
+    </article>
+  `;
+  }).join("");
+  questOutput.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+explorerForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const formData = new FormData(explorerForm);
+  const payload = new URLSearchParams(formData);
+  payload.set("moods", selectedExplorerMoods().join(","));
+  fetch("/explorer/quest", {
+    method: "POST",
+    body: payload,
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((body) => Promise.reject(body)))
+    .then((payload) => {
+      renderExplorerQuest(payload.quest);
+      updateExplorerProfile(Number(payload.quest?.fairfares_bonus || 0));
+    })
+    .catch(() => {
+      if (questOutput) questOutput.hidden = true;
+    });
+});
+
+questStops?.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button || button.disabled) return;
+  const stop = button.closest(".quest-stop");
+  stop.classList.add("is-complete");
+  button.textContent = "Checked In";
+  button.disabled = true;
+  const next = stop.nextElementSibling;
+  if (next?.classList.contains("is-locked")) {
+    next.classList.remove("is-locked");
+    next.querySelector(".quest-stop-order").textContent = Number(next.dataset.stopIndex || 0) + 1;
+    next.querySelector("small").textContent = `Stop ${Number(next.dataset.stopIndex || 0) + 1}`;
+    next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
+    next.querySelector("p").textContent = next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.";
+    next.querySelector("button").disabled = false;
+  }
+  const xp = Number(stop.querySelector("span")?.textContent?.match(/\d+/)?.[0] || 20);
+  updateExplorerProfile(xp);
+  const stopId = stop.dataset.stopId || "";
+  if (stopId) {
+    fetch("/explorer/checkin", {
+      method: "POST",
+      body: new URLSearchParams({ stop_id: stopId }),
+    }).catch(() => {});
+  }
+  const remaining = [...questStops.querySelectorAll(".quest-stop button")].some((item) => !item.disabled);
+  if (!remaining && questComplete) questComplete.hidden = false;
+});
+
+document.getElementById("resetQuest")?.addEventListener("click", () => {
+  if (questOutput) questOutput.hidden = true;
+  if (questComplete) questComplete.hidden = true;
 });
 
 const tripFilterButtons = [...document.querySelectorAll("[data-trip-filter]")];

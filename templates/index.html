@@ -18,7 +18,8 @@
   <nav class="main-nav">
     <div class="nav-links">
       <a class="active" href="/">Book</a>
-      <a href="/manage-booking">Manage Booking</a>
+      <a href="/explorer">Explorer</a>
+      <a href="/manage-booking">Profile</a>
       <a href="/buy-cars">Buy Cars</a>
       <a href="/deals">Deals</a>
     </div>
@@ -60,6 +61,10 @@
           <input id="discountCode" placeholder="Enter code">
           <small class="discount-message" id="discountMessage" aria-live="polite"></small>
         </label>
+        <a class="explorer-inline-button" href="/explorer" aria-label="Open FairFares Explorer">
+          <img src="/static/img/fairfares-explorer-button.png" alt="">
+          <span>Explorer</span>
+        </a>
         <div class="rental-estimate" aria-live="polite">
           <span>Rental length</span>
           <b id="rentalLengthLabel">10 days</b>
