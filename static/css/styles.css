@@ -1307,22 +1307,40 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   gap: 16px;
   padding: 18px;
 }
+.pickup-record[open] {
+  background: #fff;
+}
 .pickup-record-head {
   align-items: center;
+  cursor: pointer;
   display: flex;
   gap: 14px;
   justify-content: space-between;
+  list-style: none;
+}
+.pickup-record-head::-webkit-details-marker {
+  display: none;
 }
 .pickup-record-head h2 {
   color: var(--navy);
   font-size: 1.05rem;
   margin: 0 0 4px;
 }
+.pickup-record-head h2 span {
+  background: #eaf8ee;
+  border-radius: 999px;
+  color: #2e7d32;
+  display: inline-block;
+  font-size: 0.72rem;
+  margin-left: 8px;
+  padding: 4px 8px;
+}
 .pickup-record-head p {
   color: var(--muted);
   margin: 0;
 }
-.pickup-record-head button {
+.pickup-record-head > b,
+.secondary-print-button {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1460,6 +1478,27 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   grid-column: 1 / -1;
   min-height: 46px;
 }
+.agreement-print-area {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+.agreement-print-area label {
+  display: grid;
+  gap: 6px;
+}
+.signature-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pickup-form .secondary-print-button {
+  background: #fff;
+  color: var(--navy);
+  grid-column: 1 / -1;
+}
 .admin-empty {
   background: #fff;
   border: 1px solid var(--line);
@@ -1555,7 +1594,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .admin-hero,
   .admin-search,
   .pickup-record:not(.is-printing),
-  .pickup-record-head button {
+  .pickup-record.is-printing > :not(.pickup-form),
+  .pickup-record.is-printing .pickup-form > :not(.agreement-print-area),
+  .secondary-print-button {
     display: none !important;
   }
   body,
@@ -1567,6 +1608,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
   .pickup-record {
     border: 0;
+  }
+  .agreement-print-area {
+    border: 0;
+    padding: 0;
+  }
+  .agreement-print-area textarea {
+    border: 0;
+    min-height: 90vh;
   }
 }
 
@@ -3512,6 +3561,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     flex-direction: column;
   }
   .pickup-form {
+    grid-template-columns: 1fr;
+  }
+  .signature-row {
     grid-template-columns: 1fr;
   }
   .agreement-builder {

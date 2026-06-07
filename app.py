@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import os
 import secrets
 import smtplib
@@ -774,6 +775,7 @@ def init_db() -> None:
                 preferred_contact TEXT NOT NULL,
                 message TEXT NOT NULL DEFAULT '',
                 urgent INTEGER NOT NULL DEFAULT 0,
+                priority TEXT NOT NULL DEFAULT 'P3',
                 status TEXT NOT NULL DEFAULT 'OPEN',
                 claimed_by TEXT NOT NULL DEFAULT '',
                 admin_comment TEXT NOT NULL DEFAULT '',
@@ -896,6 +898,24 @@ def init_db() -> None:
         ensure_column(con, "bookings", "additional_driver_name", "additional_driver_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "additional_driver_age", "additional_driver_age TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "saved_by_user", "saved_by_user INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "actual_pickup_date", "actual_pickup_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "actual_pickup_time", "actual_pickup_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "actual_return_date", "actual_return_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "actual_return_time", "actual_return_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "late_fee_amount", "late_fee_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "late_fee_note", "late_fee_note TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "price_match_agency", "price_match_agency TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "price_match_amount", "price_match_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "price_match_discount_amount", "price_match_discount_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "price_match_original_total", "price_match_original_total REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "pickup_front_image", "pickup_front_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_back_image", "pickup_back_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_left_image", "pickup_left_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_right_image", "pickup_right_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_front_image", "return_front_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_back_image", "return_back_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_left_image", "return_left_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_right_image", "return_right_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
@@ -903,6 +923,7 @@ def init_db() -> None:
         ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "support_tickets", "priority", "priority TEXT NOT NULL DEFAULT 'P3'")
         ensure_column(con, "email_campaigns", "sent_at", "sent_at TEXT")
         ensure_column(con, "email_campaigns", "sent_count", "sent_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "email_campaigns", "last_delivery_status", "last_delivery_status TEXT NOT NULL DEFAULT ''")
@@ -1542,7 +1563,7 @@ def get_admin_bookings() -> list[sqlite3.Row]:
                    users.address, users.date_of_birth,
                    cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
                    cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
-                   cars.color AS car_color, cars.license_plate, cars.vin_number, cars.status AS car_status
+                   cars.color AS car_color, cars.daily_price, cars.license_plate, cars.vin_number, cars.status AS car_status
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
@@ -1929,6 +1950,51 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
             """,
             (car_id,),
         ).fetchone()
+
+
+def booking_datetime_from_row(row: sqlite3.Row, date_key: str, time_key: str) -> datetime | None:
+    return parse_booking_datetime(row_value(row, date_key), row_value(row, time_key))
+
+
+def calculate_late_fee(row: sqlite3.Row, actual_return_date: str, actual_return_time: str) -> tuple[float, str]:
+    scheduled_return = booking_datetime_from_row(row, "dropoff_date", "dropoff_time")
+    actual_return = parse_booking_datetime(actual_return_date, actual_return_time)
+    if not scheduled_return or not actual_return or actual_return <= scheduled_return:
+        return 0.0, ""
+    late_hours = math.ceil((actual_return - scheduled_return).total_seconds() / 3600)
+    hourly_rate = max(0.0, float(row_value(row, "daily_price") or 0) / 24)
+    fee = round(late_hours * hourly_rate, 2)
+    note = f"{late_hours} hour(s) late at {format_money(hourly_rate)}/hour based on the daily rate."
+    return fee, note
+
+
+def make_cancellation_task(
+    con: sqlite3.Connection,
+    booking: sqlite3.Row,
+    user: sqlite3.Row,
+    reason: str,
+    auto_cancelled: bool,
+) -> str:
+    ticket_id = make_ticket_id()
+    while con.execute("SELECT 1 FROM support_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone():
+        ticket_id = make_ticket_id()
+    mode = "Auto-cancelled before the 24-hour pickup cutoff." if auto_cancelled else "Admin cancellation review required."
+    message = (
+        f"{mode}\n"
+        f"Booking: {booking['booking_id']}\n"
+        f"Customer: {user['name']} · {user['email']} · {user['phone'] or 'No phone'}\n"
+        f"Pickup: {booking['pickup_date']} {booking['pickup_time']}\n"
+        f"Reason: {reason}"
+    )
+    con.execute(
+        """
+        INSERT INTO support_tickets
+        (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority)
+        VALUES (?, ?, ?, 'Cancellation request', 'Email', ?, 0, 'P3')
+        """,
+        (ticket_id, booking["id"], user["id"], message),
+    )
+    return ticket_id
 
 
 def create_booking_for_user(
@@ -2379,6 +2445,21 @@ def vehicle_model(row: sqlite3.Row) -> str:
 
 
 def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str:
+    price_match_agency = row_value(row, "price_match_agency")
+    price_match_amount = float(row_value(row, "price_match_amount") or 0)
+    price_match_discount = float(row_value(row, "price_match_discount_amount") or 0)
+    price_match_original = float(row_value(row, "price_match_original_total") or row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
+    late_fee = float(row_value(row, "late_fee_amount") or 0)
+    price_match_line = (
+        f"Price match: {price_match_agency} quote matched at {format_money(price_match_amount)}; additional 10% FairFares discount {format_money(price_match_discount)}; original FairFares total before match {format_money(price_match_original)}."
+        if price_match_agency and price_match_amount
+        else "Price match: None submitted."
+    )
+    late_fee_line = (
+        f"Late return charge: {format_money(late_fee)} ({row_value(row, 'late_fee_note')})."
+        if late_fee
+        else "Late return charge: None."
+    )
     return f"""SHORT TERM VEHICLE RENTAL AGREEMENT
 
 This agreement is entered into this day, {values.get('agreement_date', '')} between
@@ -2417,6 +2498,8 @@ Purpose: Personal Use Only
 A refundable security deposit shall be paid in the amount of ${values.get('security_deposit', '250.00')}.
 Rental subtotal: {format_money(row_value(row, 'subtotal_price') or row_value(row, 'total_price'))}
 Discount applied: {row_value(row, 'discount_code') or 'None'} - {format_money(row_value(row, 'discount_amount'))}
+{price_match_line}
+{late_fee_line}
 Final total due: {format_money(row_value(row, 'total_price'))}
 FairFares price promise: Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.
 
@@ -3342,24 +3425,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         note = form.get("note", "")
         if note:
             reason = f"{reason}: {note}"
+        pickup_at = booking_datetime_from_row(booking, "pickup_date", "pickup_time")
+        auto_cancel = bool(pickup_at and pickup_at - datetime.now() >= timedelta(hours=24))
+        next_status = "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED"
+        next_payment_status = "REFUND_REVIEW" if booking["payment_status"] == "PAID" else booking["payment_status"]
         with db() as con:
             con.execute(
                 """
                 UPDATE bookings
-                SET booking_status = 'CANCELLATION_REQUESTED',
-                    status = 'CANCELLATION_REQUESTED',
-                    payment_status = CASE WHEN payment_status = 'PAID' THEN 'REFUND_REVIEW' ELSE payment_status END,
+                SET booking_status = ?,
+                    status = ?,
+                    payment_status = ?,
                     cancellation_reason = ?
                 WHERE id = ? AND user_id = ?
                 """,
-                (reason, booking["id"], user["id"]),
+                (next_status, next_status, next_payment_status, reason, booking["id"], user["id"]),
             )
+            if auto_cancel:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+            ticket_id = make_cancellation_task(con, booking, user, reason, auto_cancel)
         self.send_json({
             "ok": True,
-            "message": "Cancellation request sent to admin for approval.",
-            "booking_status": "CANCELLATION_REQUESTED",
-            "status_label": booking_status_label("CANCELLATION_REQUESTED"),
-            "status_class": booking_status_class("CANCELLATION_REQUESTED"),
+            "message": (
+                f"Booking cancelled automatically. Task {ticket_id} was created for admin refund follow-up."
+                if auto_cancel
+                else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
+            ),
+            "booking_status": next_status,
+            "status_label": booking_status_label(next_status, next_payment_status),
+            "status_class": booking_status_class(next_status),
         })
 
     def save_current_booking(self) -> None:
@@ -3597,9 +3691,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to update student verification."}, 401)
             return
         form = self.read_form()
-        student_email = form.get("student_email", "")
+        student_email = form.get("student_email", "").strip().lower()
         student_id = form.get("student_id", "")
-        verified = 1 if "@" in student_email and len(student_id) >= 4 else 0
+        verified = 1 if student_email.endswith(".edu") and len(student_id) >= 4 else 0
         with db() as con:
             con.execute(
                 """
@@ -3611,7 +3705,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (student_email, student_id, verified, user["id"]),
             )
-        message = "Student verification saved. Discount applied." if verified else "Add a valid student email and student ID."
+        message = "Student verification saved. Student discount applied." if verified else "Use a valid .edu student email and student ID."
         self.send_json({
             "ok": bool(verified),
             "message": message,
@@ -3954,10 +4048,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["year"] or "-")}</td>
             <td>{escape(row["type"] or row["category"])}</td>
             <td>{escape(row["fuel_type"])}</td>
-            <td>{escape(row["location"])}</td>
-            <td>${row["daily_price"]:.2f}</td>
+            <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle location"></td>
+            <td><input form="car-update-{row["id"]}" name="daily_price" type="number" step="0.01" value="{row["daily_price"]:.2f}" aria-label="Daily price"></td>
             <td>
-                <form method="post" action="/admin/cars/status" class="inline-form">
+                <form id="car-update-{row["id"]}" method="post" action="/admin/cars/status" class="inline-form">
                     <input type="hidden" name="car_id" value="{row["id"]}">
                     <select name="status">{status_options}</select>
                     <button type="submit">Update</button>
@@ -4071,21 +4165,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         agreement_fields = render_agreement_fields(agreement_values)
         front_scan = license_row["front_image_url"] if license_row else ""
         back_scan = license_row["back_image_url"] if license_row else ""
+        insurance_scan = insurance["document_url"] if insurance else ""
+        actual_pickup_date = row["actual_pickup_date"] or display_date_to_input(row["pickup_date"], "")
+        actual_return_date = row["actual_return_date"] or display_date_to_input(row["dropoff_date"], "")
+        actual_pickup_time = row["actual_pickup_time"] or row["pickup_time"]
+        actual_return_time = row["actual_return_time"] or row["dropoff_time"]
+        status_summary = booking_status_label(row["booking_status"], row["payment_status"])
+
+        def capture_field(name: str, label: str, value: str, saved_copy: str = "Photo saved") -> str:
+            legacy_dl_attr = ""
+            if name == "front_image_url":
+                legacy_dl_attr = ' data-dl-camera="front"'
+            elif name == "back_image_url":
+                legacy_dl_attr = ' data-dl-camera="back"'
+            return (
+                f'<label class="dl-capture-field"><span>{escape(label)}</span>'
+                f'<input type="file" accept="image/*" capture="environment" data-photo-capture="{escape(name)}"{legacy_dl_attr}>'
+                f'<input type="hidden" name="{escape(name)}" value="{escape(value or "")}">'
+                f'<small>{escape(saved_copy if value else "Take picture or choose photo")}</small></label>'
+            )
+
         return f"""
-        <article class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
-            <div class="pickup-record-head">
+        <details class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
+            <summary class="pickup-record-head">
                 <div>
-                    <h2>{escape(row["booking_id"])} · {escape(row["user_name"])}</h2>
+                    <h2>{escape(row["booking_id"])} · {escape(row["user_name"])} <span>{escape(status_summary)}</span></h2>
                     <p>{escape(row["user_email"])} · {escape(row["car_name"])} · {escape(row["pickup_date"])} to {escape(row["dropoff_date"])}</p>
                 </div>
-                <button type="button" data-print-record>Print Agreement</button>
-            </div>
+                <b>Open pickup / return file</b>
+            </summary>
             <div class="pickup-status-grid">
                 <span><b>DL</b>{escape(license_row["verification_status"] if license_row else "Not captured")}</span>
                 <span><b>Insurance</b>{escape(insurance["insurance_provider"] if insurance else "Not captured")}</span>
                 <span><b>Payment</b>{escape(transaction["transaction_status"] if transaction else row["payment_status"])}</span>
                 <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
                 <span><b>Total</b>{escape(format_money(row["total_price"]))}</span>
+                <span><b>Late fee</b>{escape(format_money(row["late_fee_amount"])) if row["late_fee_amount"] else "None"}</span>
                 <span><b>Agreement</b>{escape("Signed" if agreement and agreement["signature_text"] else "Pending")}</span>
             </div>
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
@@ -4098,14 +4213,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <label><span>DL Number</span><input name="license_number" value="{escape(license_row["license_number"] if license_row else "")}" placeholder="Scan or enter DL"></label>
                 <label><span>DL State</span><input name="license_state" value="{escape(license_row["state"] if license_row else "CO")}"></label>
                 <label><span>DL Expiry</span><input name="license_expiry" type="date" value="{escape(license_row["expiry_date"] if license_row else "2028-12-31")}"></label>
-                <label class="dl-capture-field"><span>DL Front Picture</span><input type="file" accept="image/*" capture="environment" data-dl-camera="front"><input type="hidden" name="front_image_url" value="{escape(front_scan)}"><small>{'Front image saved' if front_scan else 'Take picture or choose photo'}</small></label>
-                <label class="dl-capture-field"><span>DL Back Picture</span><input type="file" accept="image/*" capture="environment" data-dl-camera="back"><input type="hidden" name="back_image_url" value="{escape(back_scan)}"><small>{'Back image saved' if back_scan else 'Take picture or choose photo'}</small></label>
+                {capture_field("front_image_url", "DL Front Picture", front_scan, "Front image saved")}
+                {capture_field("back_image_url", "DL Back Picture", back_scan, "Back image saved")}
                 <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
                 <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
                 <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
-                <label><span>Insurance Scan URL/Path</span><input name="insurance_document_url" value="{escape(insurance["document_url"] if insurance else "")}" placeholder="Insurance file URL or scan path"></label>
+                {capture_field("insurance_document_url", "Insurance Scan", insurance_scan, "Insurance image saved")}
                 <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
                 <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
+                <label><span>Actual Pickup Date</span><input name="actual_pickup_date" type="date" value="{escape(actual_pickup_date)}"></label>
+                <label><span>Actual Pickup Time</span><select name="actual_pickup_time">{time_select_options(actual_pickup_time)}</select></label>
+                <label><span>Actual Return Date</span><input name="actual_return_date" type="date" value="{escape(actual_return_date)}"></label>
+                <label><span>Actual Return Time</span><select name="actual_return_time">{time_select_options(actual_return_time)}</select></label>
+                <label><span>Price Match Agency</span><input name="price_match_agency" value="{escape(row["price_match_agency"])}" placeholder="Avis, Enterprise, Hertz"></label>
+                <label><span>Matched Quote Total</span><input name="price_match_amount" type="number" step="0.01" value="{escape(row["price_match_amount"] or "")}" placeholder="Lower quote total"></label>
+                {capture_field("pickup_front_image", "Pickup Front Picture", row["pickup_front_image"])}
+                {capture_field("pickup_back_image", "Pickup Back Picture", row["pickup_back_image"])}
+                {capture_field("pickup_left_image", "Pickup Left Side", row["pickup_left_image"])}
+                {capture_field("pickup_right_image", "Pickup Right Side", row["pickup_right_image"])}
+                {capture_field("return_front_image", "Return Front Picture", row["return_front_image"])}
+                {capture_field("return_back_image", "Return Back Picture", row["return_back_image"])}
+                {capture_field("return_left_image", "Return Left Side", row["return_left_image"])}
+                {capture_field("return_right_image", "Return Right Side", row["return_right_image"])}
                 <div class="agreement-builder wide-field">
                     <div class="agreement-builder-head">
                         <div>
@@ -4115,12 +4244,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <div class="agreement-field-grid">{agreement_fields}</div>
                 </div>
-                <label class="wide-field"><span>Generated Agreement Text</span><textarea name="agreement_text" rows="12">{escape(agreement_text)}</textarea></label>
-                <label><span>Signer Name</span><input name="signer_name" value="{escape(agreement["signer_name"] if agreement else row["user_name"])}"></label>
-                <label><span>Signature</span><input name="signature_text" value="{escape(agreement["signature_text"] if agreement else "")}" placeholder="Typed signature"></label>
+                <div class="agreement-print-area wide-field">
+                    <label><span>Generated Agreement Text</span><textarea name="agreement_text" rows="12">{escape(agreement_text)}</textarea></label>
+                    <div class="signature-row">
+                        <label><span>Signer Name</span><input name="signer_name" value="{escape(agreement["signer_name"] if agreement else row["user_name"])}"></label>
+                        <label><span>Signature</span><input name="signature_text" value="{escape(agreement["signature_text"] if agreement else "")}" placeholder="Typed signature"></label>
+                    </div>
+                    <button class="secondary-print-button" type="button" data-print-record>Print Agreement</button>
+                </div>
                 <button type="submit">Save User Pickup Data</button>
             </form>
-        </article>
+        </details>
         """
 
     def render_discount_row(self, row: sqlite3.Row) -> str:
@@ -4237,8 +4371,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         status = form.get("status", "AVAILABLE")
         if status not in {"AVAILABLE", "BOOKED", "MAINTENANCE"}:
             status = "AVAILABLE"
+        try:
+            daily_price = max(0.0, float(form.get("daily_price") or 0))
+        except ValueError:
+            daily_price = 0.0
+        location = form.get("location", "").strip()
         with db() as con:
-            con.execute("UPDATE cars SET status = ? WHERE id = ?", (status, form.get("car_id")))
+            current = con.execute("SELECT daily_price, location FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            con.execute(
+                "UPDATE cars SET status = ?, daily_price = ?, location = ? WHERE id = ?",
+                (
+                    status,
+                    daily_price or (current["daily_price"] if current else 0),
+                    location or (current["location"] if current else "Denver International Airport (DEN)"),
+                    form.get("car_id"),
+                ),
+            )
         self.redirect("/admin")
 
     def delete_admin_car(self) -> None:
@@ -4612,6 +4760,76 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         float(form.get("insurance_price") or 0),
                     ),
                 )
+            booking_for_fees = con.execute(
+                """
+                SELECT bookings.*, cars.daily_price
+                FROM bookings
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (booking_id,),
+            ).fetchone()
+            late_fee_amount, late_fee_note = calculate_late_fee(
+                booking_for_fees,
+                form.get("actual_return_date", ""),
+                form.get("actual_return_time", ""),
+            ) if booking_for_fees else (0.0, "")
+            try:
+                matched_total = max(0.0, float(form.get("price_match_amount") or 0))
+            except ValueError:
+                matched_total = 0.0
+            original_total = float(row_value(booking_for_fees, "price_match_original_total") or 0) if booking_for_fees else 0.0
+            if not original_total and booking_for_fees:
+                original_total = max(0.0, float(booking_for_fees["total_price"] or 0) - float(booking_for_fees["late_fee_amount"] or 0))
+            price_match_discount = round(matched_total * 0.10, 2) if matched_total else 0.0
+            revised_total = round((matched_total - price_match_discount if matched_total else original_total) + late_fee_amount, 2)
+            con.execute(
+                """
+                UPDATE bookings
+                SET actual_pickup_date = ?,
+                    actual_pickup_time = ?,
+                    actual_return_date = ?,
+                    actual_return_time = ?,
+                    late_fee_amount = ?,
+                    late_fee_note = ?,
+                    price_match_agency = ?,
+                    price_match_amount = ?,
+                    price_match_discount_amount = ?,
+                    price_match_original_total = ?,
+                    total_price = ?,
+                    pickup_front_image = ?,
+                    pickup_back_image = ?,
+                    pickup_left_image = ?,
+                    pickup_right_image = ?,
+                    return_front_image = ?,
+                    return_back_image = ?,
+                    return_left_image = ?,
+                    return_right_image = ?
+                WHERE id = ?
+                """,
+                (
+                    form.get("actual_pickup_date", ""),
+                    form.get("actual_pickup_time", ""),
+                    form.get("actual_return_date", ""),
+                    form.get("actual_return_time", ""),
+                    late_fee_amount,
+                    late_fee_note,
+                    form.get("price_match_agency", ""),
+                    matched_total,
+                    price_match_discount,
+                    original_total,
+                    revised_total,
+                    form.get("pickup_front_image", ""),
+                    form.get("pickup_back_image", ""),
+                    form.get("pickup_left_image", ""),
+                    form.get("pickup_right_image", ""),
+                    form.get("return_front_image", ""),
+                    form.get("return_back_image", ""),
+                    form.get("return_left_image", ""),
+                    form.get("return_right_image", ""),
+                    booking_id,
+                ),
+            )
             if form.get("payment_method"):
                 invoice_number = f"INV-{secrets.randbelow(900000) + 100000}"
                 amount = con.execute("SELECT total_price FROM bookings WHERE id = ?", (booking_id,)).fetchone()
@@ -4632,7 +4850,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        users.address, users.date_of_birth,
                        cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
                        cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
-                       cars.color AS car_color, cars.license_plate, cars.vin_number
+                       cars.color AS car_color, cars.daily_price, cars.license_plate, cars.vin_number
                 FROM bookings
                 JOIN users ON users.id = bookings.user_id
                 JOIN cars ON cars.id = bookings.car_id

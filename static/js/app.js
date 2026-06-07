@@ -1238,7 +1238,7 @@ document.querySelectorAll("[data-print-record]").forEach((button) => {
   });
 });
 
-document.querySelectorAll("[data-dl-camera]").forEach((input) => {
+document.querySelectorAll("[data-dl-camera], [data-photo-capture]").forEach((input) => {
   input.addEventListener("change", () => {
     const file = input.files?.[0];
     const field = input.closest(".dl-capture-field");
