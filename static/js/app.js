@@ -43,6 +43,7 @@ const referralClaimModal = document.getElementById("referralClaimModal");
 
 const explorerForm = document.getElementById("explorerForm");
 const moodGrid = document.getElementById("moodGrid");
+const explorerMoodHelper = document.getElementById("explorerMoodHelper");
 const questOutput = document.getElementById("questOutput");
 const questTitle = document.getElementById("questTitle");
 const questMeta = document.getElementById("questMeta");
@@ -894,8 +895,16 @@ function selectedExplorerMoods() {
 
 moodGrid?.addEventListener("change", (event) => {
   const moods = selectedExplorerMoods();
-  if (moods.length > 3 && event.target?.checked) {
+  if (moods.length > 5 && event.target?.checked) {
     event.target.checked = false;
+    if (explorerMoodHelper) explorerMoodHelper.textContent = "Choose up to 5 vibes so the route stays focused.";
+    return;
+  }
+  event.target?.closest("label")?.classList.toggle("is-selected", Boolean(event.target?.checked));
+  if (explorerMoodHelper) {
+    explorerMoodHelper.textContent = moods.length < 3
+      ? `Pick ${3 - moods.length} more vibe${3 - moods.length === 1 ? "" : "s"} to generate a stronger quest.`
+      : `${moods.length}/5 vibes selected. Explorer will tune the feed around these choices.`;
   }
 });
 
@@ -1016,6 +1025,21 @@ function renderExplorerReviews(stop) {
   `;
 }
 
+function renderExplorerMedia(stop) {
+  const media = Array.isArray(stop.reference_media_urls) && stop.reference_media_urls.length
+    ? stop.reference_media_urls
+    : (stop.reference_photo_url ? [stop.reference_photo_url] : []);
+  if (!media.length) return `<div class="quest-photo-placeholder">Reference media carousel</div>`;
+  const slides = media.slice(0, 5);
+  return `
+    <div class="quest-media-carousel" style="--media-duration:${slides.length * 4}s">
+      ${slides.map((url, index) => `
+        <img src="${escapeHtml(url)}" alt="${escapeHtml(stop.name || "Explorer stop")} media ${index + 1}">
+      `).join("")}
+    </div>
+  `;
+}
+
 function explorerCompletionState() {
   const stops = [...document.querySelectorAll(".quest-stop")];
   const total = stops.length || 0;
@@ -1092,7 +1116,7 @@ function renderExplorerQuest(quest) {
   if (explorerCommunity) explorerCommunity.hidden = false;
   questMap.innerHTML = quest.stops.map((stop, index) => `
     <span class="${stop.is_secret ? "is-secret" : ""} ${index === 0 ? "is-current" : ""}">
-      ${stop.is_secret ? "?" : index + 1}
+      ${stop.is_secret ? "?" : index === 0 ? "GO" : "PIN"}
     </span>
   `).join("");
   renderExplorerGoogleMap(quest);
@@ -1116,9 +1140,9 @@ function renderExplorerQuest(quest) {
     ` : "";
     return `
     <article class="quest-stop ${locked || secret ? "is-locked" : ""} ${completed ? "is-complete" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}" data-photo-bonus="${photoBonus}">
-      <div class="quest-stop-order">${stop.is_secret ? "?" : index + 1}</div>
+      <div class="quest-stop-order">${secret ? "?" : completed ? "OK" : "PIN"}</div>
       <div>
-        <small>${secret ? "Mystery Stop" : locked ? "Locked Mission" : completed ? "Completed Mission" : `Active Mission · Stop ${index + 1}`}</small>
+        <small>${secret ? "Mystery Stop" : locked ? "Locked Mission" : completed ? "Checked In" : `Active Mission`}</small>
         <h3>${secret ? "Unlock after previous stop" : stopName}</h3>
         ${placeMeta}
         <div class="mission-title">${secret ? "Unlock the next adventure" : missionTitle}</div>
@@ -1126,12 +1150,12 @@ function renderExplorerQuest(quest) {
         ${secret ? "" : renderMissionChecklist(stop)}
         <p><b>Story prompt:</b> ${secret ? "The prompt appears when the stop unlocks." : escapeHtml(stop.story_prompt || "What made this stop worth the drive?")}</p>
         <p><b>Tips:</b> ${secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Use current hours and safe parking before you go.")}</p>
-        <div class="quest-photo-placeholder">${!secret && stop.reference_photo_url ? `<img src="${escapeHtml(stop.reference_photo_url)}" alt="">` : "Reference photo placeholder"}</div>
+        ${secret ? `<div class="quest-photo-placeholder">Mystery media unlocks later</div>` : renderExplorerMedia(stop)}
         ${secret ? "" : renderUploadChallenge(stop)}
         ${secret ? "" : renderExplorerReviews(stop)}
         <div class="mission-reward"><span>${stop.xp_reward} XP</span><span>+${photoBonus} photo bonus</span></div>
       </div>
-      <button type="button" ${secret || locked || completed ? "disabled" : ""}>${completed ? "Completed" : secret || locked ? "Locked" : "Start Mission"}</button>
+      <button type="button" ${secret || locked || completed ? "disabled" : ""}>${completed ? "Checked In" : secret || locked ? "Locked" : "Check In"}</button>
     </article>
   `;
   }).join("");
@@ -1141,9 +1165,15 @@ function renderExplorerQuest(quest) {
 
 explorerForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  const moods = selectedExplorerMoods();
+  if (moods.length < 3) {
+    if (explorerMoodHelper) explorerMoodHelper.textContent = "Choose at least 3 vibes before generating your quest.";
+    moodGrid?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
   const formData = new FormData(explorerForm);
   const payload = new URLSearchParams(formData);
-  payload.set("moods", selectedExplorerMoods().join(","));
+  payload.set("moods", moods.join(","));
   fetch("/explorer/quest", {
     method: "POST",
     body: payload,
@@ -1169,18 +1199,20 @@ questStops?.addEventListener("click", (event) => {
   if (!button || button.disabled) return;
   const stop = button.closest(".quest-stop");
   stop.classList.add("is-complete");
+  const stopMarker = stop.querySelector(".quest-stop-order");
+  if (stopMarker) stopMarker.textContent = "OK";
   button.textContent = "Checked In";
   button.disabled = true;
   const next = stop.nextElementSibling;
   if (next?.classList.contains("is-locked")) {
     next.classList.remove("is-locked");
-    next.querySelector(".quest-stop-order").textContent = Number(next.dataset.stopIndex || 0) + 1;
-    next.querySelector("small").textContent = `Active Mission · Stop ${Number(next.dataset.stopIndex || 0) + 1}`;
+    next.querySelector(".quest-stop-order").textContent = "PIN";
+    next.querySelector("small").textContent = "Active Mission";
     next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
     const mission = next.querySelector("p");
     if (mission) mission.innerHTML = `<b>Mission:</b> ${escapeHtml(next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.")}`;
     next.querySelector("button").disabled = false;
-    next.querySelector("button").textContent = "Start Mission";
+    next.querySelector("button").textContent = "Check In";
     const mapPin = questMap?.querySelectorAll("span")?.[Number(next.dataset.stopIndex || 0)];
     mapPin?.classList.add("is-current");
   }

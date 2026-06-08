@@ -1913,10 +1913,10 @@ EXPLORER_PLACE_QUERIES = {
     "Adventure": ["outdoor adventure near {city}", "unique activities near {city}"],
     "Nature": ["parks and nature near {city}", "scenic nature spots near {city}"],
     "Photography": ["best photo spots near {city}", "instagrammable places near {city}"],
-    "Date Night": ["date night spots near {city}", "romantic places near {city}"],
+    "Date Night": ["evening date night spots near {city}", "romantic dinner and views near {city}"],
     "Coffee": ["best coffee shops near {city}", "student coffee near {city}"],
     "Scenic Drive": ["scenic overlook near {city}", "scenic drive stops near {city}"],
-    "Sunset": ["best sunset viewpoint near {city}", "sunset overlook near {city}"],
+    "Sunset": ["best evening sunset viewpoint near {city}", "sunset overlook near {city}"],
     "Hidden Gems": ["hidden gems near {city}", "unique local places near {city}"],
     "Music": ["live music near {city}", "music venues near {city}"],
     "Shopping": ["shopping district near {city}", "local shops near {city}"],
@@ -2030,9 +2030,12 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
     rating = float(detail.get("rating") or place.get("rating") or 0)
     review_count = int(detail.get("user_ratings_total") or place.get("user_ratings_total") or 0)
     photos = detail.get("photos") if isinstance(detail.get("photos"), list) else []
-    photo_reference = ""
-    if photos:
-        photo_reference = str(dict(photos[0]).get("photo_reference") or "")
+    photo_urls = []
+    for photo in photos[:5]:
+        photo_reference = str(dict(photo).get("photo_reference") or "")
+        if photo_reference:
+            photo_urls.append(explorer_photo_url(photo_reference))
+    photo_reference_url = photo_urls[0] if photo_urls else ""
     reviews = []
     for review in detail.get("reviews") or []:
         if isinstance(review, dict):
@@ -2055,7 +2058,8 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
         "checklist": mission_pack["checklist"],
         "photo_bonus_xp": mission_pack["photo_bonus_xp"],
         "tips": "Live Google Places result. Check current hours, parking, and safety before you go.",
-        "reference_photo_url": explorer_photo_url(photo_reference),
+        "reference_photo_url": photo_reference_url,
+        "reference_media_urls": photo_urls,
         "is_secret": 1 if secret else 0,
         "locked": 1 if secret else 0,
         "place_id": str(detail.get("place_id") or place_id),
@@ -2073,7 +2077,7 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
     if not api_key:
         return []
     title_city = city.split(",", 1)[0].strip() or "Denver"
-    query_moods = moods[:3] or ["Scenic Drive", "Hidden Gems", "Food"]
+    query_moods = moods[:5] or ["Scenic Drive", "Hidden Gems", "Food"]
     seen_place_ids: set[str] = set()
     stops: list[dict[str, object]] = []
     for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
@@ -2137,7 +2141,7 @@ def log_explorer_config_status() -> None:
 
 
 def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool, city_lat: float = 0, city_lng: float = 0) -> dict[str, object]:
-    mood_order = moods[:3] or ["Scenic Drive"]
+    mood_order = moods[:5] or ["Scenic Drive"]
     selected_moods = set(mood_order)
     google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng)
     scored = []
@@ -2174,6 +2178,7 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                     "photo_bonus_xp": 25,
                     "tips": "Local fallback stop added because Google Places returned fewer route options.",
                     "reference_photo_url": "",
+                    "reference_media_urls": [],
                     "is_secret": 1 if len(google_stops) == 4 else 0,
                     "locked": 1 if len(google_stops) == 4 else 0,
                     "place_id": "",
@@ -2202,6 +2207,7 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                 "photo_bonus_xp": 25 if index < len(stops) - 1 else 35,
                 "tips": "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
                 "reference_photo_url": "",
+                "reference_media_urls": [],
                 "is_secret": 1 if index == len(stops) - 1 else 0,
                 "locked": 1 if index == len(stops) - 1 else 0,
                 "place_id": "",
@@ -2271,6 +2277,7 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
                 "photo_bonus_xp": 25,
                 "tips": row_value(stop, "tips"),
                 "reference_photo_url": row_value(stop, "reference_photo_url"),
+                "reference_media_urls": [row_value(stop, "reference_photo_url")] if row_value(stop, "reference_photo_url") else [],
                 "is_secret": int(row_value(stop, "is_secret", 0) or 0),
                 "locked": int(row_value(stop, "locked", 0) or 0),
                 "completed": int(row_value(stop, "completed", 0) or 0),

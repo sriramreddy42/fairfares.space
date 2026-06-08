@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-5">
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-6">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-5"></script>
+  <script defer src="/static/js/app.js?v=explorer-6"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -83,21 +83,22 @@
         <div class="explorer-step">
           <small>Step 3</small>
           <h2>What's today's vibe?</h2>
-          <p>Choose up to 3.</p>
+          <p>Choose 3 to 5 so Explorer can build a better route.</p>
           <div class="mood-grid" id="moodGrid">
-            <label><input type="checkbox" name="moods" value="Food">Food</label>
-            <label><input type="checkbox" name="moods" value="Adventure">Adventure</label>
-            <label><input type="checkbox" name="moods" value="Nature">Nature</label>
-            <label><input type="checkbox" name="moods" value="Photography">Photography</label>
-            <label><input type="checkbox" name="moods" value="Date Night">Date Night</label>
-            <label><input type="checkbox" name="moods" value="Coffee">Coffee</label>
-            <label><input type="checkbox" name="moods" value="Scenic Drive">Scenic Drive</label>
-            <label><input type="checkbox" name="moods" value="Sunset">Sunset</label>
-            <label><input type="checkbox" name="moods" value="Hidden Gems">Hidden Gems</label>
-            <label><input type="checkbox" name="moods" value="Music">Music</label>
-            <label><input type="checkbox" name="moods" value="Shopping">Shopping</label>
-            <label><input type="checkbox" name="moods" value="Surprise Me">Surprise Me</label>
+            <label data-icon="FOOD"><input type="checkbox" name="moods" value="Food"><span>Food</span></label>
+            <label data-icon="PEAK"><input type="checkbox" name="moods" value="Adventure"><span>Adventure</span></label>
+            <label data-icon="LEAF"><input type="checkbox" name="moods" value="Nature"><span>Nature</span></label>
+            <label data-icon="SHOT"><input type="checkbox" name="moods" value="Photography"><span>Photography</span></label>
+            <label data-icon="DATE"><input type="checkbox" name="moods" value="Date Night"><span>Date Night</span></label>
+            <label data-icon="CAFE"><input type="checkbox" name="moods" value="Coffee"><span>Coffee</span></label>
+            <label data-icon="DRIVE"><input type="checkbox" name="moods" value="Scenic Drive"><span>Scenic Drive</span></label>
+            <label data-icon="SUN"><input type="checkbox" name="moods" value="Sunset"><span>Sunset</span></label>
+            <label data-icon="GEM"><input type="checkbox" name="moods" value="Hidden Gems"><span>Hidden Gems</span></label>
+            <label data-icon="LIVE"><input type="checkbox" name="moods" value="Music"><span>Music</span></label>
+            <label data-icon="SHOP"><input type="checkbox" name="moods" value="Shopping"><span>Shopping</span></label>
+            <label data-icon="?"><input type="checkbox" name="moods" value="Surprise Me"><span>Surprise Me</span></label>
           </div>
+          <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night and Sunset prioritize evening-friendly places.</p>
         </div>
 
         <div class="explorer-step explorer-preferences">

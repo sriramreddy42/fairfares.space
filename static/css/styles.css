@@ -5180,7 +5180,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .explorer-screen {
-  background: #f4f6fb;
+  background:
+    linear-gradient(180deg, rgba(3, 9, 32, 0.78), rgba(4, 10, 30, 0.96)),
+    url("/static/img/explorer-game-bg.png") center top / cover fixed;
+  color: #eef6ff;
 }
 
 .explorer-page {
@@ -5193,8 +5196,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .explorer-hero {
   align-items: center;
-  background: #07143f;
-  border-radius: 8px;
+  background: rgba(5, 13, 45, 0.88);
+  border: 1px solid rgba(255, 215, 74, 0.28);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.34);
   color: #fff;
   display: grid;
   gap: 28px;
@@ -5275,9 +5280,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .explorer-form,
 .explorer-side,
 .quest-output {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: rgba(5, 13, 45, 0.9);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.26);
   padding: 24px;
 }
 
@@ -5287,7 +5293,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .explorer-step {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255,255,255,0.14);
   display: grid;
   gap: 12px;
   padding-bottom: 18px;
@@ -5302,8 +5308,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .explorer-step h2,
 .explorer-side h2,
 .quest-head h2 {
+  color: #fff;
   font-size: clamp(1.35rem, 2.5vw, 2rem);
   margin: 0;
+}
+
+.explorer-step p,
+.quest-head p {
+  color: #dce6ff;
 }
 
 .explorer-location-row,
@@ -5325,8 +5337,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .explorer-form input,
 .explorer-form select {
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  background: rgba(255,255,255,0.94);
+  border: 1px solid rgba(255,255,255,0.28);
+  border-radius: 9px;
   color: var(--navy);
   font: inherit;
   font-weight: 850;
@@ -5344,17 +5357,74 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .segmented-choice label,
 .mood-grid label {
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.13), rgba(255,255,255,0.05));
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+  color: #fff;
   cursor: pointer;
-  display: inline-flex;
+  display: grid;
   gap: 8px;
-  padding: 10px 14px;
+  grid-template-columns: 54px minmax(0, 1fr) 22px;
+  min-height: 74px;
+  min-width: 190px;
+  padding: 10px 12px;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
 
 .segmented-choice input,
 .mood-grid input {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 999px;
+  height: 20px;
   min-height: auto;
+  padding: 0;
+  width: 20px;
+}
+
+.mood-grid label::before {
+  align-items: center;
+  background: linear-gradient(135deg, rgba(255, 211, 84, 0.25), rgba(237, 0, 28, 0.18));
+  border: 1px solid rgba(255, 215, 74, 0.35);
+  border-radius: 12px;
+  color: #ffd84e;
+  content: attr(data-icon);
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 950;
+  height: 50px;
+  justify-content: center;
+  letter-spacing: 0.03em;
+  width: 50px;
+}
+
+.mood-grid label:hover {
+  border-color: rgba(255, 215, 74, 0.65);
+  transform: translateY(-2px);
+}
+
+.mood-grid label.is-selected,
+.mood-grid label:has(input:checked) {
+  background: linear-gradient(135deg, rgba(237, 0, 28, 0.72), rgba(255, 176, 39, 0.3));
+  border-color: #ffd84e;
+}
+
+.mood-grid label.is-selected input,
+.mood-grid label:has(input:checked) input {
+  background: #ffd84e;
+  box-shadow: inset 0 0 0 5px #5b1300;
+}
+
+.mood-grid label span {
+  font-size: 1.05rem;
+  font-weight: 950;
+}
+
+.explorer-mood-helper {
+  color: #ffd84e !important;
+  font-weight: 850;
 }
 
 .explorer-bonus-card {
@@ -5384,7 +5454,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .explorer-side li {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255,255,255,0.14);
+  color: #dce6ff;
   font-weight: 850;
   list-style: none;
   padding-bottom: 12px;
@@ -5407,7 +5478,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .explorer-passport {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid rgba(255,255,255,0.14);
   display: grid;
   gap: 10px;
   margin-top: 22px;
@@ -5420,8 +5491,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .explorer-passport div {
   align-items: center;
-  background: #f7f9fc;
-  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: 8px;
   display: flex;
   justify-content: space-between;
@@ -5456,10 +5527,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stats span {
-  background: #f7f9fc;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 10px;
+  color: #dce6ff;
   display: grid;
   font-weight: 850;
   min-width: 120px;
@@ -5467,7 +5538,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stats b {
-  color: var(--navy);
+  color: #ffd84e;
   font-size: 1.2rem;
 }
 
@@ -5480,9 +5551,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .quest-progress-card,
 .quest-boost-card,
 .quest-badge-card {
-  background: #f8fafc;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
   display: grid;
   gap: 10px;
   padding: 14px;
@@ -5498,14 +5569,14 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 .quest-progress-card b,
 .quest-boost-card b,
 .quest-badge-card b {
-  color: var(--navy);
+  color: #fff;
   font-size: 1.05rem;
 }
 
 .quest-progress-card span,
 .quest-boost-card span,
 .quest-badge-card span {
-  color: var(--muted);
+  color: #dce6ff;
   font-weight: 850;
 }
 
@@ -5517,7 +5588,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-progress-track span {
-  background: linear-gradient(90deg, #10b981, var(--red));
+  background: linear-gradient(90deg, #27f4ff, #ff48d3, #ffd84e);
   display: block;
   height: 100%;
   transition: width 0.35s ease;
@@ -5531,9 +5602,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-map {
   align-items: center;
-  background: linear-gradient(135deg, #edf5ff, #fff);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: radial-gradient(circle at 20% 40%, rgba(39,244,255,0.18), transparent 26%), radial-gradient(circle at 70% 45%, rgba(255,72,211,0.18), transparent 28%), rgba(2, 8, 30, 0.74);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px;
   display: flex;
   gap: clamp(10px, 3vw, 34px);
   min-height: 120px;
@@ -5543,7 +5614,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-map span {
   align-items: center;
-  background: var(--red);
+  background: linear-gradient(135deg, #ed001c, #ffb027);
+  border: 2px solid rgba(255,255,255,0.8);
   border-radius: 999px;
   color: #fff;
   display: inline-flex;
@@ -5555,7 +5627,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-map span:not(:last-child)::after {
-  background: var(--navy);
+  background: linear-gradient(90deg, #27f4ff, #ff48d3);
   content: "";
   height: 3px;
   left: 48px;
@@ -5573,10 +5645,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-map-canvas {
-  background: #eef3fb;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
+  background: rgba(2, 8, 30, 0.7);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px;
+  color: #dce6ff;
   display: grid;
   min-height: 320px;
   overflow: hidden;
@@ -5585,7 +5657,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-map-canvas b {
-  color: var(--navy);
+  color: #fff;
   font-size: 1.35rem;
 }
 
@@ -5596,8 +5668,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-stop {
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
   display: grid;
   gap: 14px;
   grid-template-columns: 54px minmax(0, 1fr) 150px;
@@ -5606,9 +5679,11 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-stop-order {
   align-items: center;
-  background: #fff1f1;
+  background: radial-gradient(circle, #27f4ff, #0d4ed8);
+  border: 2px solid rgba(255,255,255,0.8);
   border-radius: 999px;
-  color: var(--red);
+  color: #fff;
+  font-size: 0.76rem;
   display: flex;
   font-weight: 950;
   height: 48px;
@@ -5617,6 +5692,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stop h3 {
+  color: #fff;
   margin: 0;
 }
 
@@ -5627,12 +5703,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stop p {
-  color: var(--muted);
+  color: #cbd7f7;
   margin: 4px 0;
 }
 
 .mission-title {
-  color: var(--navy);
+  color: #ffd84e;
   font-size: 1.15rem;
   font-weight: 950;
   margin: 10px 0 6px;
@@ -5646,6 +5722,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .mission-checklist li {
+  color: #eef6ff;
   align-items: center;
   display: flex;
   gap: 8px;
@@ -5668,10 +5745,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-place-meta span,
 .quest-place-meta a {
-  background: #f7f9fc;
-  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: 999px;
-  color: var(--muted);
+  color: #dce6ff;
   font-size: 0.9rem;
   font-weight: 850;
   padding: 6px 10px;
@@ -5684,10 +5761,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-photo-placeholder {
   align-items: center;
-  background: linear-gradient(135deg, #eef3fb, #fff);
-  border: 1px dashed #b7c1d4;
-  border-radius: 8px;
-  color: #626b7a;
+  background: rgba(255,255,255,0.08);
+  border: 1px dashed rgba(255,255,255,0.24);
+  border-radius: 12px;
+  color: #dce6ff;
   display: flex;
   font-size: 0.9rem;
   font-weight: 900;
@@ -5696,17 +5773,55 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   overflow: hidden;
 }
 
-.quest-photo-placeholder img {
+.quest-media-carousel {
+  background: rgba(0,0,0,0.24);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
+  display: grid;
+  min-height: clamp(170px, 22vw, 300px);
+  overflow: hidden;
+  position: relative;
+}
+
+.quest-media-carousel::after {
+  background: linear-gradient(180deg, transparent, rgba(2,8,30,0.45));
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.quest-media-carousel img {
+  animation: explorerMediaFade var(--media-duration, 20s) infinite;
+  grid-area: 1 / 1;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
   width: 100%;
+}
+
+.quest-media-carousel img:nth-child(1) { animation-delay: 0s; }
+.quest-media-carousel img:nth-child(2) { animation-delay: 4s; }
+.quest-media-carousel img:nth-child(3) { animation-delay: 8s; }
+.quest-media-carousel img:nth-child(4) { animation-delay: 12s; }
+.quest-media-carousel img:nth-child(5) { animation-delay: 16s; }
+
+.quest-media-carousel img:only-child {
+  animation: none;
+  opacity: 1;
+}
+
+@keyframes explorerMediaFade {
+  0%, 100% { opacity: 0; transform: scale(1.04); }
+  5%, 22% { opacity: 1; transform: scale(1); }
+  28% { opacity: 0; transform: scale(1.03); }
 }
 
 .mission-upload {
   align-items: center;
-  background: #fff8e6;
-  border: 1px solid #f4cf73;
-  border-radius: 8px;
+  background: rgba(255, 216, 78, 0.09);
+  border: 1px solid rgba(255, 216, 78, 0.35);
+  border-radius: 12px;
   display: flex;
   gap: 12px;
   justify-content: space-between;
@@ -5720,7 +5835,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .mission-upload span {
-  color: var(--muted);
+  color: #dce6ff;
   font-weight: 850;
 }
 
@@ -5746,8 +5861,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .memory-menu {
-  background: #fff;
-  border: 1px solid var(--line);
+  background: #07143f;
+  border: 1px solid rgba(255,255,255,0.18);
   border-radius: 8px;
   box-shadow: 0 18px 44px rgba(6, 18, 52, 0.18);
   display: grid;
@@ -5765,7 +5880,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .memory-menu label {
-  background: #fff;
+  background: rgba(255,255,255,0.06);
   border: 0;
   border-radius: 7px;
   cursor: pointer;
@@ -5775,8 +5890,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .memory-menu label:hover {
-  background: #fff1f2;
-  color: var(--red);
+  background: rgba(237, 0, 28, 0.28);
+  color: #fff;
 }
 
 .memory-menu label input {
@@ -5784,12 +5899,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .mission-upload.is-uploaded {
-  background: #effaf0;
-  border-color: #aee6b8;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(64, 255, 172, 0.42);
 }
 
 .memory-status {
-  color: #267531;
+  color: #8dffc7;
   display: block;
   flex-basis: 100%;
   font-weight: 950;
@@ -5803,10 +5918,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .mission-reward span {
-  background: #eef6ff;
-  border: 1px solid #c9ddff;
+  background: rgba(39, 244, 255, 0.12);
+  border: 1px solid rgba(39, 244, 255, 0.24);
   border-radius: 999px;
-  color: var(--navy);
+  color: #eef6ff;
   font-weight: 950;
   padding: 7px 10px;
 }
@@ -5818,9 +5933,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-place-reviews blockquote {
-  background: #fbfcff;
+  background: rgba(255,255,255,0.08);
   border-left: 4px solid var(--red);
-  color: var(--muted);
+  color: #cbd7f7;
   display: grid;
   gap: 3px;
   margin: 0;
@@ -5828,7 +5943,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-place-reviews b {
-  color: var(--navy);
+  color: #fff;
 }
 
 .quest-stop button,
@@ -5849,17 +5964,17 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stop.is-locked {
-  background: #f6f7fb;
-  opacity: 0.78;
+  background: rgba(255,255,255,0.05);
+  opacity: 0.9;
   position: relative;
 }
 
 .quest-stop.is-locked::after {
   align-items: center;
-  background: rgba(255,255,255,0.82);
-  border: 1px dashed #c7cfdd;
+  background: rgba(5, 13, 45, 0.86);
+  border: 1px dashed rgba(255,255,255,0.26);
   border-radius: 8px;
-  color: var(--navy);
+  color: #ffd84e;
   content: "Complete the previous mission to unlock";
   display: flex;
   font-weight: 950;
@@ -5871,8 +5986,8 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-stop.is-complete {
-  border-color: #aee6b8;
-  background: #f3fff5;
+  border-color: rgba(64, 255, 172, 0.5);
+  background: rgba(16, 185, 129, 0.13);
 }
 
 .quest-stop button:disabled {
@@ -5881,9 +5996,9 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-complete {
-  background: #effaf0;
-  border: 1px solid #b9e6bf;
-  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.13);
+  border: 1px solid rgba(64, 255, 172, 0.4);
+  border-radius: 14px;
   display: grid;
   gap: 10px;
   padding: 18px;
@@ -5905,10 +6020,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .memory-video-status {
-  background: #fff;
-  border: 1px solid #b9e6bf;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(64, 255, 172, 0.4);
   border-radius: 8px;
-  color: #267531;
+  color: #8dffc7;
   font-weight: 900;
   padding: 10px 12px;
 }
