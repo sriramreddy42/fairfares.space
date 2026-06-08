@@ -2079,6 +2079,24 @@ def explorer_maps_loader() -> str:
     )
 
 
+def explorer_config_status() -> dict[str, bool]:
+    return {
+        "mapsKeyPresent": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
+        "placesKeyPresent": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
+        "openAiKeyPresent": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+    }
+
+
+def log_explorer_config_status() -> None:
+    status = explorer_config_status()
+    print(
+        "Explorer config: "
+        f"maps={'present' if status['mapsKeyPresent'] else 'missing'}, "
+        f"places={'present' if status['placesKeyPresent'] else 'missing'}, "
+        f"openai={'present' if status['openAiKeyPresent'] else 'missing'}"
+    )
+
+
 def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool, city_lat: float = 0, city_lng: float = 0) -> dict[str, object]:
     mood_order = moods[:3] or ["Scenic Drive"]
     selected_moods = set(mood_order)
@@ -3652,6 +3670,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/explorer/place-photo":
             self.api_explorer_place_photo(parsed)
             return
+        if parsed.path == "/api/explorer/config-status":
+            self.api_explorer_config_status()
+            return
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
             return
@@ -3973,6 +3994,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def api_explorer_config_status(self) -> None:
+        self.send_json({"ok": True, "explorer": explorer_config_status()})
 
     def create_explorer_quest(self) -> None:
         user = self.current_user()
@@ -6506,6 +6530,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     load_env_file()
+    log_explorer_config_status()
     init_db()
     auto_backup_on_startup()
     host = os.environ.get("HOST", "127.0.0.1")
