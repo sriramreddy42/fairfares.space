@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-2">
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-4">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-3"></script>
+  <script defer src="/static/js/app.js?v=explorer-4"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -122,6 +122,13 @@
           <span>Hidden Gem Hunter</span>
           <span>Road Warrior</span>
         </div>
+        <div class="explorer-passport">
+          <h3>Explorer Passport</h3>
+          <div><span>Denver</span><b>Active</b></div>
+          <div><span>Boulder</span><b>Next</b></div>
+          <div><span>Colorado Springs</span><b>Locked</b></div>
+          <div><span>Las Vegas</span><b>Locked</b></div>
+        </div>
       </aside>
     </section>
 
@@ -141,15 +148,44 @@
         </div>
         <button type="button" class="light-button" id="resetQuest">Plan Another</button>
       </div>
+      <div class="quest-game-dashboard">
+        <div class="quest-progress-card">
+          <div>
+            <b>Quest Progress</b>
+            <span id="questProgressText">0/5 stops complete</span>
+          </div>
+          <div class="quest-progress-track"><span id="questProgressFill"></span></div>
+        </div>
+        <div class="quest-boost-card" id="questBoostCard">
+          <b>Rental Boost</b>
+          <span id="questBoostText">Explorer boost unlocks when you book through FairFares.</span>
+        </div>
+        <div class="quest-badge-card">
+          <b>Badge Progress</b>
+          <span id="questBadgeText">Hidden Gem Hunter: 0/5</span>
+        </div>
+      </div>
       <div class="quest-map-canvas" id="questMapCanvas">
         <b>Map preview</b>
         <span>Generate a quest to see your route, pins, and nearby stops.</span>
       </div>
       <div class="quest-map" id="questMap"></div>
       <div class="quest-stops" id="questStops"></div>
+      <aside class="explorer-community" id="explorerCommunity" hidden>
+        <div>
+          <p class="eyebrow">Explorer Community</p>
+          <h2>Share the memory, not just the route.</h2>
+          <p>Upload a photo or quick story at each stop to build a FairFares-only travel feed around real adventures.</p>
+        </div>
+        <div class="community-story-card">
+          <b>Sriram's Adventure</b>
+          <span>★★★★★</span>
+          <p>"The best stop was the one we unlocked last."</p>
+        </div>
+      </aside>
       <div class="quest-complete" id="questComplete" hidden>
         <b>Adventure complete</b>
-        <span>Rate the route, share your favorite photo, and come back for your next city quest.</span>
+        <span>+100 completion XP unlocked. Rate the route, share your favorite photo, and come back for your next city quest.</span>
         <div class="quest-rating" aria-label="Rate this quest"><button type="button">1</button><button type="button">2</button><button type="button">3</button><button type="button">4</button><button type="button">5</button></div>
       </div>
     </section>

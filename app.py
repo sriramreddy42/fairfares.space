@@ -1971,6 +1971,47 @@ def google_place_details(place_id: str, api_key: str) -> dict[str, object]:
     return dict(details.get("result") or {})
 
 
+def explorer_mission_pack(name: str, mood: str, order: int, secret: bool) -> dict[str, object]:
+    xp_bonus = 35 if secret else 25
+    title = "Explorer Field Mission"
+    challenge = f"Visit {name}, check in, capture one photo, and leave a quick Explorer rating."
+    prompt = "What made this stop worth the drive?"
+    checklist = ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"]
+    if mood in {"Food", "Coffee"}:
+        title = "Denver Food Hunter"
+        challenge = f"Order a signature item at {name}, take a food photo, and rate the taste."
+        prompt = "What should the next FairFares traveler order here?"
+        checklist = ["Order the house favorite", "Upload a food photo", "Rate taste 1-5"]
+    elif mood in {"Sunset", "Photography", "Scenic Drive"}:
+        title = "Scenic Shot Challenge"
+        challenge = f"Find the best angle at {name}, take a photo, and mark the view quality."
+        prompt = "Where is the best angle or safest pull-off?"
+        checklist = ["Find the viewpoint", "Upload your best shot", "Rate the view 1-5"]
+    elif mood in {"Adventure", "Nature"}:
+        title = "Trail & Vista Scout"
+        challenge = f"Complete a short walk or viewpoint check at {name}, then log a safety tip."
+        prompt = "What should someone know before they go?"
+        checklist = ["Check in safely", "Capture the route or view", "Leave one travel tip"]
+    elif mood in {"Music", "Shopping"}:
+        title = "Local Gem Scout"
+        challenge = f"Explore {name}, find one standout detail, and share whether it is worth a stop."
+        prompt = "What was the best find?"
+        checklist = ["Explore the location", "Capture one detail", "Share a quick recommendation"]
+    if secret:
+        title = "Mystery Stop Unlock"
+        challenge = f"Reveal {name}, complete the hidden challenge, and earn the final bonus."
+        prompt = "Was the mystery stop worth the reveal?"
+        checklist = ["Unlock the stop", "Complete the hidden challenge", "Upload proof of adventure"]
+    return {
+        "mission_title": title,
+        "challenge": challenge,
+        "story_prompt": prompt,
+        "checklist": checklist,
+        "photo_bonus_xp": xp_bonus,
+        "completion_label": f"Stop {order} reward",
+    }
+
+
 def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool) -> dict[str, object] | None:
     place_id = str(place.get("place_id") or "")
     if not place_id:
@@ -2000,21 +2041,19 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
                 reviews.append(normalized)
         if len(reviews) >= 2:
             break
-    mission = f"Check in at {name}, capture the moment, and rate whether it matched your {mood.lower()} vibe."
-    if mood in {"Food", "Coffee"}:
-        mission = f"Try one signature item at {name}, take a quick photo, and share whether it is worth the stop."
-    elif mood in {"Sunset", "Photography", "Scenic Drive"}:
-        mission = f"Find the best view at {name}, capture a photo, and log your favorite angle."
-    elif mood in {"Music", "Shopping"}:
-        mission = f"Explore {name}, note the best find, and check in to earn XP."
+    mission_pack = explorer_mission_pack(name, mood, order, secret)
     return {
         "order": order,
         "name": name,
         "lat": lat,
         "lng": lng,
         "xp_reward": 90 if secret else 55 + (order * 10),
-        "mission": mission,
-        "challenge": mission,
+        "mission": mission_pack["challenge"],
+        "challenge": mission_pack["challenge"],
+        "mission_title": mission_pack["mission_title"],
+        "story_prompt": mission_pack["story_prompt"],
+        "checklist": mission_pack["checklist"],
+        "photo_bonus_xp": mission_pack["photo_bonus_xp"],
         "tips": "Live Google Places result. Check current hours, parking, and safety before you go.",
         "reference_photo_url": explorer_photo_url(photo_reference),
         "is_secret": 1 if secret else 0,
@@ -2129,6 +2168,10 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                     "xp_reward": fallback["xp"],
                     "mission": fallback["challenge"],
                     "challenge": fallback["challenge"],
+                    "mission_title": "Local Explorer Mission",
+                    "story_prompt": "What should another FairFares traveler know?",
+                    "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
+                    "photo_bonus_xp": 25,
                     "tips": "Local fallback stop added because Google Places returned fewer route options.",
                     "reference_photo_url": "",
                     "is_secret": 1 if len(google_stops) == 4 else 0,
@@ -2153,6 +2196,10 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                 "xp_reward": stop["xp"],
                 "mission": stop["challenge"],
                 "challenge": stop["challenge"],
+                "mission_title": "Local Explorer Mission",
+                "story_prompt": "What should another FairFares traveler know?",
+                "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
+                "photo_bonus_xp": 25 if index < len(stops) - 1 else 35,
                 "tips": "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
                 "reference_photo_url": "",
                 "is_secret": 1 if index == len(stops) - 1 else 0,
@@ -2218,6 +2265,10 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
                 "xp_reward": stop["xp_reward"],
                 "mission": row_value(stop, "challenge"),
                 "challenge": row_value(stop, "challenge"),
+                "mission_title": "Explorer Field Mission" if not row_value(stop, "is_secret", 0) else "Mystery Stop Unlock",
+                "story_prompt": "What made this stop worth the drive?",
+                "checklist": ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"],
+                "photo_bonus_xp": 25,
                 "tips": row_value(stop, "tips"),
                 "reference_photo_url": row_value(stop, "reference_photo_url"),
                 "is_secret": int(row_value(stop, "is_secret", 0) or 0),

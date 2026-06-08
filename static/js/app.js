@@ -64,6 +64,12 @@ const questDescription = document.getElementById("questDescription");
 const questDifficulty = document.getElementById("questDifficulty");
 const questReward = document.getElementById("questReward");
 const questStopCount = document.getElementById("questStopCount");
+const questProgressText = document.getElementById("questProgressText");
+const questProgressFill = document.getElementById("questProgressFill");
+const questBadgeText = document.getElementById("questBadgeText");
+const questBoostText = document.getElementById("questBoostText");
+const questBoostCard = document.getElementById("questBoostCard");
+const explorerCommunity = document.getElementById("explorerCommunity");
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -1010,6 +1016,47 @@ function renderExplorerReviews(stop) {
   `;
 }
 
+function explorerCompletionState() {
+  const stops = [...document.querySelectorAll(".quest-stop")];
+  const total = stops.length || 0;
+  const completed = stops.filter((stop) => stop.classList.contains("is-complete")).length;
+  return { total, completed };
+}
+
+function updateExplorerQuestProgress() {
+  const { total, completed } = explorerCompletionState();
+  const percent = total ? Math.round((completed / total) * 100) : 0;
+  if (questProgressText) questProgressText.textContent = `${completed}/${total || 5} stops complete · ${percent}%`;
+  if (questProgressFill) questProgressFill.style.width = `${percent}%`;
+  if (questBadgeText) questBadgeText.textContent = `Hidden Gem Hunter: ${Math.min(completed, 5)}/5`;
+}
+
+function renderMissionChecklist(stop) {
+  const items = Array.isArray(stop.checklist) && stop.checklist.length
+    ? stop.checklist
+    : ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"];
+  return `
+    <ul class="mission-checklist">
+      ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderUploadChallenge(stop) {
+  return `
+    <div class="mission-upload">
+      <div>
+        <b>Photo Challenge</b>
+        <span>Upload proof after check-in for +${Number(stop.photo_bonus_xp || 25)} bonus XP.</span>
+      </div>
+      <label>
+        <input type="file" accept="image/*" data-photo-upload>
+        <span>Upload Photo</span>
+      </label>
+    </div>
+  `;
+}
+
 function renderExplorerQuest(quest) {
   if (!questOutput || !questStops || !questMap) return;
   questOutput.hidden = false;
@@ -1019,8 +1066,15 @@ function renderExplorerQuest(quest) {
   if (questDifficulty) questDifficulty.textContent = `${"★".repeat(Number(quest.difficulty || 2))}${"☆".repeat(Math.max(0, 5 - Number(quest.difficulty || 2)))}`;
   if (questReward) questReward.textContent = `${quest.total_xp} XP`;
   if (questStopCount) questStopCount.textContent = String(quest.stop_count || quest.stops.length);
+  if (questBoostText) {
+    questBoostText.textContent = quest.fairfares_booked
+      ? "Nissan Sentra-style rental boost active: +100 XP and mystery stop access."
+      : "Book through FairFares to activate +100 XP and premium mystery routes.";
+  }
+  questBoostCard?.classList.toggle("is-active", Boolean(quest.fairfares_booked));
+  if (explorerCommunity) explorerCommunity.hidden = false;
   questMap.innerHTML = quest.stops.map((stop, index) => `
-    <span class="${stop.is_secret ? "is-secret" : ""}">
+    <span class="${stop.is_secret ? "is-secret" : ""} ${index === 0 ? "is-current" : ""}">
       ${stop.is_secret ? "?" : index + 1}
     </span>
   `).join("");
@@ -1031,6 +1085,11 @@ function renderExplorerQuest(quest) {
     const address = escapeHtml(stop.address || "");
     const rating = Number(stop.rating || 0);
     const reviewCount = Number(stop.review_count || 0);
+    const completed = Boolean(Number(stop.completed || 0));
+    const locked = !completed && index > 0;
+    const secret = Boolean(Number(stop.is_secret || 0));
+    const missionTitle = escapeHtml(stop.mission_title || (secret ? "Mystery Stop Unlock" : "Explorer Field Mission"));
+    const photoBonus = Number(stop.photo_bonus_xp || 25);
     const placeMeta = !stop.is_secret && (rating || address || stop.google_url) ? `
       <div class="quest-place-meta">
         ${rating ? `<span>${rating.toFixed(1)}★ · ${reviewCount || 0} Google reviews</span>` : ""}
@@ -1039,22 +1098,27 @@ function renderExplorerQuest(quest) {
       </div>
     ` : "";
     return `
-    <article class="quest-stop ${stop.is_secret ? "is-locked" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}">
+    <article class="quest-stop ${locked || secret ? "is-locked" : ""} ${completed ? "is-complete" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}" data-photo-bonus="${photoBonus}">
       <div class="quest-stop-order">${stop.is_secret ? "?" : index + 1}</div>
       <div>
-        <small>${stop.is_secret ? "Mystery Stop" : `Stop ${index + 1}`}</small>
-        <h3>${stop.is_secret ? "Unlock after previous stop" : stopName}</h3>
+        <small>${secret ? "Mystery Stop" : locked ? "Locked Mission" : completed ? "Completed Mission" : `Active Mission · Stop ${index + 1}`}</small>
+        <h3>${secret ? "Unlock after previous stop" : stopName}</h3>
         ${placeMeta}
-        <p><b>Mission:</b> ${stop.is_secret ? "Complete the earlier stops to reveal this hidden gem." : stopChallenge}</p>
-        <p><b>Tips:</b> ${stop.is_secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Sprint 2 will connect Google Places tips here.")}</p>
-        <div class="quest-photo-placeholder">${stop.reference_photo_url ? `<img src="${escapeHtml(stop.reference_photo_url)}" alt="">` : "Reference photo placeholder"}</div>
-        ${stop.is_secret ? "" : renderExplorerReviews(stop)}
-        <span>${stop.xp_reward} XP</span>
+        <div class="mission-title">${secret ? "Unlock the next adventure" : missionTitle}</div>
+        <p><b>Challenge:</b> ${secret ? "Complete the previous mission to reveal this stop." : stopChallenge}</p>
+        ${secret ? "" : renderMissionChecklist(stop)}
+        <p><b>Story prompt:</b> ${secret ? "The prompt appears when the stop unlocks." : escapeHtml(stop.story_prompt || "What made this stop worth the drive?")}</p>
+        <p><b>Tips:</b> ${secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Use current hours and safe parking before you go.")}</p>
+        <div class="quest-photo-placeholder">${!secret && stop.reference_photo_url ? `<img src="${escapeHtml(stop.reference_photo_url)}" alt="">` : "Reference photo placeholder"}</div>
+        ${secret ? "" : renderUploadChallenge(stop)}
+        ${secret ? "" : renderExplorerReviews(stop)}
+        <div class="mission-reward"><span>${stop.xp_reward} XP</span><span>+${photoBonus} photo bonus</span></div>
       </div>
-      <button type="button" ${stop.is_secret || stop.locked ? "disabled" : ""}>${stop.is_secret || stop.locked ? "Locked" : "Start Mission"}</button>
+      <button type="button" ${secret || locked || completed ? "disabled" : ""}>${completed ? "Completed" : secret || locked ? "Locked" : "Start Mission"}</button>
     </article>
   `;
   }).join("");
+  updateExplorerQuestProgress();
   questOutput.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1088,15 +1152,18 @@ questStops?.addEventListener("click", (event) => {
   if (next?.classList.contains("is-locked")) {
     next.classList.remove("is-locked");
     next.querySelector(".quest-stop-order").textContent = Number(next.dataset.stopIndex || 0) + 1;
-    next.querySelector("small").textContent = `Stop ${Number(next.dataset.stopIndex || 0) + 1}`;
+    next.querySelector("small").textContent = `Active Mission · Stop ${Number(next.dataset.stopIndex || 0) + 1}`;
     next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
     const mission = next.querySelector("p");
     if (mission) mission.innerHTML = `<b>Mission:</b> ${escapeHtml(next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.")}`;
     next.querySelector("button").disabled = false;
     next.querySelector("button").textContent = "Start Mission";
+    const mapPin = questMap?.querySelectorAll("span")?.[Number(next.dataset.stopIndex || 0)];
+    mapPin?.classList.add("is-current");
   }
-  const xp = Number(stop.querySelector("span")?.textContent?.match(/\d+/)?.[0] || 20);
+  const xp = Number(stop.querySelector(".mission-reward span")?.textContent?.match(/\d+/)?.[0] || 20);
   updateExplorerProfile(xp);
+  updateExplorerQuestProgress();
   const stopId = stop.dataset.stopId || "";
   if (stopId) {
     fetch("/explorer/checkin", {
@@ -1106,6 +1173,20 @@ questStops?.addEventListener("click", (event) => {
   }
   const remaining = [...questStops.querySelectorAll(".quest-stop button")].some((item) => !item.disabled);
   if (!remaining && questComplete) questComplete.hidden = false;
+});
+
+questStops?.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-photo-upload]");
+  if (!input || !input.files?.length) return;
+  const stop = input.closest(".quest-stop");
+  const bonus = Number(stop?.dataset.photoBonus || 25);
+  input.closest(".mission-upload")?.classList.add("is-uploaded");
+  const label = input.closest("label")?.querySelector("span");
+  if (label) label.textContent = `Photo ready · +${bonus} XP`;
+  if (stop && stop.dataset.photoBonusAwarded !== "1") {
+    stop.dataset.photoBonusAwarded = "1";
+    updateExplorerProfile(bonus);
+  }
 });
 
 document.getElementById("resetQuest")?.addEventListener("click", () => {

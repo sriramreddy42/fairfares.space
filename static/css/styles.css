@@ -5406,6 +5406,32 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   padding: 8px 10px;
 }
 
+.explorer-passport {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 18px;
+}
+
+.explorer-passport h3 {
+  margin: 0;
+}
+
+.explorer-passport div {
+  align-items: center;
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.explorer-passport b {
+  color: var(--red);
+}
+
 .quest-output {
   display: grid;
   gap: 20px;
@@ -5445,6 +5471,64 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-size: 1.2rem;
 }
 
+.quest-game-dashboard {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.quest-progress-card,
+.quest-boost-card,
+.quest-badge-card {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.quest-progress-card div:first-child {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.quest-progress-card b,
+.quest-boost-card b,
+.quest-badge-card b {
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+
+.quest-progress-card span,
+.quest-boost-card span,
+.quest-badge-card span {
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.quest-progress-track {
+  background: #e2e8f0;
+  border-radius: 999px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.quest-progress-track span {
+  background: linear-gradient(90deg, #10b981, var(--red));
+  display: block;
+  height: 100%;
+  transition: width 0.35s ease;
+  width: 0;
+}
+
+.quest-boost-card.is-active {
+  background: #effaf0;
+  border-color: #aee6b8;
+}
+
 .quest-map {
   align-items: center;
   background: linear-gradient(135deg, #edf5ff, #fff);
@@ -5482,6 +5566,10 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-map .is-secret {
   background: #111827;
+}
+
+.quest-map .is-current {
+  box-shadow: 0 0 0 8px rgba(237, 0, 28, 0.12);
 }
 
 .quest-map-canvas {
@@ -5532,9 +5620,43 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin: 0;
 }
 
+.quest-stop small {
+  color: var(--red);
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
 .quest-stop p {
   color: var(--muted);
   margin: 4px 0;
+}
+
+.mission-title {
+  color: var(--navy);
+  font-size: 1.15rem;
+  font-weight: 950;
+  margin: 10px 0 6px;
+}
+
+.mission-checklist {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.mission-checklist li {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  font-weight: 850;
+  list-style: none;
+}
+
+.mission-checklist li::before {
+  color: #12933a;
+  content: "✓";
+  font-weight: 950;
 }
 
 .quest-place-meta {
@@ -5580,6 +5702,62 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   width: 100%;
 }
 
+.mission-upload {
+  align-items: center;
+  background: #fff8e6;
+  border: 1px solid #f4cf73;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.mission-upload div {
+  display: grid;
+  gap: 3px;
+}
+
+.mission-upload span {
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.mission-upload label {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  font-weight: 950;
+  padding: 10px 12px;
+}
+
+.mission-upload label input {
+  display: none;
+}
+
+.mission-upload.is-uploaded {
+  background: #effaf0;
+  border-color: #aee6b8;
+}
+
+.mission-reward {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mission-reward span {
+  background: #eef6ff;
+  border: 1px solid #c9ddff;
+  border-radius: 999px;
+  color: var(--navy);
+  font-weight: 950;
+  padding: 7px 10px;
+}
+
 .quest-place-reviews {
   display: grid;
   gap: 8px;
@@ -5613,7 +5791,24 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-stop.is-locked {
   background: #f6f7fb;
-  opacity: 0.72;
+  opacity: 0.78;
+  position: relative;
+}
+
+.quest-stop.is-locked::after {
+  align-items: center;
+  background: rgba(255,255,255,0.82);
+  border: 1px dashed #c7cfdd;
+  border-radius: 8px;
+  color: var(--navy);
+  content: "Complete the previous mission to unlock";
+  display: flex;
+  font-weight: 950;
+  inset: 12px 168px 12px 70px;
+  justify-content: center;
+  pointer-events: auto;
+  position: absolute;
+  text-align: center;
 }
 
 .quest-stop.is-complete {
@@ -5637,6 +5832,39 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 
 .quest-complete[hidden] {
   display: none;
+}
+
+.explorer-community {
+  align-items: center;
+  background: #07143f;
+  border-radius: 8px;
+  color: #fff;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  padding: 22px;
+}
+
+.explorer-community[hidden] {
+  display: none;
+}
+
+.explorer-community h2 {
+  color: #fff;
+  margin: 0;
+}
+
+.explorer-community p {
+  color: #dce6ff;
+}
+
+.community-story-card {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
 }
 
 .quest-rating {
@@ -5701,12 +5929,26 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
     min-height: 240px;
   }
 
+  .quest-game-dashboard,
+  .explorer-community {
+    grid-template-columns: 1fr;
+  }
+
   .quest-stop {
     grid-template-columns: 44px minmax(0, 1fr);
   }
 
+  .quest-stop.is-locked::after {
+    inset: 10px;
+  }
+
   .quest-stop button {
     grid-column: 1 / -1;
+  }
+
+  .mission-upload {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
