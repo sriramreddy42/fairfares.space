@@ -5714,7 +5714,7 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   padding: 12px;
 }
 
-.mission-upload div {
+.mission-upload > div:first-child {
   display: grid;
   gap: 3px;
 }
@@ -5724,22 +5724,75 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   font-weight: 850;
 }
 
-.mission-upload label {
+.memory-actions {
+  position: relative;
+}
+
+.memory-plus {
+  align-items: center;
+  aspect-ratio: 1;
+  background: var(--red);
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 1.6rem;
+  font-weight: 950;
+  justify-content: center;
+  line-height: 1;
+  min-height: 48px;
+  width: 48px;
+}
+
+.memory-menu {
   background: #fff;
   border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(6, 18, 52, 0.18);
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 5;
+}
+
+.memory-menu[hidden] {
+  display: none;
+}
+
+.memory-menu label {
+  background: #fff;
+  border: 0;
   border-radius: 7px;
   cursor: pointer;
+  display: block;
   font-weight: 950;
   padding: 10px 12px;
 }
 
-.mission-upload label input {
+.memory-menu label:hover {
+  background: #fff1f2;
+  color: var(--red);
+}
+
+.memory-menu label input {
   display: none;
 }
 
 .mission-upload.is-uploaded {
   background: #effaf0;
   border-color: #aee6b8;
+}
+
+.memory-status {
+  color: #267531;
+  display: block;
+  flex-basis: 100%;
+  font-weight: 950;
 }
 
 .mission-reward {
@@ -5789,6 +5842,12 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   min-height: 46px;
 }
 
+.quest-stop .memory-plus {
+  border-radius: 999px;
+  min-height: 48px;
+  padding: 0;
+}
+
 .quest-stop.is-locked {
   background: #f6f7fb;
   opacity: 0.78;
@@ -5831,6 +5890,30 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
 }
 
 .quest-complete[hidden] {
+  display: none;
+}
+
+.memory-video-button {
+  background: var(--navy);
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  font: inherit;
+  font-weight: 950;
+  min-height: 48px;
+  padding: 12px 16px;
+}
+
+.memory-video-status {
+  background: #fff;
+  border: 1px solid #b9e6bf;
+  border-radius: 8px;
+  color: #267531;
+  font-weight: 900;
+  padding: 10px 12px;
+}
+
+.memory-video-status[hidden] {
   display: none;
 }
 
@@ -5949,6 +6032,15 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   .mission-upload {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .memory-actions {
+    align-self: flex-start;
+  }
+
+  .memory-menu {
+    left: 0;
+    right: auto;
   }
 }
 

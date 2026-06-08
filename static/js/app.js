@@ -1046,13 +1046,30 @@ function renderUploadChallenge(stop) {
   return `
     <div class="mission-upload">
       <div>
-        <b>Photo Challenge</b>
-        <span>Upload proof after check-in for +${Number(stop.photo_bonus_xp || 25)} bonus XP.</span>
+        <b>Memory Challenge</b>
+        <span>Capture a photo, video, or reel proof for +${Number(stop.photo_bonus_xp || 25)} bonus XP.</span>
       </div>
-      <label>
-        <input type="file" accept="image/*" data-photo-upload>
-        <span>Upload Photo</span>
-      </label>
+      <div class="memory-actions">
+        <button type="button" class="memory-plus" data-memory-toggle aria-label="Add memory">+</button>
+        <div class="memory-menu" hidden>
+          <label>
+            <input type="file" accept="image/*" capture="environment" data-memory-upload data-memory-type="photo">
+            <span>Take photo</span>
+          </label>
+          <label>
+            <input type="file" accept="image/*" data-memory-upload data-memory-type="photo">
+            <span>Upload image</span>
+          </label>
+          <label>
+            <input type="file" accept="video/*" capture="environment" data-memory-upload data-memory-type="video">
+            <span>Take video / reel</span>
+          </label>
+          <label>
+            <input type="file" accept="video/*" data-memory-upload data-memory-type="video">
+            <span>Upload video / reel</span>
+          </label>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1142,6 +1159,12 @@ explorerForm?.addEventListener("submit", (event) => {
 });
 
 questStops?.addEventListener("click", (event) => {
+  const memoryToggle = event.target.closest("[data-memory-toggle]");
+  if (memoryToggle) {
+    const menu = memoryToggle.closest(".memory-actions")?.querySelector(".memory-menu");
+    if (menu) menu.hidden = !menu.hidden;
+    return;
+  }
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
   const stop = button.closest(".quest-stop");
@@ -1176,17 +1199,36 @@ questStops?.addEventListener("click", (event) => {
 });
 
 questStops?.addEventListener("change", (event) => {
-  const input = event.target.closest("[data-photo-upload]");
+  const input = event.target.closest("[data-memory-upload]");
   if (!input || !input.files?.length) return;
   const stop = input.closest(".quest-stop");
   const bonus = Number(stop?.dataset.photoBonus || 25);
   input.closest(".mission-upload")?.classList.add("is-uploaded");
-  const label = input.closest("label")?.querySelector("span");
-  if (label) label.textContent = `Photo ready · +${bonus} XP`;
+  const menu = input.closest(".memory-menu");
+  if (menu) menu.hidden = true;
+  const upload = input.closest(".mission-upload");
+  const status = upload?.querySelector(".memory-status") || document.createElement("span");
+  const file = input.files[0];
+  const memoryType = input.dataset.memoryType === "video" ? "video/reel" : "photo";
+  status.className = "memory-status";
+  status.textContent = `${memoryType} added: ${file.name}`;
+  upload?.appendChild(status);
   if (stop && stop.dataset.photoBonusAwarded !== "1") {
     stop.dataset.photoBonusAwarded = "1";
+    stop.dataset.memoryCaptured = "1";
     updateExplorerProfile(bonus);
   }
+});
+
+document.getElementById("createMemoryVideo")?.addEventListener("click", () => {
+  const captured = [...document.querySelectorAll(".quest-stop")]
+    .filter((stop) => stop.dataset.memoryCaptured === "1").length;
+  const status = document.getElementById("memoryVideoStatus");
+  if (!status) return;
+  status.hidden = false;
+  status.textContent = captured
+    ? `Memory video draft ready from ${captured} stop${captured === 1 ? "" : "s"}. Background music and rendering will connect in the next media sprint.`
+    : "Add at least one photo, video, or reel at a stop to create a memory video.";
 });
 
 document.getElementById("resetQuest")?.addEventListener("click", () => {
