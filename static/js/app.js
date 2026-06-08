@@ -54,6 +54,7 @@ const explorerXp = document.getElementById("explorerXp");
 const explorerLevel = document.getElementById("explorerLevel");
 const explorerBadges = document.getElementById("explorerBadges");
 const detectExplorerLocation = document.getElementById("detectExplorerLocation");
+const setExplorerCity = document.getElementById("setExplorerCity");
 const explorerCity = document.getElementById("explorerCity");
 const explorerCityLat = document.getElementById("explorerCityLat");
 const explorerCityLng = document.getElementById("explorerCityLng");
@@ -71,6 +72,11 @@ const questBadgeText = document.getElementById("questBadgeText");
 const questBoostText = document.getElementById("questBoostText");
 const questBoostCard = document.getElementById("questBoostCard");
 const explorerCommunity = document.getElementById("explorerCommunity");
+const memoryGallery = document.getElementById("memoryGallery");
+const passportPrimary = document.getElementById("passportPrimary");
+const passportNearby = document.getElementById("passportNearby");
+const passportRegional = document.getElementById("passportRegional");
+const passportFuture = document.getElementById("passportFuture");
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -893,6 +899,68 @@ function selectedExplorerMoods() {
   return [...document.querySelectorAll("#moodGrid input[name='moods']:checked")].map((input) => input.value);
 }
 
+function formatExplorerCity(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(",")
+    .map((part) => part.trim().replace(/\b\w/g, (letter) => letter.toUpperCase()))
+    .filter(Boolean)
+    .join(", ");
+}
+
+function updateExplorerPassport(cityValue) {
+  const cityName = (formatExplorerCity(cityValue).split(",", 1)[0] || "Denver").trim();
+  const nearby = {
+    Denver: ["Boulder", "Colorado Springs", "Las Vegas"],
+    Boulder: ["Denver", "Colorado Springs", "Moab"],
+    "Colorado Springs": ["Denver", "Boulder", "Santa Fe"],
+    "Las Vegas": ["Red Rock Canyon", "Hoover Dam", "Los Angeles"],
+  };
+  const places = nearby[cityName] || ["Nearby Gems", "Regional Route", "Next City"];
+  if (passportPrimary) passportPrimary.textContent = cityName;
+  if (passportNearby) passportNearby.textContent = places[0];
+  if (passportRegional) passportRegional.textContent = places[1];
+  if (passportFuture) passportFuture.textContent = places[2];
+}
+
+function syncExplorerBookingChoice() {
+  document.querySelectorAll("input[name='fairfares_booked']").forEach((input) => {
+    input.closest("label")?.classList.toggle("is-selected", input.checked);
+  });
+}
+
+function geocodeExplorerCity(source = "typed") {
+  if (!explorerCity) return Promise.resolve("");
+  const typed = formatExplorerCity(explorerCity.value);
+  explorerCity.value = typed || "Denver, Colorado";
+  updateExplorerPassport(explorerCity.value);
+  if (!window.google?.maps?.Geocoder) {
+    if (explorerLocationStatus) {
+      explorerLocationStatus.textContent = `${source === "typed" ? "City set" : "Location set"} to ${explorerCity.value}. Generate a quest when you are ready.`;
+    }
+    return Promise.resolve(explorerCity.value);
+  }
+  const geocoder = new google.maps.Geocoder();
+  return new Promise((resolve) => {
+    geocoder.geocode({ address: explorerCity.value }, (results, status) => {
+      const result = status === "OK" && results?.[0] ? results[0] : null;
+      if (result) {
+        explorerCity.value = result.formatted_address.split(",").slice(0, 2).join(", ");
+        if (explorerCityLat) explorerCityLat.value = String(result.geometry.location.lat());
+        if (explorerCityLng) explorerCityLng.value = String(result.geometry.location.lng());
+      }
+      updateExplorerPassport(explorerCity.value);
+      if (explorerLocationStatus) {
+        explorerLocationStatus.textContent = result
+          ? `Explorer set to ${explorerCity.value}.`
+          : `City set to ${explorerCity.value}.`;
+      }
+      resolve(explorerCity.value);
+    });
+  });
+}
+
 moodGrid?.addEventListener("change", (event) => {
   const moods = selectedExplorerMoods();
   if (moods.length > 5 && event.target?.checked) {
@@ -916,16 +984,38 @@ detectExplorerLocation?.addEventListener("click", () => {
   explorerLocationStatus.textContent = "Checking location...";
   navigator.geolocation.getCurrentPosition(
     (position) => {
-      if (explorerCity) explorerCity.value = "Denver, Colorado";
       if (explorerCityLat) explorerCityLat.value = String(position.coords.latitude || 0);
       if (explorerCityLng) explorerCityLng.value = String(position.coords.longitude || 0);
-      explorerLocationStatus.textContent = "Location detected near Denver. You can change it anytime.";
+      if (window.google?.maps?.Geocoder && explorerCity) {
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ location: { lat: position.coords.latitude, lng: position.coords.longitude } }, (results, status) => {
+          if (status === "OK" && results?.[0]) {
+            const locality = results[0].address_components?.find((part) => part.types.includes("locality"))?.long_name;
+            const state = results[0].address_components?.find((part) => part.types.includes("administrative_area_level_1"))?.long_name;
+            explorerCity.value = [locality, state].filter(Boolean).join(", ") || explorerCity.value;
+          }
+          updateExplorerPassport(explorerCity.value);
+          explorerLocationStatus.textContent = `Location detected near ${explorerCity.value}.`;
+        });
+      } else {
+        updateExplorerPassport(explorerCity?.value || "Denver, Colorado");
+        explorerLocationStatus.textContent = "Location detected. Explorer will start from your current area.";
+      }
     },
     () => {
       explorerLocationStatus.textContent = "Permission denied. Enter a city to keep exploring.";
     },
     { enableHighAccuracy: false, timeout: 6000 },
   );
+});
+
+setExplorerCity?.addEventListener("click", () => {
+  geocodeExplorerCity("typed");
+});
+
+explorerCity?.addEventListener("change", () => {
+  explorerCity.value = formatExplorerCity(explorerCity.value);
+  updateExplorerPassport(explorerCity.value);
 });
 
 function updateExplorerBonusCard() {
@@ -935,9 +1025,14 @@ function updateExplorerBonusCard() {
 }
 
 document.querySelectorAll("input[name='fairfares_booked']").forEach((input) => {
-  input.addEventListener("change", updateExplorerBonusCard);
+  input.addEventListener("change", () => {
+    updateExplorerBonusCard();
+    syncExplorerBookingChoice();
+  });
 });
 updateExplorerBonusCard();
+syncExplorerBookingChoice();
+updateExplorerPassport(explorerCity?.value || "Denver, Colorado");
 
 function explorerProfileValue(node) {
   return Number(node?.textContent || 0) || 0;
@@ -987,6 +1082,19 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
   });
   const bounds = new google.maps.LatLngBounds();
   const path = [];
+  const start = Number(quest.start_lat) && Number(quest.start_lng)
+    ? { lat: Number(quest.start_lat), lng: Number(quest.start_lng), label: "Start" }
+    : null;
+  if (start) {
+    bounds.extend(start);
+    path.push(start);
+    new google.maps.Marker({
+      map,
+      position: start,
+      label: "S",
+      title: `Start near ${quest.start_label || quest.city || "your location"}`,
+    });
+  }
   visibleStops.forEach((stop, index) => {
     const position = { lat: Number(stop.lat), lng: Number(stop.lng) };
     bounds.extend(position);
@@ -1015,7 +1123,8 @@ function renderExplorerReviews(stop) {
   if (!reviews.length) return "";
   return `
     <div class="quest-place-reviews">
-      ${reviews.map((review) => `
+      <b class="review-loop-title">Explorer review loop</b>
+      ${reviews.slice(0, 2).map((review) => `
         <blockquote>
           <b>${escapeHtml(review.author || "Google reviewer")} ${review.rating ? `· ${escapeHtml(review.rating)}★` : ""}</b>
           <span>${escapeHtml(review.text || "")}</span>
@@ -1098,6 +1207,25 @@ function renderUploadChallenge(stop) {
   `;
 }
 
+function appendMemoryGalleryItem(file, memoryType, stopName) {
+  if (!memoryGallery || !file) return;
+  memoryGallery.querySelector("span")?.remove();
+  const item = document.createElement("div");
+  item.className = "memory-gallery-item";
+  if (memoryType === "photo") {
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(file);
+    img.alt = `${stopName || "Explorer"} memory`;
+    item.appendChild(img);
+  } else {
+    item.innerHTML = "<b>Video / Reel</b>";
+  }
+  const label = document.createElement("small");
+  label.textContent = stopName || file.name;
+  item.appendChild(label);
+  memoryGallery.appendChild(item);
+}
+
 function renderExplorerQuest(quest) {
   if (!questOutput || !questStops || !questMap) return;
   questOutput.hidden = false;
@@ -1116,7 +1244,7 @@ function renderExplorerQuest(quest) {
   if (explorerCommunity) explorerCommunity.hidden = false;
   questMap.innerHTML = quest.stops.map((stop, index) => `
     <span class="${stop.is_secret ? "is-secret" : ""} ${index === 0 ? "is-current" : ""}">
-      ${stop.is_secret ? "?" : index === 0 ? "GO" : "PIN"}
+      ${stop.is_secret ? "?" : index === 0 ? "START" : index + 1}
     </span>
   `).join("");
   renderExplorerGoogleMap(quest);
@@ -1140,7 +1268,6 @@ function renderExplorerQuest(quest) {
     ` : "";
     return `
     <article class="quest-stop ${locked || secret ? "is-locked" : ""} ${completed ? "is-complete" : ""}" data-stop-index="${index}" data-stop-id="${escapeHtml(stop.stop_id || "")}" data-stop-name="${stopName}" data-stop-challenge="${stopChallenge}" data-photo-bonus="${photoBonus}">
-      <div class="quest-stop-order">${secret ? "?" : completed ? "OK" : "PIN"}</div>
       <div>
         <small>${secret ? "Mystery Stop" : locked ? "Locked Mission" : completed ? "Checked In" : `Active Mission`}</small>
         <h3>${secret ? "Unlock after previous stop" : stopName}</h3>
@@ -1148,14 +1275,16 @@ function renderExplorerQuest(quest) {
         <div class="mission-title">${secret ? "Unlock the next adventure" : missionTitle}</div>
         <p><b>Challenge:</b> ${secret ? "Complete the previous mission to reveal this stop." : stopChallenge}</p>
         ${secret ? "" : renderMissionChecklist(stop)}
-        <p><b>Story prompt:</b> ${secret ? "The prompt appears when the stop unlocks." : escapeHtml(stop.story_prompt || "What made this stop worth the drive?")}</p>
-        <p><b>Tips:</b> ${secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Use current hours and safe parking before you go.")}</p>
+        <p><b>Stop tips:</b> ${secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Use current hours and safe parking before you go.")}</p>
         ${secret ? `<div class="quest-photo-placeholder">Mystery media unlocks later</div>` : renderExplorerMedia(stop)}
         ${secret ? "" : renderUploadChallenge(stop)}
         ${secret ? "" : renderExplorerReviews(stop)}
         <div class="mission-reward"><span>${stop.xp_reward} XP</span><span>+${photoBonus} photo bonus</span></div>
       </div>
-      <button type="button" ${secret || locked || completed ? "disabled" : ""}>${completed ? "Checked In" : secret || locked ? "Locked" : "Check In"}</button>
+      <div class="quest-stop-actions">
+        <button type="button" ${secret || locked || completed ? "disabled" : ""}>${completed ? "Checked In" : secret || locked ? "Locked" : "I'm at this stop"}</button>
+        ${secret ? "" : `<button type="button" class="light-button choose-other-stop" data-refresh-stop>Choose other places</button>`}
+      </div>
     </article>
   `;
   }).join("");
@@ -1171,21 +1300,23 @@ explorerForm?.addEventListener("submit", (event) => {
     moodGrid?.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
-  const formData = new FormData(explorerForm);
-  const payload = new URLSearchParams(formData);
-  payload.set("moods", moods.join(","));
-  fetch("/explorer/quest", {
-    method: "POST",
-    body: payload,
-  })
-    .then((response) => response.ok ? response.json() : response.json().then((body) => Promise.reject(body)))
-    .then((payload) => {
-      renderExplorerQuest(payload.quest);
-      updateExplorerProfile(Number(payload.quest?.fairfares_bonus || 0));
+  geocodeExplorerCity("typed").finally(() => {
+    const formData = new FormData(explorerForm);
+    const payload = new URLSearchParams(formData);
+    payload.set("moods", moods.join(","));
+    fetch("/explorer/quest", {
+      method: "POST",
+      body: payload,
     })
-    .catch(() => {
-      if (questOutput) questOutput.hidden = true;
-    });
+      .then((response) => response.ok ? response.json() : response.json().then((body) => Promise.reject(body)))
+      .then((payload) => {
+        renderExplorerQuest(payload.quest);
+        updateExplorerProfile(Number(payload.quest?.fairfares_bonus || 0));
+      })
+      .catch(() => {
+        if (questOutput) questOutput.hidden = true;
+      });
+  });
 });
 
 questStops?.addEventListener("click", (event) => {
@@ -1197,22 +1328,33 @@ questStops?.addEventListener("click", (event) => {
   }
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (button.matches("[data-refresh-stop]")) {
+    button.textContent = "Alternative search queued";
+    button.disabled = true;
+    return;
+  }
   const stop = button.closest(".quest-stop");
+  if (!stop) return;
   stop.classList.add("is-complete");
-  const stopMarker = stop.querySelector(".quest-stop-order");
-  if (stopMarker) stopMarker.textContent = "OK";
   button.textContent = "Checked In";
   button.disabled = true;
+  stop.querySelectorAll("[data-refresh-stop]").forEach((item) => {
+    item.disabled = true;
+  });
   const next = stop.nextElementSibling;
   if (next?.classList.contains("is-locked")) {
     next.classList.remove("is-locked");
-    next.querySelector(".quest-stop-order").textContent = "PIN";
-    next.querySelector("small").textContent = "Active Mission";
-    next.querySelector("h3").textContent = next.dataset.stopName || "Mystery Stop Unlocked";
+    const nextStatus = next.querySelector("small");
+    const nextTitle = next.querySelector("h3");
+    if (nextStatus) nextStatus.textContent = "Active Mission";
+    if (nextTitle) nextTitle.textContent = next.dataset.stopName || "Mystery Stop Unlocked";
     const mission = next.querySelector("p");
-    if (mission) mission.innerHTML = `<b>Mission:</b> ${escapeHtml(next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.")}`;
-    next.querySelector("button").disabled = false;
-    next.querySelector("button").textContent = "Check In";
+    if (mission) mission.innerHTML = `<b>Challenge:</b> ${escapeHtml(next.dataset.stopChallenge || "Your hidden stop is ready. Complete the final challenge.")}`;
+    const nextButton = next.querySelector(".quest-stop-actions button:not([data-refresh-stop])");
+    if (nextButton) {
+      nextButton.disabled = false;
+      nextButton.textContent = "I'm at this stop";
+    }
     const mapPin = questMap?.querySelectorAll("span")?.[Number(next.dataset.stopIndex || 0)];
     mapPin?.classList.add("is-current");
   }
@@ -1226,7 +1368,7 @@ questStops?.addEventListener("click", (event) => {
       body: new URLSearchParams({ stop_id: stopId }),
     }).catch(() => {});
   }
-  const remaining = [...questStops.querySelectorAll(".quest-stop button")].some((item) => !item.disabled);
+  const remaining = [...questStops.querySelectorAll(".quest-stop-actions button:not([data-refresh-stop])")].some((item) => !item.disabled);
   if (!remaining && questComplete) questComplete.hidden = false;
 });
 
@@ -1245,6 +1387,7 @@ questStops?.addEventListener("change", (event) => {
   status.className = "memory-status";
   status.textContent = `${memoryType} added: ${file.name}`;
   upload?.appendChild(status);
+  appendMemoryGalleryItem(file, input.dataset.memoryType === "video" ? "video" : "photo", stop?.dataset.stopName || "");
   if (stop && stop.dataset.photoBonusAwarded !== "1") {
     stop.dataset.photoBonusAwarded = "1";
     stop.dataset.memoryCaptured = "1";

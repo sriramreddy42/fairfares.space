@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-7">
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-8">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-7"></script>
+  <script defer src="/static/js/app.js?v=explorer-8"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -61,6 +61,7 @@
             <label><span>City</span><input name="city" id="explorerCity" value="Denver, Colorado" autocomplete="address-level2"></label>
             <input type="hidden" name="city_lat" id="explorerCityLat" value="0">
             <input type="hidden" name="city_lng" id="explorerCityLng" value="0">
+            <button type="button" class="light-button" id="setExplorerCity">Set City</button>
             <button type="button" class="light-button" id="detectExplorerLocation">Use My Location</button>
           </div>
           <p class="modify-status" id="explorerLocationStatus" aria-live="polite"></p>
@@ -85,26 +86,27 @@
           <h2>What's today's vibe?</h2>
           <p>Choose 3 to 5 so Explorer can build a better route.</p>
           <div class="mood-grid" id="moodGrid">
-            <label data-icon="FOOD"><input type="checkbox" name="moods" value="Food"><span>Food</span></label>
-            <label data-icon="PEAK"><input type="checkbox" name="moods" value="Adventure"><span>Adventure</span></label>
-            <label data-icon="LEAF"><input type="checkbox" name="moods" value="Nature"><span>Nature</span></label>
-            <label data-icon="SHOT"><input type="checkbox" name="moods" value="Photography"><span>Photography</span></label>
-            <label data-icon="DATE"><input type="checkbox" name="moods" value="Date Night"><span>Date Night</span></label>
-            <label data-icon="CAFE"><input type="checkbox" name="moods" value="Coffee"><span>Coffee</span></label>
-            <label data-icon="DRIVE"><input type="checkbox" name="moods" value="Scenic Drive"><span>Scenic Drive</span></label>
-            <label data-icon="SUN"><input type="checkbox" name="moods" value="Sunset"><span>Sunset</span></label>
-            <label data-icon="GEM"><input type="checkbox" name="moods" value="Hidden Gems"><span>Hidden Gems</span></label>
-            <label data-icon="LIVE"><input type="checkbox" name="moods" value="Music"><span>Music</span></label>
-            <label data-icon="SHOP"><input type="checkbox" name="moods" value="Shopping"><span>Shopping</span></label>
-            <label data-icon="?"><input type="checkbox" name="moods" value="Surprise Me"><span>Surprise Me</span></label>
+            <label data-icon="food"><input type="checkbox" name="moods" value="Food"><span class="mood-art">🍔</span><span class="mood-name">Food</span></label>
+            <label data-icon="peak"><input type="checkbox" name="moods" value="Adventure"><span class="mood-art">🏔</span><span class="mood-name">Adventure</span></label>
+            <label data-icon="leaf"><input type="checkbox" name="moods" value="Nature"><span class="mood-art">🌲</span><span class="mood-name">Nature</span></label>
+            <label data-icon="shot"><input type="checkbox" name="moods" value="Photography"><span class="mood-art">📷</span><span class="mood-name">Photography</span></label>
+            <label data-icon="date"><input type="checkbox" name="moods" value="Date Night"><span class="mood-art">♥</span><span class="mood-name">Date Night</span></label>
+            <label data-icon="cafe"><input type="checkbox" name="moods" value="Coffee"><span class="mood-art">☕</span><span class="mood-name">Coffee</span></label>
+            <label data-icon="drive"><input type="checkbox" name="moods" value="Scenic Drive"><span class="mood-art">🚗</span><span class="mood-name">Scenic Drive</span></label>
+            <label data-icon="sun"><input type="checkbox" name="moods" value="Sunset"><span class="mood-art">🌅</span><span class="mood-name">Sunset</span></label>
+            <label data-icon="gem"><input type="checkbox" name="moods" value="Hidden Gems"><span class="mood-art">◆</span><span class="mood-name">Hidden Gems</span></label>
+            <label data-icon="live"><input type="checkbox" name="moods" value="Music"><span class="mood-art">♪</span><span class="mood-name">Music</span></label>
+            <label data-icon="shop"><input type="checkbox" name="moods" value="Shopping"><span class="mood-art">🛍</span><span class="mood-name">Shopping</span></label>
+            <label data-icon="surprise"><input type="checkbox" name="moods" value="Surprise Me"><span class="mood-art">?</span><span class="mood-name">Surprise Me</span></label>
           </div>
           <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night and Sunset prioritize evening-friendly places.</p>
         </div>
 
         <div class="explorer-step explorer-preferences">
-          <label><span>How much time?</span><select name="duration"><option>2 Hours</option><option selected>Half Day</option><option>Full Day</option><option>Weekend</option></select></label>
+          <label><span>How much time?</span><select name="duration"><option>2 Hours</option><option>3 Hours</option><option>4 Hours</option><option>5 Hours</option><option>6 Hours</option><option selected>Half Day</option><option>Full Day</option><option>Weekend</option><option>Week</option></select></label>
           <label><span>Budget</span><select name="budget"><option>$</option><option selected>$$</option><option>$$$</option></select></label>
           <label><span>Traveling with</span><select name="travel_with"><option>Solo</option><option>Couple</option><option selected>Friends</option><option>Family</option></select></label>
+          <p class="explorer-preference-note">Explorer uses your time, budget, and group type to keep routes practical, affordable, and worth the drive.</p>
         </div>
 
         <button class="select-button" type="submit">Generate Explorer Quest</button>
@@ -125,10 +127,10 @@
         </div>
         <div class="explorer-passport">
           <h3>Explorer Passport</h3>
-          <div><span>Denver</span><b>Active</b></div>
-          <div><span>Boulder</span><b>Next</b></div>
-          <div><span>Colorado Springs</span><b>Locked</b></div>
-          <div><span>Las Vegas</span><b>Locked</b></div>
+          <div><span id="passportPrimary">Denver</span><b>Active</b></div>
+          <div><span id="passportNearby">Boulder</span><b>Nearby</b></div>
+          <div><span id="passportRegional">Colorado Springs</span><b>Regional</b></div>
+          <div><span id="passportFuture">Las Vegas</span><b>Locked</b></div>
         </div>
       </aside>
     </section>
@@ -182,6 +184,17 @@
           <b>Sriram's Adventure</b>
           <span>★★★★★</span>
           <p>"The best stop was the one we unlocked last."</p>
+        </div>
+        <div class="memory-gallery-wrap">
+          <b>Memory Gallery</b>
+          <div class="memory-gallery" id="memoryGallery">
+            <span>Your uploaded photos, videos, and reels will build the trip movie here.</span>
+          </div>
+          <div class="memory-share-actions">
+            <button type="button">Share to WhatsApp</button>
+            <button type="button">Share to Instagram</button>
+            <button type="button">Share to Facebook</button>
+          </div>
         </div>
       </aside>
       <div class="quest-complete" id="questComplete" hidden>

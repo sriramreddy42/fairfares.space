@@ -2072,18 +2072,54 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
     }
 
 
-def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, city_lng: float) -> list[dict[str, object]]:
+def explorer_preference_terms(duration: str, budget: str, travel_with: str) -> list[str]:
+    terms: list[str] = []
+    if duration in {"2 Hours", "3 Hours"}:
+        terms.extend(["nearby", "quick stop"])
+    elif duration in {"Weekend", "Week"}:
+        terms.extend(["best rated", "day trip"])
+    if budget == "$":
+        terms.extend(["affordable", "budget friendly"])
+    elif budget == "$$$":
+        terms.extend(["premium", "highly rated"])
+    if travel_with == "Family":
+        terms.extend(["family friendly"])
+    elif travel_with == "Couple":
+        terms.extend(["romantic"])
+    elif travel_with == "Solo":
+        terms.extend(["safe solo"])
+    return terms[:4]
+
+
+def explorer_duration_profile(duration: str) -> tuple[int, int, int]:
+    profiles = {
+        "2 Hours": (2, 3, 12),
+        "3 Hours": (3, 3, 16),
+        "4 Hours": (4, 4, 22),
+        "5 Hours": (5, 4, 28),
+        "6 Hours": (6, 5, 34),
+        "Half Day": (4, 4, 26),
+        "Full Day": (8, 5, 54),
+        "Weekend": (18, 5, 120),
+        "Week": (40, 5, 220),
+    }
+    return profiles.get(duration, profiles["Half Day"])
+
+
+def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, city_lng: float, duration: str = "", budget: str = "", travel_with: str = "") -> list[dict[str, object]]:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if not api_key:
         return []
     title_city = city.split(",", 1)[0].strip() or "Denver"
     query_moods = moods[:5] or ["Scenic Drive", "Hidden Gems", "Food"]
+    preference_terms = explorer_preference_terms(duration, budget, travel_with)
+    preference_suffix = " ".join(preference_terms)
     seen_place_ids: set[str] = set()
     stops: list[dict[str, object]] = []
     for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
         for template in EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"]):
             params = {
-                "query": template.format(city=title_city),
+                "query": f"{template.format(city=title_city)} {preference_suffix}".strip(),
                 "key": api_key,
             }
             if city_lat and city_lng:
@@ -2143,7 +2179,8 @@ def log_explorer_config_status() -> None:
 def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool, city_lat: float = 0, city_lng: float = 0) -> dict[str, object]:
     mood_order = moods[:5] or ["Scenic Drive"]
     selected_moods = set(mood_order)
-    google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng)
+    duration_hours, target_stop_count, total_miles = explorer_duration_profile(duration)
+    google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng, duration, budget, travel_with)
     scored = []
     for stop in EXPLORER_DENVER_STOPS:
         score = len(selected_moods & stop["tags"])
@@ -2155,13 +2192,11 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
     stops = visible_stops + [secret_stop]
     quest_type = " + ".join(mood_order[:2])
     total_xp = sum(int(stop["xp"]) for stop in stops) + (100 if fairfares_booked else 0)
-    duration_hours = {"2 Hours": 2, "Half Day": 4, "Full Day": 8, "Weekend": 18}.get(duration, 4)
-    total_miles = 14 if duration == "2 Hours" else 36 if duration == "Half Day" else 72 if duration == "Full Day" else 140
     title_mood = "Sunset" if "Sunset" in selected_moods else "Hidden Gem" if "Hidden Gems" in selected_moods else next(iter(selected_moods))
     title_city = city.split(",", 1)[0].strip() or "Denver"
-    difficulty = 1 if duration == "2 Hours" else 2 if duration == "Half Day" else 3
+    difficulty = 1 if duration in {"2 Hours", "3 Hours"} else 2 if duration in {"4 Hours", "5 Hours", "6 Hours", "Half Day"} else 3
     if len(google_stops) >= 3:
-        while len(google_stops) < 5:
+        while len(google_stops) < target_stop_count:
             fallback = EXPLORER_DENVER_STOPS[len(google_stops) % len(EXPLORER_DENVER_STOPS)]
             google_stops.append(
                 {
@@ -2179,8 +2214,8 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                     "tips": "Local fallback stop added because Google Places returned fewer route options.",
                     "reference_photo_url": "",
                     "reference_media_urls": [],
-                    "is_secret": 1 if len(google_stops) == 4 else 0,
-                    "locked": 1 if len(google_stops) == 4 else 0,
+                    "is_secret": 1 if len(google_stops) == target_stop_count - 1 else 0,
+                    "locked": 1 if len(google_stops) == target_stop_count - 1 else 0,
                     "place_id": "",
                     "address": "",
                     "rating": 0,
@@ -2190,8 +2225,13 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                     "source": "LOCAL_FALLBACK",
                 }
             )
-        payload_stops = google_stops[:5]
+        payload_stops = google_stops[:target_stop_count]
+        for index, stop in enumerate(payload_stops):
+            stop["order"] = index + 1
+            stop["is_secret"] = 1 if index == len(payload_stops) - 1 else 0
+            stop["locked"] = 1 if index == len(payload_stops) - 1 else 0
     else:
+        local_stops = stops[:target_stop_count - 1] + [secret_stop]
         payload_stops = [
             {
                 "order": index + 1,
@@ -2204,12 +2244,12 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                 "mission_title": "Local Explorer Mission",
                 "story_prompt": "What should another FairFares traveler know?",
                 "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
-                "photo_bonus_xp": 25 if index < len(stops) - 1 else 35,
+                "photo_bonus_xp": 25 if index < len(local_stops) - 1 else 35,
                 "tips": "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
                 "reference_photo_url": "",
                 "reference_media_urls": [],
-                "is_secret": 1 if index == len(stops) - 1 else 0,
-                "locked": 1 if index == len(stops) - 1 else 0,
+                "is_secret": 1 if index == len(local_stops) - 1 else 0,
+                "locked": 1 if index == len(local_stops) - 1 else 0,
                 "place_id": "",
                 "address": "",
                 "rating": 0,
@@ -2218,7 +2258,7 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                 "google_url": "",
                 "source": "LOCAL",
             }
-            for index, stop in enumerate(stops)
+            for index, stop in enumerate(local_stops)
         ]
     total_xp = sum(int(stop["xp_reward"]) for stop in payload_stops) + (100 if fairfares_booked else 0)
     return {
@@ -2227,6 +2267,9 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
         "city": city,
         "city_lat": city_lat,
         "city_lng": city_lng,
+        "start_lat": city_lat,
+        "start_lng": city_lng,
+        "start_label": title_city,
         "quest_type": quest_type,
         "difficulty": difficulty,
         "duration": duration,
@@ -2251,6 +2294,9 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
         "city": quest["city"],
         "city_lat": row_value(quest, "city_lat", 0),
         "city_lng": row_value(quest, "city_lng", 0),
+        "start_lat": row_value(quest, "city_lat", 0),
+        "start_lng": row_value(quest, "city_lng", 0),
+        "start_label": quest["city"].split(",", 1)[0].strip() or quest["city"],
         "quest_type": quest["quest_type"],
         "difficulty": int(row_value(quest, "difficulty", 2) or 2),
         "duration": quest["duration"],

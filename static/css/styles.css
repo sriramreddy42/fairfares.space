@@ -6183,6 +6183,497 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
 }
 
+.explorer-screen {
+  background:
+    radial-gradient(circle at top right, rgba(237, 0, 28, 0.05), transparent 32%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+  color: var(--navy);
+}
+
+.explorer-screen .main-header {
+  background: #fff;
+  border-bottom: 3px solid var(--red);
+}
+
+.explorer-screen .main-nav a {
+  color: #111827;
+}
+
+.explorer-screen .main-nav a.active {
+  color: var(--red);
+}
+
+.explorer-hero {
+  background: linear-gradient(135deg, #07143f 0%, #0f234f 56%, #142d5c 100%);
+  border: 0;
+  box-shadow: 0 14px 34px rgba(15, 35, 79, 0.18);
+}
+
+.explorer-form,
+.explorer-side,
+.quest-output {
+  background: #fff;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 28px rgba(10, 28, 68, 0.07);
+  color: var(--navy);
+}
+
+.explorer-step {
+  border-bottom-color: var(--border);
+}
+
+.explorer-step h2,
+.explorer-side h2,
+.quest-head h2,
+.quest-stop h3,
+.quest-map-canvas b,
+.explorer-community h2 {
+  color: var(--navy);
+}
+
+.explorer-step p,
+.quest-head p,
+.explorer-side li,
+.quest-stop p,
+.quest-progress-card span,
+.quest-boost-card span,
+.quest-badge-card span,
+.explorer-community p {
+  color: var(--muted);
+}
+
+.explorer-location-row {
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 160px) minmax(170px, 210px);
+}
+
+.explorer-location-row label {
+  grid-column: auto;
+}
+
+.explorer-form input,
+.explorer-form select {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--navy);
+}
+
+.explorer-form .light-button,
+.quest-stop .light-button,
+.memory-share-actions button {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--navy);
+  font-weight: 950;
+  min-height: 48px;
+}
+
+.explorer-form .light-button:hover,
+.quest-stop .light-button:hover,
+.memory-share-actions button:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.segmented-choice label {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--navy);
+}
+
+.segmented-choice input {
+  border-color: #9aa6bd;
+}
+
+.segmented-choice label.is-selected,
+.segmented-choice label:has(input:checked) {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.segmented-choice label.is-selected input,
+.segmented-choice label:has(input:checked) input {
+  background: var(--red);
+  box-shadow: inset 0 0 0 5px #fff;
+}
+
+.mood-grid {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.mood-grid label {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(10, 28, 68, 0.06);
+  color: var(--navy);
+  gap: 12px;
+  grid-template-columns: 58px minmax(120px, 1fr) 24px;
+  min-height: 78px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.mood-grid label::before {
+  content: none !important;
+}
+
+.mood-grid .mood-art {
+  align-items: center;
+  background: linear-gradient(135deg, #fef2f2, #fff7db);
+  border: 1px solid #f3d16c;
+  border-radius: 8px;
+  display: inline-flex;
+  font-size: 1.45rem;
+  height: 56px;
+  justify-content: center;
+  line-height: 1;
+  width: 56px;
+}
+
+.mood-grid label[data-icon="food"] .mood-art {
+  background:
+    radial-gradient(circle at 50% 35%, #ffd166 0 22%, transparent 23%),
+    linear-gradient(#7c2d12 42%, #f59e0b 43% 57%, #7c2d12 58%);
+}
+
+.mood-grid label[data-icon="peak"] .mood-art {
+  background:
+    linear-gradient(135deg, transparent 35%, #fff 36% 46%, transparent 47%),
+    linear-gradient(135deg, #2563eb 0 48%, #14532d 49%);
+}
+
+.mood-grid label[data-icon="leaf"] .mood-art {
+  background:
+    radial-gradient(ellipse at 58% 42%, #22c55e 0 34%, transparent 35%),
+    linear-gradient(135deg, #bbf7d0, #14532d);
+}
+
+.mood-grid label[data-icon="shot"] .mood-art {
+  background:
+    radial-gradient(circle at 50% 50%, #111827 0 14%, #fff 15% 23%, transparent 24%),
+    linear-gradient(135deg, #dbeafe, #1d4ed8);
+}
+
+.mood-grid label[data-icon="date"] .mood-art {
+  background:
+    radial-gradient(circle at 42% 45%, #fb7185 0 16%, transparent 17%),
+    radial-gradient(circle at 58% 45%, #fb7185 0 16%, transparent 17%),
+    linear-gradient(135deg, #831843, #f43f5e);
+}
+
+.mood-grid label[data-icon="cafe"] .mood-art {
+  background:
+    radial-gradient(ellipse at 50% 55%, #92400e 0 28%, transparent 29%),
+    linear-gradient(135deg, #fef3c7, #78350f);
+}
+
+.mood-grid label[data-icon="drive"] .mood-art {
+  background:
+    linear-gradient(90deg, transparent 47%, #fff 48% 52%, transparent 53%),
+    linear-gradient(135deg, #111827, #60a5fa);
+}
+
+.mood-grid label[data-icon="sun"] .mood-art {
+  background:
+    radial-gradient(circle at 50% 42%, #facc15 0 22%, transparent 23%),
+    linear-gradient(180deg, #fb923c, #581c87);
+}
+
+.mood-grid label[data-icon="gem"] .mood-art {
+  background:
+    linear-gradient(135deg, transparent 30%, #fff 31% 42%, transparent 43%),
+    linear-gradient(135deg, #06b6d4, #7c3aed);
+}
+
+.mood-grid label[data-icon="live"] .mood-art {
+  background:
+    radial-gradient(circle at 42% 55%, #fff 0 8%, transparent 9%),
+    linear-gradient(135deg, #111827, #a21caf);
+}
+
+.mood-grid label[data-icon="shop"] .mood-art {
+  background:
+    linear-gradient(#fff 0 14%, transparent 15%),
+    linear-gradient(135deg, #dc2626, #f59e0b);
+}
+
+.mood-grid label[data-icon="surprise"] .mood-art {
+  background:
+    radial-gradient(circle at 50% 50%, #fff 0 11%, transparent 12%),
+    linear-gradient(135deg, #4f46e5, #0f172a);
+}
+
+.mood-grid label:hover {
+  border-color: var(--red);
+}
+
+.mood-grid label.is-selected,
+.mood-grid label:has(input:checked) {
+  background: #fff8f8;
+  border-color: var(--red);
+}
+
+.mood-grid input {
+  border-color: #9aa6bd;
+  justify-self: end;
+}
+
+.mood-grid label.is-selected input,
+.mood-grid label:has(input:checked) input {
+  background: var(--red);
+  box-shadow: inset 0 0 0 5px #fff;
+}
+
+.mood-grid .mood-name {
+  color: var(--navy);
+  font-size: 1.05rem;
+  font-weight: 950;
+  line-height: 1.15;
+  min-width: 0;
+  overflow-wrap: normal;
+  white-space: normal;
+  word-break: normal;
+}
+
+.explorer-preference-note {
+  background: #f6f8fc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 12px 14px;
+}
+
+.explorer-mood-helper {
+  color: #8a6500 !important;
+}
+
+.explorer-side {
+  background: #fff;
+}
+
+.explorer-passport div,
+.quest-stats span,
+.quest-progress-card,
+.quest-boost-card,
+.quest-badge-card,
+.quest-stop,
+.quest-place-meta span,
+.quest-place-meta a,
+.mission-upload,
+.quest-place-reviews blockquote,
+.memory-video-status,
+.community-story-card {
+  background: #f7f9fd;
+  border-color: var(--border);
+}
+
+.quest-stats b,
+.mission-title {
+  color: var(--red);
+}
+
+.quest-progress-card b,
+.quest-boost-card b,
+.quest-badge-card b,
+.quest-place-reviews b {
+  color: var(--navy);
+}
+
+.quest-game-dashboard {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.quest-boost-card.is-active {
+  background: #eefaf0;
+  border-color: #bfe6c6;
+  color: #276b2f;
+}
+
+.quest-map {
+  background: #f6f8fc;
+  border-color: var(--border);
+  min-height: 86px;
+}
+
+.quest-map span {
+  flex-basis: 42px;
+  height: 42px;
+}
+
+.quest-map-canvas {
+  background: #fff;
+  border-color: var(--border);
+  min-height: 340px;
+}
+
+.quest-stop {
+  grid-template-columns: minmax(0, 1fr) 180px;
+  padding: 18px;
+}
+
+.quest-stop-order {
+  display: none;
+}
+
+.mission-checklist li {
+  color: var(--navy);
+}
+
+.quest-media-carousel {
+  aspect-ratio: 16 / 7;
+  max-height: 220px;
+  min-height: 170px;
+  width: min(100%, 640px);
+}
+
+.quest-media-carousel img {
+  object-fit: cover;
+  object-position: center;
+}
+
+.mission-upload span,
+.mission-reward span {
+  color: var(--navy);
+}
+
+.quest-place-reviews {
+  max-height: 150px;
+  overflow: auto;
+}
+
+.review-loop-title {
+  color: var(--navy);
+  font-size: 0.9rem;
+}
+
+.quest-place-reviews blockquote {
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.quest-stop-actions {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.quest-stop button,
+.quest-rating button {
+  border-radius: 8px;
+}
+
+.quest-stop.is-locked::after {
+  background: rgba(255,255,255,0.88);
+  color: var(--navy);
+  inset: 12px 188px 12px 12px;
+}
+
+.explorer-community {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--navy);
+  grid-template-columns: minmax(0, 1fr) 280px minmax(260px, 420px);
+}
+
+.memory-gallery-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-gallery {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  min-height: 76px;
+}
+
+.memory-gallery > span {
+  background: #f7f9fd;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  grid-column: 1 / -1;
+  padding: 14px;
+}
+
+.memory-gallery-item {
+  background: #f7f9fd;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.memory-gallery-item img {
+  aspect-ratio: 1;
+  object-fit: cover;
+  width: 100%;
+}
+
+.memory-gallery-item small {
+  color: var(--muted);
+  font-weight: 850;
+  padding: 0 8px 8px;
+}
+
+.memory-share-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 960px) {
+  .explorer-builder,
+  .explorer-location-row,
+  .explorer-preferences,
+  .quest-game-dashboard,
+  .explorer-community {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer-side {
+    position: static;
+  }
+
+  .quest-stop {
+    grid-template-columns: 1fr;
+  }
+
+  .quest-stop.is-locked::after {
+    inset: 10px;
+  }
+}
+
+@media (max-width: 760px) {
+  .mood-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mood-grid label {
+    grid-template-columns: 54px minmax(0, 1fr) 24px;
+    min-height: 72px;
+  }
+
+  .mood-grid .mood-art {
+    height: 52px;
+    width: 52px;
+  }
+
+  .quest-media-carousel {
+    max-height: 190px;
+    width: 100%;
+  }
+
+  .memory-share-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-stack-form {
   display: grid;
   gap: 0.4rem;
