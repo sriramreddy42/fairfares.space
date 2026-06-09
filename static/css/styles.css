@@ -8381,3 +8381,357 @@ body.modal-open {
     width: 100% !important;
   }
 }
+
+/* Explorer final polish: navigation-grade route details and resilient cards. */
+.explorer-form,
+.explorer-side,
+.quest-output {
+  background: #fff !important;
+  color: var(--navy) !important;
+}
+
+.explorer-form *:not(.primary-route-link):not(.route-link):not(button),
+.quest-output *:not(.primary-route-link):not(.route-link):not(button) {
+  letter-spacing: 0 !important;
+}
+
+.mood-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+.mood-grid label {
+  grid-template-columns: 60px minmax(0, 1fr) 22px !important;
+  min-width: 0 !important;
+}
+
+.mood-grid .mood-name {
+  font-size: clamp(1rem, 1vw, 1.12rem) !important;
+  overflow: visible !important;
+  text-overflow: initial !important;
+}
+
+.quest-head {
+  align-items: end !important;
+  display: grid !important;
+  gap: 20px !important;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px) !important;
+}
+
+.quest-head h2 {
+  color: var(--navy) !important;
+  font-size: clamp(2rem, 3vw, 3rem) !important;
+  line-height: 1.02 !important;
+  margin: 0 0 10px !important;
+}
+
+.quest-head p {
+  color: #475467 !important;
+  max-width: 760px !important;
+}
+
+.quest-stats {
+  align-items: stretch !important;
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  margin-top: 16px !important;
+}
+
+.quest-stats span {
+  background: #f8fafc !important;
+  border: 1px solid #dce3ee !important;
+  border-radius: 8px !important;
+  color: #667085 !important;
+  display: grid !important;
+  gap: 3px !important;
+  min-height: 64px !important;
+  padding: 12px !important;
+}
+
+.quest-stats b {
+  color: var(--red) !important;
+  font-size: 1.05rem !important;
+  line-height: 1.1 !important;
+}
+
+.quest-game-dashboard {
+  display: grid !important;
+  gap: 16px !important;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) !important;
+  margin: 20px 0 !important;
+}
+
+.quest-progress-card,
+.quest-boost-card,
+.quest-badge-card {
+  background: #fff !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  color: var(--navy) !important;
+  min-height: 92px !important;
+  padding: 18px !important;
+}
+
+.quest-boost-card.is-active {
+  background: #f0fbf2 !important;
+  border-color: #b8e6c0 !important;
+  color: #19692c !important;
+}
+
+.quest-progress-track {
+  background: #e8edf4 !important;
+  height: 10px !important;
+}
+
+.quest-progress-track span {
+  background: linear-gradient(90deg, var(--red), #ff6b6b) !important;
+}
+
+.quest-map-canvas {
+  border: 1px solid #d7deea !important;
+  border-radius: 12px !important;
+  height: clamp(280px, 36vw, 480px) !important;
+  overflow: hidden !important;
+}
+
+.quest-route-details {
+  display: grid !important;
+  gap: 12px !important;
+  margin: 14px 0 18px !important;
+}
+
+.quest-route-details[hidden] {
+  display: none !important;
+}
+
+.route-summary-card,
+.next-stop-card {
+  align-items: center !important;
+  background: #f8fafc !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  padding: 16px !important;
+}
+
+.route-summary-card h3,
+.next-stop-card h3 {
+  color: var(--navy) !important;
+  font-size: clamp(1.25rem, 2vw, 1.65rem) !important;
+  margin: 0 !important;
+}
+
+.route-summary-card span,
+.next-stop-card span {
+  color: #475467 !important;
+  display: block !important;
+  line-height: 1.35 !important;
+}
+
+.route-link,
+.primary-route-link {
+  align-items: center !important;
+  border-radius: 8px !important;
+  display: inline-flex !important;
+  font-weight: 900 !important;
+  justify-content: center !important;
+  min-height: 46px !important;
+  padding: 10px 16px !important;
+  text-decoration: none !important;
+  white-space: nowrap !important;
+}
+
+.route-link {
+  background: #fff !important;
+  border: 1px solid #cfd7e5 !important;
+  color: var(--navy) !important;
+}
+
+.primary-route-link {
+  background: var(--red) !important;
+  border: 1px solid var(--red) !important;
+  color: #fff !important;
+}
+
+.route-leg-list {
+  display: grid !important;
+  gap: 8px !important;
+  list-style: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.route-leg-list li {
+  align-items: center !important;
+  background: #fff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  padding: 12px 14px !important;
+}
+
+.route-leg-list b {
+  color: var(--navy) !important;
+  overflow-wrap: anywhere !important;
+}
+
+.route-leg-list span {
+  color: #475467 !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+}
+
+.quest-map {
+  background: #f8fafc !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  gap: 12px !important;
+  margin: 16px 0 !important;
+  padding: 18px !important;
+}
+
+.quest-map span {
+  box-shadow: 0 8px 16px rgba(237, 0, 28, 0.18) !important;
+  height: 42px !important;
+  min-width: 42px !important;
+}
+
+.quest-stop {
+  grid-template-columns: minmax(0, 1fr) 190px !important;
+  max-width: 100% !important;
+}
+
+.quest-stop h3 {
+  color: var(--navy) !important;
+  font-size: clamp(1.35rem, 2vw, 2rem) !important;
+  line-height: 1.08 !important;
+  margin: 4px 0 10px !important;
+}
+
+.quest-media-carousel,
+.quest-photo-placeholder {
+  aspect-ratio: 16 / 7.2 !important;
+  border-radius: 10px !important;
+  max-height: 240px !important;
+  max-width: 680px !important;
+}
+
+.quest-photo-placeholder {
+  align-items: center !important;
+  background: linear-gradient(135deg, #f8fafc, #eef4ff) !important;
+  border: 1px dashed #aab6c8 !important;
+  color: #667085 !important;
+  display: grid !important;
+  font-weight: 900 !important;
+  justify-content: center !important;
+  min-height: 170px !important;
+}
+
+.quest-stop-actions {
+  align-self: start !important;
+  position: sticky !important;
+  top: 12px !important;
+}
+
+.quest-stop-actions .light-button {
+  background: #fff !important;
+  border-color: #cfd7e5 !important;
+  color: var(--navy) !important;
+}
+
+.quest-stop-actions .light-button:hover {
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+.explorer-community {
+  background: #fff !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 12px !important;
+  display: grid !important;
+  gap: 20px !important;
+  grid-template-columns: minmax(0, 1.1fr) minmax(240px, 320px) minmax(280px, 420px) !important;
+  margin-top: 22px !important;
+  padding: 24px !important;
+}
+
+.community-story-card,
+.memory-gallery-wrap {
+  background: #f8fafc !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  color: var(--navy) !important;
+  padding: 18px !important;
+}
+
+.memory-share-actions {
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  margin-top: 14px !important;
+}
+
+.memory-share-actions button {
+  background: #fff !important;
+  border: 1px solid #cfd7e5 !important;
+  border-radius: 8px !important;
+  color: var(--navy) !important;
+  min-height: 48px !important;
+  padding: 10px 12px !important;
+  text-align: center !important;
+}
+
+.memory-share-actions button:hover {
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+@media (max-width: 1320px) {
+  .mood-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 980px) {
+  .quest-head,
+  .quest-game-dashboard,
+  .explorer-community {
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .quest-stop {
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-stop-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    position: static !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .mood-grid,
+  .quest-stats,
+  .memory-share-actions {
+    grid-template-columns: 1fr !important;
+  }
+
+  .route-summary-card,
+  .next-stop-card,
+  .route-leg-list li {
+    grid-template-columns: 1fr !important;
+  }
+
+  .route-link,
+  .primary-route-link {
+    width: 100% !important;
+  }
+}

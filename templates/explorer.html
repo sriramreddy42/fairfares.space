@@ -172,6 +172,7 @@
         <b>Map preview</b>
         <span>Generate a quest to see your route, pins, and nearby stops.</span>
       </div>
+      <div class="quest-route-details" id="questRouteDetails" hidden></div>
       <div class="quest-map" id="questMap"></div>
       <div class="quest-stops" id="questStops"></div>
       <aside class="explorer-community" id="explorerCommunity" hidden>
@@ -191,9 +192,9 @@
             <span>Your uploaded photos, videos, and reels will build the trip movie here.</span>
           </div>
           <div class="memory-share-actions">
-            <button type="button">Share to WhatsApp</button>
-            <button type="button">Share to Instagram</button>
-            <button type="button">Share to Facebook</button>
+            <button type="button" data-share-channel="whatsapp">Share to WhatsApp</button>
+            <button type="button" data-share-channel="instagram">Share to Instagram</button>
+            <button type="button" data-share-channel="facebook">Share to Facebook</button>
           </div>
         </div>
       </aside>

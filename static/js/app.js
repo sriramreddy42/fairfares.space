@@ -48,6 +48,7 @@ const questOutput = document.getElementById("questOutput");
 const questTitle = document.getElementById("questTitle");
 const questMeta = document.getElementById("questMeta");
 const questMap = document.getElementById("questMap");
+const questRouteDetails = document.getElementById("questRouteDetails");
 const questStops = document.getElementById("questStops");
 const questComplete = document.getElementById("questComplete");
 const explorerXp = document.getElementById("explorerXp");
@@ -78,6 +79,7 @@ const passportNearby = document.getElementById("passportNearby");
 const passportRegional = document.getElementById("passportRegional");
 const passportFuture = document.getElementById("passportFuture");
 let currentExplorerQuest = null;
+let explorerDirectionsRenderer = null;
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -1049,12 +1051,154 @@ function updateExplorerProfile(xpEarned) {
   if (explorerXpProgressLabel) explorerXpProgressLabel.textContent = `${xp % 250 || (xp ? 250 : 0)} / 250 XP`;
 }
 
+function explorerPointFrom(value, fallbackLabel = "") {
+  if (!value || !Number(value.lat) || !Number(value.lng)) return null;
+  return {
+    lat: Number(value.lat),
+    lng: Number(value.lng),
+    label: value.label || value.name || fallbackLabel || "Explorer stop",
+  };
+}
+
+function explorerRoutePoints(quest) {
+  const start = explorerPointFrom({
+    lat: quest.start_lat || explorerCityLat?.value,
+    lng: quest.start_lng || explorerCityLng?.value,
+    label: quest.start_label || quest.city || explorerCity?.value || "Your location",
+  }, "Your location");
+  const stops = (quest.stops || [])
+    .map((stop, index) => explorerPointFrom({
+      lat: stop.lat,
+      lng: stop.lng,
+      label: Number(stop.is_secret || 0) ? `Mystery Stop ${index + 1}` : stop.name || `Stop ${index + 1}`,
+    }, `Stop ${index + 1}`))
+    .filter(Boolean);
+  return [start, ...stops].filter(Boolean);
+}
+
+function haversineMiles(a, b) {
+  const toRad = (value) => (Number(value) * Math.PI) / 180;
+  const earthMiles = 3958.8;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthMiles * Math.asin(Math.sqrt(h));
+}
+
+function formatExplorerMinutes(minutes) {
+  const rounded = Math.max(1, Math.round(Number(minutes) || 0));
+  if (rounded < 60) return `${rounded} min`;
+  const hours = Math.floor(rounded / 60);
+  const mins = rounded % 60;
+  return mins ? `${hours} hr ${mins} min` : `${hours} hr`;
+}
+
+function formatExplorerMiles(miles) {
+  const value = Number(miles) || 0;
+  return value >= 10 ? `${Math.round(value)} miles` : `${value.toFixed(1)} miles`;
+}
+
+function explorerNavigationUrl(destination) {
+  if (!destination) return "#";
+  const origin = explorerCityLat?.value && explorerCityLng?.value
+    ? `${explorerCityLat.value},${explorerCityLng.value}`
+    : "current location";
+  const url = new URL("https://www.google.com/maps/dir/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", `${destination.lat},${destination.lng}`);
+  url.searchParams.set("travelmode", "driving");
+  return url.toString();
+}
+
+function explorerFullRouteUrl(points) {
+  if (!points.length) return "#";
+  const origin = points[0] || null;
+  const destination = points[points.length - 1] || null;
+  const waypoints = points.slice(1, -1);
+  const url = new URL("https://www.google.com/maps/dir/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("origin", origin ? `${origin.lat},${origin.lng}` : "current location");
+  url.searchParams.set("destination", destination ? `${destination.lat},${destination.lng}` : "current location");
+  if (waypoints.length) {
+    url.searchParams.set("waypoints", waypoints.map((point) => `${point.lat},${point.lng}`).join("|"));
+  }
+  url.searchParams.set("travelmode", "driving");
+  return url.toString();
+}
+
+function explorerShareMessage() {
+  const city = explorerCity?.value || currentExplorerQuest?.city || "your city";
+  const title = currentExplorerQuest?.title || "FairFares Explorer";
+  return `I am building a ${title} in ${city}. Real places, missions, XP, and travel memories with FairFares Explorer: ${window.location.origin}/explorer`;
+}
+
+function setTemporaryButtonText(button, text) {
+  if (!button) return;
+  const original = button.textContent;
+  button.textContent = text;
+  window.setTimeout(() => {
+    button.textContent = original;
+  }, 1800);
+}
+
+function buildFallbackRouteLegs(points) {
+  return points.slice(1).map((point, index) => {
+    const previous = points[index];
+    const miles = haversineMiles(previous, point) * 1.22;
+    return {
+      from: previous.label || (index === 0 ? "Your location" : `Stop ${index}`),
+      to: point.label || `Stop ${index + 1}`,
+      miles,
+      durationMinutes: Math.max(5, Math.round((miles / 24) * 60)),
+    };
+  });
+}
+
+function renderExplorerRouteDetails(points, legs, source = "estimated") {
+  if (!questRouteDetails || points.length < 2 || !legs.length) return;
+  const totalMiles = legs.reduce((sum, leg) => sum + Number(leg.miles || 0), 0);
+  const totalMinutes = legs.reduce((sum, leg) => sum + Number(leg.durationMinutes || 0), 0);
+  const nextStop = points[1];
+  questRouteDetails.hidden = false;
+  questRouteDetails.innerHTML = `
+    <div class="route-summary-card">
+      <div>
+        <p class="eyebrow">Driving Route</p>
+        <h3>${formatExplorerMiles(totalMiles)} · ${formatExplorerMinutes(totalMinutes)}</h3>
+        <span>${source === "google" ? "Live Google driving route" : "Estimated route until Google Directions responds"}</span>
+      </div>
+      <a class="route-link" href="${explorerFullRouteUrl(points)}" target="_blank" rel="noopener">Open Full Route</a>
+    </div>
+    <div class="next-stop-card">
+      <div>
+        <p class="eyebrow">Next Stop</p>
+        <h3>${escapeHtml(nextStop.label || "Stop 1")}</h3>
+        <span>From ${escapeHtml(legs[0].from || "your location")}: ${formatExplorerMinutes(legs[0].durationMinutes)} · ${formatExplorerMiles(legs[0].miles)}</span>
+      </div>
+      <a class="primary-route-link" href="${explorerNavigationUrl(nextStop)}" target="_blank" rel="noopener">Start Navigation</a>
+    </div>
+    <ol class="route-leg-list">
+      ${legs.map((leg) => `
+        <li>
+          <b>${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}</b>
+          <span>${formatExplorerMinutes(leg.durationMinutes)} · ${formatExplorerMiles(leg.miles)}</span>
+        </li>
+      `).join("")}
+    </ol>
+  `;
+}
+
 function renderExplorerGoogleMap(quest, attempt = 0) {
   const mapCanvas = document.getElementById("questMapCanvas");
   if (!mapCanvas) return;
-  const visibleStops = (quest.stops || []).filter((stop) => !stop.is_secret && Number(stop.lat) && Number(stop.lng));
+  const routePoints = explorerRoutePoints(quest);
+  const visibleStops = (quest.stops || []).filter((stop) => Number(stop.lat) && Number(stop.lng));
   if (!visibleStops.length) {
     mapCanvas.innerHTML = "<b>Map preview</b><span>Stops will appear here after the quest has location data.</span>";
+    if (questRouteDetails) questRouteDetails.hidden = true;
     return;
   }
   if (!window.google?.maps) {
@@ -1067,12 +1211,10 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
     mapCanvas.innerHTML = mapsEnabled
       ? "<b>Map could not load</b><span>Google Maps is enabled, but the browser did not finish loading it. Refresh once or check the Maps key restrictions.</span>"
       : "<b>Map ready on Render</b><span>Google Maps will render here when GOOGLE_MAPS_API_KEY is available for this deployment.</span>";
+    if (routePoints.length > 1) renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
     return;
   }
-  const center = {
-    lat: Number(visibleStops[0].lat),
-    lng: Number(visibleStops[0].lng),
-  };
+  const center = routePoints[0] || { lat: Number(visibleStops[0].lat), lng: Number(visibleStops[0].lng) };
   mapCanvas.innerHTML = "";
   const map = new google.maps.Map(mapCanvas, {
     center,
@@ -1081,17 +1223,14 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
     streetViewControl: false,
     fullscreenControl: true,
   });
+  if (explorerDirectionsRenderer) explorerDirectionsRenderer.setMap(null);
+  explorerDirectionsRenderer = null;
   const bounds = new google.maps.LatLngBounds();
-  const path = [];
-  const start = Number(quest.start_lat) && Number(quest.start_lng)
-    ? { lat: Number(quest.start_lat), lng: Number(quest.start_lng), label: "Start" }
-    : null;
-  if (start) {
-    bounds.extend(start);
-    path.push(start);
+  if (routePoints[0]) {
+    bounds.extend(routePoints[0]);
     new google.maps.Marker({
       map,
-      position: start,
+      position: routePoints[0],
       label: "S",
       title: `Start near ${quest.start_label || quest.city || "your location"}`,
     });
@@ -1099,22 +1238,69 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
   visibleStops.forEach((stop, index) => {
     const position = { lat: Number(stop.lat), lng: Number(stop.lng) };
     bounds.extend(position);
-    path.push(position);
     new google.maps.Marker({
       map,
       position,
-      label: String(index + 1),
-      title: stop.name || `Stop ${index + 1}`,
+      label: Number(stop.is_secret || 0) ? "?" : String(index + 1),
+      title: Number(stop.is_secret || 0) ? `Mystery Stop ${index + 1}` : (stop.name || `Stop ${index + 1}`),
     });
   });
-  if (path.length > 1) {
+  if (routePoints.length > 1 && google.maps.DirectionsService && google.maps.DirectionsRenderer) {
+    const origin = routePoints[0];
+    const destination = routePoints[routePoints.length - 1];
+    const waypoints = routePoints.slice(1, -1).map((point) => ({
+      location: { lat: point.lat, lng: point.lng },
+      stopover: true,
+    }));
+    const service = new google.maps.DirectionsService();
+    explorerDirectionsRenderer = new google.maps.DirectionsRenderer({
+      map,
+      suppressMarkers: true,
+      preserveViewport: true,
+      polylineOptions: {
+        strokeColor: "#1266f1",
+        strokeOpacity: 0.92,
+        strokeWeight: 5,
+      },
+    });
+    service.route({
+      origin: { lat: origin.lat, lng: origin.lng },
+      destination: { lat: destination.lat, lng: destination.lng },
+      waypoints,
+      optimizeWaypoints: false,
+      travelMode: google.maps.TravelMode.DRIVING,
+    }, (result, status) => {
+      if (status === "OK" && result?.routes?.[0]?.legs?.length) {
+        explorerDirectionsRenderer.setDirections(result);
+        const legs = result.routes[0].legs.map((leg, index) => ({
+          from: routePoints[index]?.label || leg.start_address || `Stop ${index}`,
+          to: routePoints[index + 1]?.label || leg.end_address || `Stop ${index + 1}`,
+          miles: Number(leg.distance?.value || 0) / 1609.344,
+          durationMinutes: Number(leg.duration?.value || 0) / 60,
+        }));
+        renderExplorerRouteDetails(routePoints, legs, "google");
+        const routeBounds = result.routes[0].bounds;
+        if (routeBounds) map.fitBounds(routeBounds);
+      } else {
+        new google.maps.Polyline({
+          map,
+          path: routePoints,
+          strokeColor: "#1266f1",
+          strokeOpacity: 0.75,
+          strokeWeight: 4,
+        });
+        renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
+      }
+    });
+  } else if (routePoints.length > 1) {
     new google.maps.Polyline({
       map,
-      path,
-      strokeColor: "#ed001c",
-      strokeOpacity: 0.9,
+      path: routePoints,
+      strokeColor: "#1266f1",
+      strokeOpacity: 0.85,
       strokeWeight: 4,
     });
+    renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
   }
   map.fitBounds(bounds);
 }
@@ -1421,6 +1607,35 @@ questStops?.addEventListener("change", (event) => {
     stop.dataset.memoryCaptured = "1";
     updateExplorerProfile(bonus);
   }
+});
+
+document.querySelectorAll("[data-share-channel]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const channel = button.dataset.shareChannel;
+    const text = explorerShareMessage();
+    const encodedText = encodeURIComponent(text);
+    const pageUrl = encodeURIComponent(`${window.location.origin}/explorer`);
+    if (channel === "whatsapp") {
+      window.open(`https://wa.me/?text=${encodedText}`, "_blank", "noopener");
+      return;
+    }
+    if (channel === "facebook") {
+      window.open(`https://www.facebook.com/sharer/sharer.php?u=${pageUrl}&quote=${encodedText}`, "_blank", "noopener");
+      return;
+    }
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "FairFares Explorer", text, url: `${window.location.origin}/explorer` });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      setTemporaryButtonText(button, "Copied for Instagram");
+    }
+  });
 });
 
 document.getElementById("createMemoryVideo")?.addEventListener("click", () => {

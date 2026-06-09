@@ -12,10 +12,12 @@ async function generateQuest(page) {
   await page.locator("button", { hasText: "Generate Explorer Quest" }).click();
   await expect(page.locator(".quest-output")).toBeVisible();
   await expect(page.locator(".quest-stop").first()).toBeVisible();
+  await expect(page.locator("#questRouteDetails")).toBeVisible();
+  await expect(page.locator(".route-leg-list li").first()).toBeVisible();
 }
 
 async function expectNoVisibleTextClipping(page) {
-  const clipped = await page.locator(".mood-grid label, .segmented-choice label, .quest-stop-actions button, .memory-menu label").evaluateAll((nodes) =>
+  const clipped = await page.locator(".mood-grid label, .segmented-choice label, .quest-stop-actions button, .memory-menu label, .memory-share-actions button, .route-link, .primary-route-link").evaluateAll((nodes) =>
     nodes
       .map((node) => {
         const rect = node.getBoundingClientRect();
@@ -101,6 +103,10 @@ test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
   await expectVisibleControlBorders(page);
   await expectNoHorizontalOverflow(page);
   await expectQuestStopsFitViewport(page);
+  await expect(page.locator("[data-share-channel='whatsapp']")).toBeVisible();
+  await expect(page.locator("[data-share-channel='instagram']")).toBeVisible();
+  await expect(page.locator("[data-share-channel='facebook']")).toBeVisible();
+  await expect(page.locator(".primary-route-link").first()).toHaveAttribute("href", /google\.com\/maps\/dir/);
 
   const firstImage = page.locator(".quest-stop:not(.is-locked) .quest-media-carousel, .quest-stop:not(.is-locked) .quest-photo-placeholder").first();
   await expect(firstImage).toBeVisible();
