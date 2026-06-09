@@ -5,3 +5,6 @@ __pycache__/
 data/*.sqlite3
 data/outbox/
 data/backups/
+node_modules/
+test-results/
+playwright-report/

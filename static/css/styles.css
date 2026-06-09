@@ -2393,9 +2393,18 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   margin-right: 8px;
 }
 .light-button {
+  align-items: center;
   background: #fff !important;
   border: 1px solid var(--line) !important;
+  border-radius: 5px;
   color: var(--navy) !important;
+  display: flex;
+  font-weight: 900;
+  justify-content: center;
+  min-height: 48px;
+  padding: 12px;
+  text-align: center;
+  text-decoration: none;
   width: 100%;
 }
 .tabs {
@@ -6674,6 +6683,226 @@ legend { font-size: 0.86rem; font-weight: 900; text-transform: uppercase; }
   }
 }
 
+.explorer-builder,
+.explorer-form,
+.explorer-side,
+.quest-output {
+  min-width: 0;
+}
+
+.explorer-form input[type="radio"],
+.explorer-form input[type="checkbox"],
+.quest-output input[type="radio"],
+.quest-output input[type="checkbox"] {
+  appearance: none;
+  background: #fff;
+  border: 2px solid #9aa6bd;
+  border-radius: 999px;
+  box-shadow: none;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 20px;
+  margin: 0;
+  min-height: 20px;
+  padding: 0;
+  width: 20px;
+}
+
+.explorer-form input[type="checkbox"],
+.quest-output input[type="checkbox"] {
+  border-radius: 5px;
+}
+
+.explorer-form input[type="radio"]:checked,
+.explorer-form input[type="checkbox"]:checked,
+.quest-output input[type="radio"]:checked,
+.quest-output input[type="checkbox"]:checked {
+  background: var(--red);
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 5px #fff;
+}
+
+.segmented-choice label {
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.segmented-choice input {
+  flex: 0 0 auto;
+}
+
+.mood-grid {
+  align-items: stretch;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.mood-grid label {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 58px minmax(0, 1fr) 24px;
+  justify-items: stretch;
+  overflow: hidden;
+}
+
+.mood-grid .mood-art {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.mood-grid .mood-name {
+  grid-column: 2;
+  grid-row: 1;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mood-grid input {
+  align-self: center;
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.mood-grid label.is-selected .mood-name,
+.mood-grid label:has(input:checked) .mood-name {
+  color: var(--red);
+}
+
+.explorer-passport div {
+  overflow: hidden;
+}
+
+.explorer-passport span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quest-stop {
+  grid-template-columns: minmax(0, 760px) minmax(170px, 210px);
+}
+
+.quest-stop > div:first-child {
+  min-width: 0;
+}
+
+.quest-place-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.quest-place-meta span,
+.quest-place-meta a {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: #344054;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.quest-place-meta a {
+  color: var(--red);
+}
+
+.quest-media-carousel {
+  aspect-ratio: 16 / 6;
+  max-height: 205px;
+  max-width: 640px;
+  min-height: 150px;
+  width: 100%;
+}
+
+.quest-media-carousel img {
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+}
+
+.mission-upload {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--navy);
+}
+
+.memory-menu {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 38px rgba(10, 28, 68, 0.22);
+  color: var(--navy);
+  min-width: 230px;
+  padding: 10px;
+  z-index: 20;
+}
+
+.memory-menu label {
+  background: #f7f9fd;
+  border-radius: 8px;
+  color: var(--navy);
+  font-weight: 950;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.memory-menu label:hover {
+  background: #fff1f1;
+  color: var(--red);
+}
+
+.quest-place-reviews {
+  color: var(--navy);
+}
+
+.quest-place-reviews blockquote {
+  background: #fff;
+  border-left: 4px solid var(--red);
+  color: #4b5563;
+}
+
+.quest-place-reviews b {
+  color: var(--navy);
+}
+
+.quest-stop .light-button[disabled] {
+  background: #f7f9fd;
+  color: var(--muted);
+}
+
+@media (min-width: 1200px) {
+  .explorer-builder {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+}
+
+@media (max-width: 1180px) {
+  .quest-stop {
+    grid-template-columns: 1fr;
+  }
+
+  .quest-media-carousel {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .mood-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mood-grid label {
+    grid-template-columns: 54px minmax(0, 1fr) 24px;
+  }
+}
+
 .admin-stack-form {
   display: grid;
   gap: 0.4rem;
@@ -7407,5 +7636,748 @@ body.modal-open {
     filter: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+}
+
+/* Explorer visual QA hardening: this block intentionally comes last so older
+   experiments cannot re-break card alignment, input borders, or mobile flow. */
+.explorer-screen {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(237, 0, 28, 0.07), transparent 26%),
+    linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%) !important;
+  color: var(--navy);
+  overflow-x: hidden;
+}
+
+.explorer-screen .main-nav,
+.explorer-screen .top-brand {
+  background: #fff;
+}
+
+.explorer-screen .top-brand {
+  grid-template-columns: minmax(0, auto);
+  justify-content: start;
+  min-height: 88px;
+  padding-block: 14px;
+}
+
+.explorer-screen .top-benefits {
+  display: none !important;
+}
+
+.explorer-screen .logo-lockup img {
+  max-height: 64px;
+  max-width: 360px;
+}
+
+.explorer-screen .main-nav a,
+.explorer-screen .nav-actions > span,
+.explorer-screen .nav-actions .user-chip {
+  color: var(--navy) !important;
+}
+
+.explorer-screen .main-nav a.active {
+  color: var(--red) !important;
+}
+
+.explorer-page,
+.explorer-builder,
+.explorer-form,
+.explorer-side,
+.quest-output,
+.quest-stop,
+.quest-stop > div,
+.explorer-community {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.explorer-form,
+.explorer-side,
+.quest-output,
+.explorer-community {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 12px !important;
+  box-shadow: 0 16px 34px rgba(8, 24, 58, 0.08) !important;
+}
+
+.explorer-step h2,
+.explorer-side h2,
+.quest-head h2,
+.quest-stop h3,
+.explorer-community h2 {
+  color: var(--navy) !important;
+}
+
+.explorer-step p,
+.explorer-side li,
+.quest-head p,
+.quest-stop p,
+.explorer-community p {
+  color: #505a6d !important;
+}
+
+.explorer-location-row {
+  align-items: end;
+  grid-template-columns: minmax(280px, 1fr) minmax(130px, 160px) minmax(170px, 210px) !important;
+}
+
+.explorer-form input,
+.explorer-form select,
+.explorer-form button {
+  max-width: 100%;
+}
+
+.explorer-form .light-button,
+.quest-stop .light-button,
+.memory-share-actions button {
+  align-items: center;
+  background: #fff !important;
+  border: 1px solid #cfd7e5 !important;
+  border-radius: 8px !important;
+  color: var(--navy) !important;
+  display: inline-flex;
+  font-weight: 950;
+  justify-content: center;
+  min-height: 48px;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.explorer-form .light-button:hover,
+.quest-stop .light-button:hover,
+.memory-share-actions button:hover {
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+.segmented-choice label {
+  background: #fff !important;
+  border: 1px solid #cfd7e5 !important;
+  color: var(--navy) !important;
+  line-height: 1.1;
+}
+
+.explorer-form input[type="radio"],
+.explorer-form input[type="checkbox"],
+.quest-output input[type="radio"],
+.quest-output input[type="checkbox"] {
+  appearance: none !important;
+  background: #fff !important;
+  border: 2px solid #8d99ae !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  display: inline-block !important;
+  flex: 0 0 20px !important;
+  height: 20px !important;
+  margin: 0 !important;
+  min-height: 20px !important;
+  min-width: 20px !important;
+  padding: 0 !important;
+  width: 20px !important;
+}
+
+.explorer-form input[type="checkbox"],
+.quest-output input[type="checkbox"] {
+  border-radius: 5px !important;
+}
+
+.explorer-form input[type="radio"]:checked,
+.explorer-form input[type="checkbox"]:checked,
+.quest-output input[type="radio"]:checked,
+.quest-output input[type="checkbox"]:checked {
+  background: var(--red) !important;
+  border-color: var(--red) !important;
+  box-shadow: inset 0 0 0 5px #fff !important;
+}
+
+.mood-grid {
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)) !important;
+}
+
+.mood-grid label {
+  align-items: center !important;
+  background: #fff !important;
+  border: 1px solid #d9e0ec !important;
+  border-radius: 10px !important;
+  box-shadow: 0 10px 22px rgba(10, 28, 68, 0.06) !important;
+  color: var(--navy) !important;
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-columns: 56px minmax(0, 1fr) 24px !important;
+  justify-items: stretch !important;
+  min-height: 82px !important;
+  overflow: hidden !important;
+  padding: 12px !important;
+  position: relative;
+}
+
+.mood-grid label::before {
+  content: none !important;
+}
+
+.mood-grid .mood-art {
+  align-items: center !important;
+  border: 1px solid #e7c65b !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  font-size: 1.45rem !important;
+  grid-column: 1 !important;
+  height: 56px !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  overflow: hidden !important;
+  width: 56px !important;
+}
+
+.mood-grid .mood-name {
+  color: var(--navy) !important;
+  display: block !important;
+  font-size: clamp(1rem, 1.4vw, 1.12rem) !important;
+  font-weight: 950 !important;
+  grid-column: 2 !important;
+  line-height: 1.15 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  overflow-wrap: normal !important;
+  text-align: left !important;
+  white-space: normal !important;
+  word-break: normal !important;
+}
+
+.mood-grid input {
+  align-self: center !important;
+  grid-column: 3 !important;
+  justify-self: end !important;
+}
+
+.mood-grid label:hover {
+  border-color: var(--red) !important;
+  transform: translateY(-1px);
+}
+
+.mood-grid label.is-selected,
+.mood-grid label:has(input:checked) {
+  background: #fff6f6 !important;
+  border-color: var(--red) !important;
+  box-shadow: 0 12px 24px rgba(237, 0, 28, 0.11) !important;
+}
+
+.mood-grid label.is-selected .mood-name,
+.mood-grid label:has(input:checked) .mood-name {
+  color: var(--red) !important;
+}
+
+.explorer-mood-helper,
+.explorer-preference-note {
+  background: #f7f9fd !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 8px !important;
+  color: #344054 !important;
+  line-height: 1.35;
+  padding: 12px 14px !important;
+}
+
+.quest-stop {
+  align-items: start !important;
+  background: #fff !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 12px !important;
+  display: grid !important;
+  gap: 18px !important;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 210px) !important;
+  overflow: hidden !important;
+  padding: 20px !important;
+}
+
+.quest-stop small {
+  color: var(--red) !important;
+  letter-spacing: 0.02em;
+}
+
+.quest-place-meta {
+  align-items: center !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+
+.quest-place-meta span,
+.quest-place-meta a {
+  background: #f7f9fd !important;
+  border: 1px solid #d7deea !important;
+  color: #475467 !important;
+  line-height: 1.2 !important;
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+}
+
+.quest-place-meta a {
+  color: var(--red) !important;
+}
+
+.mission-title {
+  color: var(--red) !important;
+}
+
+.quest-media-carousel {
+  aspect-ratio: 16 / 7 !important;
+  border-radius: 10px !important;
+  max-height: 220px !important;
+  max-width: 680px !important;
+  min-height: 150px !important;
+  width: 100% !important;
+}
+
+.quest-media-carousel img {
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  width: 100% !important;
+}
+
+.mission-upload {
+  background: #fbfcff !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  color: var(--navy) !important;
+  padding: 12px 14px !important;
+}
+
+.mission-upload span,
+.mission-reward span {
+  color: var(--navy) !important;
+}
+
+.memory-plus {
+  background: var(--red) !important;
+  border: 0 !important;
+  color: #fff !important;
+}
+
+.memory-menu {
+  background: #fff !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 10px !important;
+  box-shadow: 0 20px 45px rgba(7, 20, 63, 0.2) !important;
+  color: var(--navy) !important;
+  min-width: 230px;
+  z-index: 50 !important;
+}
+
+.memory-menu label {
+  background: #f7f9fd !important;
+  border: 1px solid transparent !important;
+  color: var(--navy) !important;
+  display: block !important;
+  min-height: 42px !important;
+  padding: 10px 12px !important;
+}
+
+.memory-menu label:hover {
+  background: #fff1f1 !important;
+  border-color: #ffd1d1 !important;
+  color: var(--red) !important;
+}
+
+.memory-menu input[type="file"] {
+  display: none !important;
+}
+
+.quest-place-reviews {
+  max-height: 132px !important;
+  overflow: auto !important;
+}
+
+.quest-place-reviews blockquote {
+  background: #f8fafc !important;
+  border-left: 4px solid var(--red) !important;
+  color: #475467 !important;
+  font-size: 0.9rem !important;
+}
+
+.quest-stop-actions {
+  display: grid !important;
+  gap: 10px !important;
+  min-width: 0;
+}
+
+.quest-stop-actions button {
+  min-width: 0;
+  width: 100%;
+}
+
+.quest-stop.is-locked {
+  opacity: 0.72;
+}
+
+.quest-stop.is-locked::after {
+  display: none !important;
+}
+
+.explorer-community {
+  align-items: stretch !important;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px) minmax(260px, 420px) !important;
+}
+
+.memory-gallery {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+}
+
+.memory-share-actions button {
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .explorer-builder,
+  .explorer-location-row,
+  .explorer-preferences,
+  .quest-game-dashboard,
+  .explorer-community {
+    grid-template-columns: 1fr !important;
+  }
+
+  .explorer-side {
+    position: static !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .quest-stop {
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-stop-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .explorer-page {
+    padding: 12px !important;
+  }
+
+  .explorer-hero,
+  .explorer-form,
+  .explorer-side,
+  .quest-output {
+    border-radius: 10px !important;
+    padding: 16px !important;
+  }
+
+  .mood-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .mood-grid label {
+    grid-template-columns: 52px minmax(0, 1fr) 24px !important;
+    min-height: 74px !important;
+  }
+
+  .mood-grid .mood-art {
+    height: 50px !important;
+    width: 50px !important;
+  }
+
+  .mood-grid .mood-name {
+    font-size: 1rem !important;
+  }
+
+  .quest-media-carousel {
+    aspect-ratio: 4 / 3 !important;
+    max-height: 210px !important;
+    min-height: 160px !important;
+  }
+
+  .quest-stop-actions {
+    grid-template-columns: 1fr !important;
+  }
+
+  .memory-menu {
+    left: auto !important;
+    right: 0 !important;
+  }
+}
+
+/* Explorer comprehensive visual QA layer. Keep this final: it fixes the exact
+   screenshot issues around clipping mood cards, weak controls, and oversized
+   mission media. */
+.explorer-screen {
+  background: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%) !important;
+}
+
+.explorer-page {
+  max-width: 1480px !important;
+  overflow-x: hidden !important;
+  padding: clamp(14px, 2vw, 28px) !important;
+}
+
+.explorer-hero {
+  background:
+    linear-gradient(90deg, rgba(7, 20, 63, 0.92), rgba(7, 20, 63, 0.78)),
+    url("/static/img/fairfares-explorer-button.png") center right / contain no-repeat !important;
+  border-radius: 12px !important;
+  min-height: 260px !important;
+}
+
+.explorer-builder {
+  align-items: start !important;
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 330px) !important;
+}
+
+.explorer-location-row {
+  align-items: end !important;
+  grid-template-columns: minmax(260px, 1fr) minmax(130px, 160px) minmax(170px, 210px) !important;
+}
+
+.explorer-location-row button {
+  white-space: normal !important;
+}
+
+.explorer-step {
+  overflow: hidden !important;
+}
+
+.segmented-choice {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
+}
+
+.segmented-choice label {
+  border: 1px solid #cfd7e5 !important;
+  border-radius: 999px !important;
+  flex: 0 1 auto !important;
+  min-height: 44px !important;
+  padding: 9px 14px !important;
+}
+
+.segmented-choice label:has(input:checked) {
+  background: #fff6f6 !important;
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+
+.mood-grid {
+  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr)) !important;
+}
+
+.mood-grid label {
+  grid-template-columns: 62px minmax(96px, 1fr) 24px !important;
+  min-height: 86px !important;
+  padding: 13px 16px !important;
+}
+
+.mood-grid .mood-art {
+  height: 58px !important;
+  width: 58px !important;
+}
+
+.mood-grid .mood-name {
+  align-self: center !important;
+  font-size: clamp(0.98rem, 1.1vw, 1.08rem) !important;
+  hyphens: none !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  overflow-wrap: normal !important;
+  text-overflow: clip !important;
+  word-break: normal !important;
+}
+
+.explorer-form input[type="radio"],
+.explorer-form input[type="checkbox"],
+.quest-output input[type="radio"],
+.quest-output input[type="checkbox"] {
+  border: 2px solid #64708a !important;
+  outline: 0 !important;
+}
+
+.explorer-passport div {
+  align-items: center !important;
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+
+.explorer-passport span:first-child {
+  min-width: 0 !important;
+}
+
+.quest-output {
+  overflow: hidden !important;
+}
+
+.quest-stop {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 220px) !important;
+  padding: 22px !important;
+}
+
+.quest-stop-order,
+.quest-stop .quest-stop-order {
+  display: none !important;
+}
+
+.quest-place-meta span,
+.quest-place-meta a {
+  border-radius: 999px !important;
+  padding: 7px 10px !important;
+}
+
+.quest-media-carousel {
+  aspect-ratio: 16 / 6.4 !important;
+  border: 1px solid #d7deea !important;
+  box-shadow: 0 16px 28px rgba(7, 20, 63, 0.08) !important;
+  max-height: 235px !important;
+  max-width: 640px !important;
+}
+
+.quest-media-carousel img {
+  filter: saturate(0.98) contrast(0.98) !important;
+}
+
+.quest-place-reviews {
+  border-left: 0 !important;
+  display: grid !important;
+  gap: 8px !important;
+  max-height: 150px !important;
+  padding-right: 4px !important;
+}
+
+.quest-place-reviews h4 {
+  color: var(--navy) !important;
+  font-size: 0.92rem !important;
+  margin: 0 !important;
+}
+
+.quest-place-reviews blockquote {
+  border-radius: 8px !important;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  padding: 10px 12px !important;
+}
+
+.mission-upload {
+  align-items: center !important;
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-columns: minmax(0, 1fr) 48px !important;
+}
+
+.memory-plus {
+  border-radius: 999px !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  width: 48px !important;
+}
+
+.memory-menu {
+  right: 0 !important;
+  top: calc(100% + 8px) !important;
+}
+
+.quest-stop-actions button,
+.explorer-form button,
+.memory-share-actions button {
+  cursor: pointer;
+}
+
+.quest-stop-actions button:disabled {
+  cursor: not-allowed;
+}
+
+.explorer-map-shell {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+
+@media (max-width: 1280px) {
+  .mood-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .explorer-builder,
+  .explorer-location-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .mood-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .explorer-page {
+    padding: 10px !important;
+  }
+
+  .explorer-hero {
+    min-height: 0 !important;
+  }
+
+  .mood-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .mood-grid label {
+    grid-template-columns: 56px minmax(0, 1fr) 24px !important;
+    min-height: 78px !important;
+    padding: 12px !important;
+  }
+
+  .mood-grid .mood-art {
+    height: 52px !important;
+    width: 52px !important;
+  }
+
+  .mood-grid .mood-name {
+    font-size: 1rem !important;
+  }
+
+  .quest-stop {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    padding: 16px !important;
+    width: 100% !important;
+  }
+
+  .quest-stop > div:first-child,
+  .quest-stop-actions,
+  .mission-upload,
+  .quest-place-reviews,
+  .quest-media-carousel,
+  .quest-photo-placeholder {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .quest-stop h3,
+  .quest-stop p,
+  .quest-place-reviews blockquote {
+    overflow-wrap: anywhere !important;
+  }
+
+  .quest-stop-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-media-carousel {
+    aspect-ratio: 16 / 9 !important;
+    max-height: 205px !important;
+    max-width: 100% !important;
+  }
+
+  .quest-place-meta span,
+  .quest-place-meta a {
+    border-radius: 8px !important;
+    width: 100% !important;
   }
 }

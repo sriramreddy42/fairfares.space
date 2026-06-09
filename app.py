@@ -1978,7 +1978,7 @@ def explorer_mission_pack(name: str, mood: str, order: int, secret: bool) -> dic
     prompt = "What made this stop worth the drive?"
     checklist = ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"]
     if mood in {"Food", "Coffee"}:
-        title = "Denver Food Hunter"
+        title = "Food Hunter"
         challenge = f"Order a signature item at {name}, take a food photo, and rate the taste."
         prompt = "What should the next FairFares traveler order here?"
         checklist = ["Order the house favorite", "Upload a food photo", "Rate taste 1-5"]
@@ -2012,7 +2012,7 @@ def explorer_mission_pack(name: str, mood: str, order: int, secret: bool) -> dic
     }
 
 
-def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool) -> dict[str, object] | None:
+def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool, city_label: str = "") -> dict[str, object] | None:
     place_id = str(place.get("place_id") or "")
     if not place_id:
         return None
@@ -2045,6 +2045,8 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
         if len(reviews) >= 2:
             break
     mission_pack = explorer_mission_pack(name, mood, order, secret)
+    if not secret and city_label:
+        mission_pack["mission_title"] = f"{city_label} {mission_pack['mission_title']}"
     return {
         "order": order,
         "name": name,
@@ -2139,10 +2141,10 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
                 if not place_id or place_id in seen_place_ids:
                     continue
                 seen_place_ids.add(place_id)
-                stop = google_place_to_stop(place, api_key, len(stops) + 1, mood, len(stops) == 4)
+                stop = google_place_to_stop(place, api_key, len(stops) + 1, mood, len(stops) == 4, title_city)
                 if stop:
                     stops.append(stop)
-                if len(stops) >= 5:
+                if len(stops) >= 12:
                     return stops
     return stops
 
@@ -2226,10 +2228,15 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
                 }
             )
         payload_stops = google_stops[:target_stop_count]
+        alternate_stops = google_stops[target_stop_count:target_stop_count + 6]
         for index, stop in enumerate(payload_stops):
             stop["order"] = index + 1
             stop["is_secret"] = 1 if index == len(payload_stops) - 1 else 0
             stop["locked"] = 1 if index == len(payload_stops) - 1 else 0
+        for index, stop in enumerate(alternate_stops):
+            stop["order"] = target_stop_count + index + 1
+            stop["is_secret"] = 0
+            stop["locked"] = 0
     else:
         local_stops = stops[:target_stop_count - 1] + [secret_stop]
         payload_stops = [
@@ -2260,6 +2267,34 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
             }
             for index, stop in enumerate(local_stops)
         ]
+        alternate_stops = [
+            {
+                "order": index + 1,
+                "name": stop["name"],
+                "lat": stop["lat"],
+                "lng": stop["lng"],
+                "xp_reward": stop["xp"],
+                "mission": stop["challenge"],
+                "challenge": stop["challenge"],
+                "mission_title": "Local Explorer Mission",
+                "story_prompt": "What should another FairFares traveler know?",
+                "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
+                "photo_bonus_xp": 25,
+                "tips": "Local alternate stop. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
+                "reference_photo_url": "",
+                "reference_media_urls": [],
+                "is_secret": 0,
+                "locked": 0,
+                "place_id": "",
+                "address": "",
+                "rating": 0,
+                "review_count": 0,
+                "reviews": [],
+                "google_url": "",
+                "source": "LOCAL",
+            }
+            for index, stop in enumerate(EXPLORER_DENVER_STOPS[target_stop_count:target_stop_count + 6])
+        ]
     total_xp = sum(int(stop["xp_reward"]) for stop in payload_stops) + (100 if fairfares_booked else 0)
     return {
         "title": f"{title_city} {title_mood} Explorer Quest",
@@ -2283,6 +2318,7 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
         "fairfares_bonus": 100 if fairfares_booked else 0,
         "source": "GOOGLE_PLACES" if len(google_stops) >= 3 else "LOCAL",
         "stops": payload_stops,
+        "alternatives": alternate_stops,
     }
 
 
@@ -4097,7 +4133,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "public, max-age=86400")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def api_explorer_config_status(self) -> None:
         self.send_json({"ok": True, "explorer": explorer_config_status()})

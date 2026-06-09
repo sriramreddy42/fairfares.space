@@ -77,6 +77,7 @@ const passportPrimary = document.getElementById("passportPrimary");
 const passportNearby = document.getElementById("passportNearby");
 const passportRegional = document.getElementById("passportRegional");
 const passportFuture = document.getElementById("passportFuture");
+let currentExplorerQuest = null;
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
@@ -1226,8 +1227,31 @@ function appendMemoryGalleryItem(file, memoryType, stopName) {
   memoryGallery.appendChild(item);
 }
 
-function renderExplorerQuest(quest) {
+function replaceExplorerStop(stopElement) {
+  const index = Number(stopElement?.dataset.stopIndex ?? -1);
+  if (!currentExplorerQuest || index < 0) return false;
+  const alternatives = Array.isArray(currentExplorerQuest.alternatives) ? currentExplorerQuest.alternatives : [];
+  const usedNames = new Set((currentExplorerQuest.stops || []).map((stop) => String(stop.name || "").toLowerCase()));
+  const nextIndex = alternatives.findIndex((stop) => stop?.name && !usedNames.has(String(stop.name).toLowerCase()));
+  if (nextIndex < 0) return false;
+  const [replacement] = alternatives.splice(nextIndex, 1);
+  currentExplorerQuest.stops[index] = {
+    ...replacement,
+    order: index + 1,
+    is_secret: 0,
+    locked: 0,
+    completed: 0,
+  };
+  renderExplorerQuest(currentExplorerQuest, { preserveScroll: true });
+  window.setTimeout(() => {
+    questStops?.querySelector(`[data-stop-index="${index}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 50);
+  return true;
+}
+
+function renderExplorerQuest(quest, options = {}) {
   if (!questOutput || !questStops || !questMap) return;
+  currentExplorerQuest = quest;
   questOutput.hidden = false;
   if (questTitle) questTitle.textContent = quest.title;
   if (questDescription) questDescription.textContent = quest.description || "Complete the route, unlock the mystery stop, and collect XP.";
@@ -1289,7 +1313,7 @@ function renderExplorerQuest(quest) {
   `;
   }).join("");
   updateExplorerQuestProgress();
-  questOutput.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!options.preserveScroll) questOutput.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 explorerForm?.addEventListener("submit", (event) => {
@@ -1329,8 +1353,12 @@ questStops?.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
   if (button.matches("[data-refresh-stop]")) {
-    button.textContent = "Alternative search queued";
-    button.disabled = true;
+    button.textContent = "Finding another place...";
+    const replaced = replaceExplorerStop(button.closest(".quest-stop"));
+    if (!replaced) {
+      button.textContent = "No more nearby options";
+      button.disabled = true;
+    }
     return;
   }
   const stop = button.closest(".quest-stop");
