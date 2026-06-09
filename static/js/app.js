@@ -78,8 +78,29 @@ const passportPrimary = document.getElementById("passportPrimary");
 const passportNearby = document.getElementById("passportNearby");
 const passportRegional = document.getElementById("passportRegional");
 const passportFuture = document.getElementById("passportFuture");
+const explorerMemoryRailButton = document.getElementById("explorerMemoryRailButton");
+const explorerMemoryDrawer = document.getElementById("explorerMemoryDrawer");
+const explorerMemoryDrawerClose = document.getElementById("explorerMemoryDrawerClose");
 let currentExplorerQuest = null;
 let explorerDirectionsRenderer = null;
+
+function setExplorerMemoryDrawer(open) {
+  if (!explorerMemoryDrawer || !explorerMemoryRailButton) return;
+  explorerMemoryDrawer.classList.toggle("is-open", open);
+  explorerMemoryDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+  explorerMemoryRailButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+explorerMemoryRailButton?.addEventListener("click", () => {
+  const isOpen = explorerMemoryDrawer?.classList.contains("is-open") || false;
+  setExplorerMemoryDrawer(!isOpen);
+});
+
+explorerMemoryDrawerClose?.addEventListener("click", () => setExplorerMemoryDrawer(false));
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setExplorerMemoryDrawer(false);
+});
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-9">
+  <link rel="stylesheet" href="/static/css/styles.css?v=explorer-10">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-9"></script>
+  <script defer src="/static/js/app.js?v=explorer-10"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -33,6 +33,45 @@
   </nav>
 
   <main class="explorer-page">
+    <aside class="explorer-memory-rail" aria-label="Explorer memories">
+      <button type="button" class="explorer-memory-rail-button" id="explorerMemoryRailButton" aria-controls="explorerMemoryDrawer" aria-expanded="false">
+        <span class="rail-play-icon" aria-hidden="true"></span>
+        <span class="rail-hover-label">Memories</span>
+      </button>
+    </aside>
+
+    <aside class="explorer-memory-drawer" id="explorerMemoryDrawer" aria-hidden="true">
+      <div class="memory-drawer-head">
+        <div>
+          <p class="eyebrow">Explorer Reels</p>
+          <h2>Real moments from FairFares trips</h2>
+        </div>
+        <button type="button" class="memory-drawer-close" id="explorerMemoryDrawerClose" aria-label="Close memories">Close</button>
+      </div>
+      <div class="memory-reel-feed" id="explorerMemoryFeed">
+        <article class="memory-reel-card">
+          <div class="memory-reel-top">
+            <span class="memory-avatar">SK</span>
+            <div><b>sarah.k</b><small>Denver sunset quest</small></div>
+            <button type="button">Follow</button>
+          </div>
+          <img src="/static/img/hero-road.png" alt="Denver drive memory">
+          <div class="memory-reel-actions"><b>12.8K</b><span>likes</span><b>428</b><span>comments</span><b>1.9K</b><span>shares</span></div>
+          <p><b>sarah.k</b> The skyline stop made the whole route feel like a movie. Saved this quest for next weekend too.</p>
+        </article>
+        <article class="memory-reel-card">
+          <div class="memory-reel-top">
+            <span class="memory-avatar">AT</span>
+            <div><b>alex.travels</b><small>Food hunter mission</small></div>
+            <button type="button">Follow</button>
+          </div>
+          <img src="/static/img/referral-deals-denver.jpeg" alt="Explorer food and city memory">
+          <div class="memory-reel-actions"><b>8.4K</b><span>likes</span><b>231</b><span>comments</span><b>904</b><span>shares</span></div>
+          <p><b>alex.travels</b> We found a tiny local spot from the mystery stop and it was easily the best part of the day.</p>
+        </article>
+      </div>
+    </aside>
+
     <section class="explorer-hero">
       <div>
         <p class="eyebrow">FairFares Explorer</p>

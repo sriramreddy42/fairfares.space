@@ -7935,7 +7935,7 @@ body.modal-open {
 
 .quest-media-carousel img {
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
   object-position: center !important;
   width: 100% !important;
 }
@@ -8732,6 +8732,814 @@ body.modal-open {
 
   .route-link,
   .primary-route-link {
+    width: 100% !important;
+  }
+}
+
+/* Explorer memories rail: compact Reels-style entry with a quiet hover reveal. */
+.explorer-memory-rail {
+  left: max(10px, calc((100vw - 1480px) / 2 - 70px));
+  position: fixed;
+  top: 154px;
+  z-index: 45;
+}
+
+.explorer-memory-rail-button {
+  align-items: center;
+  background: #07143f;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(7, 20, 63, 0.22);
+  color: #fff;
+  display: inline-flex;
+  height: 54px;
+  justify-content: center;
+  overflow: visible;
+  padding: 0;
+  position: relative;
+  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+  width: 54px;
+}
+
+.explorer-memory-rail-button::after {
+  border: 2px solid rgba(237, 0, 28, 0.9);
+  border-radius: inherit;
+  content: "";
+  inset: -5px;
+  opacity: 0;
+  position: absolute;
+  transform: scale(0.92);
+  animation: explorerRailPulse 3s ease-in-out infinite;
+}
+
+.explorer-memory-rail-button:hover,
+.explorer-memory-rail-button[aria-expanded="true"] {
+  background: #0b1f5f;
+  box-shadow: 0 22px 48px rgba(7, 20, 63, 0.32);
+  transform: scale(1.07);
+}
+
+.rail-play-icon {
+  border: 3px solid #fff;
+  border-radius: 9px;
+  display: block;
+  height: 28px;
+  position: relative;
+  width: 28px;
+}
+
+.rail-play-icon::before {
+  border-bottom: 7px solid transparent;
+  border-left: 10px solid #fff;
+  border-top: 7px solid transparent;
+  content: "";
+  left: 9px;
+  position: absolute;
+  top: 4px;
+}
+
+.rail-hover-label {
+  background: #07143f;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  box-shadow: 0 16px 34px rgba(7, 20, 63, 0.22);
+  color: #fff;
+  font-weight: 900;
+  left: calc(100% + 10px);
+  opacity: 0;
+  padding: 9px 13px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translate(-8px, -50%) scale(0.96);
+  transition: opacity 180ms ease, transform 180ms ease;
+  white-space: nowrap;
+}
+
+.explorer-memory-rail-button:hover .rail-hover-label,
+.explorer-memory-rail-button[aria-expanded="true"] .rail-hover-label {
+  opacity: 1;
+  transform: translate(0, -50%) scale(1);
+}
+
+.explorer-memory-drawer {
+  background: #080d14;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  left: max(76px, calc((100vw - 1480px) / 2 + 8px));
+  max-width: min(430px, calc(100vw - 100px));
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: fixed;
+  top: 132px;
+  transform: translateX(-24px) scale(0.98);
+  transition: opacity 220ms ease, transform 220ms ease;
+  width: 430px;
+  z-index: 60;
+}
+
+.explorer-memory-drawer.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+}
+
+.memory-drawer-head {
+  align-items: start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 18px;
+}
+
+.memory-drawer-head h2 {
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1.12;
+  margin: 2px 0 0;
+}
+
+.memory-drawer-close {
+  background: #fff;
+  border: 0;
+  border-radius: 999px;
+  color: #07143f;
+  font-weight: 900;
+  min-height: 38px;
+  padding: 8px 13px;
+}
+
+.memory-reel-feed {
+  display: grid;
+  gap: 16px;
+  max-height: calc(100vh - 250px);
+  overflow: auto;
+  padding: 18px;
+}
+
+.memory-reel-card {
+  background: #111820;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.memory-reel-top {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.memory-avatar {
+  align-items: center;
+  background: linear-gradient(135deg, #ed001c, #ffb000);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 950;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.memory-reel-top b,
+.memory-reel-top small {
+  display: block;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-reel-top small {
+  color: rgba(255, 255, 255, 0.72);
+  font-weight: 800;
+}
+
+.memory-reel-top button {
+  background: #fff;
+  border: 0;
+  border-radius: 8px;
+  color: #07143f;
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.memory-reel-card img {
+  aspect-ratio: 9 / 12;
+  background: #0b1220;
+  display: block;
+  height: auto;
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+}
+
+.memory-reel-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 9px;
+  padding: 12px 12px 0;
+}
+
+.memory-reel-actions b {
+  color: #fff;
+}
+
+.memory-reel-actions span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.memory-reel-card p {
+  color: rgba(255, 255, 255, 0.88);
+  line-height: 1.35;
+  margin: 0;
+  padding: 10px 12px 14px;
+}
+
+@keyframes explorerRailPulse {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  45% {
+    opacity: 0.85;
+    transform: scale(1.12);
+  }
+}
+
+@media (max-width: 1180px) {
+  .explorer-memory-rail {
+    left: 12px;
+    top: auto;
+    bottom: 18px;
+  }
+
+  .explorer-memory-drawer {
+    bottom: 84px;
+    left: 12px;
+    max-width: calc(100vw - 24px);
+    top: auto;
+    width: 420px;
+  }
+
+  .rail-hover-label {
+    bottom: calc(100% + 10px);
+    left: 50%;
+    top: auto;
+    transform: translate(-50%, 8px) scale(0.96);
+  }
+
+  .explorer-memory-rail-button:hover .rail-hover-label,
+  .explorer-memory-rail-button[aria-expanded="true"] .rail-hover-label {
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .explorer-memory-rail-button {
+    height: 50px;
+    width: 50px;
+  }
+
+  .explorer-memory-drawer {
+    border-radius: 14px;
+  }
+
+  .memory-reel-feed {
+    max-height: 62vh;
+  }
+}
+
+/* Explorer mobile density pass: use the phone screen like an app, not a stack
+   of oversized desktop cards. Keep this last so earlier visual experiments
+   cannot force single-column controls back in. */
+@media (max-width: 760px) {
+  .explorer-screen {
+    background: #f5f7fb !important;
+  }
+
+  .explorer-screen .top-brand {
+    min-height: 64px !important;
+    padding: 8px 12px !important;
+  }
+
+  .explorer-screen .logo-lockup img {
+    max-height: 46px !important;
+    max-width: 220px !important;
+  }
+
+  .explorer-screen .main-nav {
+    gap: 8px !important;
+    padding: 8px 10px !important;
+  }
+
+  .explorer-screen .main-nav a {
+    font-size: 0.9rem !important;
+    min-height: 38px !important;
+    padding: 8px 10px !important;
+  }
+
+  .explorer-page {
+    gap: 10px !important;
+    padding: 8px !important;
+  }
+
+  .explorer-hero {
+    background:
+      linear-gradient(90deg, rgba(7, 20, 63, 0.96), rgba(7, 20, 63, 0.84)),
+      url("/static/img/fairfares-explorer-button.png") right 10px top 10px / 110px auto no-repeat !important;
+    border-radius: 10px !important;
+    min-height: 0 !important;
+    padding: 14px !important;
+  }
+
+  .explorer-hero h1 {
+    font-size: clamp(1.6rem, 8vw, 2.15rem) !important;
+    line-height: 1.02 !important;
+    max-width: calc(100% - 82px) !important;
+  }
+
+  .explorer-hero p {
+    font-size: 0.86rem !important;
+    line-height: 1.35 !important;
+    margin-top: 8px !important;
+    max-width: 100% !important;
+  }
+
+  .explorer-hero img {
+    display: none !important;
+  }
+
+  .explorer-profile-strip {
+    gap: 6px !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    margin-top: 10px !important;
+  }
+
+  .explorer-profile-strip span {
+    border-radius: 8px !important;
+    min-height: 54px !important;
+    padding: 8px !important;
+  }
+
+  .explorer-profile-strip b {
+    font-size: 1rem !important;
+  }
+
+  .explorer-xp-meter {
+    margin-top: 8px !important;
+    padding: 8px !important;
+  }
+
+  .explorer-builder,
+  .quest-output {
+    gap: 10px !important;
+  }
+
+  .explorer-form,
+  .explorer-side,
+  .quest-output,
+  .explorer-community {
+    border-radius: 10px !important;
+    padding: 12px !important;
+  }
+
+  .explorer-step {
+    padding-block: 10px !important;
+  }
+
+  .explorer-step h2,
+  .explorer-side h2,
+  .quest-head h2,
+  .explorer-community h2 {
+    font-size: clamp(1.35rem, 6vw, 1.8rem) !important;
+    line-height: 1.08 !important;
+    margin-bottom: 8px !important;
+  }
+
+  .explorer-step p,
+  .quest-head p,
+  .explorer-side li,
+  .explorer-community p {
+    font-size: 0.92rem !important;
+    line-height: 1.35 !important;
+  }
+
+  .explorer-location-row {
+    gap: 8px !important;
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .explorer-location-row label {
+    grid-column: 1 / -1 !important;
+  }
+
+  .explorer-form label span,
+  .explorer-location-row label span {
+    font-size: 0.78rem !important;
+    margin-bottom: 5px !important;
+  }
+
+  .explorer-form input,
+  .explorer-form select,
+  .explorer-form .light-button,
+  .explorer-form .select-button {
+    border-radius: 8px !important;
+    font-size: 0.95rem !important;
+    min-height: 44px !important;
+    padding: 9px 10px !important;
+  }
+
+  .segmented-choice {
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .segmented-choice label {
+    border-radius: 10px !important;
+    display: grid !important;
+    font-size: 0.82rem !important;
+    gap: 5px !important;
+    justify-items: center !important;
+    min-height: 56px !important;
+    padding: 8px 6px !important;
+    text-align: center !important;
+  }
+
+  .explorer-form input[type="radio"],
+  .explorer-form input[type="checkbox"],
+  .quest-output input[type="radio"],
+  .quest-output input[type="checkbox"] {
+    flex-basis: 17px !important;
+    height: 17px !important;
+    min-height: 17px !important;
+    min-width: 17px !important;
+    width: 17px !important;
+  }
+
+  .mood-grid {
+    gap: 8px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mood-grid label {
+    border-radius: 10px !important;
+    gap: 7px !important;
+    grid-template-columns: 42px minmax(0, 1fr) 18px !important;
+    min-height: 64px !important;
+    padding: 8px !important;
+  }
+
+  .mood-grid .mood-art {
+    border-radius: 9px !important;
+    font-size: 1.25rem !important;
+    height: 40px !important;
+    width: 40px !important;
+  }
+
+  .mood-grid .mood-name {
+    font-size: clamp(0.78rem, 3.35vw, 0.93rem) !important;
+    line-height: 1.08 !important;
+    overflow-wrap: anywhere !important;
+    white-space: normal !important;
+  }
+
+  .explorer-mood-helper,
+  .explorer-preference-note,
+  .explorer-bonus-card {
+    font-size: 0.84rem !important;
+    padding: 9px 10px !important;
+  }
+
+  .explorer-preferences {
+    gap: 8px !important;
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .explorer-preferences label:first-child {
+    grid-column: 1 / -1 !important;
+  }
+
+  .explorer-preference-note {
+    grid-column: 1 / -1 !important;
+  }
+
+  .explorer-side {
+    display: grid !important;
+    gap: 10px !important;
+  }
+
+  .explorer-side ul {
+    gap: 0 !important;
+    margin: 0 !important;
+  }
+
+  .explorer-side li {
+    padding: 8px 0 !important;
+  }
+
+  .badge-preview {
+    display: grid !important;
+    gap: 7px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .badge-preview span {
+    border-radius: 999px !important;
+    font-size: 0.72rem !important;
+    padding: 6px 7px !important;
+    text-align: center !important;
+  }
+
+  .explorer-passport {
+    display: grid !important;
+    gap: 7px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .explorer-passport h3 {
+    grid-column: 1 / -1 !important;
+  }
+
+  .explorer-passport div {
+    border-radius: 8px !important;
+    font-size: 0.82rem !important;
+    gap: 4px !important;
+    grid-template-columns: 1fr !important;
+    padding: 8px !important;
+  }
+
+  .quest-head {
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-head h2 {
+    font-size: clamp(1.55rem, 7vw, 2rem) !important;
+  }
+
+  .quest-head .light-button {
+    min-height: 42px !important;
+    width: 100% !important;
+  }
+
+  .quest-stats {
+    gap: 7px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .quest-stats span {
+    min-height: 54px !important;
+    padding: 9px !important;
+  }
+
+  .quest-game-dashboard {
+    gap: 8px !important;
+    grid-template-columns: 1fr !important;
+    margin: 12px 0 !important;
+  }
+
+  .quest-progress-card,
+  .quest-boost-card,
+  .quest-badge-card {
+    min-height: 0 !important;
+    padding: 11px !important;
+  }
+
+  .quest-map-canvas {
+    height: 260px !important;
+  }
+
+  .quest-route-details {
+    gap: 8px !important;
+    margin: 10px 0 !important;
+  }
+
+  .route-summary-card,
+  .next-stop-card,
+  .route-leg-list li {
+    gap: 8px !important;
+    padding: 10px !important;
+  }
+
+  .route-leg-list {
+    gap: 6px !important;
+  }
+
+  .route-leg-list b,
+  .route-leg-list span {
+    font-size: 0.84rem !important;
+    white-space: normal !important;
+  }
+
+  .quest-map {
+    gap: 8px !important;
+    margin: 10px 0 !important;
+    overflow-x: auto !important;
+    padding: 10px !important;
+  }
+
+  .quest-map span {
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+
+  .quest-stop {
+    border-radius: 10px !important;
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+    padding: 12px !important;
+  }
+
+  .quest-stop h3 {
+    font-size: clamp(1.15rem, 5vw, 1.45rem) !important;
+    margin-bottom: 6px !important;
+  }
+
+  .quest-place-meta {
+    gap: 6px !important;
+  }
+
+  .quest-place-meta span,
+  .quest-place-meta a {
+    font-size: 0.78rem !important;
+    padding: 6px 8px !important;
+    width: auto !important;
+  }
+
+  .quest-media-carousel,
+  .quest-photo-placeholder {
+    aspect-ratio: 16 / 9 !important;
+    max-height: 190px !important;
+    min-height: 150px !important;
+  }
+
+  .mission-upload {
+    gap: 8px !important;
+    grid-template-columns: minmax(0, 1fr) 42px !important;
+    padding: 9px 10px !important;
+  }
+
+  .memory-plus {
+    height: 42px !important;
+    min-height: 42px !important;
+    width: 42px !important;
+  }
+
+  .quest-place-reviews {
+    max-height: 104px !important;
+  }
+
+  .quest-place-reviews blockquote {
+    font-size: 0.78rem !important;
+    padding: 8px !important;
+  }
+
+  .quest-stop-actions {
+    gap: 8px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    position: static !important;
+    top: auto !important;
+    width: 100% !important;
+  }
+
+  .quest-stop-actions button,
+  .quest-rating button,
+  .route-link,
+  .primary-route-link {
+    font-size: 0.86rem !important;
+    min-height: 42px !important;
+    padding: 8px 10px !important;
+    width: auto !important;
+  }
+
+  .explorer-community {
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+    padding: 12px !important;
+  }
+
+  .community-story-card,
+  .memory-gallery-wrap {
+    padding: 12px !important;
+  }
+
+  .memory-share-actions {
+    gap: 8px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .memory-share-actions button {
+    font-size: 0.78rem !important;
+    min-height: 42px !important;
+    padding: 8px 6px !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .explorer-screen .main-nav a {
+    font-size: 0.82rem !important;
+    padding-inline: 7px !important;
+  }
+
+  .explorer-hero h1 {
+    max-width: 100% !important;
+  }
+
+  .mood-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mood-grid label {
+    gap: 6px !important;
+    grid-template-columns: 34px minmax(0, 1fr) 16px !important;
+    min-height: 58px !important;
+    padding: 7px !important;
+  }
+
+  .mood-grid .mood-art {
+    font-size: 1.05rem !important;
+    height: 34px !important;
+    width: 34px !important;
+  }
+
+  .mood-grid .mood-name {
+    font-size: clamp(0.72rem, 3.5vw, 0.84rem) !important;
+  }
+
+  .segmented-choice {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .segmented-choice label:last-child {
+    grid-column: 1 / -1 !important;
+  }
+
+  .segmented-choice label {
+    font-size: 0.76rem !important;
+  }
+
+  .explorer-preferences,
+  .quest-stop-actions,
+  .badge-preview {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .memory-share-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .explorer-preferences label:first-child,
+  .explorer-preference-note {
+    grid-column: 1 / -1 !important;
+  }
+
+  .quest-stop-actions button,
+  .memory-share-actions button {
+    font-size: 0.74rem !important;
+    line-height: 1.1 !important;
+    min-height: 40px !important;
+    padding: 7px 6px !important;
+  }
+
+  .memory-share-actions button {
+    overflow-wrap: anywhere !important;
+  }
+}
+
+/* Final Explorer mobile guardrail: mission actions must stay compact after all
+   legacy Explorer rules have loaded. */
+@media (max-width: 760px) {
+  .explorer-screen .quest-stop .quest-stop-actions {
+    align-self: stretch !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-auto-flow: row !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    position: static !important;
+    top: auto !important;
+    width: 100% !important;
+  }
+
+  .explorer-screen .quest-stop .quest-stop-actions > button {
+    display: inline-flex !important;
+    grid-column: auto !important;
+    justify-content: center !important;
+    justify-self: stretch !important;
+    min-width: 0 !important;
     width: 100% !important;
   }
 }

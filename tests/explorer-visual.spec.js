@@ -96,6 +96,45 @@ async function expectQuestStopsFitViewport(page) {
   expect(brokenStops, `Quest stops do not fit viewport: ${JSON.stringify(brokenStops)}`).toEqual([]);
 }
 
+async function expectMobileDenseLayout(page) {
+  const layout = await page.evaluate(() => {
+    const countColumns = (selector, limit = 6) => {
+      const nodes = [...document.querySelectorAll(selector)].filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const styles = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+      });
+      return new Set(nodes.slice(0, limit).map((node) => Math.round(node.getBoundingClientRect().left))).size;
+    };
+
+    return {
+      moodColumns: countColumns(".mood-grid label", 6),
+      bookingChoiceColumns: countColumns(".segmented-choice label", 3),
+      statColumns: countColumns(".quest-stats span", 4),
+      shareColumns: countColumns(".memory-share-actions button", 3),
+      multiActionColumns: [...document.querySelectorAll(".quest-stop-actions")]
+        .map((group) => {
+          const buttons = [...group.querySelectorAll("button")].filter((node) => {
+            const rect = node.getBoundingClientRect();
+            const styles = getComputedStyle(node);
+            return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+          });
+          if (buttons.length < 2) return null;
+          return new Set(buttons.map((node) => Math.round(node.getBoundingClientRect().left))).size;
+        })
+        .filter(Boolean),
+    };
+  });
+
+  expect(layout.moodColumns, `Mood choices should use two mobile columns: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+  expect(layout.bookingChoiceColumns, `Booking choices should not be one-per-row: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+  expect(layout.statColumns, `Quest stats should stay compact on mobile: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+  expect(layout.shareColumns, `Share buttons should use compact rows: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+  for (const columns of layout.multiActionColumns) {
+    expect(columns, `Mission action groups with multiple buttons should use compact rows: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+  }
+}
+
 test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await generateQuest(page);
@@ -107,6 +146,14 @@ test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
   await expect(page.locator("[data-share-channel='instagram']")).toBeVisible();
   await expect(page.locator("[data-share-channel='facebook']")).toBeVisible();
   await expect(page.locator(".primary-route-link").first()).toHaveAttribute("href", /google\.com\/maps\/dir/);
+  await expect(page.locator("#explorerMemoryRailButton")).toBeVisible();
+  await page.locator("#explorerMemoryRailButton").hover();
+  await expect(page.locator(".rail-hover-label")).toHaveCSS("opacity", "1");
+  await page.locator("#explorerMemoryRailButton").click();
+  await expect(page.locator("#explorerMemoryDrawer")).toHaveClass(/is-open/);
+  await expect(page.locator(".memory-reel-card").first()).toBeVisible();
+  await page.locator("#explorerMemoryDrawerClose").click();
+  await expect(page.locator("#explorerMemoryDrawer")).not.toHaveClass(/is-open/);
 
   const firstImage = page.locator(".quest-stop:not(.is-locked) .quest-media-carousel, .quest-stop:not(.is-locked) .quest-photo-placeholder").first();
   await expect(firstImage).toBeVisible();
@@ -132,6 +179,7 @@ test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
 test("Explorer mobile UI keeps controls readable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 1100 });
   await generateQuest(page);
+  await expectMobileDenseLayout(page);
   await expectNoVisibleTextClipping(page);
   await expectVisibleControlBorders(page);
   await expectNoHorizontalOverflow(page);
