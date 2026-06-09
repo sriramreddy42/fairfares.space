@@ -90,6 +90,15 @@ async function smokePage(page, route, screenshotName) {
   await page.screenshot({ path: path.join(visualDir, screenshotName), fullPage: true });
 }
 
+async function loginAsAdmin(page) {
+  await page.goto("/login");
+  await page.fill("input[name='email']", "admin@fairfares.com");
+  await page.fill("input[name='password']", "ChangeMe123!");
+  await page.click("button[type='submit']");
+  await page.waitForLoadState("networkidle");
+  await expect(page).toHaveURL(/\/admin|\/activation-pending/);
+}
+
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/", "home-desktop.png");
@@ -120,4 +129,48 @@ test("deals and buy cars pages visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/deals", "deals-mobile.png");
   await smokePage(page, "/buy-cars", "buy-cars-mobile.png");
+});
+
+test("auth pages desktop and mobile visual smoke", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await smokePage(page, "/login", "login-desktop.png");
+  await smokePage(page, "/signup", "signup-desktop.png");
+  await expectReadableCards(page, ".auth-card, .login-poster");
+
+  await page.setViewportSize({ width: 390, height: 1100 });
+  await smokePage(page, "/login", "login-mobile.png");
+  await smokePage(page, "/signup", "signup-mobile.png");
+  await expectReadableCards(page, ".auth-card, .login-poster");
+});
+
+test("admin pages desktop and mobile visual smoke", async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 1000 });
+  await loginAsAdmin(page);
+
+  for (const [route, name] of [
+    ["/admin", "admin-dashboard-desktop.png"],
+    ["/admin/bookings", "admin-bookings-desktop.png"],
+    ["/admin/users", "admin-users-desktop.png"],
+    ["/admin/tickets", "admin-tickets-desktop.png"],
+    ["/admin/discounts", "admin-discounts-desktop.png"],
+    ["/admin/email-marketing", "admin-email-marketing-desktop.png"],
+    ["/admin/pickup", "admin-pickup-desktop.png"],
+  ]) {
+    await smokePage(page, route, name);
+    await expectReadableCards(page, ".admin-card, .admin-hero, .admin-user-card, .pickup-record");
+  }
+
+  await page.setViewportSize({ width: 390, height: 1100 });
+  for (const [route, name] of [
+    ["/admin", "admin-dashboard-mobile.png"],
+    ["/admin/bookings", "admin-bookings-mobile.png"],
+    ["/admin/users", "admin-users-mobile.png"],
+    ["/admin/tickets", "admin-tickets-mobile.png"],
+    ["/admin/discounts", "admin-discounts-mobile.png"],
+    ["/admin/email-marketing", "admin-email-marketing-mobile.png"],
+    ["/admin/pickup", "admin-pickup-mobile.png"],
+  ]) {
+    await smokePage(page, route, name);
+    await expectReadableCards(page, ".admin-card, .admin-hero, .admin-user-card, .pickup-record");
+  }
 });
