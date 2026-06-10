@@ -79,6 +79,25 @@ OPENAI_API_KEY=your_openai_key
 
 `OPENAI_API_KEY` is reserved for a later AI route-writing sprint. The current app uses deterministic quest copy plus Google Places data.
 
+## Mobile App Shell
+
+FairFares can run as native iOS and Android apps through Capacitor. The current mobile shell loads the live hosted website at `https://fairfares.onrender.com`, which keeps the Flask backend, authentication, bookings, Explorer, and admin-driven content in one place.
+
+After changing `capacitor.config.json` or adding Capacitor plugins, sync the native projects:
+
+```bash
+npm run cap:sync
+```
+
+Open the native projects:
+
+```bash
+npm run cap:open:ios
+npm run cap:open:android
+```
+
+Build and signing still happen in Xcode for iOS and Android Studio for Android. Future native features such as camera capture, location permissions, push notifications, and document handling can be added as Capacitor plugins.
+
 ## Deploy
 
 The project includes `render.yaml` for Render hosting.

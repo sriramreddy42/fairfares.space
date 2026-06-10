@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FairFares</string>
+    <string name="title_activity_main">FairFares</string>
+    <string name="package_name">com.fairfares.app</string>
+    <string name="custom_url_scheme">com.fairfares.app</string>
+</resources>

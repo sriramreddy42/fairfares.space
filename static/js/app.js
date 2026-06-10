@@ -81,6 +81,17 @@ const passportFuture = document.getElementById("passportFuture");
 const explorerMemoryRailButton = document.getElementById("explorerMemoryRailButton");
 const explorerMemoryDrawer = document.getElementById("explorerMemoryDrawer");
 const explorerMemoryDrawerClose = document.getElementById("explorerMemoryDrawerClose");
+const explorerCityStep = document.getElementById("explorerCityStep");
+const explorerBookingStep = document.getElementById("explorerBookingStep");
+const explorerMoodStep = document.getElementById("explorerMoodStep");
+const explorerPrefsStep = document.getElementById("explorerPrefsStep");
+const explorerCitySummary = document.getElementById("explorerCitySummary");
+const explorerBookingSummary = document.getElementById("explorerBookingSummary");
+const explorerMoodSummary = document.getElementById("explorerMoodSummary");
+const changeExplorerCityStep = document.getElementById("changeExplorerCityStep");
+const changeExplorerBookingStep = document.getElementById("changeExplorerBookingStep");
+const explorerBookingChoice = document.getElementById("explorerBookingChoice");
+const explorerSocialGrid = document.getElementById("explorerSocialGrid");
 let currentExplorerQuest = null;
 let explorerDirectionsRenderer = null;
 
@@ -954,6 +965,69 @@ function syncExplorerBookingChoice() {
   });
 }
 
+function setExplorerFlowStage(stage) {
+  if (!explorerForm) return;
+  explorerForm.dataset.flowStage = stage;
+  [
+    ["city", explorerCityStep],
+    ["booking", explorerBookingStep],
+    ["mood", explorerMoodStep],
+    ["preferences", explorerPrefsStep],
+  ].forEach(([name, step]) => {
+    if (!step) return;
+    const isActive = name === stage;
+    const isComplete = (
+      (name === "city" && ["booking", "mood", "preferences"].includes(stage)) ||
+      (name === "booking" && ["mood", "preferences"].includes(stage)) ||
+      (name === "mood" && stage === "preferences")
+    );
+    step.classList.toggle("is-active", isActive);
+    step.classList.toggle("is-complete", isComplete);
+  });
+}
+
+  function updateExplorerCitySummary() {
+    if (!explorerCitySummary) return;
+    const label = explorerCitySummary.querySelector("b");
+    if (label) label.textContent = explorerCity?.value || "Denver, Colorado";
+    explorerCitySummary.hidden = false;
+  }
+
+function completeExplorerCityStep() {
+  updateExplorerCitySummary();
+  setExplorerFlowStage("booking");
+  explorerBookingStep?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function explorerBookingLabel(value) {
+  if (value === "yes") return "Booked through FairFares";
+  if (value === "no") return "Using my own car";
+  return "Just exploring";
+}
+
+function updateExplorerBookingSummary() {
+  if (!explorerBookingSummary) return;
+  const selected = document.querySelector("input[name='fairfares_booked']:checked")?.value || "exploring";
+  const summary = explorerBookingSummary.querySelector("span");
+  if (summary) summary.textContent = explorerBookingLabel(selected);
+  explorerBookingSummary.hidden = false;
+}
+
+function completeExplorerBookingStep() {
+  updateExplorerBookingSummary();
+  explorerBookingChoice?.classList.add("is-collapsed");
+  setExplorerFlowStage("mood");
+  explorerMoodStep?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function updateExplorerMoodSummary() {
+  if (!explorerMoodSummary) return;
+  const moods = selectedExplorerMoods();
+  const summary = explorerMoodSummary.querySelector("span");
+  if (summary) summary.textContent = moods.length ? `Vibes: ${moods.join(", ")}` : "Choose your vibes";
+  explorerMoodSummary.hidden = moods.length === 0;
+}
+
 function geocodeExplorerCity(source = "typed") {
   if (!explorerCity) return Promise.resolve("");
   const typed = formatExplorerCity(explorerCity.value);
@@ -985,20 +1059,30 @@ function geocodeExplorerCity(source = "typed") {
   });
 }
 
-moodGrid?.addEventListener("change", (event) => {
-  const moods = selectedExplorerMoods();
-  if (moods.length > 5 && event.target?.checked) {
-    event.target.checked = false;
-    if (explorerMoodHelper) explorerMoodHelper.textContent = "Choose up to 5 vibes so the route stays focused.";
-    return;
+  moodGrid?.addEventListener("change", (event) => {
+    let moods = selectedExplorerMoods();
+    if (moods.length > 5 && event.target?.checked) {
+      event.target.checked = false;
+      event.target.closest("label")?.classList.remove("is-selected");
+      moods = selectedExplorerMoods();
+      updateExplorerMoodSummary();
+      if (explorerMoodHelper) explorerMoodHelper.textContent = "Choose up to 5 vibes so the route stays focused.";
+      return;
+    }
+    event.target?.closest("label")?.classList.toggle("is-selected", Boolean(event.target?.checked));
+    moods = selectedExplorerMoods();
+    updateExplorerMoodSummary();
+    if (explorerMoodHelper) {
+      explorerMoodHelper.textContent = moods.length < 3
+        ? `Pick ${3 - moods.length} more vibe${3 - moods.length === 1 ? "" : "s"} to generate a stronger quest.`
+        : `${moods.length}/5 vibes selected. Explorer will tune the feed around these choices.`;
   }
-  event.target?.closest("label")?.classList.toggle("is-selected", Boolean(event.target?.checked));
-  if (explorerMoodHelper) {
-    explorerMoodHelper.textContent = moods.length < 3
-      ? `Pick ${3 - moods.length} more vibe${3 - moods.length === 1 ? "" : "s"} to generate a stronger quest.`
-      : `${moods.length}/5 vibes selected. Explorer will tune the feed around these choices.`;
-  }
-});
+    if (moods.length >= 3) {
+      setExplorerFlowStage("preferences");
+    } else {
+      setExplorerFlowStage("mood");
+    }
+  });
 
 detectExplorerLocation?.addEventListener("click", () => {
   if (!navigator.geolocation) {
@@ -1020,10 +1104,12 @@ detectExplorerLocation?.addEventListener("click", () => {
           }
           updateExplorerPassport(explorerCity.value);
           explorerLocationStatus.textContent = `Location detected near ${explorerCity.value}.`;
+          completeExplorerCityStep();
         });
       } else {
         updateExplorerPassport(explorerCity?.value || "Denver, Colorado");
         explorerLocationStatus.textContent = "Location detected. Explorer will start from your current area.";
+        completeExplorerCityStep();
       }
     },
     () => {
@@ -1034,7 +1120,7 @@ detectExplorerLocation?.addEventListener("click", () => {
 });
 
 setExplorerCity?.addEventListener("click", () => {
-  geocodeExplorerCity("typed");
+  geocodeExplorerCity("typed").then(() => completeExplorerCityStep());
 });
 
 explorerCity?.addEventListener("change", () => {
@@ -1052,11 +1138,36 @@ document.querySelectorAll("input[name='fairfares_booked']").forEach((input) => {
   input.addEventListener("change", () => {
     updateExplorerBonusCard();
     syncExplorerBookingChoice();
+    completeExplorerBookingStep();
   });
 });
-updateExplorerBonusCard();
-syncExplorerBookingChoice();
-updateExplorerPassport(explorerCity?.value || "Denver, Colorado");
+  updateExplorerBonusCard();
+  syncExplorerBookingChoice();
+  updateExplorerPassport(explorerCity?.value || "Denver, Colorado");
+  if (explorerCitySummary) explorerCitySummary.hidden = true;
+  if (explorerBookingSummary) explorerBookingSummary.hidden = true;
+  if (explorerMoodSummary) explorerMoodSummary.hidden = true;
+  setExplorerFlowStage("city");
+
+  changeExplorerCityStep?.addEventListener("click", () => {
+    setExplorerFlowStage("city");
+    if (explorerCitySummary) explorerCitySummary.hidden = true;
+    if (explorerBookingSummary) explorerBookingSummary.hidden = true;
+    explorerBookingChoice?.classList.remove("is-collapsed");
+  });
+
+  changeExplorerBookingStep?.addEventListener("click", () => {
+    explorerBookingChoice?.classList.remove("is-collapsed");
+    if (explorerBookingSummary) explorerBookingSummary.hidden = true;
+    setExplorerFlowStage("booking");
+  });
+
+explorerSocialGrid?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-follow-profile]");
+  if (!button) return;
+  button.classList.toggle("is-following");
+  button.textContent = button.classList.contains("is-following") ? "Following" : "Follow";
+});
 
 function explorerProfileValue(node) {
   return Number(node?.textContent || 0) || 0;

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-42">
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-43">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-10"></script>
+  <script defer src="/static/js/app.js?v=explorer-12"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -73,10 +73,18 @@
     </aside>
 
     <section class="explorer-hero">
-      <div>
+      <div class="explorer-hero-copy">
         <p class="eyebrow">FairFares Explorer</p>
-        <h1>Rent a car. Pick your mood. Unlock an adventure.</h1>
-        <p>Explorer turns a booking into a city quest with hidden stops, check-ins, XP, badges, and memories worth sharing.</p>
+        <h1 class="explorer-hero-title" aria-label="Rent a car. Pick your mood. Unlock an adventure. Explorer.">
+          <span class="hero-line hero-line-one">Rent a car.</span>
+          <span class="hero-line hero-line-two">Pick your mood.</span>
+          <span class="hero-line hero-line-three">Unlock an adventure.</span>
+          <span class="hero-explorer-word" aria-hidden="true">
+            <span style="--i:8">E</span><span style="--i:7">x</span><span style="--i:6">p</span><span style="--i:5">l</span><span style="--i:4">o</span><span style="--i:3">r</span><span style="--i:2">e</span><span style="--i:1">r</span>
+          </span>
+        </h1>
+        <p class="explorer-hero-subcopy">Explorer turns a booking into a city quest with hidden stops, check-ins, XP, badges, and memories worth sharing.</p>
+        <p class="explorer-hero-tagline">Your personal travel memories and city guide.</p>
         <div class="explorer-profile-strip">
           <span><b id="explorerLevel">$level</b>Level</span>
           <span><b id="explorerXp">$xp</b>XP</span>
@@ -92,8 +100,8 @@
     </section>
 
     <section class="explorer-builder">
-      <form id="explorerForm" class="explorer-form">
-        <div class="explorer-step">
+      <form id="explorerForm" class="explorer-form explorer-flow-form" data-flow-stage="city">
+        <div class="explorer-step explorer-flow-step is-active" id="explorerCityStep" data-step-name="city">
           <small>Step 1</small>
           <h2>Where are you exploring?</h2>
           <div class="explorer-location-row">
@@ -104,12 +112,16 @@
             <button type="button" class="light-button" id="detectExplorerLocation">Use My Location</button>
           </div>
           <p class="modify-status" id="explorerLocationStatus" aria-live="polite"></p>
+          <p class="explorer-step-summary" id="explorerCitySummary" hidden>
+            <span>Exploring <b>Denver, Colorado</b></span>
+            <button type="button" id="changeExplorerCityStep">Change city</button>
+          </p>
         </div>
 
-        <div class="explorer-step">
+        <div class="explorer-step explorer-flow-step" id="explorerBookingStep" data-step-name="booking">
           <small>Step 2</small>
           <h2>Did you book through FairFares?</h2>
-          <div class="segmented-choice">
+          <div class="segmented-choice explorer-choice-group" id="explorerBookingChoice">
             <label><input type="radio" name="fairfares_booked" value="yes" $booked_checked> Yes</label>
             <label><input type="radio" name="fairfares_booked" value="no"> No</label>
             <label><input type="radio" name="fairfares_booked" value="exploring" $exploring_checked> I'm just exploring</label>
@@ -118,9 +130,13 @@
             <b>Explorer Bonus Active</b>
             <span>+100 XP added because you booked through FairFares.</span>
           </div>
+          <p class="explorer-step-summary" id="explorerBookingSummary" hidden>
+            <span>FairFares bonus choice saved</span>
+            <button type="button" id="changeExplorerBookingStep">Change</button>
+          </p>
         </div>
 
-        <div class="explorer-step">
+        <div class="explorer-step explorer-flow-step" id="explorerMoodStep" data-step-name="mood">
           <small>Step 3</small>
           <h2>What's today's vibe?</h2>
           <p>Choose 3 to 5 so Explorer can build a better route.</p>
@@ -139,9 +155,12 @@
             <label data-icon="surprise"><input type="checkbox" name="moods" value="Surprise Me"><span class="mood-art">?</span><span class="mood-name">Surprise Me</span></label>
           </div>
           <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night and Sunset prioritize evening-friendly places.</p>
+          <p class="explorer-step-summary" id="explorerMoodSummary" hidden>
+            <span>Vibes selected</span>
+          </p>
         </div>
 
-        <div class="explorer-step explorer-preferences">
+        <div class="explorer-step explorer-preferences explorer-flow-step" id="explorerPrefsStep" data-step-name="preferences">
           <label><span>How much time?</span><select name="duration"><option>2 Hours</option><option>3 Hours</option><option>4 Hours</option><option>5 Hours</option><option>6 Hours</option><option selected>Half Day</option><option>Full Day</option><option>Weekend</option><option>Week</option></select></label>
           <label><span>Budget</span><select name="budget"><option>$</option><option selected>$$</option><option>$$$</option></select></label>
           <label><span>Traveling with</span><select name="travel_with"><option>Solo</option><option>Couple</option><option selected>Friends</option><option>Family</option></select></label>
@@ -234,6 +253,33 @@
             <button type="button" data-share-channel="whatsapp">Share to WhatsApp</button>
             <button type="button" data-share-channel="instagram">Share to Instagram</button>
             <button type="button" data-share-channel="facebook">Share to Facebook</button>
+          </div>
+        </div>
+        <div class="explorer-social-grid" id="explorerSocialGrid">
+          <div class="social-grid-head">
+            <b>Suggested reels</b>
+            <button type="button" aria-label="More reels">...</button>
+          </div>
+          <article class="social-reel-tile" style="--reel-bg: url('/static/img/hero-road.png')">
+            <div><b>denver.routes</b><span>Original audio</span></div>
+            <p>Sunset route unlocked after the final stop.</p>
+            <footer><span>18K likes</span><span>842 comments</span></footer>
+          </article>
+          <article class="social-reel-tile" style="--reel-bg: url('/static/img/referral-deals-denver.jpeg')">
+            <div><b>fairfares.food</b><span>Explorer reel</span></div>
+            <p>Mystery stop turned into the best food memory.</p>
+            <footer><span>11K likes</span><span>392 shares</span></footer>
+          </article>
+          <article class="social-reel-tile" style="--reel-bg: url('/static/img/landing-reference.png')">
+            <div><b>city.quester</b><span>Trip story</span></div>
+            <p>Three stops, one hidden gem, and a new favorite place.</p>
+            <footer><span>7.8K likes</span><span>219 comments</span></footer>
+          </article>
+          <div class="suggested-profile-grid">
+            <b>Suggested profiles</b>
+            <article><span>SK</span><div><b>sarah.k</b><small>Sunset quests</small></div><button type="button" data-follow-profile>Follow</button></article>
+            <article><span>AT</span><div><b>alex.travels</b><small>Food missions</small></div><button type="button" data-follow-profile>Follow</button></article>
+            <article><span>PR</span><div><b>priya.routes</b><small>Hidden gems</small></div><button type="button" data-follow-profile>Follow</button></article>
           </div>
         </div>
       </aside>

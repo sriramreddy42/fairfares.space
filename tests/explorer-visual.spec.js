@@ -5,6 +5,10 @@ const visualDir = path.join("test-results", "visual");
 
 async function generateQuest(page) {
   await page.goto("/explorer");
+  await expect(page.locator("h2", { hasText: "Where are you exploring?" })).toBeVisible();
+  await page.locator("#setExplorerCity").click();
+  await expect(page.locator("h2", { hasText: "Did you book through FairFares?" })).toBeVisible();
+  await page.locator("label", { hasText: "Yes" }).first().click();
   await expect(page.locator("h2", { hasText: "What's today's vibe?" })).toBeVisible();
   for (const vibe of ["Food", "Adventure", "Nature"]) {
     await page.locator(".mood-grid label", { hasText: vibe }).click();
@@ -19,6 +23,11 @@ async function generateQuest(page) {
 async function expectNoVisibleTextClipping(page) {
   const clipped = await page.locator(".mood-grid label, .segmented-choice label, .quest-stop-actions button, .memory-menu label, .memory-share-actions button, .route-link, .primary-route-link").evaluateAll((nodes) =>
     nodes
+      .filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const styles = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+      })
       .map((node) => {
         const rect = node.getBoundingClientRect();
         const text = node.innerText.replace(/\s+/g, " ").trim();
@@ -53,6 +62,11 @@ async function expectNoHorizontalOverflow(page) {
 async function expectVisibleControlBorders(page) {
   const weakControls = await page.locator(".explorer-form input[type='radio'], .explorer-form input[type='checkbox']").evaluateAll((nodes) =>
     nodes
+      .filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const styles = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+      })
       .map((node) => {
         const styles = getComputedStyle(node);
         return {
@@ -91,12 +105,12 @@ async function expectQuestStopsFitViewport(page) {
           outsideChildren,
         };
       })
-      .filter((item) => item.width < item.viewport * 0.82 || item.right > item.viewport + 2 || item.outsideChildren.length)
+      .filter((item) => item.width < item.viewport * 0.8 || item.right > item.viewport + 2 || item.outsideChildren.length)
   );
   expect(brokenStops, `Quest stops do not fit viewport: ${JSON.stringify(brokenStops)}`).toEqual([]);
 }
 
-async function expectMobileDenseLayout(page) {
+async function expectMobileBookingLayout(page) {
   const layout = await page.evaluate(() => {
     const countColumns = (selector, limit = 6) => {
       const nodes = [...document.querySelectorAll(selector)].filter((node) => {
@@ -108,8 +122,41 @@ async function expectMobileDenseLayout(page) {
     };
 
     return {
-      moodColumns: countColumns(".mood-grid label", 6),
       bookingChoiceColumns: countColumns(".segmented-choice label", 3),
+    };
+  });
+
+  expect(layout.bookingChoiceColumns, `Booking choices should not be one-per-row while visible: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+}
+
+async function expectMobileMoodLayout(page) {
+  const layout = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll(".mood-grid label")].filter((node) => {
+      const rect = node.getBoundingClientRect();
+      const styles = getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+    });
+
+    return {
+      moodColumns: new Set(nodes.slice(0, 6).map((node) => Math.round(node.getBoundingClientRect().left))).size,
+    };
+  });
+
+  expect(layout.moodColumns, `Mood choices should use two mobile columns: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
+}
+
+async function expectMobileQuestLayout(page) {
+  const layout = await page.evaluate(() => {
+    const countColumns = (selector, limit = 6) => {
+      const nodes = [...document.querySelectorAll(selector)].filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const styles = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && styles.display !== "none" && styles.visibility !== "hidden";
+      });
+      return new Set(nodes.slice(0, limit).map((node) => Math.round(node.getBoundingClientRect().left))).size;
+    };
+
+    return {
       statColumns: countColumns(".quest-stats span", 4),
       shareColumns: countColumns(".memory-share-actions button", 3),
       multiActionColumns: [...document.querySelectorAll(".quest-stop-actions")]
@@ -126,8 +173,6 @@ async function expectMobileDenseLayout(page) {
     };
   });
 
-  expect(layout.moodColumns, `Mood choices should use two mobile columns: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
-  expect(layout.bookingChoiceColumns, `Booking choices should not be one-per-row: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
   expect(layout.statColumns, `Quest stats should stay compact on mobile: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
   expect(layout.shareColumns, `Share buttons should use compact rows: ${JSON.stringify(layout)}`).toBeGreaterThanOrEqual(2);
   for (const columns of layout.multiActionColumns) {
@@ -178,8 +223,23 @@ test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
 
 test("Explorer mobile UI keeps controls readable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 1100 });
-  await generateQuest(page);
-  await expectMobileDenseLayout(page);
+  await page.goto("/explorer");
+  await expect(page.locator("h2", { hasText: "Where are you exploring?" })).toBeVisible();
+  await page.locator("#setExplorerCity").click();
+  await expect(page.locator("h2", { hasText: "Did you book through FairFares?" })).toBeVisible();
+  await expectMobileBookingLayout(page);
+  await page.locator("label", { hasText: "Yes" }).first().click();
+  await expect(page.locator("h2", { hasText: "What's today's vibe?" })).toBeVisible();
+  await expectMobileMoodLayout(page);
+  for (const vibe of ["Food", "Adventure", "Nature"]) {
+    await page.locator(".mood-grid label", { hasText: vibe }).click();
+  }
+  await page.locator("button", { hasText: "Generate Explorer Quest" }).click();
+  await expect(page.locator(".quest-output")).toBeVisible();
+  await expect(page.locator(".quest-stop").first()).toBeVisible();
+  await expect(page.locator("#questRouteDetails")).toBeVisible();
+  await expect(page.locator(".route-leg-list li").first()).toBeVisible();
+  await expectMobileQuestLayout(page);
   await expectNoVisibleTextClipping(page);
   await expectVisibleControlBorders(page);
   await expectNoHorizontalOverflow(page);

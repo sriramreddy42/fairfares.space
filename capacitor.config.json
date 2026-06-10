@@ -1,0 +1,26 @@
+{
+  "appId": "com.fairfares.app",
+  "appName": "FairFares",
+  "webDir": "static",
+  "server": {
+    "url": "https://fairfares.onrender.com",
+    "cleartext": false,
+    "allowNavigation": [
+      "fairfares.onrender.com",
+      "*.fairfares.onrender.com",
+      "www.google.com",
+      "maps.google.com",
+      "*.google.com",
+      "*.googleapis.com",
+      "*.gstatic.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "scheme": "FairFares"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true
+  }
+}
