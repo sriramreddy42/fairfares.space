@@ -61,6 +61,24 @@ async function expectNoHorizontalOverflow(page) {
 }
 
 async function expectExplorerHeroMatchesRequestedLayout(page) {
+  const introIssues = await page.locator(".explorer-hero").evaluate((hero) => {
+    const heroRect = hero.getBoundingClientRect();
+    const title = hero.querySelector(".explorer-hero-title");
+    const subcopy = hero.querySelector(".explorer-hero-subcopy");
+    const titleRect = title.getBoundingClientRect();
+    const subcopyRect = subcopy.getBoundingClientRect();
+    return {
+      titleTooWide: titleRect.width > heroRect.width * 0.46 && window.innerWidth > 900,
+      titleTooTall: titleRect.height > heroRect.height * 0.42 && window.innerWidth > 900,
+      titleOverlapsSubcopy: titleRect.bottom > subcopyRect.top - 10,
+      titleOutsideLeft: titleRect.left < heroRect.left - 1,
+    };
+  });
+  expect(
+    Object.entries(introIssues).filter(([, value]) => value),
+    `Explorer intro text layout issues: ${JSON.stringify(introIssues)}`
+  ).toEqual([]);
+
   await page.waitForTimeout(4200);
   await expect(page.locator(".explorer-book-card")).toBeVisible();
   await expect(page.locator(".explorer-book-card", { hasText: "Your personal travel book" })).toBeVisible();
@@ -85,8 +103,11 @@ async function expectExplorerHeroMatchesRequestedLayout(page) {
       bookNotRightSide: bookRect.left <= heroRect.left + heroRect.width * 0.42 && window.innerWidth > 900,
       bookTransparent: bookOpacity < 0.9,
       profileNotLeft: profileRect.left > heroRect.left + heroRect.width * 0.2 && window.innerWidth > 900,
+      profileTooLow: profileRect.top > heroRect.top + heroRect.height * 0.42 && window.innerWidth > 900,
+      profileTooWide: profileRect.width > heroRect.width * 0.46 && window.innerWidth > 900,
       profileTransparent: profileOpacity < 0.9,
       xpNotBelowProfile: xpRect.top < profileRect.bottom - 1,
+      xpTooLow: xpRect.top > heroRect.top + heroRect.height * 0.62 && window.innerWidth > 900,
     };
   });
   expect(Object.entries(issues).filter(([, value]) => value), `Explorer hero layout issues: ${JSON.stringify(issues)}`).toEqual([]);

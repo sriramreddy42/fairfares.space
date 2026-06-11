@@ -1833,7 +1833,7 @@ def referral_claim_modal(reward: sqlite3.Row | None) -> str:
   <section class="booking-referral-backdrop" id="referralClaimModal" data-auto-show="true" hidden>
     <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="referralClaimTitle">
       <button class="guest-offer-close" type="button" data-claim-close aria-label="Close referral claim">x</button>
-      <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-glow-logo.png" alt="FairFares logo">
       <p class="eyebrow">Referral bonus ready</p>
       <h2 id="referralClaimTitle">You referred 3 people.</h2>
       <p>Your referral reward is ready. Claim it now and use this 10% coupon on up to 3 future bookings.</p>
@@ -3936,7 +3936,7 @@ def guest_offer_modal() -> str:
   <section class="guest-offer-backdrop" id="guestOfferModal" hidden>
     <div class="guest-offer-modal" role="dialog" aria-modal="true" aria-labelledby="guestOfferTitle">
       <button class="guest-offer-close" type="button" data-offer-close aria-label="Close offer">x</button>
-      <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-glow-logo.png" alt="FairFares logo">
       <p class="eyebrow">Referral student deal</p>
       <h2 id="guestOfferTitle">Claim 10% off before booking.</h2>
       <p>Use the FairFares referral deal on this eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
@@ -6688,7 +6688,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
                     <button class="guest-offer-close" type="button" data-referral-close aria-label="Close referral offer">x</button>
-                    <img class="guest-offer-logo" src="/static/img/logo-dark-header.png" alt="FairFares logo">
+                    <img class="guest-offer-logo" src="/static/img/fairfares-glow-logo.png" alt="FairFares logo">
                     <p class="eyebrow">Referral bonus</p>
                     <h2 id="bookingReferralTitle">Refer 3 friends. Unlock 10% off future bookings.</h2>
                     <p>Create your account with the same email or phone used on this booking. Share this code with friends through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>

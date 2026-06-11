@@ -12094,7 +12094,7 @@ body.modal-open {
   aspect-ratio: 1 !important;
   background:
     linear-gradient(135deg, rgba(15, 199, 213, 0.9), rgba(229, 37, 42, 0.9)),
-    url("/static/img/logo-light-header.png") center / cover no-repeat !important;
+    url("/static/img/fairfares-glow-logo.png") center / cover no-repeat !important;
   border: 3px solid rgba(255, 255, 255, 0.72) !important;
   border-radius: 999px !important;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2) !important;
@@ -13692,5 +13692,141 @@ body.modal-open {
   .explorer-screen .mood-grid label span:not(.mood-art) {
     font-size: 0.86rem !important;
     line-height: 1.08 !important;
+  }
+}
+
+/* Final Explorer polish: keep this at the end so older repeated blocks cannot override it. */
+@media (min-width: 901px) {
+  .nav-links a[href="/explorer"] {
+    margin-left: 24px !important;
+    margin-right: 18px !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    min-height: clamp(560px, 60vw, 760px) !important;
+    padding: clamp(52px, 5.2vw, 74px) clamp(54px, 5.6vw, 86px) !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    min-height: clamp(470px, 47vw, 610px) !important;
+  }
+
+  .explorer-screen .explorer-hero-title {
+    font-size: clamp(2.05rem, 2.9vw, 3.25rem) !important;
+    line-height: 1.05 !important;
+    max-width: min(650px, 42vw) !important;
+    top: clamp(58px, 5vw, 76px) !important;
+  }
+
+  .explorer-screen .explorer-hero-subcopy {
+    font-size: clamp(0.96rem, 1.08vw, 1.18rem) !important;
+    max-width: min(520px, 38vw) !important;
+    top: clamp(290px, 21vw, 335px) !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    gap: 12px !important;
+    grid-template-columns: 74px minmax(0, 1fr) !important;
+    max-width: min(520px, 42vw) !important;
+    top: clamp(74px, 8vw, 104px) !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 74px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip {
+    gap: 10px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 68px !important;
+    padding: 10px 12px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: clamp(1.25rem, 2vw, 1.95rem) !important;
+  }
+
+  .explorer-screen .explorer-profile-strip small {
+    font-size: clamp(0.72rem, 0.9vw, 0.92rem) !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    max-width: min(520px, 42vw) !important;
+    padding: 12px 14px !important;
+    top: clamp(188px, 16vw, 232px) !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    max-width: min(520px, 42vw) !important;
+    padding: clamp(16px, 2vw, 24px) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: min(100%, 290px) !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.4rem, 2.1vw, 2.2rem) !important;
+    line-height: 1.08 !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .explorer-screen .explorer-hero-title {
+    font-size: clamp(2rem, 10vw, 3.35rem) !important;
+    max-width: 92vw !important;
+    top: 38px !important;
+  }
+
+  .explorer-screen .explorer-hero-subcopy {
+    top: 245px !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    grid-template-columns: 62px minmax(0, 1fr) !important;
+    max-width: 100% !important;
+    top: 185px !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 62px !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    top: 285px !important;
+  }
+}
+
+/* Final mood-grid containment: prevent desktop cards from spilling off the page. */
+.explorer-screen .mood-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)) !important;
+  width: 100% !important;
+}
+
+.explorer-screen .mood-grid label {
+  grid-template-columns: 58px minmax(0, 1fr) 30px !important;
+  min-width: 0 !important;
+}
+
+.explorer-screen .mood-grid .mood-name,
+.explorer-screen .mood-grid label span:not(.mood-art) {
+  overflow-wrap: anywhere !important;
+}
+
+@media (min-width: 1200px) {
+  .explorer-screen .mood-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .explorer-screen .mood-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .explorer-screen .mood-grid label {
+    grid-template-columns: 42px minmax(0, 1fr) 22px !important;
   }
 }

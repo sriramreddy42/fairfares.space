@@ -116,6 +116,7 @@ function syncStoredProfilePhotoToNav(src = savedExplorerUserPhoto()) {
 }
 
 function setExplorerUserPhoto(src) {
+  syncStoredProfilePhotoToNav(src);
   if (!explorerUserPhoto || !explorerUserPhotoPreview) return;
   if (src) {
     explorerUserPhotoPreview.src = src;
@@ -132,7 +133,6 @@ function setExplorerUserPhoto(src) {
     const hint = explorerUserPhoto.querySelector("em");
     if (hint) hint.textContent = "Upload your photo";
   }
-  syncStoredProfilePhotoToNav(src);
 }
 
 function savedExplorerUserPhoto() {
