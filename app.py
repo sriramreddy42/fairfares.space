@@ -445,6 +445,57 @@ def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, do
     return outbox_file, delivery_status
 
 
+def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = "Reset your FairFares password"
+    text_body = (
+        f"Hi {name},\n\n"
+        "We received a request to reset your FairFares password. Click the link below to set a new password:\n"
+        f"{reset_link}\n\n"
+        "This link expires in 30 minutes for your security.\n\n"
+        "If you didn't request a password reset, ignore this email and your password will remain unchanged.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <p>Hi {html.escape(name)},</p>
+          <p>We received a request to reset your FairFares password.</p>
+          <p><a href="{html.escape(reset_link)}" style="background:#e60019;color:#fff;padding:12px 24px;border-radius:5px;text-decoration:none;display:inline-block;font-weight:700">Reset Password</a></p>
+          <p><small>This link expires in 30 minutes for your security.</small></p>
+          <p><small>If you didn't request a password reset, ignore this email and your password will remain unchanged.</small></p>
+        </div>
+    """
+
+    outbox_file = OUTBOX_DIR / f"password-reset-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
+
+    return outbox_file, delivery_status
+
+
 def render_campaign_text(template: str, user: sqlite3.Row, origin: str) -> str:
     first_name = (user["name"] or "FairFares Member").split(" ", 1)[0]
     values = {
@@ -4010,6 +4061,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/healthz": self.healthz,
             "/login": self.login_page,
             "/signup": self.signup_page,
+            "/forgot-password": self.forgot_password_page,
+            "/reset-password": self.reset_password_page,
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
@@ -4036,6 +4089,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/login": self.login,
             "/signup": self.signup,
+            "/forgot-password": self.forgot_password,
+            "/reset-password": self.reset_password,
             "/bookings/modify": self.update_user_booking,
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
@@ -4082,7 +4137,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
 
     def allow_post_from_same_origin(self, path: str) -> bool:
-        if path in {"/login", "/signup"}:
+        if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
             return True
         expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
         for header_name in ("Origin", "Referer"):
@@ -4167,6 +4222,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def student_verification_url(self, token: str) -> str:
         return f"{self.public_origin().rstrip('/')}/student-verify?token={urllib.parse.quote(token)}"
+
+    def reset_password_url(self, token: str) -> str:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        if public_base_url:
+            return f"{public_base_url}/reset-password?token={urllib.parse.quote(token)}"
+        host = self.headers.get("Host") or "127.0.0.1:8000"
+        scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return f"{scheme}://{host}/reset-password?token={urllib.parse.quote(token)}"
 
     def public_origin(self) -> str:
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -4713,6 +4776,132 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
         self.set_session(verification["user_id"])
+
+    def forgot_password_page(self) -> None:
+        self.send_html(
+            render_template(
+                "forgot_password.html",
+                error="",
+            )
+        )
+
+    def forgot_password(self) -> None:
+        form = self.read_form()
+        email = form.get("email", "").lower().strip()
+
+        if not email or "@" not in email:
+            self.send_html(
+                render_template(
+                    "forgot_password.html",
+                    error="Please enter a valid email address.",
+                )
+            )
+            return
+
+        with db() as con:
+            user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
+        token = create_verification(user["id"] if user else 1, email, purpose="PASSWORD_RESET")
+
+        if user:
+            link = self.reset_password_url(token)
+            outbox_file, delivery_status = send_password_reset_email(email, user["name"], link)
+
+        self.send_html(
+            render_template(
+                "forgot_password_sent.html",
+                email=escape(email),
+            )
+        )
+
+    def reset_password_page(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        token = query.get("token", [""])[0]
+
+        if not token:
+            self.activation_message_page("Reset link missing", "Please use the password reset link from your FairFares email.")
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.email
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        self.send_html(
+            render_template(
+                "reset_password.html",
+                token=escape(token),
+                error="",
+            )
+        )
+
+    def reset_password(self) -> None:
+        form = self.read_form()
+        token = form.get("token", "").strip()
+        new_password = form.get("password", "")
+
+        if not token or len(new_password) < 8:
+            self.send_html(
+                render_template(
+                    "reset_password.html",
+                    token=escape(token),
+                    error="Password must be at least 8 characters.",
+                )
+            )
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.id
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        with db() as con:
+            con.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), verification["user_id"]),
+            )
+            con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+            con.execute("DELETE FROM sessions WHERE user_id = ?", (verification["user_id"],))
+
+        self.activation_message_page(
+            "Password reset successful",
+            "Your password has been reset. You can now sign in with your new password.",
+            "Go to Login",
+            "/login"
+        )
 
     def update_user_booking(self) -> None:
         user = self.current_user()
