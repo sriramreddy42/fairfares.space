@@ -101,6 +101,20 @@ let currentExplorerQuest = null;
 let explorerDirectionsRenderer = null;
 const EXPLORER_PHOTO_STORAGE_KEY = "fairfaresExplorerProfilePhoto";
 
+function syncStoredProfilePhotoToNav(src = savedExplorerUserPhoto()) {
+  document.querySelectorAll(".user-chip span").forEach((avatar) => {
+    if (src) {
+      avatar.style.backgroundImage = `url("${src}")`;
+      avatar.style.backgroundSize = "cover";
+      avatar.style.backgroundPosition = "center";
+    } else {
+      avatar.style.removeProperty("background-image");
+      avatar.style.removeProperty("background-size");
+      avatar.style.removeProperty("background-position");
+    }
+  });
+}
+
 function setExplorerUserPhoto(src) {
   if (!explorerUserPhoto || !explorerUserPhotoPreview) return;
   if (src) {
@@ -118,6 +132,7 @@ function setExplorerUserPhoto(src) {
     const hint = explorerUserPhoto.querySelector("em");
     if (hint) hint.textContent = "Upload your photo";
   }
+  syncStoredProfilePhotoToNav(src);
 }
 
 function savedExplorerUserPhoto() {
@@ -145,12 +160,15 @@ explorerUserPhotoInput?.addEventListener("change", () => {
     setExplorerUserPhoto(src);
     try {
       window.localStorage?.setItem(EXPLORER_PHOTO_STORAGE_KEY, src);
+      syncStoredProfilePhotoToNav(src);
     } catch {
       // Large local photos may exceed storage; preview still works for this session.
     }
   });
   reader.readAsDataURL(file);
 });
+
+syncStoredProfilePhotoToNav();
 
 function setExplorerMemoryDrawer(open) {
   if (!explorerMemoryDrawer || !explorerMemoryRailButton) return;

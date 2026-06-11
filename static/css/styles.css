@@ -8790,6 +8790,66 @@ body.modal-open {
   }
 }
 
+/* Latest Explorer hero/header tuning: smaller intro, higher profile cards, cleaner nav spacing. */
+@media (min-width: 901px) {
+  .nav-links a[href="/explorer"] {
+    margin-left: 18px !important;
+  }
+
+  .explorer-screen .explorer-hero-title {
+    font-size: clamp(2.1rem, 4.2vw, 4.55rem) !important;
+    line-height: 1.04 !important;
+    max-width: 560px !important;
+    top: clamp(50px, 5.5vw, 72px) !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    grid-template-columns: 78px minmax(0, 1fr) !important;
+    max-width: 520px !important;
+    top: clamp(170px, 18vw, 218px) !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 78px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip {
+    gap: 10px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 70px !important;
+    padding: 10px 12px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: clamp(1.35rem, 2.4vw, 2.15rem) !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    max-width: 520px !important;
+    padding: 14px 16px !important;
+    top: clamp(275px, 27vw, 330px) !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    max-width: 500px !important;
+    padding: clamp(16px, 2vw, 24px) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: min(100%, 280px) !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.25rem, 1.85vw, 1.85rem) !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: clamp(0.86rem, 0.95vw, 0.98rem) !important;
+  }
+}
+
 .quest-route-details {
   display: grid !important;
   gap: 12px !important;
