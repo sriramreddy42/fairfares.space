@@ -101,15 +101,18 @@ async function loginAsAdmin(page) {
 
 async function expectFeedbackWidget(page) {
   await expect(page.locator("#appFeedbackWidget")).toBeVisible();
-  await expect(page.locator(".app-feedback-tab", { hasText: "Feedback" })).toBeVisible();
+  await expect(page.locator(".app-feedback-tab", { hasText: "Website Feedback" })).toBeVisible();
 }
 
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/", "home-desktop.png");
   await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
-  await expect(page.locator(".results-promo", { hasText: "Use Explorer as your free trip adviser." })).toBeVisible();
-  await expect(page.locator(".results-ad-card", { hasText: "Rental confidence for students." })).toBeVisible();
+  await expect(page.locator(".results-promo", { hasText: "Explorer is your personal travel guide." })).toBeVisible();
+  await expect(page.locator(".results-ad-card", { hasText: "Your days deserve a place to live." })).toBeVisible();
+  const filterBox = await page.locator(".results-side-rail .filters").boundingBox();
+  const promoBox = await page.locator(".results-side-rail .results-promo").boundingBox();
+  expect(filterBox.y, "Apply filter should be above Explorer advertisements").toBeLessThan(promoBox.y);
   await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel, .hero-media");
 

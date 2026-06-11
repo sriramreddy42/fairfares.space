@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-44">
-  <script defer src="/static/js/app.js?v=42"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-45">
+  <script defer src="/static/js/app.js?v=43"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -85,25 +85,45 @@
 
     <section class="results-layout" id="results">
       <aside class="results-side-rail">
-        <section class="results-promo" aria-label="FairFares student travel guide">
+        <div class="filters">
+          <div class="filter-head">
+            <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterOptions">
+              <b aria-hidden="true"><i></i><i></i><i></i></b>
+              <span>Apply filter</span>
+            </button>
+            <button id="clearFilters" type="button">Clear All</button>
+          </div>
+          <div class="filter-options" id="filterOptions">
+          <fieldset>
+            <legend>Car Type</legend>
+            $type_filters
+          </fieldset>
+          <fieldset>
+            <legend>Fuel Type</legend>
+            $fuel_filters
+          </fieldset>
+          </div>
+        </div>
+
+        <section class="results-promo" aria-label="Explorer personal travel guide">
           <div class="promo-brand-row">
             <img src="/static/img/fairfares-explorer-button.png" alt="FairFares Explorer">
-            <span>Student travel guide</span>
+            <span>Personal travel guide</span>
           </div>
-          <h2>Use Explorer as your free trip adviser.</h2>
-          <p>FairFares helps students compare rentals, avoid hidden-fee surprises, and turn every booking into food, scenic, date-night, and adventure ideas nearby.</p>
-          <div class="promo-proof-grid" aria-label="FairFares benefits">
+          <h2>Explorer is your personal travel guide.</h2>
+          <p>Capture the little sparks of a day: sunset routes, hidden corners, favorite bites, photos, notes, and the kind of memories that turn a trip into a story you can keep.</p>
+          <div class="promo-proof-grid" aria-label="Explorer memories">
             <article>
-              <b>Fair prices</b>
-              <span>Built around student budgets.</span>
+              <b>Life moments</b>
+              <span>Keep photos, stops, and stories together.</span>
             </article>
             <article>
-              <b>Better rides</b>
-              <span>Simple cars, clear terms.</span>
+              <b>Hidden paths</b>
+              <span>Find places that feel like they found you.</span>
             </article>
             <article>
-              <b>Explorer perks</b>
-              <span>XP, memories, weather fit.</span>
+              <b>Memory book</b>
+              <span>Let every city leave a page behind.</span>
             </article>
           </div>
           <a class="promo-cta" href="/explorer">
@@ -114,32 +134,12 @@
 
         <section class="results-ad-card" aria-label="FairFares mission">
           <div>
-            <span class="ad-kicker">Why we exist</span>
-            <h3>Rental confidence for students.</h3>
-            <p>We are building FairFares to make campus travel less confusing: transparent prices, useful booking tools, and local recommendations that help you actually enjoy the trip.</p>
+            <span class="ad-kicker">Explorer journal</span>
+            <h3>Your days deserve a place to live.</h3>
+            <p>Save the route, the weather, the feeling, the photo, and the friend who said, remember this.</p>
           </div>
           <img src="/static/img/logo-light-header.png" alt="FairFares">
         </section>
-
-      <div class="filters">
-        <div class="filter-head">
-          <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterOptions">
-            <b aria-hidden="true"><i></i><i></i><i></i></b>
-            <span>Apply filter</span>
-          </button>
-          <button id="clearFilters" type="button">Clear All</button>
-        </div>
-        <div class="filter-options" id="filterOptions">
-        <fieldset>
-          <legend>Car Type</legend>
-          $type_filters
-        </fieldset>
-        <fieldset>
-          <legend>Fuel Type</legend>
-          $fuel_filters
-        </fieldset>
-        </div>
-      </div>
       </aside>
 
       <section class="cars-panel">

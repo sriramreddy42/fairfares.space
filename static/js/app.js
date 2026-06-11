@@ -2307,7 +2307,7 @@ function initAppFeedbackWidget() {
   widget.id = "appFeedbackWidget";
   widget.innerHTML = `
     <button class="app-feedback-tab" type="button" aria-expanded="false" aria-controls="appFeedbackPanel">
-      <span>Feedback</span>
+      <span>Website Feedback</span>
     </button>
     <form class="app-feedback-panel" id="appFeedbackPanel" hidden>
       <div class="app-feedback-head">
