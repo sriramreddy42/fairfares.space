@@ -11709,3 +11709,351 @@ body.modal-open {
     font-size: 0.78rem !important;
   }
 }
+
+/* Explorer compact adviser pass: balanced feed, timed/weather tags, and tighter mobile space. */
+.explorer-nav-tag {
+  background: #061641 !important;
+  border: 1px solid rgba(15, 199, 213, 0.45) !important;
+  border-radius: 999px !important;
+  color: #ffffff !important;
+  display: inline-flex !important;
+  font-size: 0.9rem !important;
+  font-weight: 900 !important;
+  min-height: 40px !important;
+  padding: 9px 14px !important;
+  white-space: nowrap !important;
+}
+
+.explorer-profile-cluster {
+  align-items: center !important;
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-columns: 92px minmax(0, 1fr) !important;
+  margin-top: 18px !important;
+  max-width: 720px !important;
+}
+
+.explorer-user-photo {
+  align-items: center !important;
+  aspect-ratio: 1 !important;
+  background:
+    linear-gradient(135deg, rgba(15, 199, 213, 0.9), rgba(229, 37, 42, 0.9)),
+    url("/static/img/logo-light-header.png") center / cover no-repeat !important;
+  border: 3px solid rgba(255, 255, 255, 0.72) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2) !important;
+  color: #ffffff !important;
+  display: flex !important;
+  font-weight: 900 !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  position: relative !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease !important;
+}
+
+.explorer-user-photo span {
+  background: rgba(6, 22, 65, 0.72) !important;
+  border-radius: 999px !important;
+  padding: 8px !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.explorer-user-photo input {
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  width: 1px !important;
+}
+
+.explorer-user-photo img {
+  height: 100% !important;
+  inset: 0 !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  position: absolute !important;
+  width: 100% !important;
+  z-index: 1 !important;
+}
+
+.explorer-user-photo em {
+  align-items: center !important;
+  background: rgba(6, 22, 65, 0.82) !important;
+  color: #ffffff !important;
+  display: flex !important;
+  font-size: 0.68rem !important;
+  font-style: normal !important;
+  font-weight: 900 !important;
+  inset: 0 !important;
+  justify-content: center !important;
+  line-height: 1.05 !important;
+  opacity: 0 !important;
+  padding: 10px !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  transform: translateY(8px) !important;
+  transition: opacity 0.18s ease, transform 0.18s ease !important;
+  z-index: 3 !important;
+}
+
+.explorer-user-photo:hover,
+.explorer-user-photo:focus-within,
+.explorer-user-photo:focus {
+  border-color: #ffffff !important;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28), 0 0 0 4px rgba(15, 199, 213, 0.28) !important;
+  cursor: pointer !important;
+  transform: translateY(-1px) !important;
+}
+
+.explorer-user-photo.has-empty-photo:hover em,
+.explorer-user-photo.has-empty-photo:focus-within em,
+.explorer-user-photo.has-empty-photo:focus em {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+.explorer-user-photo.has-photo span {
+  display: none !important;
+}
+
+.explorer-user-photo.has-photo:hover em,
+.explorer-user-photo.has-photo:focus-within em,
+.explorer-user-photo.has-photo:focus em {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+.explorer-profile-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  margin: 0 !important;
+}
+
+.explorer-xp-meter {
+  max-width: 720px !important;
+}
+
+.explorer-side {
+  display: grid !important;
+  gap: 14px !important;
+}
+
+.explorer-side ul {
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  list-style: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.explorer-side li {
+  background: #f8fafc !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 8px !important;
+  display: grid !important;
+  gap: 2px !important;
+  min-height: 62px !important;
+  padding: 10px !important;
+}
+
+.explorer-side li b {
+  color: var(--red) !important;
+  font-size: 1rem !important;
+}
+
+.explorer-side li span {
+  color: #475467 !important;
+  font-size: 0.82rem !important;
+  font-weight: 800 !important;
+}
+
+.badge-preview {
+  grid-template-columns: 1fr !important;
+}
+
+.badge-preview span {
+  min-height: 38px !important;
+  padding: 8px 10px !important;
+}
+
+.quest-weather-summary {
+  background: #eef7ff !important;
+  border: 1px solid #bddcf7 !important;
+  border-radius: 8px !important;
+  color: #0b4678 !important;
+  display: inline-flex !important;
+  font-weight: 900 !important;
+  margin: 8px 0 0 !important;
+  padding: 8px 10px !important;
+}
+
+.quest-weather-summary[hidden] {
+  display: none !important;
+}
+
+.quest-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+.quest-stats span {
+  min-height: 54px !important;
+  padding: 9px 10px !important;
+}
+
+.quest-game-dashboard {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.quest-progress-card,
+.quest-boost-card,
+.quest-badge-card {
+  min-height: 74px !important;
+  padding: 12px !important;
+}
+
+.stop-insight-row {
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  margin: 12px 0 !important;
+}
+
+.stop-insight-row span {
+  background: #f8fafc !important;
+  border: 1px solid #d7deea !important;
+  border-radius: 8px !important;
+  color: #526071 !important;
+  display: grid !important;
+  font-size: 0.82rem !important;
+  font-weight: 800 !important;
+  gap: 3px !important;
+  line-height: 1.2 !important;
+  min-height: 64px !important;
+  padding: 9px !important;
+}
+
+.stop-insight-row b {
+  color: var(--navy) !important;
+  font-size: 0.96rem !important;
+}
+
+.stop-insight-row .is-good {
+  background: #f0fbf2 !important;
+  border-color: #b8e6c0 !important;
+}
+
+.stop-insight-row .is-caution {
+  background: #fff8e8 !important;
+  border-color: #f3d58a !important;
+}
+
+.stop-insight-row .is-warning {
+  background: #fff1f1 !important;
+  border-color: #f3b6b8 !important;
+}
+
+.quest-media-carousel,
+.quest-photo-placeholder {
+  aspect-ratio: 16 / 8.4 !important;
+  max-height: 230px !important;
+  max-width: 680px !important;
+  width: 100% !important;
+}
+
+.quest-media-carousel img,
+.quest-media-carousel video,
+.quest-photo-placeholder img {
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  width: 100% !important;
+}
+
+.explorer-social-grid {
+  grid-template-columns: repeat(3, minmax(120px, 170px)) minmax(230px, 1fr) !important;
+}
+
+.social-reel-tile {
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  min-height: 210px !important;
+}
+
+@media (max-width: 760px) {
+  .explorer-screen .top-brand {
+    min-height: 82px !important;
+    padding: 10px 14px !important;
+  }
+
+  .explorer-screen .main-nav .nav-links a:not(.active),
+  .explorer-screen .main-nav .nav-actions > span:not(.explorer-nav-tag),
+  .explorer-screen .main-nav .nav-actions > a:not(.nav-button) {
+    display: none !important;
+  }
+
+  .explorer-nav-tag {
+    font-size: 0.72rem !important;
+    min-height: 34px !important;
+    padding: 7px 9px !important;
+  }
+
+  .explorer-profile-cluster {
+    grid-template-columns: 68px minmax(0, 1fr) !important;
+  }
+
+  .explorer-profile-strip {
+    gap: 8px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .explorer-profile-strip span {
+    min-height: 54px !important;
+    padding: 8px !important;
+  }
+
+  .explorer-side ul,
+  .quest-game-dashboard,
+  .stop-insight-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .quest-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .quest-stats span {
+    border-radius: 7px !important;
+    font-size: 0.72rem !important;
+    min-height: 52px !important;
+    padding: 7px 5px !important;
+  }
+
+  .quest-stats b {
+    font-size: 0.86rem !important;
+  }
+
+  .mission-upload {
+    align-items: center !important;
+    grid-template-columns: minmax(0, 1fr) 52px !important;
+  }
+
+  .explorer-social-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    overflow: visible !important;
+  }
+
+  .explorer-social-grid .social-grid-head,
+  .suggested-profile-grid {
+    grid-column: 1 / -1 !important;
+  }
+
+  .social-reel-tile {
+    min-height: 190px !important;
+  }
+}

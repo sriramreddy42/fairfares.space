@@ -1924,6 +1924,94 @@ EXPLORER_PLACE_QUERIES = {
 }
 
 
+MOOD_TIME_RULES = {
+    "Food": ("Any time", "Works for lunch, dinner, or a snack stop."),
+    "Coffee": ("Morning to afternoon", "Best before 4 PM for study, work, or a quick reset."),
+    "Adventure": ("Morning to early afternoon", "Daylight gives you safer trails, parking, and photos."),
+    "Nature": ("Morning or golden hour", "Cooler light and calmer crowds make this easier to enjoy."),
+    "Photography": ("Golden hour", "Soft light is usually strongest shortly after sunrise or before sunset."),
+    "Date Night": ("Evening", "Built for dinner, lights, music, and relaxed night plans."),
+    "Scenic Drive": ("Daylight or sunset", "Go while roads and overlooks are easy to see."),
+    "Sunset": ("Sunset window", "Arrive 30-45 minutes before sunset and stay for blue hour."),
+    "Hidden Gems": ("Late morning to evening", "Flexible, but verify hours for smaller local spots."),
+    "Music": ("Evening", "Most venues and performances are strongest at night."),
+    "Shopping": ("Late morning to afternoon", "Best while shops are fully open."),
+    "Surprise Me": ("Flexible", "Explorer will adapt the timing to the stop type."),
+}
+
+OUTDOOR_MOODS = {"Adventure", "Nature", "Photography", "Scenic Drive", "Sunset"}
+INDOOR_FRIENDLY_MOODS = {"Food", "Coffee", "Music", "Shopping", "Date Night"}
+
+
+def explorer_weather_forecast(city: str, target_date: date | None = None) -> dict[str, object]:
+    """Lightweight seasonal forecast until a live weather provider is connected."""
+    target_date = target_date or date.today()
+    month = target_date.month
+    city_name = city.split(",", 1)[0].strip().lower()
+    mountain_city = any(name in city_name for name in ["denver", "boulder", "colorado", "salt lake", "reno"])
+    desert_city = any(name in city_name for name in ["las vegas", "phoenix", "palm springs"])
+    coastal_city = any(name in city_name for name in ["los angeles", "san diego", "san francisco", "seattle"])
+
+    if month in {12, 1, 2}:
+        high = 42 if mountain_city else 58 if coastal_city else 50
+        low = 22 if mountain_city else 45 if coastal_city else 33
+        condition = "Cold"
+        rain_chance = 25
+    elif month in {3, 4, 5}:
+        high = 68 if not desert_city else 82
+        low = 42 if mountain_city else 55
+        condition = "Mild"
+        rain_chance = 30
+    elif month in {6, 7, 8}:
+        high = 88 if not desert_city else 105
+        low = 61 if mountain_city else 76 if desert_city else 65
+        condition = "Sunny"
+        rain_chance = 18 if not coastal_city else 12
+    else:
+        high = 66 if mountain_city else 78 if desert_city else 70
+        low = 40 if mountain_city else 58
+        condition = "Cool"
+        rain_chance = 22
+
+    if rain_chance >= 35:
+        condition = "Chance of rain"
+    if high >= 95:
+        condition = "Very hot"
+    return {
+        "condition": condition,
+        "high_f": high,
+        "low_f": low,
+        "rain_chance": rain_chance,
+        "summary": f"{condition}, about {high}°F high / {low}°F low, {rain_chance}% rain chance.",
+    }
+
+
+def explorer_stop_advice(mood: str, city: str, weather: dict[str, object]) -> dict[str, str]:
+    time_window, time_reason = MOOD_TIME_RULES.get(mood, MOOD_TIME_RULES["Surprise Me"])
+    condition = str(weather.get("condition") or "Mild")
+    high = int(weather.get("high_f") or 70)
+    rain = int(weather.get("rain_chance") or 0)
+    outdoor = mood in OUTDOOR_MOODS
+    if outdoor and (rain >= 40 or condition == "Very hot" or high >= 95):
+        verdict = "Wait or swap"
+        weather_note = "Outdoor stop is less comfortable in heat or rain. Pick an indoor alternative if conditions look rough."
+    elif outdoor and (condition in {"Cold", "Cool"} or rain >= 25):
+        verdict = "Go prepared"
+        weather_note = "Still worth it, but bring layers and check the sky before you drive."
+    elif mood in INDOOR_FRIENDLY_MOODS:
+        verdict = "Good pick"
+        weather_note = "Weather should not block this stop. It is a strong backup if outdoor plans shift."
+    else:
+        verdict = "Good pick"
+        weather_note = "Conditions look reasonable for this plan."
+    return {
+        "best_time": time_window,
+        "time_reason": time_reason,
+        "weather_verdict": verdict,
+        "weather_note": weather_note,
+    }
+
+
 def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
     request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -2012,13 +2100,16 @@ def explorer_mission_pack(name: str, mood: str, order: int, secret: bool) -> dic
     }
 
 
-def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool, city_label: str = "") -> dict[str, object] | None:
+def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool, city_label: str = "", weather: dict[str, object] | None = None, include_details: bool = True) -> dict[str, object] | None:
     place_id = str(place.get("place_id") or "")
     if not place_id:
         return None
-    try:
-        detail = google_place_details(place_id, api_key)
-    except Exception:
+    if include_details:
+        try:
+            detail = google_place_details(place_id, api_key)
+        except Exception:
+            detail = place
+    else:
         detail = place
     geometry = dict(detail.get("geometry") or place.get("geometry") or {})
     location = dict(geometry.get("location") or {})
@@ -2047,6 +2138,8 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
     mission_pack = explorer_mission_pack(name, mood, order, secret)
     if not secret and city_label:
         mission_pack["mission_title"] = f"{city_label} {mission_pack['mission_title']}"
+    weather = weather or explorer_weather_forecast(city_label or "")
+    advice = explorer_stop_advice(mood, city_label, weather)
     return {
         "order": order,
         "name": name,
@@ -2071,6 +2164,12 @@ def google_place_to_stop(place: dict[str, object], api_key: str, order: int, moo
         "reviews": reviews,
         "google_url": str(detail.get("url") or ""),
         "source": "GOOGLE_PLACES",
+        "mood": mood,
+        "tags": [mood],
+        "best_time": advice["best_time"],
+        "time_reason": advice["time_reason"],
+        "weather_verdict": advice["weather_verdict"],
+        "weather_note": advice["weather_note"],
     }
 
 
@@ -2116,9 +2215,13 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
     query_moods = moods[:5] or ["Scenic Drive", "Hidden Gems", "Food"]
     preference_terms = explorer_preference_terms(duration, budget, travel_with)
     preference_suffix = " ".join(preference_terms)
+    weather = explorer_weather_forecast(city)
     seen_place_ids: set[str] = set()
-    stops: list[dict[str, object]] = []
+    mood_buckets: dict[str, list[dict[str, object]]] = {}
     for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
+        if mood in mood_buckets:
+            continue
+        mood_buckets[mood] = []
         for template in EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"]):
             params = {
                 "query": f"{template.format(city=title_city)} {preference_suffix}".strip(),
@@ -2141,11 +2244,23 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
                 if not place_id or place_id in seen_place_ids:
                     continue
                 seen_place_ids.add(place_id)
-                stop = google_place_to_stop(place, api_key, len(stops) + 1, mood, len(stops) == 4, title_city)
+                stop = google_place_to_stop(place, api_key, len(mood_buckets[mood]) + 1, mood, False, title_city, weather, include_details=False)
                 if stop:
-                    stops.append(stop)
-                if len(stops) >= 12:
-                    return stops
+                    mood_buckets[mood].append(stop)
+                if len(mood_buckets[mood]) >= 4:
+                    break
+            if len(mood_buckets[mood]) >= 4:
+                break
+    stops: list[dict[str, object]] = []
+    for round_index in range(4):
+        for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
+            bucket = mood_buckets.get(mood) or []
+            if len(bucket) > round_index:
+                stop = bucket[round_index]
+                stop["order"] = len(stops) + 1
+                stops.append(stop)
+            if len(stops) >= 12:
+                return stops
     return stops
 
 
@@ -2182,14 +2297,34 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
     mood_order = moods[:5] or ["Scenic Drive"]
     selected_moods = set(mood_order)
     duration_hours, target_stop_count, total_miles = explorer_duration_profile(duration)
+    weather = explorer_weather_forecast(city)
     google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng, duration, budget, travel_with)
-    scored = []
-    for stop in EXPLORER_DENVER_STOPS:
-        score = len(selected_moods & stop["tags"])
-        scored.append((score, stop))
-    scored.sort(key=lambda item: (-item[0], item[1]["name"]))
-    visible_stops = [item[1] for item in scored[:4]]
-    remaining_stops = [stop for stop in EXPLORER_DENVER_STOPS if stop not in visible_stops]
+    scored_by_mood: dict[str, list[dict[str, object]]] = {}
+    for mood in mood_order:
+        scored = []
+        for stop in EXPLORER_DENVER_STOPS:
+            score = (2 if mood in stop["tags"] else 0) + len(selected_moods & stop["tags"])
+            scored.append((score, stop["name"], stop))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        scored_by_mood[mood] = [item[2] for item in scored]
+    visible_stops = []
+    used_local_names: set[str] = set()
+    while len(visible_stops) < max(1, target_stop_count - 1):
+        added = False
+        for mood in mood_order:
+            for stop in scored_by_mood.get(mood, []):
+                if stop["name"] not in used_local_names:
+                    visible_stop = dict(stop)
+                    visible_stop["_primary_mood"] = mood
+                    visible_stops.append(visible_stop)
+                    used_local_names.add(str(stop["name"]))
+                    added = True
+                    break
+            if len(visible_stops) >= max(1, target_stop_count - 1):
+                break
+        if not added:
+            break
+    remaining_stops = [stop for stop in EXPLORER_DENVER_STOPS if str(stop["name"]) not in used_local_names]
     secret_stop = next((stop for stop in remaining_stops if "Hidden Gems" in stop["tags"]), remaining_stops[0] if remaining_stops else EXPLORER_DENVER_STOPS[-1])
     stops = visible_stops + [secret_stop]
     quest_type = " + ".join(mood_order[:2])
@@ -2197,42 +2332,52 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
     title_mood = "Sunset" if "Sunset" in selected_moods else "Hidden Gem" if "Hidden Gems" in selected_moods else next(iter(selected_moods))
     title_city = city.split(",", 1)[0].strip() or "Denver"
     difficulty = 1 if duration in {"2 Hours", "3 Hours"} else 2 if duration in {"4 Hours", "5 Hours", "6 Hours", "Half Day"} else 3
+    def local_payload_stop(stop: dict[str, object], index: int, tip: str, source: str, secret: bool = False) -> dict[str, object]:
+        primary_mood = stop.get("_primary_mood") or ("Hidden Gems" if secret and "Hidden Gems" in stop["tags"] else next((mood for mood in mood_order if mood in stop["tags"]), next(iter(stop["tags"]), "Surprise Me")))
+        advice = explorer_stop_advice(str(primary_mood), city, weather)
+        return {
+            "order": index + 1,
+            "name": stop["name"],
+            "lat": stop["lat"],
+            "lng": stop["lng"],
+            "xp_reward": stop["xp"],
+            "mission": stop["challenge"],
+            "challenge": stop["challenge"],
+            "mission_title": "Mystery Stop Unlock" if secret else "Local Explorer Mission",
+            "story_prompt": "What should another FairFares traveler know?",
+            "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
+            "photo_bonus_xp": 35 if secret else 25,
+            "tips": tip,
+            "reference_photo_url": "",
+            "reference_media_urls": [],
+            "is_secret": 1 if secret else 0,
+            "locked": 1 if secret else 0,
+            "place_id": "",
+            "address": "",
+            "rating": 0,
+            "review_count": 0,
+            "reviews": [],
+            "google_url": "",
+            "source": source,
+            "mood": primary_mood,
+            "tags": sorted(stop["tags"]),
+            "best_time": advice["best_time"],
+            "time_reason": advice["time_reason"],
+            "weather_verdict": advice["weather_verdict"],
+            "weather_note": advice["weather_note"],
+        }
     if len(google_stops) >= 3:
         while len(google_stops) < target_stop_count:
             fallback = EXPLORER_DENVER_STOPS[len(google_stops) % len(EXPLORER_DENVER_STOPS)]
-            google_stops.append(
-                {
-                    "order": len(google_stops) + 1,
-                    "name": fallback["name"],
-                    "lat": fallback["lat"],
-                    "lng": fallback["lng"],
-                    "xp_reward": fallback["xp"],
-                    "mission": fallback["challenge"],
-                    "challenge": fallback["challenge"],
-                    "mission_title": "Local Explorer Mission",
-                    "story_prompt": "What should another FairFares traveler know?",
-                    "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
-                    "photo_bonus_xp": 25,
-                    "tips": "Local fallback stop added because Google Places returned fewer route options.",
-                    "reference_photo_url": "",
-                    "reference_media_urls": [],
-                    "is_secret": 1 if len(google_stops) == target_stop_count - 1 else 0,
-                    "locked": 1 if len(google_stops) == target_stop_count - 1 else 0,
-                    "place_id": "",
-                    "address": "",
-                    "rating": 0,
-                    "review_count": 0,
-                    "reviews": [],
-                    "google_url": "",
-                    "source": "LOCAL_FALLBACK",
-                }
-            )
+            google_stops.append(local_payload_stop(fallback, len(google_stops), "Local fallback stop added because Google Places returned fewer route options.", "LOCAL_FALLBACK", len(google_stops) == target_stop_count - 1))
         payload_stops = google_stops[:target_stop_count]
         alternate_stops = google_stops[target_stop_count:target_stop_count + 6]
         for index, stop in enumerate(payload_stops):
             stop["order"] = index + 1
             stop["is_secret"] = 1 if index == len(payload_stops) - 1 else 0
             stop["locked"] = 1 if index == len(payload_stops) - 1 else 0
+            if stop["is_secret"]:
+                stop["mission_title"] = "Mystery Stop Unlock"
         for index, stop in enumerate(alternate_stops):
             stop["order"] = target_stop_count + index + 1
             stop["is_secret"] = 0
@@ -2240,65 +2385,17 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
     else:
         local_stops = stops[:target_stop_count - 1] + [secret_stop]
         payload_stops = [
-            {
-                "order": index + 1,
-                "name": stop["name"],
-                "lat": stop["lat"],
-                "lng": stop["lng"],
-                "xp_reward": stop["xp"],
-                "mission": stop["challenge"],
-                "challenge": stop["challenge"],
-                "mission_title": "Local Explorer Mission",
-                "story_prompt": "What should another FairFares traveler know?",
-                "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
-                "photo_bonus_xp": 25 if index < len(local_stops) - 1 else 35,
-                "tips": "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
-                "reference_photo_url": "",
-                "reference_media_urls": [],
-                "is_secret": 1 if index == len(local_stops) - 1 else 0,
-                "locked": 1 if index == len(local_stops) - 1 else 0,
-                "place_id": "",
-                "address": "",
-                "rating": 0,
-                "review_count": 0,
-                "reviews": [],
-                "google_url": "",
-                "source": "LOCAL",
-            }
+            local_payload_stop(stop, index, "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.", "LOCAL", index == len(local_stops) - 1)
             for index, stop in enumerate(local_stops)
         ]
         alternate_stops = [
-            {
-                "order": index + 1,
-                "name": stop["name"],
-                "lat": stop["lat"],
-                "lng": stop["lng"],
-                "xp_reward": stop["xp"],
-                "mission": stop["challenge"],
-                "challenge": stop["challenge"],
-                "mission_title": "Local Explorer Mission",
-                "story_prompt": "What should another FairFares traveler know?",
-                "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
-                "photo_bonus_xp": 25,
-                "tips": "Local alternate stop. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.",
-                "reference_photo_url": "",
-                "reference_media_urls": [],
-                "is_secret": 0,
-                "locked": 0,
-                "place_id": "",
-                "address": "",
-                "rating": 0,
-                "review_count": 0,
-                "reviews": [],
-                "google_url": "",
-                "source": "LOCAL",
-            }
+            local_payload_stop(stop, index, "Local alternate stop. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.", "LOCAL", False)
             for index, stop in enumerate(EXPLORER_DENVER_STOPS[target_stop_count:target_stop_count + 6])
         ]
     total_xp = sum(int(stop["xp_reward"]) for stop in payload_stops) + (100 if fairfares_booked else 0)
     return {
         "title": f"{title_city} {title_mood} Explorer Quest",
-        "description": f"A {duration.lower()} {quest_type.lower()} route for {travel_with.lower()} travelers in {title_city}. Google Places details, reviews, photos, check-ins, and XP all flow through this quest.",
+        "description": f"A {duration.lower()} {quest_type.lower()} route for {travel_with.lower()} travelers in {title_city}. Explorer balances your selected moods, suggests the best time to go, and checks weather fit before each stop.",
         "city": city,
         "city_lat": city_lat,
         "city_lng": city_lng,
@@ -2317,17 +2414,21 @@ def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: 
         "stop_count": len(payload_stops),
         "fairfares_bonus": 100 if fairfares_booked else 0,
         "source": "GOOGLE_PLACES" if len(google_stops) >= 3 else "LOCAL",
+        "weather": weather,
         "stops": payload_stops,
         "alternatives": alternate_stops,
     }
 
 
 def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[str, object]:
+    city = quest["city"]
+    weather = explorer_weather_forecast(city)
+    quest_moods = [item.strip() for item in str(quest["quest_type"] or "").split("+") if item.strip()]
     return {
         "quest_id": quest["id"],
         "title": quest["title"],
         "description": row_value(quest, "description"),
-        "city": quest["city"],
+        "city": city,
         "city_lat": row_value(quest, "city_lat", 0),
         "city_lng": row_value(quest, "city_lng", 0),
         "start_lat": row_value(quest, "city_lat", 0),
@@ -2343,8 +2444,10 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
         "total_miles": quest["total_miles"],
         "total_xp": quest["total_xp"],
         "stop_count": int(row_value(quest, "stop_count", len(stops)) or len(stops)),
+        "weather": weather,
         "stops": [
-            {
+            dict(
+                {
                 "stop_id": stop["id"],
                 "order": stop["stop_order"],
                 "name": stop["name"],
@@ -2370,7 +2473,10 @@ def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[
                 "reviews": json.loads(row_value(stop, "reviews_json", "[]") or "[]"),
                 "google_url": row_value(stop, "google_url"),
                 "source": row_value(stop, "source", "LOCAL"),
-            }
+                "mood": quest_moods[(int(row_value(stop, "stop_order", 1) or 1) - 1) % len(quest_moods)] if quest_moods else "Explorer",
+                },
+                **explorer_stop_advice(quest_moods[(int(row_value(stop, "stop_order", 1) or 1) - 1) % len(quest_moods)] if quest_moods else "Surprise Me", city, weather),
+            )
             for stop in stops
         ],
     }
@@ -4101,7 +4207,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         has_booking = bool(get_booking_for_user(user["id"])) if user else False
         body = render_template(
             "explorer.html",
-            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            auth_link='<span class="explorer-nav-tag">Explorer by FairFares</span>' if user else '<a href="/login">Sign in / Join</a>',
             level=escape(str(profile["level"])),
             xp=escape(str(profile["xp"])),
             trips=escape(str(profile["trips"])),

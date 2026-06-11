@@ -83,13 +83,21 @@
             <span style="--i:8">E</span><span style="--i:7">x</span><span style="--i:6">p</span><span style="--i:5">l</span><span style="--i:4">o</span><span style="--i:3">r</span><span style="--i:2">e</span><span style="--i:1">r</span>
           </span>
         </h1>
-        <p class="explorer-hero-subcopy">Explorer turns a booking into a city quest with hidden stops, check-ins, XP, badges, and memories worth sharing.</p>
+        <p class="explorer-hero-subcopy">Explorer turns your trip into a personal travel adviser with timed stops, weather fit, XP, badges, and memories worth sharing.</p>
         <p class="explorer-hero-tagline">Your personal travel memories and city guide.</p>
-        <div class="explorer-profile-strip">
-          <span><b id="explorerLevel">$level</b>Level</span>
-          <span><b id="explorerXp">$xp</b>XP</span>
-          <span><b id="explorerTrips">$trips</b>Trips</span>
-          <span><b id="explorerBadges">$badges</b>Badges</span>
+        <div class="explorer-profile-cluster">
+          <label class="explorer-user-photo has-empty-photo" id="explorerUserPhoto" aria-label="Upload Explorer profile photo" tabindex="0">
+            <input type="file" id="explorerUserPhotoInput" accept="image/*">
+            <img id="explorerUserPhotoPreview" alt="Explorer profile photo" hidden>
+            <span>FF</span>
+            <em>Upload your photo</em>
+          </label>
+          <div class="explorer-profile-strip">
+            <span><b id="explorerLevel">$level</b>Level</span>
+            <span><b id="explorerXp">$xp</b>XP</span>
+            <span><b id="explorerTrips">$trips</b>Trips</span>
+            <span><b id="explorerBadges">$badges</b>Badges</span>
+          </div>
         </div>
         <div class="explorer-xp-meter" aria-label="Explorer XP progress">
           <div><strong>Level 1 Explorer</strong><span id="explorerXpProgressLabel">$xp / 250 XP</span></div>
@@ -139,7 +147,7 @@
         <div class="explorer-step explorer-flow-step" id="explorerMoodStep" data-step-name="mood">
           <small>Step 3</small>
           <h2>What's today's vibe?</h2>
-          <p>Choose 3 to 5 so Explorer can build a better route.</p>
+          <p>Choose 3 to 5 so Explorer can balance food, adventure, timing, and weather fit.</p>
           <div class="mood-grid" id="moodGrid">
             <label data-icon="food"><input type="checkbox" name="moods" value="Food"><span class="mood-art">🍔</span><span class="mood-name">Food</span></label>
             <label data-icon="peak"><input type="checkbox" name="moods" value="Adventure"><span class="mood-art">🏔</span><span class="mood-name">Adventure</span></label>
@@ -154,7 +162,7 @@
             <label data-icon="shop"><input type="checkbox" name="moods" value="Shopping"><span class="mood-art">🛍</span><span class="mood-name">Shopping</span></label>
             <label data-icon="surprise"><input type="checkbox" name="moods" value="Surprise Me"><span class="mood-art">?</span><span class="mood-name">Surprise Me</span></label>
           </div>
-          <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night and Sunset prioritize evening-friendly places.</p>
+          <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night, Sunset, Adventure, and Food each get different timing rules.</p>
           <p class="explorer-step-summary" id="explorerMoodSummary" hidden>
             <span>Vibes selected</span>
           </p>
@@ -173,10 +181,10 @@
       <aside class="explorer-side">
         <h2>Explorer unlocks</h2>
         <ul>
-          <li>FairFares booking bonus: +100 XP</li>
-          <li>Mystery stops unlock as you check in</li>
-          <li>Photo and story challenges earn XP</li>
-          <li>Badges build your Explorer profile</li>
+          <li><b>+100 XP</b><span>booking bonus</span></li>
+          <li><b>Mystery</b><span>check-in unlocks</span></li>
+          <li><b>Photos</b><span>bonus challenges</span></li>
+          <li><b>Badges</b><span>profile progress</span></li>
         </ul>
         <div class="badge-preview">
           <span>First Explorer</span>
@@ -200,6 +208,7 @@
           <h2 id="questTitle">Denver Sunset Adventure</h2>
           <p id="questDescription">A city quest will appear here after you generate your route.</p>
           <p id="questMeta">5 stops · 4 hours · 36 miles · 250 XP</p>
+          <p class="quest-weather-summary" id="questWeatherSummary" hidden></p>
           <div class="quest-stats">
             <span><b id="questDifficulty">★★☆☆☆</b>Difficulty</span>
             <span><b id="questReward">350 XP</b>Reward</span>

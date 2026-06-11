@@ -72,6 +72,7 @@ const questProgressFill = document.getElementById("questProgressFill");
 const questBadgeText = document.getElementById("questBadgeText");
 const questBoostText = document.getElementById("questBoostText");
 const questBoostCard = document.getElementById("questBoostCard");
+const questWeatherSummary = document.getElementById("questWeatherSummary");
 const explorerCommunity = document.getElementById("explorerCommunity");
 const memoryGallery = document.getElementById("memoryGallery");
 const passportPrimary = document.getElementById("passportPrimary");
@@ -81,6 +82,9 @@ const passportFuture = document.getElementById("passportFuture");
 const explorerMemoryRailButton = document.getElementById("explorerMemoryRailButton");
 const explorerMemoryDrawer = document.getElementById("explorerMemoryDrawer");
 const explorerMemoryDrawerClose = document.getElementById("explorerMemoryDrawerClose");
+const explorerUserPhoto = document.getElementById("explorerUserPhoto");
+const explorerUserPhotoInput = document.getElementById("explorerUserPhotoInput");
+const explorerUserPhotoPreview = document.getElementById("explorerUserPhotoPreview");
 const explorerCityStep = document.getElementById("explorerCityStep");
 const explorerBookingStep = document.getElementById("explorerBookingStep");
 const explorerMoodStep = document.getElementById("explorerMoodStep");
@@ -94,6 +98,58 @@ const explorerBookingChoice = document.getElementById("explorerBookingChoice");
 const explorerSocialGrid = document.getElementById("explorerSocialGrid");
 let currentExplorerQuest = null;
 let explorerDirectionsRenderer = null;
+const EXPLORER_PHOTO_STORAGE_KEY = "fairfaresExplorerProfilePhoto";
+
+function setExplorerUserPhoto(src) {
+  if (!explorerUserPhoto || !explorerUserPhotoPreview) return;
+  if (src) {
+    explorerUserPhotoPreview.src = src;
+    explorerUserPhotoPreview.hidden = false;
+    explorerUserPhoto.classList.add("has-photo");
+    explorerUserPhoto.classList.remove("has-empty-photo");
+    const hint = explorerUserPhoto.querySelector("em");
+    if (hint) hint.textContent = "Change photo";
+  } else {
+    explorerUserPhotoPreview.removeAttribute("src");
+    explorerUserPhotoPreview.hidden = true;
+    explorerUserPhoto.classList.remove("has-photo");
+    explorerUserPhoto.classList.add("has-empty-photo");
+    const hint = explorerUserPhoto.querySelector("em");
+    if (hint) hint.textContent = "Upload your photo";
+  }
+}
+
+function savedExplorerUserPhoto() {
+  try {
+    return window.localStorage?.getItem(EXPLORER_PHOTO_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+setExplorerUserPhoto(savedExplorerUserPhoto());
+
+explorerUserPhoto?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  explorerUserPhotoInput?.click();
+});
+
+explorerUserPhotoInput?.addEventListener("change", () => {
+  const file = explorerUserPhotoInput.files?.[0];
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    const src = String(reader.result || "");
+    setExplorerUserPhoto(src);
+    try {
+      window.localStorage?.setItem(EXPLORER_PHOTO_STORAGE_KEY, src);
+    } catch {
+      // Large local photos may exceed storage; preview still works for this session.
+    }
+  });
+  reader.readAsDataURL(file);
+});
 
 function setExplorerMemoryDrawer(open) {
   if (!explorerMemoryDrawer || !explorerMemoryRailButton) return;
@@ -1041,7 +1097,21 @@ function geocodeExplorerCity(source = "typed") {
   }
   const geocoder = new google.maps.Geocoder();
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    window.setTimeout(() => {
+      updateExplorerPassport(explorerCity.value);
+      if (explorerLocationStatus) {
+        explorerLocationStatus.textContent = `City set to ${explorerCity.value}. Live map lookup is taking longer, so Explorer will use your typed city.`;
+      }
+      finish(explorerCity.value);
+    }, 1800);
     geocoder.geocode({ address: explorerCity.value }, (results, status) => {
+      if (settled) return;
       const result = status === "OK" && results?.[0] ? results[0] : null;
       if (result) {
         explorerCity.value = result.formatted_address.split(",").slice(0, 2).join(", ");
@@ -1054,7 +1124,7 @@ function geocodeExplorerCity(source = "typed") {
           ? `Explorer set to ${explorerCity.value}.`
           : `City set to ${explorerCity.value}.`;
       }
-      resolve(explorerCity.value);
+      finish(explorerCity.value);
     });
   });
 }
@@ -1167,6 +1237,12 @@ explorerSocialGrid?.addEventListener("click", (event) => {
   if (!button) return;
   button.classList.toggle("is-following");
   button.textContent = button.classList.contains("is-following") ? "Following" : "Follow";
+});
+
+explorerSocialGrid?.addEventListener("click", (event) => {
+  const tile = event.target.closest(".social-reel-tile");
+  if (!tile || event.target.closest("button")) return;
+  setExplorerMemoryDrawer(true);
 });
 
 function explorerProfileValue(node) {
@@ -1526,6 +1602,21 @@ function renderUploadChallenge(stop) {
   `;
 }
 
+function renderExplorerStopInsights(stop) {
+  const mood = stop.mood || (Array.isArray(stop.tags) ? stop.tags[0] : "") || "Explorer";
+  const bestTime = stop.best_time || "Flexible";
+  const timeReason = stop.time_reason || "Explorer picked this timing from your selected mood.";
+  const verdict = stop.weather_verdict || "Check weather";
+  const weatherNote = stop.weather_note || "Check current conditions before you go.";
+  return `
+    <div class="stop-insight-row">
+      <span><b>${escapeHtml(mood)}</b>Mood match</span>
+      <span><b>${escapeHtml(bestTime)}</b>${escapeHtml(timeReason)}</span>
+      <span class="${verdict === "Wait or swap" ? "is-warning" : verdict === "Go prepared" ? "is-caution" : "is-good"}"><b>${escapeHtml(verdict)}</b>${escapeHtml(weatherNote)}</span>
+    </div>
+  `;
+}
+
 function appendMemoryGalleryItem(file, memoryType, stopName) {
   if (!memoryGallery || !file) return;
   memoryGallery.querySelector("span")?.remove();
@@ -1574,6 +1665,11 @@ function renderExplorerQuest(quest, options = {}) {
   if (questTitle) questTitle.textContent = quest.title;
   if (questDescription) questDescription.textContent = quest.description || "Complete the route, unlock the mystery stop, and collect XP.";
   if (questMeta) questMeta.textContent = `${quest.stops.length} stops · ${quest.total_hours} hours · ${quest.total_miles} miles`;
+  if (questWeatherSummary) {
+    const weather = quest.weather || {};
+    questWeatherSummary.hidden = !weather.summary;
+    questWeatherSummary.textContent = weather.summary ? `Weather fit: ${weather.summary}` : "";
+  }
   if (questDifficulty) questDifficulty.textContent = `${"★".repeat(Number(quest.difficulty || 2))}${"☆".repeat(Math.max(0, 5 - Number(quest.difficulty || 2)))}`;
   if (questReward) questReward.textContent = `${quest.total_xp} XP`;
   if (questStopCount) questStopCount.textContent = String(quest.stop_count || quest.stops.length);
@@ -1615,6 +1711,7 @@ function renderExplorerQuest(quest, options = {}) {
         <h3>${secret ? "Unlock after previous stop" : stopName}</h3>
         ${placeMeta}
         <div class="mission-title">${secret ? "Unlock the next adventure" : missionTitle}</div>
+        ${secret ? "" : renderExplorerStopInsights(stop)}
         <p><b>Challenge:</b> ${secret ? "Complete the previous mission to reveal this stop." : stopChallenge}</p>
         ${secret ? "" : renderMissionChecklist(stop)}
         <p><b>Stop tips:</b> ${secret ? "The surprise location unlocks after your previous check-in." : escapeHtml(stop.tips || "Use current hours and safe parking before you go.")}</p>
