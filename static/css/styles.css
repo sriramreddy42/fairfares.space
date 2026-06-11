@@ -13830,3 +13830,232 @@ body.modal-open {
     grid-template-columns: 42px minmax(0, 1fr) 22px !important;
   }
 }
+
+/* Final correction pass for booking savings, nav spacing, and Explorer hero density. */
+.price-summary b {
+  color: #15803d !important;
+  display: block !important;
+  font-size: clamp(0.9rem, 1vw, 1rem) !important;
+  line-height: 1.25 !important;
+  margin-top: 6px !important;
+}
+
+.price-summary em {
+  display: block !important;
+  font-size: clamp(0.78rem, 0.9vw, 0.92rem) !important;
+  line-height: 1.28 !important;
+  max-width: 360px !important;
+}
+
+@media (min-width: 901px) {
+  .nav-links a[href="/explorer"] {
+    margin-left: 34px !important;
+    margin-right: 24px !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    min-height: clamp(440px, 40vw, 560px) !important;
+    padding: clamp(38px, 4.2vw, 58px) clamp(46px, 5vw, 76px) !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    min-height: clamp(330px, 30vw, 420px) !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    grid-template-columns: 68px minmax(0, 1fr) !important;
+    max-width: min(460px, 38vw) !important;
+    top: clamp(28px, 4vw, 56px) !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 68px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 58px !important;
+    padding: 8px 10px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: clamp(1.12rem, 1.65vw, 1.65rem) !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    max-width: min(460px, 38vw) !important;
+    top: clamp(104px, 9vw, 136px) !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    max-width: min(480px, 38vw) !important;
+    padding: clamp(14px, 1.7vw, 20px) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: min(100%, 260px) !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.25rem, 1.8vw, 1.9rem) !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: clamp(0.84rem, 0.95vw, 0.94rem) !important;
+  }
+}
+
+/* Final mobile/results correction pass: compact all visible booking surfaces. */
+.top-benefits {
+  align-items: center !important;
+  gap: clamp(16px, 4vw, 48px) !important;
+}
+
+.benefit-pill {
+  align-items: center !important;
+  column-gap: 12px !important;
+  display: grid !important;
+  grid-template-columns: 62px minmax(0, max-content) !important;
+  row-gap: 2px !important;
+}
+
+.benefit-pill .circle-icon {
+  grid-row: 1 / span 2 !important;
+  height: 62px !important;
+  width: 62px !important;
+}
+
+.benefit-pill strong,
+.benefit-pill span:last-child {
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
+
+.booking-hero {
+  margin-bottom: 0 !important;
+}
+
+.results-layout {
+  align-items: start !important;
+  padding-top: 14px !important;
+}
+
+.cars-panel,
+.car-list {
+  align-content: start !important;
+}
+
+.car-card {
+  align-items: start !important;
+  min-height: 0 !important;
+  padding-block: 16px !important;
+}
+
+.car-art,
+.price-box {
+  align-content: start !important;
+  align-items: start !important;
+}
+
+.price-box em {
+  max-width: 300px !important;
+}
+
+.car-terms {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+.car-terms summary {
+  border: 2px solid #0b63ce !important;
+  border-radius: 5px !important;
+  padding: 2px 8px !important;
+}
+
+.car-terms-grid {
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  margin-top: 8px !important;
+}
+
+.car-terms-grid span {
+  background: #f7f9fc !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 6px !important;
+  color: #4d5666 !important;
+  font-size: 0.74rem !important;
+  font-weight: 850 !important;
+  line-height: 1.22 !important;
+  padding: 8px !important;
+}
+
+.explorer-inline-button {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  grid-template-columns: 104px minmax(0, 1fr) !important;
+  min-height: 52px !important;
+  padding: 2px 0 !important;
+}
+
+.explorer-inline-button img {
+  height: 48px !important;
+  object-fit: contain !important;
+  width: 104px !important;
+}
+
+.explorer-inline-button span {
+  justify-self: start !important;
+}
+
+@media (max-width: 900px) {
+  .top-benefits {
+    gap: 10px !important;
+    justify-content: start !important;
+    overflow-x: auto !important;
+    width: 100% !important;
+  }
+
+  .benefit-pill {
+    flex: 0 0 auto !important;
+    grid-template-columns: 48px minmax(0, max-content) !important;
+  }
+
+  .benefit-pill .circle-icon {
+    height: 48px !important;
+    width: 48px !important;
+  }
+
+  .benefit-pill strong {
+    font-size: 0.82rem !important;
+  }
+
+  .benefit-pill span:last-child {
+    font-size: 0.78rem !important;
+  }
+
+  .results-layout {
+    padding-top: 10px !important;
+  }
+
+  .car-card {
+    padding-block: 12px !important;
+  }
+
+  .car-terms-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .price-box em {
+    max-width: none !important;
+  }
+
+  .explorer-inline-button {
+    grid-template-columns: 82px minmax(0, 1fr) !important;
+  }
+
+  .explorer-inline-button img {
+    width: 82px !important;
+  }
+}

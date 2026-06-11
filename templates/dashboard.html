@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-50">
-  <script defer src="/static/js/app.js?v=45"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-52">
+  <script defer src="/static/js/app.js?v=46"></script>
 </head>
 <body class="manage-screen">
   <header class="top-brand">
@@ -78,6 +78,7 @@
         <aside class="price-summary">
           <small>Total Price</small>
           <strong>$price_text</strong>
+          <b>$savings_label</b>
           <em>$price_match_note</em>
         </aside>
         $request_notice
@@ -179,7 +180,7 @@
             </div>
             <div class="document-preview" id="documentPreview">
               <h3>Invoice / Receipt</h3>
-              <p>Booking $booking_id | $provider | $price_text total | $days days</p>
+              <p>Booking $booking_id | $price_text total | $days days</p>
               <small>Generated documents load from admin booking records.</small>
             </div>
             <div class="modify-actions">

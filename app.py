@@ -299,7 +299,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     subject = f"FairFares booking confirmed: {booking['booking_id']}"
     support_phone = "9372518688"
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
-    savings_or_price_promise = booking_savings_note(booking, include_terms=True)
+    savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
     booking_summary = (
         f"Booking ID: {booking['booking_id']}\n"
         f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
@@ -3403,7 +3403,7 @@ EMAIL_MARKETING_DRAFTS = [
         "audience": "New booking customers",
         "subject": "Your FairFares booking is confirmed: {booking_id}",
         "headline": "Your car is booked.",
-        "body": "Thanks for choosing FairFares. Your trip is confirmed for {pickup_date}. Bring a lower quote from Avis, Enterprise, Hertz, or another major rental company and we will match it plus give an additional 10% off after review.",
+        "body": "Thanks for choosing FairFares. Your trip is confirmed for {pickup_date}. Your FairFares savings are carried into your booking, receipt, agreement, and confirmation email. If you bring a lower comparable quote before pickup, we will review it, match the eligible price, and add another 10% off after review.",
         "cta": "Manage Booking",
     },
     {
@@ -3557,8 +3557,8 @@ def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "")
 
 
 PRICE_MATCH_PROMISE = (
-    "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? "
-    "We'll match it and give you an additional 10% off."
+    "Bring a lower comparable quote before pickup. FairFares will review it, match the eligible price, "
+    "and add another 10% off so your savings stay clear on your documents."
 )
 
 
@@ -3575,6 +3575,36 @@ def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bo
         )
     terms = " Terms and conditions apply." if include_terms else ""
     return f"{PRICE_MATCH_PROMISE}{terms}"
+
+
+def booking_savings_label(row: sqlite3.Row | dict[str, object] | None) -> str:
+    if not row:
+        return ""
+    discount_amount = float(row_value(row, "discount_amount") or 0)
+    if discount_amount > 0:
+        code = row_value(row, "discount_code")
+        return f"FairFares saved you {format_money(discount_amount)}{f' with {code}' if code else ''}."
+    return "FairFares price-match promise is included."
+
+
+def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, include_terms: bool = False) -> str:
+    if not row:
+        return ""
+    discount_amount = float(row_value(row, "discount_amount") or 0)
+    subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
+    total = float(row_value(row, "total_price") or 0)
+    if discount_amount > 0:
+        code = row_value(row, "discount_code")
+        code_part = f" using {code}" if code else ""
+        return (
+            f"We lowered your trip from {format_money(subtotal)} to {format_money(total)}{code_part}. "
+            f"Your savings are already applied to this booking, receipt, rental agreement, and email copy."
+        )
+    terms = " Terms and conditions apply." if include_terms else ""
+    return (
+        "If you find a lower comparable quote before pickup, FairFares will review it, match the eligible price, "
+        f"and add another 10% off so the savings are easy to see on your documents.{terms}"
+    )
 
 
 def saved_agreement_data(agreement: sqlite3.Row | None) -> dict[str, str]:
@@ -3647,7 +3677,7 @@ def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str
         if late_fee
         else "Late return charge: None."
     )
-    savings_or_price_promise = booking_savings_note(row)
+    savings_or_price_promise = booking_savings_explainer(row)
     return f"""SHORT TERM VEHICLE RENTAL AGREEMENT
 
 This agreement is entered into this day, {values.get('agreement_date', '')} between
@@ -3689,7 +3719,7 @@ Discount applied: {row_value(row, 'discount_code') or 'None'} - {format_money(ro
 {price_match_line}
 {late_fee_line}
 Final total due: {format_money(row_value(row, 'total_price'))}
-FairFares savings note: {savings_or_price_promise}
+How FairFares saved you money: {savings_or_price_promise}
 
 4. LEASE PAYMENT.
 As consideration of this lease, Lessee shall pay ${values.get('monthly_payment', '')} monthly on a month-to-month basis.
@@ -3841,7 +3871,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
     fee_amount = float(booking["total_price"]) * 0.045
     base_amount = float(booking["total_price"]) - tax_amount - fee_amount
     status_line = f"Trip status: {booking_status_label(booking['booking_status'], booking['payment_status'])}"
-    savings_line = booking_savings_note(booking)
+    savings_line = booking_savings_explainer(booking)
 
     return {
         "Invoice / Receipt": {
@@ -3856,7 +3886,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Payment: {payment_method} · {transaction_status}\n"
                 f"Subtotal: {format_money(booking['subtotal_price'] or booking['total_price'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
-                f"Savings note: {savings_line}\n"
+                f"FairFares savings: {savings_line}\n"
                 f"Total due: {format_money(booking['total_price'])}"
             ),
             "status": f"Generated from booking {booking['booking_id']} and admin payment records.",
@@ -3879,7 +3909,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Booking: {booking['booking_id']}\n"
                 f"Rental subtotal: ${base_amount:.2f}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
-                f"Savings note: {savings_line}\n"
+                f"FairFares savings: {savings_line}\n"
                 f"Taxes estimate: ${tax_amount:.2f}\n"
                 f"Airport/provider fees estimate: ${fee_amount:.2f}\n"
                 f"Insurance: {insurance_line}\n"
@@ -4172,12 +4202,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def home(self) -> None:
         content = get_content()
         user = self.current_user()
+        service_copy = {
+            "Hybrid": ("Hybrid cars", "Sedans & SUVs"),
+            "Fuel-Efficient": ("Fuel-efficient", "Lower-cost rentals"),
+            "Electric": ("Electric", "Vehicle options"),
+        }
         services = "\n".join(
             f"""
             <div class="benefit-pill">
                 <span class="circle-icon">{escape(row["icon"])}</span>
-                <strong>{escape(row["title"])}</strong>
-                <span>{escape(row["body"])}</span>
+                <strong>{escape(service_copy.get(row["title"], (row["title"], row["body"]))[0])}</strong>
+                <span>{escape(service_copy.get(row["title"], (row["title"], row["body"]))[1])}</span>
             </div>
             """
             for row in get_services()
@@ -4495,14 +4530,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <div class="price-box">
                 <strong data-price-range>${low}-${high}</strong><span>/day est.</span>
                 <small class="availability-note" data-availability-note></small>
-                <em>Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.</em>
+                <em>FairFares keeps your savings visible before you book, then carries the final price into your receipt, agreement, and confirmation email.</em>
                 <div class="card-actions-row">
                     <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
                 <details class="car-terms">
                     <summary>View Details</summary>
-                    <p>Bring a lower quote for the same rental period from Avis, Enterprise, Hertz, or another major rental company. FairFares will match it and give you an additional 10% off after review. Terms and conditions apply.</p>
+                    <div class="car-terms-grid">
+                        <span>Price-match review before pickup</span>
+                        <span>Eligible cancellation up to 24 hours before pickup</span>
+                        <span>Taxes, fees, mileage, insurance, and pickup rules follow your rental agreement</span>
+                    </div>
                 </details>
             </div>
         </article>
@@ -6666,7 +6705,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <div>
                     <p class="eyebrow">Confirmed / Pay at pickup</p>
                     <h2>Your car is booked.</h2>
-                    <p>We promise a fair rental price. If you show us a lower quote from Avis, Enterprise, Hertz, or another major rental company, we'll match it and give you an additional 10% off.</p>
+                    <p>We promise a fair rental price. If you show us a lower comparable quote before pickup, FairFares will review it, match the eligible price, and add another 10% off so your savings stay clear on your documents.</p>
                     {guest_account_note}
                 </div>
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
@@ -6764,7 +6803,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
             price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
-            price_match_note=escape(booking_savings_note(booking) if booking else ""),
+            savings_label=escape(booking_savings_label(booking) if booking else ""),
+            price_match_note=escape(booking_savings_explainer(booking) if booking else ""),
             status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),
             status_class=escape(booking_status_class(booking["booking_status"]) if booking else "status-muted"),
             upgrade_options=upgrade_options,

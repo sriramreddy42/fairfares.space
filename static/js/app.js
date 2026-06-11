@@ -315,7 +315,7 @@ function updateRentalRanges() {
   const days = getRentalDays();
   if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
   if (quoteMatchLabel) {
-    quoteMatchLabel.textContent = "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.";
+    quoteMatchLabel.textContent = "FairFares keeps your savings clear before you book, then shows the final price on your receipt, agreement, and confirmation email.";
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);
