@@ -299,10 +299,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     subject = f"FairFares booking confirmed: {booking['booking_id']}"
     support_phone = "9372518688"
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
-    price_match = (
-        "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? "
-        "We'll match it and give you an additional 10% off. Terms and conditions apply."
-    )
+    savings_or_price_promise = booking_savings_note(booking, include_terms=True)
     booking_summary = (
         f"Booking ID: {booking['booking_id']}\n"
         f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
@@ -316,7 +313,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
         f"Dear {name},\n\n"
         "Your FairFares booking is confirmed.\n\n"
         f"{booking_summary}\n"
-        f"{price_match}\n\n"
+        f"{savings_or_price_promise}\n\n"
         f"Booking poster: {poster_url}\n\n"
         "Thank you for choosing FairFares.\n"
     )
@@ -333,7 +330,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>Total due</b></td><td>{html.escape(format_money(booking['total_price']))}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
           </table>
-          <p><b>Price match promise:</b> {html.escape(price_match)}</p>
+          <p><b>{'FairFares savings' if float(row_value(booking, 'discount_amount') or 0) > 0 else 'Price match promise'}:</b> {html.escape(savings_or_price_promise)}</p>
           <p>Questions? Call {support_phone}.</p>
         </div>
     """
@@ -3559,6 +3556,27 @@ def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "")
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+PRICE_MATCH_PROMISE = (
+    "Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? "
+    "We'll match it and give you an additional 10% off."
+)
+
+
+def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bool = False) -> str:
+    discount_amount = float(row_value(row, "discount_amount") or 0)
+    if discount_amount > 0:
+        code = row_value(row, "discount_code")
+        subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
+        total = float(row_value(row, "total_price") or 0)
+        code_part = f" with {code}" if code else ""
+        return (
+            f"You saved {format_money(discount_amount)}{code_part}. "
+            f"Original total {format_money(subtotal)}; final total {format_money(total)}."
+        )
+    terms = " Terms and conditions apply." if include_terms else ""
+    return f"{PRICE_MATCH_PROMISE}{terms}"
+
+
 def saved_agreement_data(agreement: sqlite3.Row | None) -> dict[str, str]:
     if not agreement:
         return {}
@@ -3629,6 +3647,7 @@ def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str
         if late_fee
         else "Late return charge: None."
     )
+    savings_or_price_promise = booking_savings_note(row)
     return f"""SHORT TERM VEHICLE RENTAL AGREEMENT
 
 This agreement is entered into this day, {values.get('agreement_date', '')} between
@@ -3670,7 +3689,7 @@ Discount applied: {row_value(row, 'discount_code') or 'None'} - {format_money(ro
 {price_match_line}
 {late_fee_line}
 Final total due: {format_money(row_value(row, 'total_price'))}
-FairFares price promise: Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off.
+FairFares savings note: {savings_or_price_promise}
 
 4. LEASE PAYMENT.
 As consideration of this lease, Lessee shall pay ${values.get('monthly_payment', '')} monthly on a month-to-month basis.
@@ -3822,6 +3841,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
     fee_amount = float(booking["total_price"]) * 0.045
     base_amount = float(booking["total_price"]) - tax_amount - fee_amount
     status_line = f"Trip status: {booking_status_label(booking['booking_status'], booking['payment_status'])}"
+    savings_line = booking_savings_note(booking)
 
     return {
         "Invoice / Receipt": {
@@ -3836,6 +3856,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Payment: {payment_method} · {transaction_status}\n"
                 f"Subtotal: {format_money(booking['subtotal_price'] or booking['total_price'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"Savings note: {savings_line}\n"
                 f"Total due: {format_money(booking['total_price'])}"
             ),
             "status": f"Generated from booking {booking['booking_id']} and admin payment records.",
@@ -3858,6 +3879,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Booking: {booking['booking_id']}\n"
                 f"Rental subtotal: ${base_amount:.2f}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"Savings note: {savings_line}\n"
                 f"Taxes estimate: ${tax_amount:.2f}\n"
                 f"Airport/provider fees estimate: ${fee_amount:.2f}\n"
                 f"Insurance: {insurance_line}\n"
@@ -6742,7 +6764,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
             price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
-            price_match_note=escape("Found a lower quote from Avis, Enterprise, Hertz, or another major rental company? We'll match it and give you an additional 10% off."),
+            price_match_note=escape(booking_savings_note(booking) if booking else ""),
             status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),
             status_class=escape(booking_status_class(booking["booking_status"]) if booking else "status-muted"),
             upgrade_options=upgrade_options,

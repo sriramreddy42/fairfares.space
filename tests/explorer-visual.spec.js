@@ -16,6 +16,7 @@ async function generateQuest(page) {
   await page.locator("button", { hasText: "Generate Explorer Quest" }).click();
   await expect(page.locator(".quest-output")).toBeVisible();
   await expect(page.locator(".quest-stop").first()).toBeVisible();
+  await expect(page.locator("#questMapCanvas .map-zoom-intro")).toBeVisible();
   await expect(page.locator("#questRouteDetails")).toBeVisible();
   await expect(page.locator(".route-leg-list li").first()).toBeVisible();
 }
@@ -225,12 +226,16 @@ test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
   await expect(page.locator("[data-share-channel='instagram']")).toBeVisible();
   await expect(page.locator("[data-share-channel='facebook']")).toBeVisible();
   await expect(page.locator(".primary-route-link").first()).toHaveAttribute("href", /google\.com\/maps\/dir/);
+  await expect(page.locator(".quest-stop.is-locked")).toHaveCount(1);
+  await expect(page.locator(".quest-stop").last()).toHaveClass(/is-locked/);
   await expect(page.locator("#explorerMemoryRailButton")).toBeVisible();
   await page.locator("#explorerMemoryRailButton").hover();
   await expect(page.locator(".rail-hover-label")).toHaveCSS("opacity", "1");
   await page.locator("#explorerMemoryRailButton").click();
   await expect(page.locator("#explorerMemoryDrawer")).toHaveClass(/is-open/);
-  await expect(page.locator(".memory-reel-card").first()).toBeVisible();
+  await expect(page.locator("#explorerMemoryDrawer .memory-reel-card")).toHaveCount(1);
+  await expect(page.locator("#explorerMemoryDrawer .memory-featured-reel")).toBeVisible();
+  await expect(page.locator("#explorerMemoryDrawer .memory-follow-panel", { hasText: "Suggested profiles" })).toBeVisible();
   await page.locator("#explorerMemoryDrawerClose").click();
   await expect(page.locator("#explorerMemoryDrawer")).not.toHaveClass(/is-open/);
 

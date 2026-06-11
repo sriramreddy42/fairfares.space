@@ -8602,6 +8602,192 @@ body.modal-open {
   border-radius: 12px !important;
   height: clamp(280px, 36vw, 480px) !important;
   overflow: hidden !important;
+  position: relative !important;
+}
+
+.map-zoom-intro {
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 52%, rgba(34, 211, 238, 0.24), transparent 20%),
+    radial-gradient(circle at 48% 45%, rgba(237, 0, 28, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(3, 12, 35, 0.98), rgba(7, 24, 62, 0.9));
+  color: #ffffff;
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  z-index: 8;
+  animation: mapZoomIntoRoute 2.75s cubic-bezier(0.16, 0.84, 0.22, 1) forwards;
+}
+
+.map-zoom-intro.is-leaving {
+  animation: mapZoomIntroLeave 0.85s ease forwards;
+}
+
+.map-zoom-space {
+  align-items: center;
+  display: grid;
+  height: 100%;
+  justify-items: center;
+  position: relative;
+  width: 100%;
+}
+
+.map-zoom-stars {
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.86) 0 1px, transparent 1.5px),
+    radial-gradient(circle, rgba(34, 211, 238, 0.65) 0 1px, transparent 1.6px);
+  background-position: 0 0, 28px 42px;
+  background-size: 68px 68px, 96px 96px;
+  inset: -20%;
+  opacity: 0.46;
+  position: absolute;
+  transform: rotate(-8deg);
+}
+
+.map-zoom-earth {
+  aspect-ratio: 1;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.82), transparent 8%),
+    radial-gradient(circle at 62% 68%, rgba(16, 196, 200, 0.9), transparent 16%),
+    radial-gradient(circle at 42% 58%, rgba(39, 174, 96, 0.92), transparent 17%),
+    radial-gradient(circle at 66% 34%, rgba(36, 99, 235, 0.9), transparent 20%),
+    linear-gradient(135deg, #1e7bff, #0b2e6f 64%, #061637);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 999px;
+  box-shadow:
+    inset -24px -20px 42px rgba(1, 7, 25, 0.58),
+    0 0 0 18px rgba(34, 211, 238, 0.08),
+    0 26px 58px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  position: relative;
+  width: clamp(120px, 22vw, 220px);
+  animation: mapEarthSpin 2.8s linear infinite, mapEarthApproach 2.5s cubic-bezier(0.16, 0.84, 0.22, 1) forwards;
+}
+
+.map-zoom-earth span,
+.map-zoom-earth i {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  inset: 16%;
+  position: absolute;
+}
+
+.map-zoom-earth i {
+  border-color: rgba(255, 255, 255, 0.18);
+  inset: 30% 8%;
+  transform: rotate(28deg);
+}
+
+.map-zoom-orbit {
+  fill: none;
+  height: min(44%, 230px);
+  position: absolute;
+  stroke: #ff4052;
+  stroke-dasharray: 520;
+  stroke-dashoffset: 520;
+  stroke-linecap: round;
+  stroke-width: 5;
+  width: min(68%, 540px);
+  animation: mapOrbitTrace 1.7s ease 0.34s forwards;
+}
+
+.map-zoom-pulse {
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 64, 82, 0.8);
+  border-radius: 999px;
+  box-shadow: 0 0 38px rgba(255, 64, 82, 0.52);
+  opacity: 0;
+  position: absolute;
+  transform: translate(110px, 18px) scale(0.24);
+  width: 58px;
+  animation: mapTargetPulse 1.4s ease 1.05s forwards;
+}
+
+.map-zoom-label {
+  bottom: clamp(18px, 5vw, 44px);
+  display: grid;
+  gap: 6px;
+  left: clamp(18px, 4vw, 42px);
+  position: absolute;
+  text-align: left;
+}
+
+.map-zoom-label b {
+  color: #ffffff !important;
+  font-size: clamp(1rem, 1.8vw, 1.35rem) !important;
+}
+
+.map-zoom-label span {
+  color: rgba(255, 255, 255, 0.76);
+  font-weight: 800;
+}
+
+@keyframes mapEarthSpin {
+  to {
+    background-position: 48px 0, 0 0, 0 0, 0 0, 0 0;
+  }
+}
+
+@keyframes mapEarthApproach {
+  0% {
+    opacity: 0;
+    transform: scale(0.58) translateY(22px);
+  }
+  28% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.82;
+    transform: scale(2.25) translateY(-8px);
+  }
+}
+
+@keyframes mapOrbitTrace {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes mapTargetPulse {
+  0% {
+    opacity: 0;
+    transform: translate(110px, 18px) scale(0.24);
+  }
+  38% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(110px, 18px) scale(2.1);
+  }
+}
+
+@keyframes mapZoomIntoRoute {
+  0% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.18;
+  }
+}
+
+@keyframes mapZoomIntroLeave {
+  to {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-zoom-intro {
+    display: none !important;
+  }
 }
 
 .quest-route-details {
@@ -13134,7 +13320,7 @@ body.modal-open {
 
 .app-feedback-tab span {
   line-height: 1 !important;
-  transform: none !important;
+  transform: rotate(180deg) !important;
   writing-mode: vertical-rl !important;
 }
 
@@ -13154,5 +13340,297 @@ body.modal-open {
   .app-feedback-tab {
     min-height: 166px !important;
     width: 46px !important;
+  }
+}
+
+/* Explorer correction pass: professional header, readable mood cards, animated hero settle, and focused memories. */
+.explorer-screen .top-brand {
+  align-items: center !important;
+  background: linear-gradient(100deg, #061b44 0%, #031533 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  display: flex !important;
+  justify-content: flex-start !important;
+  min-height: 96px !important;
+  padding: 14px clamp(18px, 4vw, 64px) !important;
+}
+
+.explorer-screen .logo-lockup img {
+  max-height: 76px !important;
+  max-width: 420px !important;
+}
+
+.explorer-screen .main-nav {
+  background: #ffffff !important;
+  border-bottom: 3px solid #ed001c !important;
+  padding-inline: clamp(18px, 4vw, 64px) !important;
+}
+
+.explorer-screen .nav-links {
+  gap: clamp(22px, 4vw, 46px) !important;
+}
+
+.explorer-screen .nav-links a {
+  font-size: 1.02rem !important;
+}
+
+.explorer-nav-tag {
+  background: #f4fbff !important;
+  border: 1px solid rgba(7, 26, 61, 0.18) !important;
+  box-shadow: none !important;
+  color: #071a3d !important;
+  min-height: 38px !important;
+}
+
+.explorer-screen .explorer-hero {
+  align-items: stretch !important;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(420px, 0.9fr) !important;
+  min-height: clamp(560px, 50vw, 690px) !important;
+}
+
+.explorer-screen .explorer-hero-copy {
+  display: block !important;
+  position: relative !important;
+}
+
+.explorer-screen .explorer-profile-cluster {
+  left: 0 !important;
+  max-width: 620px !important;
+  position: absolute !important;
+  top: clamp(225px, 25vw, 290px) !important;
+  transform: translateY(120px) !important;
+  animation: explorerProfileLiftIntoPlace 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards 2.15s !important;
+}
+
+.explorer-screen .explorer-xp-meter {
+  left: 0 !important;
+  max-width: 620px !important;
+  position: absolute !important;
+  top: clamp(350px, 35vw, 430px) !important;
+  transform: translateY(118px) !important;
+  animation: explorerProfileLiftIntoPlace 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards 2.28s !important;
+}
+
+.explorer-screen .explorer-book-card {
+  align-content: center !important;
+  align-self: center !important;
+  gap: 12px !important;
+  justify-items: center !important;
+  max-width: 560px !important;
+  padding: clamp(18px, 2.4vw, 28px) !important;
+}
+
+.explorer-screen .explorer-book-card img {
+  max-width: min(100%, 310px) !important;
+  transform-origin: center !important;
+  animation: explorerBookLogoSettle 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) both 1.1s !important;
+}
+
+.explorer-screen .explorer-book-card h2 {
+  font-size: clamp(1.35rem, 2.05vw, 2.1rem) !important;
+  max-width: 430px !important;
+  text-align: left !important;
+}
+
+.explorer-screen .explorer-book-card p {
+  font-size: clamp(0.92rem, 1.05vw, 1.02rem) !important;
+  max-width: 430px !important;
+}
+
+.explorer-screen .explorer-book-card div {
+  justify-self: start !important;
+}
+
+.explorer-screen .mood-grid {
+  display: grid !important;
+  gap: 16px !important;
+  grid-template-columns: repeat(4, minmax(210px, 1fr)) !important;
+}
+
+.explorer-screen .mood-grid label {
+  align-items: center !important;
+  display: grid !important;
+  gap: 16px !important;
+  grid-template-columns: 64px minmax(0, 1fr) 34px !important;
+  min-height: 104px !important;
+  padding: 16px !important;
+}
+
+.explorer-screen .mood-grid .mood-name,
+.explorer-screen .mood-grid label span:not(.mood-art) {
+  display: block !important;
+  font-size: clamp(1rem, 1.2vw, 1.28rem) !important;
+  letter-spacing: 0 !important;
+  line-height: 1.08 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow-wrap: normal !important;
+  text-align: left !important;
+  text-orientation: mixed !important;
+  white-space: normal !important;
+  word-break: normal !important;
+  writing-mode: horizontal-tb !important;
+}
+
+.explorer-screen .mood-grid input[type="checkbox"] {
+  align-self: center !important;
+  justify-self: end !important;
+}
+
+.explorer-memory-drawer {
+  width: min(70vw, 1040px) !important;
+}
+
+.memory-reel-feed {
+  align-items: start !important;
+  display: grid !important;
+  gap: 22px !important;
+  grid-template-columns: minmax(320px, 520px) minmax(240px, 340px) !important;
+  justify-content: center !important;
+}
+
+.memory-featured-reel {
+  justify-self: center !important;
+  max-width: 520px !important;
+  width: 100% !important;
+}
+
+.memory-featured-reel img {
+  aspect-ratio: 9 / 12 !important;
+  object-fit: cover !important;
+  object-position: center !important;
+}
+
+.memory-follow-panel {
+  background: #111820 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 16px !important;
+  color: #ffffff !important;
+  display: grid !important;
+  gap: 12px !important;
+  padding: 16px !important;
+}
+
+.memory-follow-panel h3 {
+  color: #ffffff !important;
+  font-size: 1.25rem !important;
+  line-height: 1.1 !important;
+  margin: 0 0 4px !important;
+}
+
+.memory-follow-panel article {
+  align-items: center !important;
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto !important;
+}
+
+.memory-follow-panel article > span {
+  align-items: center !important;
+  background: linear-gradient(135deg, #ed001c, #10c4c8) !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  font-weight: 950 !important;
+  height: 42px !important;
+  justify-content: center !important;
+  width: 42px !important;
+}
+
+.memory-follow-panel b,
+.memory-follow-panel small {
+  display: block !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.memory-follow-panel small {
+  color: rgba(255, 255, 255, 0.68) !important;
+  font-weight: 800 !important;
+}
+
+.memory-follow-panel button {
+  background: #ffffff !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: #07143f !important;
+  font-weight: 900 !important;
+  padding: 8px 10px !important;
+}
+
+@keyframes explorerProfileLiftIntoPlace {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes explorerBookLogoSettle {
+  from {
+    transform: translateY(18px) scale(1.18);
+  }
+  to {
+    transform: translateY(-4px) scale(0.86);
+  }
+}
+
+@media (max-width: 1100px) {
+  .explorer-screen .mood-grid {
+    grid-template-columns: repeat(3, minmax(190px, 1fr)) !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .explorer-screen .explorer-hero {
+    grid-template-columns: 1fr !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    min-height: 430px !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    top: 225px !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    top: 335px !important;
+  }
+
+  .memory-reel-feed {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .explorer-screen .top-brand {
+    min-height: 78px !important;
+    padding: 10px 14px !important;
+  }
+
+  .explorer-screen .logo-lockup img {
+    max-height: 58px !important;
+    max-width: 300px !important;
+  }
+
+  .explorer-screen .mood-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .explorer-screen .mood-grid label {
+    gap: 10px !important;
+    grid-template-columns: 44px minmax(0, 1fr) 22px !important;
+    min-height: 76px !important;
+    padding: 10px !important;
+  }
+
+  .explorer-screen .mood-grid .mood-art {
+    height: 40px !important;
+    width: 40px !important;
+  }
+
+  .explorer-screen .mood-grid .mood-name,
+  .explorer-screen .mood-grid label span:not(.mood-art) {
+    font-size: 0.86rem !important;
+    line-height: 1.08 !important;
   }
 }

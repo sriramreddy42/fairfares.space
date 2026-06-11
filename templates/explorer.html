@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-45">
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-47">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-14"></script>
+  <script defer src="/static/js/app.js?v=explorer-15"></script>
 </head>
 <body class="explorer-screen">
   <header class="top-brand">
@@ -22,7 +22,7 @@
     <div class="nav-links">
       <a href="/">Book</a>
       <a class="active" href="/explorer">Explorer</a>
-      <a href="/manage-booking">Profile</a>
+      <a href="/manage-booking">Manage Booking</a>
       <a href="/deals">Deals</a>
     </div>
     <div class="nav-actions">
@@ -49,7 +49,7 @@
         <button type="button" class="memory-drawer-close" id="explorerMemoryDrawerClose" aria-label="Close memories">Close</button>
       </div>
       <div class="memory-reel-feed" id="explorerMemoryFeed">
-        <article class="memory-reel-card">
+        <article class="memory-reel-card memory-featured-reel">
           <div class="memory-reel-top">
             <span class="memory-avatar">SK</span>
             <div><b>sarah.k</b><small>Denver sunset quest</small></div>
@@ -59,16 +59,14 @@
           <div class="memory-reel-actions"><b>12.8K</b><span>likes</span><b>428</b><span>comments</span><b>1.9K</b><span>shares</span></div>
           <p><b>sarah.k</b> The skyline stop made the whole route feel like a movie. Saved this quest for next weekend too.</p>
         </article>
-        <article class="memory-reel-card">
-          <div class="memory-reel-top">
-            <span class="memory-avatar">AT</span>
-            <div><b>alex.travels</b><small>Food hunter mission</small></div>
-            <button type="button">Follow</button>
-          </div>
-          <img src="/static/img/referral-deals-denver.jpeg" alt="Explorer food and city memory">
-          <div class="memory-reel-actions"><b>8.4K</b><span>likes</span><b>231</b><span>comments</span><b>904</b><span>shares</span></div>
-          <p><b>alex.travels</b> We found a tiny local spot from the mystery stop and it was easily the best part of the day.</p>
-        </article>
+        <aside class="memory-follow-panel" aria-label="Suggested Explorer profiles">
+          <p class="eyebrow">Follow explorers</p>
+          <h3>Suggested profiles</h3>
+          <article><span>AT</span><div><b>alex.travels</b><small>Food missions</small></div><button type="button">Follow</button></article>
+          <article><span>DR</span><div><b>denver.routes</b><small>Scenic drives</small></div><button type="button">Follow</button></article>
+          <article><span>PR</span><div><b>priya.routes</b><small>Hidden gems</small></div><button type="button">Follow</button></article>
+          <article><span>SK</span><div><b>sunset.k</b><small>Golden hour stops</small></div><button type="button">Follow</button></article>
+        </aside>
       </div>
     </aside>
     <div class="explorer-memory-backdrop" id="explorerMemoryBackdrop" hidden></div>

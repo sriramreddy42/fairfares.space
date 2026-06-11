@@ -1409,6 +1409,37 @@ function renderExplorerRouteDetails(points, legs, source = "estimated") {
   `;
 }
 
+function showExplorerMapZoomIntro(mapCanvas, routePoints) {
+  if (!mapCanvas || !routePoints.length || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const destination = routePoints[routePoints.length - 1] || routePoints[0];
+  const cityLabel = escapeHtml(destination.label || currentExplorerQuest?.city || explorerCity?.value || "your route");
+  const existingIntro = mapCanvas.querySelector(".map-zoom-intro");
+  existingIntro?.remove();
+  const intro = document.createElement("div");
+  intro.className = "map-zoom-intro";
+  intro.setAttribute("aria-hidden", "true");
+  intro.innerHTML = `
+    <div class="map-zoom-space">
+      <div class="map-zoom-stars"></div>
+      <div class="map-zoom-earth">
+        <span></span>
+        <i></i>
+      </div>
+      <svg class="map-zoom-orbit" viewBox="0 0 320 180" focusable="false">
+        <path d="M28 126 C88 34 188 34 292 84" />
+      </svg>
+      <div class="map-zoom-pulse"></div>
+      <div class="map-zoom-label">
+        <b>Finding your Explorer route</b>
+        <span>Zooming into ${cityLabel}</span>
+      </div>
+    </div>
+  `;
+  mapCanvas.append(intro);
+  window.setTimeout(() => intro.classList.add("is-leaving"), 2400);
+  window.setTimeout(() => intro.remove(), 3300);
+}
+
 function renderExplorerGoogleMap(quest, attempt = 0) {
   const mapCanvas = document.getElementById("questMapCanvas");
   if (!mapCanvas) return;
@@ -1430,6 +1461,7 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
       ? "<b>Map could not load</b><span>Google Maps is enabled, but the browser did not finish loading it. Refresh once or check the Maps key restrictions.</span>"
       : "<b>Map ready on Render</b><span>Google Maps will render here when GOOGLE_MAPS_API_KEY is available for this deployment.</span>";
     if (routePoints.length > 1) renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
+    showExplorerMapZoomIntro(mapCanvas, routePoints);
     return;
   }
   const center = routePoints[0] || { lat: Number(visibleStops[0].lat), lng: Number(visibleStops[0].lng) };
@@ -1521,6 +1553,7 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
     renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
   }
   map.fitBounds(bounds);
+  showExplorerMapZoomIntro(mapCanvas, routePoints);
 }
 
 function renderExplorerReviews(stop) {
@@ -1703,8 +1736,9 @@ function renderExplorerQuest(quest, options = {}) {
     const rating = Number(stop.rating || 0);
     const reviewCount = Number(stop.review_count || 0);
     const completed = Boolean(Number(stop.completed || 0));
-    const locked = !completed && index > 0;
-    const secret = Boolean(Number(stop.is_secret || 0));
+    const isFinalStop = index === quest.stops.length - 1;
+    const secret = Boolean(Number(stop.is_secret || 0)) && isFinalStop;
+    const locked = !completed && secret;
     const missionTitle = escapeHtml(stop.mission_title || (secret ? "Mystery Stop Unlock" : "Explorer Field Mission"));
     const photoBonus = Number(stop.photo_bonus_xp || 25);
     const placeMeta = !stop.is_secret && (rating || address || stop.google_url) ? `

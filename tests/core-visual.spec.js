@@ -109,7 +109,7 @@ test("home page desktop and mobile visual smoke", async ({ page }) => {
   await smokePage(page, "/", "home-desktop.png");
   await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
   await expect(page.locator(".results-promo", { hasText: "Explorer is your personal travel guide." })).toBeVisible();
-  await expect(page.locator(".results-ad-card", { hasText: "Your days deserve a place to live." })).toBeVisible();
+  await expect(page.locator(".results-ad-card", { hasText: "Know what you saved before you drive." })).toBeVisible();
   const filterBox = await page.locator(".results-side-rail .filters").boundingBox();
   const promoBox = await page.locator(".results-side-rail .results-promo").boundingBox();
   expect(filterBox.y, "Apply filter should be above Explorer advertisements").toBeLessThan(promoBox.y);
