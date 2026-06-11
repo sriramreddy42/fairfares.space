@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$brand | Student Car Rentals</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-42">
-  <script defer src="/static/js/app.js?v=41"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-44">
+  <script defer src="/static/js/app.js?v=42"></script>
 </head>
 <body>
   <header class="top-brand">
@@ -84,7 +84,44 @@
     </section>
 
     <section class="results-layout" id="results">
-      <aside class="filters">
+      <aside class="results-side-rail">
+        <section class="results-promo" aria-label="FairFares student travel guide">
+          <div class="promo-brand-row">
+            <img src="/static/img/fairfares-explorer-button.png" alt="FairFares Explorer">
+            <span>Student travel guide</span>
+          </div>
+          <h2>Use Explorer as your free trip adviser.</h2>
+          <p>FairFares helps students compare rentals, avoid hidden-fee surprises, and turn every booking into food, scenic, date-night, and adventure ideas nearby.</p>
+          <div class="promo-proof-grid" aria-label="FairFares benefits">
+            <article>
+              <b>Fair prices</b>
+              <span>Built around student budgets.</span>
+            </article>
+            <article>
+              <b>Better rides</b>
+              <span>Simple cars, clear terms.</span>
+            </article>
+            <article>
+              <b>Explorer perks</b>
+              <span>XP, memories, weather fit.</span>
+            </article>
+          </div>
+          <a class="promo-cta" href="/explorer">
+            <span>Open Explorer</span>
+            <b aria-hidden="true">&rarr;</b>
+          </a>
+        </section>
+
+        <section class="results-ad-card" aria-label="FairFares mission">
+          <div>
+            <span class="ad-kicker">Why we exist</span>
+            <h3>Rental confidence for students.</h3>
+            <p>We are building FairFares to make campus travel less confusing: transparent prices, useful booking tools, and local recommendations that help you actually enjoy the trip.</p>
+          </div>
+          <img src="/static/img/logo-light-header.png" alt="FairFares">
+        </section>
+
+      <div class="filters">
         <div class="filter-head">
           <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterOptions">
             <b aria-hidden="true"><i></i><i></i><i></i></b>
@@ -102,6 +139,7 @@
           $fuel_filters
         </fieldset>
         </div>
+      </div>
       </aside>
 
       <section class="cars-panel">

@@ -2722,6 +2722,20 @@ def get_admin_metrics() -> dict[str, int]:
         }
 
 
+def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT app_feedback.*, users.name AS user_name, users.email AS user_email
+            FROM app_feedback
+            LEFT JOIN users ON users.id = app_feedback.user_id
+            ORDER BY app_feedback.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+
 def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
     with db() as con:
         return con.execute(
@@ -5078,7 +5092,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (user["id"] if user else None, rating, message, page, user_agent),
             )
-        self.send_json({"ok": True, "message": "Thank you. Your valuable feedback was submitted."})
+        self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
 
     def generate_referral_code(self) -> None:
         form = self.read_form()
@@ -5214,6 +5228,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
         fleet_summary = "\n".join(self.render_fleet_summary_row(row) for row in get_fleet_summary())
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
+        feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
         body = render_template(
             "admin.html",
             admin_name=escape(user["name"]),
@@ -5226,8 +5241,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             db_path=escape(DB_PATH),
             backup_dir=escape(BACKUP_DIR),
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
+            feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )
         self.send_html(body)
+
+    def render_website_feedback_row(self, row: sqlite3.Row) -> str:
+        user_label = row_value(row, "user_name") or "Guest"
+        user_email = row_value(row, "user_email")
+        if user_email:
+            user_label = f"{user_label}<br><span>{escape(user_email)}</span>"
+        stars = "★" * int(row_value(row, "rating", 0) or 0)
+        return f"""
+        <tr>
+            <td><b>{escape(stars)}</b><br><span>{escape(row_value(row, "created_at"))}</span></td>
+            <td>{user_label}</td>
+            <td>{escape(row_value(row, "page") or "/")}</td>
+            <td>{escape(row_value(row, "message") or "No message")}</td>
+            <td><span>{escape(row_value(row, "user_agent"))}</span></td>
+        </tr>
+        """
 
     def render_backup_row(self, path: Path) -> str:
         size_kb = path.stat().st_size / 1024

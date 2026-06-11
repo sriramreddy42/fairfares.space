@@ -59,6 +59,38 @@ async function expectNoHorizontalOverflow(page) {
   expect(overflow, `Page has horizontal overflow of ${overflow}px`).toBeLessThanOrEqual(2);
 }
 
+async function expectExplorerHeroMatchesRequestedLayout(page) {
+  await page.waitForTimeout(4200);
+  await expect(page.locator(".explorer-book-card")).toBeVisible();
+  await expect(page.locator(".explorer-book-card", { hasText: "Your personal travel book" })).toBeVisible();
+  await expect(page.locator(".explorer-profile-cluster")).toBeVisible();
+
+  const issues = await page.locator(".explorer-hero").evaluate((hero) => {
+    const heroRect = hero.getBoundingClientRect();
+    const title = hero.querySelector(".explorer-hero-title");
+    const bookCard = hero.querySelector(".explorer-book-card");
+    const profile = hero.querySelector(".explorer-profile-cluster");
+    const xp = hero.querySelector(".explorer-xp-meter");
+    const titleRect = title.getBoundingClientRect();
+    const bookRect = bookCard.getBoundingClientRect();
+    const profileRect = profile.getBoundingClientRect();
+    const xpRect = xp.getBoundingClientRect();
+    const bookOpacity = Number(getComputedStyle(bookCard).opacity || "0");
+    const profileOpacity = Number(getComputedStyle(profile).opacity || "0");
+    return {
+      titleOutsideLeft: titleRect.left < heroRect.left - 1,
+      titleOutsideRight: titleRect.right > heroRect.right + 1,
+      titleTooLarge: titleRect.width > heroRect.width,
+      bookNotRightSide: bookRect.left <= heroRect.left + heroRect.width * 0.42 && window.innerWidth > 900,
+      bookTransparent: bookOpacity < 0.9,
+      profileNotLeft: profileRect.left > heroRect.left + heroRect.width * 0.2 && window.innerWidth > 900,
+      profileTransparent: profileOpacity < 0.9,
+      xpNotBelowProfile: xpRect.top < profileRect.bottom - 1,
+    };
+  });
+  expect(Object.entries(issues).filter(([, value]) => value), `Explorer hero layout issues: ${JSON.stringify(issues)}`).toEqual([]);
+}
+
 async function expectVisibleControlBorders(page) {
   const weakControls = await page.locator(".explorer-form input[type='radio'], .explorer-form input[type='checkbox']").evaluateAll((nodes) =>
     nodes
@@ -182,6 +214,8 @@ async function expectMobileQuestLayout(page) {
 
 test("Explorer desktop UI is aligned and interactive", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/explorer");
+  await expectExplorerHeroMatchesRequestedLayout(page);
   await generateQuest(page);
   await expectNoVisibleTextClipping(page);
   await expectVisibleControlBorders(page);

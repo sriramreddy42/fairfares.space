@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Developer Portal | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-42">
-  <script defer src="/static/js/app.js?v=41"></script>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-44">
+  <script defer src="/static/js/app.js?v=42"></script>
 </head>
 <body class="admin-screen">
   <header class="admin-shell-header">
@@ -47,6 +47,21 @@
       <a href="/admin/commercials"><b>Commercials</b><span>Change hero video links, live mode, and playback time</span></a>
       <a href="/admin/email-marketing"><b>Email Marketing</b><span>Draft campaigns, lifecycle calendar, and planned send dates</span></a>
       <a href="/admin/pickup"><b>User Pickup Info</b><span>DL, insurance, payment, agreement, signature, print</span></a>
+    </section>
+
+    <section class="admin-card website-feedback-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Website Feedback</h2>
+          <p>Ratings and comments submitted from the floating feedback button across FairFares pages.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Rating</th><th>User</th><th>Page</th><th>Feedback</th><th>Browser</th></tr></thead>
+          <tbody>$feedback_rows</tbody>
+        </table>
+      </div>
     </section>
 
     <section class="admin-card">

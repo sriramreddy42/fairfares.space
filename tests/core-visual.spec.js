@@ -99,16 +99,42 @@ async function loginAsAdmin(page) {
   await expect(page).toHaveURL(/\/admin|\/activation-pending/);
 }
 
+async function expectFeedbackWidget(page) {
+  await expect(page.locator("#appFeedbackWidget")).toBeVisible();
+  await expect(page.locator(".app-feedback-tab", { hasText: "Feedback" })).toBeVisible();
+}
+
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/", "home-desktop.png");
   await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
+  await expect(page.locator(".results-promo", { hasText: "Use Explorer as your free trip adviser." })).toBeVisible();
+  await expect(page.locator(".results-ad-card", { hasText: "Rental confidence for students." })).toBeVisible();
+  await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel, .hero-media");
 
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/", "home-mobile.png");
   await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
+  await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel");
+});
+
+test("website feedback submits and appears in admin", async ({ page }) => {
+  const message = `Website feedback test ${Date.now()}`;
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  await expectFeedbackWidget(page);
+  await page.locator(".app-feedback-tab").click();
+  await expect(page.locator(".app-feedback-panel", { hasText: "Rate this website" })).toBeVisible();
+  await page.locator("[data-feedback-rating='5']").click();
+  await page.locator(".app-feedback-panel textarea[name='message']").fill(message);
+  await page.locator(".app-feedback-submit").click();
+  await expect(page.locator(".app-feedback-status")).toContainText("website feedback");
+
+  await loginAsAdmin(page);
+  await expect(page.locator(".website-feedback-card", { hasText: "Website Feedback" })).toBeVisible();
+  await expect(page.locator(".website-feedback-card")).toContainText(message);
 });
 
 test("manage booking page desktop and mobile visual smoke", async ({ page }) => {

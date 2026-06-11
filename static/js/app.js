@@ -2312,12 +2312,12 @@ function initAppFeedbackWidget() {
     <form class="app-feedback-panel" id="appFeedbackPanel" hidden>
       <div class="app-feedback-head">
         <div>
-          <b>Rate FairFares</b>
-          <span>Leave your valuable feedback</span>
+          <b>Rate this website</b>
+          <span>Leave your valuable website feedback</span>
         </div>
         <button type="button" class="app-feedback-close" aria-label="Close feedback">x</button>
       </div>
-      <div class="app-feedback-stars" role="radiogroup" aria-label="Rate the application">
+      <div class="app-feedback-stars" role="radiogroup" aria-label="Rate this website">
         ${[1, 2, 3, 4, 5].map((value) => `<button type="button" role="radio" data-feedback-rating="${value}" aria-checked="false" aria-label="${value} star${value === 1 ? "" : "s"}">★</button>`).join("")}
       </div>
       <input type="hidden" name="rating" value="">
@@ -2375,7 +2375,7 @@ function initAppFeedbackWidget() {
     })
       .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
       .then((payload) => {
-        status.textContent = payload.message || "Thank you for your valuable feedback.";
+        status.textContent = payload.message || "Thank you for your valuable website feedback.";
         window.setTimeout(() => setOpen(false), 1400);
       })
       .catch((payload) => {
