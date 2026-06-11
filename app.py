@@ -890,6 +890,17 @@ def init_db() -> None:
                 FOREIGN KEY(ticket_id) REFERENCES support_tickets(id)
             );
 
+            CREATE TABLE IF NOT EXISTS app_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                rating INTEGER NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                page TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS saved_cars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -3973,6 +3984,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/xp": self.api_explorer_xp,
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
+            "/feedback": self.submit_app_feedback,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
             "/referrals/claim": self.claim_referral_bonus,
@@ -4204,7 +4216,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def explorer_page(self) -> None:
         user = self.current_user()
         profile = get_explorer_profile(user["id"] if user else None)
-        has_booking = bool(get_booking_for_user(user["id"])) if user else False
         body = render_template(
             "explorer.html",
             auth_link='<span class="explorer-nav-tag">Explorer by FairFares</span>' if user else '<a href="/login">Sign in / Join</a>',
@@ -4212,8 +4223,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             xp=escape(str(profile["xp"])),
             trips=escape(str(profile["trips"])),
             badges=escape(str(profile["badges"])),
-            booked_checked="checked" if has_booking else "",
-            exploring_checked="" if has_booking else "checked",
+            booked_checked="",
+            exploring_checked="",
             maps_loader=explorer_maps_loader(),
         )
         self.send_html(body)
@@ -5045,6 +5056,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "sla": support_sla_text(priority),
             "message": f"Ticket {ticket_id} created as {priority}. SLA: {support_sla_text(priority)}. Target response by {due_at}.",
         })
+
+    def submit_app_feedback(self) -> None:
+        user = self.current_user()
+        form = self.read_form()
+        try:
+            rating = int(form.get("rating", "0") or 0)
+        except ValueError:
+            rating = 0
+        if rating < 1 or rating > 5:
+            self.send_json({"ok": False, "message": "Please choose a rating from 1 to 5."}, 400)
+            return
+        message = (form.get("message") or "").strip()[:1200]
+        page = (form.get("page") or "").strip()[:300]
+        user_agent = (self.headers.get("User-Agent") or "").strip()[:300]
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO app_feedback (user_id, rating, message, page, user_agent)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user["id"] if user else None, rating, message, page, user_agent),
+            )
+        self.send_json({"ok": True, "message": "Thank you. Your valuable feedback was submitted."})
 
     def generate_referral_code(self) -> None:
         form = self.read_form()

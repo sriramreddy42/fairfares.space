@@ -82,6 +82,7 @@ const passportFuture = document.getElementById("passportFuture");
 const explorerMemoryRailButton = document.getElementById("explorerMemoryRailButton");
 const explorerMemoryDrawer = document.getElementById("explorerMemoryDrawer");
 const explorerMemoryDrawerClose = document.getElementById("explorerMemoryDrawerClose");
+const explorerMemoryBackdrop = document.getElementById("explorerMemoryBackdrop");
 const explorerUserPhoto = document.getElementById("explorerUserPhoto");
 const explorerUserPhotoInput = document.getElementById("explorerUserPhotoInput");
 const explorerUserPhotoPreview = document.getElementById("explorerUserPhotoPreview");
@@ -156,6 +157,8 @@ function setExplorerMemoryDrawer(open) {
   explorerMemoryDrawer.classList.toggle("is-open", open);
   explorerMemoryDrawer.setAttribute("aria-hidden", open ? "false" : "true");
   explorerMemoryRailButton.setAttribute("aria-expanded", open ? "true" : "false");
+  document.body.classList.toggle("memory-drawer-open", open);
+  if (explorerMemoryBackdrop) explorerMemoryBackdrop.hidden = !open;
 }
 
 explorerMemoryRailButton?.addEventListener("click", () => {
@@ -164,6 +167,13 @@ explorerMemoryRailButton?.addEventListener("click", () => {
 });
 
 explorerMemoryDrawerClose?.addEventListener("click", () => setExplorerMemoryDrawer(false));
+explorerMemoryBackdrop?.addEventListener("click", () => setExplorerMemoryDrawer(false));
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && explorerMemoryDrawer?.classList.contains("is-open")) {
+    setExplorerMemoryDrawer(false);
+  }
+});
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setExplorerMemoryDrawer(false);
@@ -2289,3 +2299,93 @@ document.querySelectorAll("[data-dl-camera], [data-photo-capture]").forEach((inp
     reader.readAsDataURL(file);
   });
 });
+
+function initAppFeedbackWidget() {
+  if (document.getElementById("appFeedbackWidget")) return;
+  const widget = document.createElement("section");
+  widget.className = "app-feedback-widget";
+  widget.id = "appFeedbackWidget";
+  widget.innerHTML = `
+    <button class="app-feedback-tab" type="button" aria-expanded="false" aria-controls="appFeedbackPanel">
+      <span>Feedback</span>
+    </button>
+    <form class="app-feedback-panel" id="appFeedbackPanel" hidden>
+      <div class="app-feedback-head">
+        <div>
+          <b>Rate FairFares</b>
+          <span>Leave your valuable feedback</span>
+        </div>
+        <button type="button" class="app-feedback-close" aria-label="Close feedback">x</button>
+      </div>
+      <div class="app-feedback-stars" role="radiogroup" aria-label="Rate the application">
+        ${[1, 2, 3, 4, 5].map((value) => `<button type="button" role="radio" data-feedback-rating="${value}" aria-checked="false" aria-label="${value} star${value === 1 ? "" : "s"}">★</button>`).join("")}
+      </div>
+      <input type="hidden" name="rating" value="">
+      <label>
+        <span>Your feedback</span>
+        <textarea name="message" rows="4" maxlength="1200" placeholder="Tell us what felt good, confusing, or missing."></textarea>
+      </label>
+      <button class="app-feedback-submit" type="submit">Submit feedback</button>
+      <p class="app-feedback-status" aria-live="polite"></p>
+    </form>
+  `;
+  document.body.appendChild(widget);
+
+  const tab = widget.querySelector(".app-feedback-tab");
+  const panel = widget.querySelector(".app-feedback-panel");
+  const close = widget.querySelector(".app-feedback-close");
+  const ratingInput = widget.querySelector("input[name='rating']");
+  const stars = [...widget.querySelectorAll("[data-feedback-rating]")];
+  const status = widget.querySelector(".app-feedback-status");
+
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    tab.setAttribute("aria-expanded", open ? "true" : "false");
+    widget.classList.toggle("is-open", open);
+  };
+
+  const setRating = (rating) => {
+    ratingInput.value = String(rating);
+    stars.forEach((star) => {
+      const active = Number(star.dataset.feedbackRating) <= rating;
+      star.classList.toggle("is-active", active);
+      star.setAttribute("aria-checked", Number(star.dataset.feedbackRating) === rating ? "true" : "false");
+    });
+  };
+
+  tab.addEventListener("click", () => setOpen(panel.hidden));
+  close.addEventListener("click", () => setOpen(false));
+  stars.forEach((star) => {
+    star.addEventListener("click", () => setRating(Number(star.dataset.feedbackRating || 0)));
+  });
+
+  panel.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const rating = Number(ratingInput.value || 0);
+    if (!rating) {
+      status.textContent = "Please choose a star rating first.";
+      return;
+    }
+    status.textContent = "Sending feedback...";
+    const formData = new FormData(panel);
+    formData.set("page", window.location.pathname);
+    fetch("/feedback", {
+      method: "POST",
+      body: new URLSearchParams(formData),
+    })
+      .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+      .then((payload) => {
+        status.textContent = payload.message || "Thank you for your valuable feedback.";
+        window.setTimeout(() => setOpen(false), 1400);
+      })
+      .catch((payload) => {
+        status.textContent = payload?.message || "Feedback could not be submitted right now.";
+      });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) setOpen(false);
+  });
+}
+
+initAppFeedbackWidget();

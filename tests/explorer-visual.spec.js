@@ -7,7 +7,7 @@ async function generateQuest(page) {
   await page.goto("/explorer");
   await expect(page.locator("h2", { hasText: "Where are you exploring?" })).toBeVisible();
   await page.locator("#setExplorerCity").click();
-  await expect(page.locator("h2", { hasText: "Did you book through FairFares?" })).toBeVisible();
+  await expect(page.locator("h2", { hasText: "Did you book the car through FairFares?" })).toBeVisible();
   await page.locator("label", { hasText: "Yes" }).first().click();
   await expect(page.locator("h2", { hasText: "What's today's vibe?" })).toBeVisible();
   for (const vibe of ["Food", "Adventure", "Nature"]) {
@@ -226,7 +226,7 @@ test("Explorer mobile UI keeps controls readable", async ({ page }) => {
   await page.goto("/explorer");
   await expect(page.locator("h2", { hasText: "Where are you exploring?" })).toBeVisible();
   await page.locator("#setExplorerCity").click();
-  await expect(page.locator("h2", { hasText: "Did you book through FairFares?" })).toBeVisible();
+  await expect(page.locator("h2", { hasText: "Did you book the car through FairFares?" })).toBeVisible();
   await expectMobileBookingLayout(page);
   await page.locator("label", { hasText: "Yes" }).first().click();
   await expect(page.locator("h2", { hasText: "What's today's vibe?" })).toBeVisible();
