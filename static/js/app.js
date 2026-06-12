@@ -580,10 +580,18 @@ if (mainNav && menuButton) {
   mobileMenu.className = "mobile-menu";
   mobileMenu.hidden = true;
 
+  const seenMobileItems = new Set();
   const hiddenNavItems = [
     ...document.querySelectorAll(".nav-links a"),
-    ...document.querySelectorAll(".nav-actions > a"),
-  ];
+    ...document.querySelectorAll(".nav-actions > a:not(.user-chip)"),
+  ].filter((item) => {
+    const href = item.getAttribute("href") || "";
+    const label = item.textContent.trim().replace(/\s+/g, " ");
+    const key = `${href}|${label}`;
+    if (!href || href === "/wiki" || seenMobileItems.has(key)) return false;
+    seenMobileItems.add(key);
+    return true;
+  });
 
   hiddenNavItems.forEach((item) => {
     const clone = item.cloneNode(true);
