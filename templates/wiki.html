@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wiki | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-53">
+  <script defer src="/static/js/app.js?v=47"></script>
+</head>
+<body class="wiki-screen">
+  <header class="top-brand">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Book</a>
+      <a href="/explorer">Explorer</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="/deals">Deals</a>
+      <a class="active" href="/wiki">Wiki</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="wiki-layout">
+    <section class="wiki-hero">
+      <p class="eyebrow">FairFares Wiki</p>
+      <h1>Search answers before you ask.</h1>
+      <p>Find quick FairFares info about savings, Explorer, pickup, receipts, cancellation, and rental documents. Internal files stay private in Admin Wiki.</p>
+      <form class="wiki-search" method="get" action="/wiki">
+        <input name="q" value="$query" placeholder="Search savings, Explorer, pickup, receipt...">
+        <button type="submit">Search Wiki</button>
+      </form>
+    </section>
+
+    <section class="wiki-rag-card" aria-label="Future RAG flow">
+      <h2>OpenAI + RAG knowledge flow</h2>
+      <ol>
+        <li><b>Your files</b><span>Policies, FAQs, agreements, and admin docs.</span></li>
+        <li><b>Vector database</b><span>Searches similar passages without exposing private files.</span></li>
+        <li><b>GPT-4o / GPT-5</b><span>Writes a plain-language answer from allowed sources.</span></li>
+        <li><b>Answer</b><span>Public users see public content only. Admin sees internal content too.</span></li>
+      </ol>
+    </section>
+
+    <section class="wiki-results">
+      <div class="wiki-results-head">
+        <h2>$result_count results</h2>
+        <span>Public Wiki search</span>
+      </div>
+      $wiki_results
+    </section>
+  </main>
+</body>
+</html>

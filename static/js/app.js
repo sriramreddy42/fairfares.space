@@ -2441,3 +2441,114 @@ function initAppFeedbackWidget() {
 }
 
 initAppFeedbackWidget();
+
+function initWikiAgentWidget() {
+  if (document.getElementById("wikiAgentWidget")) return;
+  const prompts = [
+    "cheapest cars",
+    "refund policy",
+    "Explorer memories",
+    "pickup documents",
+    "student savings",
+  ];
+  const widget = document.createElement("section");
+  widget.className = "wiki-agent-widget";
+  widget.id = "wikiAgentWidget";
+  widget.innerHTML = `
+    <div class="wiki-agent-prompt" aria-live="polite"><span>${prompts[0]}</span></div>
+    <button class="wiki-agent-orb" type="button" aria-expanded="false" aria-controls="wikiAgentPanel" aria-label="Ask FairFares Wiki agent">
+      <b>AI</b>
+    </button>
+    <form class="wiki-agent-panel" id="wikiAgentPanel" hidden>
+      <div class="wiki-agent-head">
+        <div>
+          <b>Ask Wiki Agent</b>
+          <span>Answers come from FairFares Wiki access you are allowed to see.</span>
+        </div>
+        <button type="button" class="wiki-agent-close" aria-label="Close Wiki agent">x</button>
+      </div>
+      <div class="wiki-agent-chips" aria-label="Suggested questions">
+        ${prompts.slice(0, 4).map((prompt) => `<button type="button" data-agent-question="${prompt}">${prompt}</button>`).join("")}
+      </div>
+      <label>
+        <span>Your question</span>
+        <input name="question" autocomplete="off" placeholder="Ask about cheapest cars or refund policy">
+      </label>
+      <button class="wiki-agent-submit" type="submit">Ask</button>
+      <div class="wiki-agent-answer" aria-live="polite">Pick a suggestion or ask a FairFares question.</div>
+    </form>
+  `;
+  document.body.appendChild(widget);
+
+  const promptBubble = widget.querySelector(".wiki-agent-prompt");
+  const promptText = promptBubble?.querySelector("span");
+  const orb = widget.querySelector(".wiki-agent-orb");
+  const panel = widget.querySelector(".wiki-agent-panel");
+  const close = widget.querySelector(".wiki-agent-close");
+  const input = widget.querySelector("input[name='question']");
+  const answer = widget.querySelector(".wiki-agent-answer");
+  const submit = widget.querySelector(".wiki-agent-submit");
+  let promptIndex = 0;
+
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    orb.setAttribute("aria-expanded", open ? "true" : "false");
+    widget.classList.toggle("is-open", open);
+    if (open) input?.focus();
+  };
+
+  const rotatePrompt = () => {
+    if (!promptBubble || !promptText || widget.classList.contains("is-open")) return;
+    promptBubble.classList.add("is-switching");
+    window.setTimeout(() => {
+      promptIndex = (promptIndex + 1) % prompts.length;
+      promptText.textContent = prompts[promptIndex];
+      promptBubble.classList.remove("is-switching");
+    }, 240);
+  };
+
+  window.setInterval(rotatePrompt, 2000);
+  orb.addEventListener("click", () => setOpen(panel.hidden));
+  close.addEventListener("click", () => setOpen(false));
+
+  widget.querySelectorAll("[data-agent-question]").forEach((button) => {
+    button.addEventListener("click", () => {
+      input.value = button.dataset.agentQuestion || "";
+      panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  });
+
+  panel.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const question = input.value.trim();
+    if (!question) {
+      answer.textContent = "Ask something like cheapest cars, refund policy, or Explorer memories.";
+      return;
+    }
+    submit.disabled = true;
+    answer.textContent = "Searching FairFares Wiki...";
+    fetch("/wiki/ask", {
+      method: "POST",
+      body: new URLSearchParams({ question }),
+    })
+      .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+      .then((payload) => {
+        const sourceText = Array.isArray(payload.sources) && payload.sources.length
+          ? ` Sources: ${payload.sources.map((source) => source.title).join(", ")}.`
+          : "";
+        answer.textContent = `${payload.answer || payload.message || "No answer found."}${sourceText}`;
+      })
+      .catch((payload) => {
+        answer.textContent = payload?.message || "Wiki Agent could not answer right now.";
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) setOpen(false);
+  });
+}
+
+initWikiAgentWidget();
