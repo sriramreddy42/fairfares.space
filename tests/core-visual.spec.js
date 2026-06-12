@@ -171,6 +171,35 @@ test("deals and buy cars pages visual smoke", async ({ page }) => {
   await smokePage(page, "/buy-cars", "buy-cars-mobile.png");
 });
 
+test("wiki search respects public and internal visibility", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await smokePage(page, "/wiki", "wiki-desktop.png");
+  await expect(page.locator(".wiki-result-card", { hasText: "How FairFares savings work" })).toBeVisible();
+  await expect(page.locator("#wikiAgentWidget")).toBeVisible();
+  await expect(page.locator(".wiki-agent-prompt")).toContainText(/cheapest cars|refund policy|Explorer memories|pickup documents|student savings/);
+  await page.locator(".wiki-agent-orb").click();
+  await expect(page.locator(".wiki-agent-panel")).toBeVisible();
+  await page.locator(".wiki-agent-panel input[name='question']").fill("refund policy");
+  await page.locator(".wiki-agent-submit").click();
+  await expect(page.locator(".wiki-agent-answer")).toContainText("Refund and cancellation policy");
+
+  await page.goto("/wiki?q=rag");
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("body")).not.toContainText("Your files flow into a vector database");
+
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await smokePage(page, "/wiki", "wiki-mobile.png");
+
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await loginAsAdmin(page);
+  await smokePage(page, "/admin/wiki?q=rag", "admin-wiki-desktop.png");
+  await expect(page.locator("body")).toContainText("Your files flow into a vector database");
+  await page.locator(".wiki-agent-orb").click();
+  await page.locator(".wiki-agent-panel input[name='question']").fill("rag");
+  await page.locator(".wiki-agent-submit").click();
+  await expect(page.locator(".wiki-agent-answer")).toContainText("OpenAI + RAG knowledge flow");
+});
+
 test("auth pages desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await smokePage(page, "/login", "login-desktop.png");
@@ -193,6 +222,7 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin/users", "admin-users-desktop.png"],
     ["/admin/tickets", "admin-tickets-desktop.png"],
     ["/admin/discounts", "admin-discounts-desktop.png"],
+    ["/admin/wiki", "admin-wiki-loop-desktop.png"],
     ["/admin/email-marketing", "admin-email-marketing-desktop.png"],
     ["/admin/pickup", "admin-pickup-desktop.png"],
   ]) {
@@ -207,6 +237,7 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin/users", "admin-users-mobile.png"],
     ["/admin/tickets", "admin-tickets-mobile.png"],
     ["/admin/discounts", "admin-discounts-mobile.png"],
+    ["/admin/wiki", "admin-wiki-mobile.png"],
     ["/admin/email-marketing", "admin-email-marketing-mobile.png"],
     ["/admin/pickup", "admin-pickup-mobile.png"],
   ]) {

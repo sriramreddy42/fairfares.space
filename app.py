@@ -445,6 +445,57 @@ def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, do
     return outbox_file, delivery_status
 
 
+def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = "Reset your FairFares password"
+    text_body = (
+        f"Hi {name},\n\n"
+        "We received a request to reset your FairFares password. Click the link below to set a new password:\n"
+        f"{reset_link}\n\n"
+        "This link expires in 30 minutes for your security.\n\n"
+        "If you didn't request a password reset, ignore this email and your password will remain unchanged.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <p>Hi {html.escape(name)},</p>
+          <p>We received a request to reset your FairFares password.</p>
+          <p><a href="{html.escape(reset_link)}" style="background:#e60019;color:#fff;padding:12px 24px;border-radius:5px;text-decoration:none;display:inline-block;font-weight:700">Reset Password</a></p>
+          <p><small>This link expires in 30 minutes for your security.</small></p>
+          <p><small>If you didn't request a password reset, ignore this email and your password will remain unchanged.</small></p>
+        </div>
+    """
+
+    outbox_file = OUTBOX_DIR / f"password-reset-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
+
+    return outbox_file, delivery_status
+
+
 def render_campaign_text(template: str, user: sqlite3.Row, origin: str) -> str:
     first_name = (user["name"] or "FairFares Member").split(" ", 1)[0]
     values = {
@@ -898,6 +949,20 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS wiki_articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                subtitle TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                visibility TEXT NOT NULL DEFAULT 'PUBLIC',
+                status TEXT NOT NULL DEFAULT 'PUBLISHED',
+                created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(created_by) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS saved_cars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -1135,6 +1200,11 @@ def init_db() -> None:
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "support_tickets", "priority", "priority TEXT NOT NULL DEFAULT 'P3'")
+        ensure_column(con, "wiki_articles", "tags", "tags TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "wiki_articles", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
+        ensure_column(con, "wiki_articles", "status", "status TEXT NOT NULL DEFAULT 'PUBLISHED'")
+        ensure_column(con, "wiki_articles", "created_by", "created_by INTEGER")
+        ensure_column(con, "wiki_articles", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "email_campaigns", "sent_at", "sent_at TEXT")
         ensure_column(con, "email_campaigns", "sent_count", "sent_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "email_campaigns", "last_delivery_status", "last_delivery_status TEXT NOT NULL DEFAULT ''")
@@ -1179,6 +1249,55 @@ def init_db() -> None:
             )
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
+
+        default_wiki_articles = [
+            (
+                "How FairFares savings work",
+                "Where discounts, price-match review, receipts, and rental agreements connect.",
+                "FairFares keeps the savings story visible from search to checkout. If a student or promo discount is applied, the saved amount appears on the booking, receipt, rental agreement, and confirmation email. If a customer brings a lower comparable quote before pickup, FairFares can review it, match the eligible price, and add another 10% off after review.",
+                "savings, discount, receipt, agreement, price match",
+                "PUBLIC",
+            ),
+            (
+                "Explorer personal travel guide",
+                "Routes, weather-smart stops, XP, badges, and memories in one travel book.",
+                "Explorer helps customers turn a rental day into a personal travel guide. It can suggest timing, weather fit, stop types, and memory prompts so the trip becomes easier to plan and easier to remember.",
+                "explorer, travel guide, memories, route, weather",
+                "PUBLIC",
+            ),
+            (
+                "Cheapest cars and best value",
+                "How to find low daily rates, compact cars, and student-ready deals.",
+                "To find the cheapest cars, sort results by Price (Low to High), compare compact and economy vehicles first, and check the savings note on each car card. FairFares also highlights fuel-efficient and electric options when they can reduce trip costs beyond the daily rate.",
+                "cheapest cars, low price, economy, compact, deals, student savings",
+                "PUBLIC",
+            ),
+            (
+                "Refund and cancellation policy",
+                "What customers should know before canceling or changing a booking.",
+                "Most bookings can be reviewed for cancellation before pickup. If a booking has a provider rule, late cancellation window, no-show condition, or discount restriction, FairFares shows the status in Manage Booking and keeps support available for review. Refund timing depends on the booking status, payment record, and provider terms.",
+                "refund policy, cancellation, cancel booking, manage booking, provider terms",
+                "PUBLIC",
+            ),
+            (
+                "OpenAI + RAG knowledge flow",
+                "Future admin-only plan for files, vector search, and GPT answers.",
+                "Your files flow into a vector database. Search retrieves the closest safe passages, then GPT-4o or GPT-5 writes an answer. Internal files and private operational notes must stay admin-only and must never be returned to public Wiki search.",
+                "rag, openai, vector database, internal files, gpt",
+                "INTERNAL",
+            ),
+        ]
+        for article in default_wiki_articles:
+            con.execute(
+                """
+                INSERT INTO wiki_articles (title, subtitle, body, tags, visibility, status)
+                SELECT ?, ?, ?, ?, ?, 'PUBLISHED'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM wiki_articles WHERE title = ? AND status = 'PUBLISHED'
+                )
+                """,
+                (*article, article[0]),
+            )
 
         seed_defaults = os.environ.get("FAIRFARES_SEED_DEFAULTS", "0").strip() == "1"
         if not seed_defaults:
@@ -2733,6 +2852,47 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def search_wiki_articles(query: str = "", include_internal: bool = False) -> list[sqlite3.Row]:
+    clean_query = " ".join((query or "").split())[:120]
+    clauses = ["status = 'PUBLISHED'"]
+    params: list[object] = []
+    if not include_internal:
+        clauses.append("visibility = 'PUBLIC'")
+    if clean_query:
+        like = f"%{clean_query.lower()}%"
+        clauses.append(
+            "(LOWER(title) LIKE ? OR LOWER(subtitle) LIKE ? OR LOWER(body) LIKE ? OR LOWER(tags) LIKE ?)"
+        )
+        params.extend([like, like, like, like])
+    where = " AND ".join(clauses)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT wiki_articles.*, users.name AS author_name
+            FROM wiki_articles
+            LEFT JOIN users ON users.id = wiki_articles.created_by
+            WHERE {where}
+            ORDER BY
+              CASE visibility WHEN 'PUBLIC' THEN 0 ELSE 1 END,
+              updated_at DESC,
+              id DESC
+            """,
+            params,
+        ).fetchall()
+
+
+def get_wiki_article(article_id: int, include_internal: bool = False) -> sqlite3.Row | None:
+    clauses = ["id = ?", "status = 'PUBLISHED'"]
+    params: list[object] = [article_id]
+    if not include_internal:
+        clauses.append("visibility = 'PUBLIC'")
+    with db() as con:
+        return con.execute(
+            f"SELECT * FROM wiki_articles WHERE {' AND '.join(clauses)}",
+            params,
+        ).fetchone()
+
+
 def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
     with db() as con:
         return con.execute(
@@ -4003,6 +4163,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/": self.home,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
+            "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
@@ -4010,6 +4171,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/healthz": self.healthz,
             "/login": self.login_page,
             "/signup": self.signup_page,
+            "/forgot-password": self.forgot_password_page,
+            "/reset-password": self.reset_password_page,
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
@@ -4017,6 +4180,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/users": self.admin_users_page,
             "/admin/tickets": self.admin_tickets_page,
             "/admin/discounts": self.admin_discounts_page,
+            "/admin/wiki": self.admin_wiki_page,
             "/admin/commercials": self.admin_commercials_page,
             "/admin/email-marketing": self.admin_email_marketing_page,
             "/admin/pickup": self.admin_pickup_page,
@@ -4036,6 +4200,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/login": self.login,
             "/signup": self.signup,
+            "/forgot-password": self.forgot_password,
+            "/reset-password": self.reset_password,
             "/bookings/modify": self.update_user_booking,
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
@@ -4051,6 +4217,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/profile/update": self.update_user_profile,
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
+            "/wiki/ask": self.ask_wiki_agent,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
             "/referrals/claim": self.claim_referral_bonus,
@@ -4061,6 +4228,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/wiki": self.create_admin_wiki_article,
+            "/admin/wiki/delete": self.delete_admin_wiki_article,
             "/admin/commercials": self.create_admin_commercial,
             "/admin/commercials/status": self.update_admin_commercial_status,
             "/admin/commercials/delete": self.delete_admin_commercial,
@@ -4082,7 +4251,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
 
     def allow_post_from_same_origin(self, path: str) -> bool:
-        if path in {"/login", "/signup"}:
+        if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
             return True
         expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
         for header_name in ("Origin", "Referer"):
@@ -4167,6 +4336,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def student_verification_url(self, token: str) -> str:
         return f"{self.public_origin().rstrip('/')}/student-verify?token={urllib.parse.quote(token)}"
+
+    def reset_password_url(self, token: str) -> str:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        if public_base_url:
+            return f"{public_base_url}/reset-password?token={urllib.parse.quote(token)}"
+        host = self.headers.get("Host") or "127.0.0.1:8000"
+        scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return f"{scheme}://{host}/reset-password?token={urllib.parse.quote(token)}"
 
     def public_origin(self) -> str:
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -4498,6 +4675,65 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def wiki_page(self) -> None:
+        user = self.current_user()
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query).get("q", [""])[0].strip()
+        articles = search_wiki_articles(query, include_internal=False)
+        article_cards = "\n".join(self.render_wiki_article_card(row, admin=False) for row in articles)
+        body = render_template(
+            "wiki.html",
+            query=escape(query),
+            result_count=escape(len(articles)),
+            wiki_results=article_cards or self.render_wiki_empty_state(query, admin=False),
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def render_wiki_article_card(self, row: sqlite3.Row, admin: bool = False) -> str:
+        visibility = row_value(row, "visibility") or "PUBLIC"
+        visibility_badge = (
+            f'<span class="wiki-visibility wiki-visibility-{escape(visibility.lower())}">{escape(visibility.title())}</span>'
+            if admin
+            else ""
+        )
+        tags = [
+            tag.strip()
+            for tag in (row_value(row, "tags") or "").split(",")
+            if tag.strip()
+        ]
+        tag_html = "".join(f"<span>{escape(tag)}</span>" for tag in tags[:8])
+        body_text = row_value(row, "body")
+        return f"""
+        <article class="wiki-result-card">
+          <div class="wiki-result-head">
+            <div>
+              <h2>{escape(row_value(row, "title"))}</h2>
+              <p>{escape(row_value(row, "subtitle"))}</p>
+            </div>
+            {visibility_badge}
+          </div>
+          <div class="wiki-body">{escape(body_text)}</div>
+          <div class="wiki-tags">{tag_html}</div>
+          <small>Updated {escape(row_value(row, "updated_at"))}{(' · ' + escape(row_value(row, 'author_name'))) if row_value(row, 'author_name') else ''}</small>
+        </article>
+        """
+
+    def render_wiki_empty_state(self, query: str, admin: bool = False) -> str:
+        if query:
+            return f"""
+            <article class="wiki-empty">
+              <b>No Wiki result found for "{escape(query)}".</b>
+              <span>{'Create an article below or adjust your search.' if admin else 'Try a simpler search like savings, Explorer, pickup, receipt, or cancellation.'}</span>
+            </article>
+            """
+        return """
+        <article class="wiki-empty">
+          <b>No Wiki articles yet.</b>
+          <span>Admin can create title, subtitle, body, tags, and visibility rules.</span>
+        </article>
+        """
+
     def render_car_card(self, row: sqlite3.Row, saved_car_ids: set[int] | None = None) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         car_visual = (
@@ -4713,6 +4949,132 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
         self.set_session(verification["user_id"])
+
+    def forgot_password_page(self) -> None:
+        self.send_html(
+            render_template(
+                "forgot_password.html",
+                error="",
+            )
+        )
+
+    def forgot_password(self) -> None:
+        form = self.read_form()
+        email = form.get("email", "").lower().strip()
+
+        if not email or "@" not in email:
+            self.send_html(
+                render_template(
+                    "forgot_password.html",
+                    error="Please enter a valid email address.",
+                )
+            )
+            return
+
+        with db() as con:
+            user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
+        token = create_verification(user["id"] if user else 1, email, purpose="PASSWORD_RESET")
+
+        if user:
+            link = self.reset_password_url(token)
+            outbox_file, delivery_status = send_password_reset_email(email, user["name"], link)
+
+        self.send_html(
+            render_template(
+                "forgot_password_sent.html",
+                email=escape(email),
+            )
+        )
+
+    def reset_password_page(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        token = query.get("token", [""])[0]
+
+        if not token:
+            self.activation_message_page("Reset link missing", "Please use the password reset link from your FairFares email.")
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.email
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        self.send_html(
+            render_template(
+                "reset_password.html",
+                token=escape(token),
+                error="",
+            )
+        )
+
+    def reset_password(self) -> None:
+        form = self.read_form()
+        token = form.get("token", "").strip()
+        new_password = form.get("password", "")
+
+        if not token or len(new_password) < 8:
+            self.send_html(
+                render_template(
+                    "reset_password.html",
+                    token=escape(token),
+                    error="Password must be at least 8 characters.",
+                )
+            )
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.id
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        with db() as con:
+            con.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), verification["user_id"]),
+            )
+            con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+            con.execute("DELETE FROM sessions WHERE user_id = ?", (verification["user_id"],))
+
+        self.activation_message_page(
+            "Password reset successful",
+            "Your password has been reset. You can now sign in with your new password.",
+            "Go to Login",
+            "/login"
+        )
 
     def update_user_booking(self) -> None:
         user = self.current_user()
@@ -5155,6 +5517,52 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
 
+    def ask_wiki_agent(self) -> None:
+        user = self.current_user()
+        include_internal = bool(user and (int(user["is_admin"] or 0) == 1 or row_value(user, "role") == "ADMIN"))
+        form = self.read_form()
+        question = " ".join((form.get("question") or "").split())[:180]
+        if not question:
+            self.send_json({"ok": False, "message": "Ask a question like cheapest cars, refund policy, or Explorer memories."}, 400)
+            return
+        articles = search_wiki_articles(question, include_internal=include_internal)
+        if not articles:
+            self.send_json(
+                {
+                    "ok": True,
+                    "answer": "I could not find a close Wiki match yet. Try asking about cheapest cars, refund policy, Explorer, receipts, pickup, or cancellation.",
+                    "sources": [],
+                    "scope": "Admin Wiki" if include_internal else "Public Wiki",
+                }
+            )
+            return
+
+        primary = articles[0]
+        supporting = articles[1:3]
+        answer_parts = [
+            f"{row_value(primary, 'title')}: {row_value(primary, 'body')}",
+        ]
+        if supporting:
+            answer_parts.append(
+                "Related notes: "
+                + " ".join(f"{row_value(row, 'title')}." for row in supporting)
+            )
+        sources = [
+            {
+                "title": row_value(row, "title"),
+                "visibility": row_value(row, "visibility"),
+            }
+            for row in articles[:3]
+        ]
+        self.send_json(
+            {
+                "ok": True,
+                "answer": " ".join(answer_parts),
+                "sources": sources,
+                "scope": "Admin Wiki" if include_internal else "Public Wiki",
+            }
+        )
+
     def generate_referral_code(self) -> None:
         form = self.read_form()
         username = form.get("instagram_username", "")
@@ -5518,6 +5926,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             discounts=discounts or '<tr><td colspan="7">No discount codes yet.</td></tr>',
         )
         self.send_html(body)
+
+    def admin_wiki_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query).get("q", [""])[0].strip()
+        articles = search_wiki_articles(query, include_internal=True)
+        article_cards = "\n".join(self.render_admin_wiki_article(row) for row in articles)
+        body = render_template(
+            "admin_wiki.html",
+            admin_name=escape(user["name"]),
+            query=escape(query),
+            article_count=escape(len(articles)),
+            wiki_articles=article_cards or self.render_wiki_empty_state(query, admin=True),
+        )
+        self.send_html(body)
+
+    def render_admin_wiki_article(self, row: sqlite3.Row) -> str:
+        card = self.render_wiki_article_card(row, admin=True)
+        return f"""
+        <div class="admin-wiki-item">
+          {card}
+          <form method="post" action="/admin/wiki/delete" class="inline-form">
+            <input type="hidden" name="article_id" value="{row["id"]}">
+            <button class="danger-button" type="submit">Delete</button>
+          </form>
+        </div>
+        """
 
     def admin_commercials_page(self) -> None:
         user = self.require_admin()
@@ -6096,6 +6533,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute("DELETE FROM discounts WHERE id = ?", (form.get("discount_id"),))
         self.redirect("/admin/discounts")
+
+    def create_admin_wiki_article(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        title = (form.get("title") or "").strip()[:180]
+        subtitle = (form.get("subtitle") or "").strip()[:260]
+        body = (form.get("body") or "").strip()[:10000]
+        tags = (form.get("tags") or "").strip()[:400]
+        visibility = (form.get("visibility") or "PUBLIC").upper()
+        if visibility not in {"PUBLIC", "INTERNAL"}:
+            visibility = "PUBLIC"
+        if not title or not body:
+            self.redirect("/admin/wiki")
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO wiki_articles (title, subtitle, body, tags, visibility, status, created_by)
+                VALUES (?, ?, ?, ?, ?, 'PUBLISHED', ?)
+                """,
+                (title, subtitle, body, tags, visibility, user["id"]),
+            )
+        self.redirect("/admin/wiki")
+
+    def delete_admin_wiki_article(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute(
+                "UPDATE wiki_articles SET status = 'ARCHIVED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (form.get("article_id"),),
+            )
+        self.redirect("/admin/wiki")
 
     def create_admin_commercial(self) -> None:
         user = self.require_admin()
