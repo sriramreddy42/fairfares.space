@@ -1584,16 +1584,27 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
 
 function renderExplorerReviews(stop) {
   const reviews = Array.isArray(stop.reviews) ? stop.reviews : [];
-  if (!reviews.length) return "";
+  const fallback = [
+    {
+      author: "Google review summary",
+      rating: stop.rating || "",
+      text: stop.review_count
+        ? `${stop.review_count} Google reviews are linked to this live place result. Open the listing for the full thread.`
+        : "Live Google comments appear here when Places returns review text.",
+    },
+  ];
+  const reviewList = reviews.length ? reviews : fallback;
   return `
     <div class="quest-place-reviews">
       <b class="review-loop-title">Explorer review loop</b>
-      ${reviews.slice(0, 2).map((review) => `
+      <div class="quest-review-strip" aria-label="Google comments">
+      ${reviewList.slice(0, 6).map((review) => `
         <blockquote>
           <b>${escapeHtml(review.author || "Google reviewer")} ${review.rating ? `· ${escapeHtml(review.rating)}★` : ""}</b>
           <span>${escapeHtml(review.text || "")}</span>
         </blockquote>
       `).join("")}
+      </div>
     </div>
   `;
 }
@@ -2174,6 +2185,36 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
     })
     .catch((payload) => {
       if (status) status.textContent = payload?.message || "Please check your details and try again.";
+    });
+});
+
+document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
+  fetch("/payment/hold", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Booking hold recorded.";
+      const badge = document.getElementById("bookingStatusBadge");
+      if (badge && payload.status_label) badge.textContent = payload.status_label;
+      const holdLabel = document.getElementById("holdAmountLabel");
+      if (holdLabel && payload.hold_amount) holdLabel.textContent = payload.hold_amount;
+      const dueLabel = document.getElementById("dueAtPickupLabel");
+      if (dueLabel && payload.due_at_pickup) dueLabel.textContent = payload.due_at_pickup;
+      const paid = document.createElement("p");
+      paid.className = "payment-hold-paid";
+      paid.textContent = `Hold paid. Invoice ${payload.invoice_number || ""}`.trim();
+      form.replaceWith(paid);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Payment hold could not be recorded.";
+      if (submitButton) submitButton.disabled = false;
     });
 });
 
