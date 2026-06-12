@@ -300,12 +300,17 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     support_phone = "9372518688"
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
     savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
+    breakdown = booking_price_breakdown(booking)
     booking_summary = (
         f"Booking ID: {booking['booking_id']}\n"
         f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
         f"Pickup: {booking['pickup_location']} on {booking['pickup_date']} at {booking['pickup_time']}\n"
         f"Drop-off: {booking['dropoff_location']} on {booking['dropoff_date']} at {booking['dropoff_time']}\n"
-        f"Total due at pickup: {format_money(booking['total_price'])}\n"
+        f"Rental subtotal: {format_money(breakdown['base'])}\n"
+        f"Taxes and fees estimate: {format_money(breakdown['tax_fee_amount'])}\n"
+        f"FairFares total: {format_money(breakdown['total'])}\n"
+        f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+        f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
         f"Payment: {payment_status_label(booking['payment_status'])}\n"
         f"Questions: {support_phone}\n"
     )
@@ -327,7 +332,11 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>Vehicle</b></td><td>{html.escape(booking['category'])} | {html.escape(booking['car_name'])} or similar</td></tr>
             <tr><td><b>Pickup</b></td><td>{html.escape(booking['pickup_location'])}<br>{html.escape(booking['pickup_date'])} at {html.escape(booking['pickup_time'])}</td></tr>
             <tr><td><b>Drop-off</b></td><td>{html.escape(booking['dropoff_location'])}<br>{html.escape(booking['dropoff_date'])} at {html.escape(booking['dropoff_time'])}</td></tr>
-            <tr><td><b>Total due</b></td><td>{html.escape(format_money(booking['total_price']))}</td></tr>
+            <tr><td><b>Rental subtotal</b></td><td>{html.escape(format_money(breakdown['base']))}</td></tr>
+            <tr><td><b>Taxes and fees</b></td><td>{html.escape(format_money(breakdown['tax_fee_amount']))}</td></tr>
+            <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
+            <tr><td><b>10% booking hold</b></td><td>{html.escape(format_money(breakdown['booking_hold']))}</td></tr>
+            <tr><td><b>Due at pickup</b></td><td>{html.escape(format_money(breakdown['due_at_pickup']))}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
           </table>
           <p><b>{'FairFares savings' if float(row_value(booking, 'discount_amount') or 0) > 0 else 'Price match promise'}:</b> {html.escape(savings_or_price_promise)}</p>
@@ -817,6 +826,11 @@ def init_db() -> None:
                 subtotal_price REAL NOT NULL DEFAULT 0,
                 discount_code TEXT NOT NULL DEFAULT '',
                 discount_amount REAL NOT NULL DEFAULT 0,
+                tax_fee_amount REAL NOT NULL DEFAULT 0,
+                booking_hold_amount REAL NOT NULL DEFAULT 0,
+                due_at_pickup_amount REAL NOT NULL DEFAULT 0,
+                estimated_market_total REAL NOT NULL DEFAULT 0,
+                fairfares_savings_amount REAL NOT NULL DEFAULT 0,
                 total_price REAL NOT NULL,
                 status TEXT NOT NULL,
                 booking_status TEXT NOT NULL DEFAULT 'CONFIRMED',
@@ -1171,6 +1185,11 @@ def init_db() -> None:
         ensure_column(con, "bookings", "subtotal_price", "subtotal_price REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "discount_code", "discount_code TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "discount_amount", "discount_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "tax_fee_amount", "tax_fee_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "booking_hold_amount", "booking_hold_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "due_at_pickup_amount", "due_at_pickup_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "estimated_market_total", "estimated_market_total REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "fairfares_savings_amount", "fairfares_savings_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "additional_driver_name", "additional_driver_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "additional_driver_age", "additional_driver_age TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "saved_by_user", "saved_by_user INTEGER NOT NULL DEFAULT 0")
@@ -1643,11 +1662,83 @@ def format_money(value: object) -> str:
 
 def daily_price_range(price: object) -> tuple[int, int]:
     daily = float(price or 0)
-    low = max(25, round(daily * 0.85))
-    high = min(52, round(daily * 1.1))
+    low = max(25, round(daily * 0.9))
+    high = max(low, round(daily * 1.08))
     if high < low:
         high = low
     return low, high
+
+
+BOOKING_HOLD_RATE = 0.10
+MARKET_COMPARISON_RATE = 0.12
+DAILY_FEE_LINES = (
+    ("CO road safety fee", 2.44),
+    ("CO congestion impact fee", 3.13),
+    ("VLF recovery", 0.20),
+)
+PERCENT_FEE_LINES = (
+    ("Ownership tax", 0.020),
+    ("Sales tax", 0.040),
+    ("Rental tax items", 0.0725),
+)
+
+
+def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
+    rental_days = max(1, min(int(float(days or 1)), 366))
+    daily = round(float(daily_price or 0), 2)
+    base = round(daily * rental_days, 2)
+    daily_fees = [(label, round(amount * rental_days, 2)) for label, amount in DAILY_FEE_LINES]
+    percent_fees = [(label, round(base * rate, 2)) for label, rate in PERCENT_FEE_LINES]
+    tax_fee_lines = daily_fees + percent_fees
+    tax_fee_amount = round(sum(amount for _, amount in tax_fee_lines), 2)
+    discount = round(max(0.0, min(float(discount_amount or 0), base + tax_fee_amount)), 2)
+    total = round(max(0.0, base + tax_fee_amount - discount), 2)
+    booking_hold = round(total * BOOKING_HOLD_RATE, 2)
+    due_at_pickup = round(max(0.0, total - booking_hold), 2)
+    market_total = round(total * (1 + MARKET_COMPARISON_RATE), 2)
+    savings = round(max(0.0, market_total - total + discount), 2)
+    return {
+        "daily": daily,
+        "days": rental_days,
+        "weeks": rental_days // 7,
+        "extra_days": rental_days % 7,
+        "base": base,
+        "tax_fee_amount": tax_fee_amount,
+        "tax_fee_lines": tax_fee_lines,
+        "discount_amount": discount,
+        "total": total,
+        "booking_hold": booking_hold,
+        "due_at_pickup": due_at_pickup,
+        "market_total": market_total,
+        "savings": savings,
+    }
+
+
+def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
+    if not row:
+        return rental_price_breakdown(0, 1, 0)
+    daily = row_value(row, "daily_price")
+    if not daily:
+        days = max(1, int(float(row_value(row, "days") or 1)))
+        subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
+        daily = subtotal / days if days else subtotal
+    discount = float(row_value(row, "discount_amount") or 0)
+    breakdown = rental_price_breakdown(daily, row_value(row, "days") or 1, discount)
+    stored_total = float(row_value(row, "total_price") or 0)
+    if stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
+        hold = float(row_value(row, "booking_hold_amount") or round(stored_total * BOOKING_HOLD_RATE, 2))
+        tax_fee = float(row_value(row, "tax_fee_amount") or max(0, stored_total - float(breakdown["base"]) + discount))
+        breakdown.update(
+            {
+                "tax_fee_amount": round(tax_fee, 2),
+                "total": round(stored_total, 2),
+                "booking_hold": round(hold, 2),
+                "due_at_pickup": round(max(0.0, stored_total - hold), 2),
+                "market_total": round(float(row_value(row, "estimated_market_total") or stored_total * (1 + MARKET_COMPARISON_RATE)), 2),
+                "savings": round(float(row_value(row, "fairfares_savings_amount") or max(0.0, stored_total * MARKET_COMPARISON_RATE + discount)), 2),
+            }
+        )
+    return breakdown
 
 
 def default_trip_dates() -> tuple[str, str]:
@@ -2898,7 +2989,7 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
         return con.execute(
             """
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
-                   cars.doors, cars.transmission, cars.color, cars.image_url
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -2915,7 +3006,7 @@ def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
             """
-            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url, cars.daily_price
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -2988,7 +3079,7 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
 
 def booking_status_label(status: str, payment_status: str = "") -> str:
     if status == "CONFIRMED":
-        return "Confirmed / Pay at pickup"
+        return "Confirmed / Hold paid" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
     labels = {
         "CANCELLATION_REQUESTED": "Request sent to admin",
         "CANCELLED": "Cancelled",
@@ -3010,6 +3101,8 @@ def booking_status_class(status: str) -> str:
 def payment_status_label(status: str) -> str:
     labels = {
         "PAY_AT_PICKUP": "Pay at pickup",
+        "HOLD_DUE": "10% hold due",
+        "HOLD_PAID": "10% hold paid",
         "PAID": "Paid",
         "PENDING": "Payment pending",
         "REFUND_REVIEW": "Refund review",
@@ -3375,15 +3468,17 @@ def create_booking_for_user(
         rental_days = max(1, min(int(days or 1), 366))
         subtotal = round(float(car["daily_price"]) * rental_days, 2)
         discount_amount = calculate_discount_amount(subtotal, discount)
-        final_total = round(subtotal - discount_amount, 2)
+        price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+        final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
         con.execute(
             """
             INSERT INTO bookings
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
+             tax_fee_amount, booking_hold_amount, due_at_pickup_amount, estimated_market_total, fairfares_savings_amount,
              total_price, status, booking_status, payment_status, contact_name, contact_email, contact_phone)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP', ?, ?, ?)
             """,
             (
                 booking_id,
@@ -3400,6 +3495,11 @@ def create_booking_for_user(
                 subtotal,
                 applied_code,
                 discount_amount,
+                price_breakdown["tax_fee_amount"],
+                price_breakdown["booking_hold"],
+                price_breakdown["due_at_pickup"],
+                price_breakdown["market_total"],
+                price_breakdown["savings"],
                 final_total,
                 "CONFIRMED",
                 (user["name"] or "") if user else "",
@@ -3435,6 +3535,7 @@ def build_booking_preview(
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
     discount_amount = calculate_discount_amount(subtotal, discount)
+    price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
     return {
         "id": None,
         "booking_id": "Pending details",
@@ -3450,7 +3551,12 @@ def build_booking_preview(
         "subtotal_price": subtotal,
         "discount_code": discount["code"] if discount else "",
         "discount_amount": discount_amount,
-        "total_price": round(subtotal - discount_amount, 2),
+        "tax_fee_amount": price_breakdown["tax_fee_amount"],
+        "booking_hold_amount": price_breakdown["booking_hold"],
+        "due_at_pickup_amount": price_breakdown["due_at_pickup"],
+        "estimated_market_total": price_breakdown["market_total"],
+        "fairfares_savings_amount": price_breakdown["savings"],
+        "total_price": price_breakdown["total"],
         "status": "CONFIRMED",
         "booking_status": "CONFIRMED",
         "payment_status": "PAY_AT_PICKUP",
@@ -3462,6 +3568,7 @@ def build_booking_preview(
         "transmission": car["transmission"],
         "color": car["color"],
         "image_url": car["image_url"],
+        "daily_price": car["daily_price"],
     }
 
 
@@ -3723,6 +3830,7 @@ PRICE_MATCH_PROMISE = (
 
 
 def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bool = False) -> str:
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     if discount_amount > 0:
         code = row_value(row, "discount_code")
@@ -3734,22 +3842,28 @@ def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bo
             f"Original total {format_money(subtotal)}; final total {format_money(total)}."
         )
     terms = " Terms and conditions apply." if include_terms else ""
-    return f"{PRICE_MATCH_PROMISE}{terms}"
+    return (
+        f"Estimated market total {format_money(breakdown['market_total'])}; FairFares total "
+        f"{format_money(breakdown['total'])}. A 10% hold of {format_money(breakdown['booking_hold'])} "
+        f"is deducted from your pickup balance.{terms}"
+    )
 
 
 def booking_savings_label(row: sqlite3.Row | dict[str, object] | None) -> str:
     if not row:
         return ""
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     if discount_amount > 0:
         code = row_value(row, "discount_code")
         return f"FairFares saved you {format_money(discount_amount)}{f' with {code}' if code else ''}."
-    return "FairFares price-match promise is included."
+    return f"Estimated FairFares savings: {format_money(breakdown['savings'])}."
 
 
 def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, include_terms: bool = False) -> str:
     if not row:
         return ""
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
     total = float(row_value(row, "total_price") or 0)
@@ -3757,13 +3871,15 @@ def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, inclu
         code = row_value(row, "discount_code")
         code_part = f" using {code}" if code else ""
         return (
-            f"We lowered your trip from {format_money(subtotal)} to {format_money(total)}{code_part}. "
-            f"Your savings are already applied to this booking, receipt, rental agreement, and email copy."
+            f"We lowered your rental from {format_money(subtotal)} to {format_money(total)}{code_part}. "
+            f"Taxes and fees are itemized, and a 10% hold of {format_money(breakdown['booking_hold'])} "
+            f"is deducted from your pickup balance."
         )
     terms = " Terms and conditions apply." if include_terms else ""
     return (
-        "If you find a lower comparable quote before pickup, FairFares will review it, match the eligible price, "
-        f"and add another 10% off so the savings are easy to see on your documents.{terms}"
+        f"FairFares estimates {format_money(breakdown['savings'])} in savings against a comparable major-rental total. "
+        f"Your 10% hold is {format_money(breakdown['booking_hold'])}; the remaining "
+        f"{format_money(breakdown['due_at_pickup'])} is due at pickup after review.{terms}"
     )
 
 
@@ -4027,11 +4143,13 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
         if license_row and license_row["license_number"]
         else "Driver license not captured yet."
     )
-    tax_amount = float(booking["total_price"]) * 0.0825
-    fee_amount = float(booking["total_price"]) * 0.045
-    base_amount = float(booking["total_price"]) - tax_amount - fee_amount
+    breakdown = booking_price_breakdown(booking)
     status_line = f"Trip status: {booking_status_label(booking['booking_status'], booking['payment_status'])}"
     savings_line = booking_savings_explainer(booking)
+    tax_fee_lines = "\n".join(
+        f"{label}: {format_money(amount)}"
+        for label, amount in breakdown["tax_fee_lines"]  # type: ignore[index]
+    )
 
     return {
         "Invoice / Receipt": {
@@ -4044,10 +4162,13 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Vehicle: {booking['car_name']}\n"
                 f"Dates: {booking['pickup_date']} {booking['pickup_time']} to {booking['dropoff_date']} {booking['dropoff_time']}\n"
                 f"Payment: {payment_method} · {transaction_status}\n"
-                f"Subtotal: {format_money(booking['subtotal_price'] or booking['total_price'])}\n"
+                f"Rental subtotal: {format_money(breakdown['base'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"Taxes and fees: {format_money(breakdown['tax_fee_amount'])}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+                f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
                 f"FairFares savings: {savings_line}\n"
-                f"Total due: {format_money(booking['total_price'])}"
+                f"Estimated total: {format_money(breakdown['total'])}"
             ),
             "status": f"Generated from booking {booking['booking_id']} and admin payment records.",
         },
@@ -4056,6 +4177,9 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "content": (
                 f"{status_line}\n\n"
                 f"{agreement_text}\n\n"
+                f"Estimated total: {format_money(breakdown['total'])}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}. This hold is deducted from the pickup balance. Holds become non-refundable inside 24 hours before pickup unless FairFares approves an exception.\n"
+                f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
                 f"DL: {license_line}\n"
                 f"Insurance: {insurance_line}\n"
                 f"Signature: {agreement['signature_text'] if agreement and agreement['signature_text'] else 'Pending'}"
@@ -4067,13 +4191,16 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "content": (
                 f"{status_line}\n"
                 f"Booking: {booking['booking_id']}\n"
-                f"Rental subtotal: ${base_amount:.2f}\n"
+                f"Rental days: {breakdown['weeks']} week(s), {breakdown['extra_days']} day(s)\n"
+                f"Daily rate: {format_money(breakdown['daily'])}\n"
+                f"Rental subtotal: {format_money(breakdown['base'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"{tax_fee_lines}\n"
                 f"FairFares savings: {savings_line}\n"
-                f"Taxes estimate: ${tax_amount:.2f}\n"
-                f"Airport/provider fees estimate: ${fee_amount:.2f}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+                f"Due at pickup: {format_money(breakdown['due_at_pickup'])}\n"
                 f"Insurance: {insurance_line}\n"
-                f"Final total: ${float(booking['total_price']):.2f}"
+                f"Final total: {format_money(breakdown['total'])}"
             ),
             "status": "Generated from booking total, insurance, and invoice records.",
         },
@@ -4206,6 +4333,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
+            "/payment/hold": self.pay_booking_hold,
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
             "/guest-booking": self.create_guest_booking,
@@ -4743,7 +4871,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
-        low, high = daily_price_range(row["daily_price"])
+        daily_rate = round(float(row["daily_price"] or 0))
         is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
         save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
@@ -4764,9 +4892,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <ul>{features}</ul>
             </div>
             <div class="price-box">
-                <strong data-price-range>${low}-${high}</strong><span>/day est.</span>
+                <strong data-price-range>${daily_rate}</strong><span>/day</span>
                 <small class="availability-note" data-availability-note></small>
-                <em>FairFares keeps your savings visible before you book, then carries the final price into your receipt, agreement, and confirmation email.</em>
+                <em>Daily rate comes from FairFares inventory. Taxes, fees, 10% hold, and pickup balance are shown before confirmation.</em>
                 <div class="card-actions-row">
                     <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
@@ -4774,9 +4902,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <details class="car-terms">
                     <summary>View Details</summary>
                     <div class="car-terms-grid">
+                        <span>Daily rate from inventory</span>
+                        <span>Taxes and provider fees itemized before confirmation</span>
+                        <span>10% hold is deducted at pickup</span>
                         <span>Price-match review before pickup</span>
                         <span>Eligible cancellation up to 24 hours before pickup</span>
-                        <span>Taxes, fees, mileage, insurance, and pickup rules follow your rental agreement</span>
+                        <span>Mileage, insurance, and pickup rules follow your rental agreement</span>
                     </div>
                 </details>
             </div>
@@ -5275,6 +5406,80 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute("UPDATE bookings SET saved_by_user = 1 WHERE id = ? AND user_id = ?", (booking["id"], user["id"]))
         self.send_json({"ok": True, "message": "Current trip saved."})
+
+    def pay_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay the booking hold."}, 401)
+            return
+        form = self.read_form()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "Book a car before paying a hold."}, 404)
+            return
+        if booking["booking_status"] in {"CANCELLED", "RETURNED"}:
+            self.send_json({"ok": False, "message": "This booking cannot accept a payment hold."}, 400)
+            return
+        breakdown = booking_price_breakdown(booking)
+        hold_amount = float(breakdown["booking_hold"])
+        cardholder = form.get("cardholder_name", "").strip()
+        raw_card = re.sub(r"\D+", "", form.get("card_last4", ""))
+        payment_method = form.get("payment_method", "Card").strip() or "Card"
+        if not cardholder or len(raw_card) < 4:
+            self.send_json({"ok": False, "message": "Enter the cardholder name and last 4 card digits."}, 400)
+            return
+        card_last4 = raw_card[-4:]
+        billing_status, billing_notes = evaluate_billing_name(
+            payment_method,
+            cardholder,
+            booking["contact_name"] or user["name"],
+            "",
+        )
+        if billing_status == "REVIEW_REQUIRED":
+            billing_status = "MATCHED"
+            billing_notes = "Billing name captured for 10% booking hold."
+        invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
+        with db() as con:
+            while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
+                invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
+            con.execute(
+                """
+                INSERT INTO transactions
+                (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+                VALUES (?, ?, ?, ?, 'HOLD_PAID', ?, ?, ?)
+                """,
+                (
+                    booking["id"],
+                    f"{payment_method} ending {card_last4}",
+                    cardholder,
+                    hold_amount,
+                    billing_status,
+                    billing_notes,
+                    invoice_number,
+                ),
+            )
+            con.execute(
+                """
+                UPDATE bookings
+                SET payment_status = 'HOLD_PAID',
+                    booking_hold_amount = ?,
+                    due_at_pickup_amount = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (hold_amount, breakdown["due_at_pickup"], booking["id"], user["id"]),
+            )
+        self.send_json(
+            {
+                "ok": True,
+                "message": f"10% booking hold recorded: {format_money(hold_amount)}. It will be deducted from pickup balance.",
+                "payment_status": "HOLD_PAID",
+                "payment_label": payment_status_label("HOLD_PAID"),
+                "status_label": booking_status_label("CONFIRMED", "HOLD_PAID"),
+                "hold_amount": format_money(hold_amount),
+                "due_at_pickup": format_money(breakdown["due_at_pickup"]),
+                "invoice_number": invoice_number,
+            }
+        )
 
     def save_search_car(self) -> None:
         user = self.current_user()
@@ -7098,6 +7303,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
+        active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
+        price_breakdown_summary = ""
+        if booking:
+            price_breakdown_summary = f"""
+              <div class="price-breakdown-summary">
+                <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
+                <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees</span>
+                <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% hold</span>
+                <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
+              </div>
+            """
         first_time_manage_content = ""
         if show_start_experience or show_signed_out_empty:
             first_time_manage_content = """
@@ -7174,12 +7390,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
             referral_share_url = f"{self.public_origin()}/deals"
+            hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
+            payment_hold_card = f"""
+                <section class="booking-hold-panel" id="bookingHoldPanel">
+                    <div>
+                        <p class="eyebrow">Payment hold</p>
+                        <h3>Pay 10% now, finish at pickup.</h3>
+                        <p>The hold is deducted from your pickup balance. It becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.</p>
+                    </div>
+                    <div class="booking-hold-breakdown">
+                        <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
+                        <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>10% hold</span>
+                        <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
+                    </div>
+                    {'<p class="payment-hold-paid">Hold paid. Your pickup balance is updated.</p>' if hold_paid else ''}
+                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid) else ''}>
+                        <label><span>Cardholder name *</span><input name="cardholder_name" autocomplete="cc-name" required></label>
+                        <label><span>Card last 4 *</span><input name="card_last4" inputmode="numeric" maxlength="19" placeholder="1234" required></label>
+                        <input type="hidden" name="payment_method" value="Card">
+                        <button type="submit">Pay 10% Hold</button>
+                        <small>Local payment hold flow. Full card numbers are not stored.</small>
+                    </form>
+                    {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay the hold.</p>' if is_guest_checkout else ''}
+                    <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
+                </section>
+            """
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
                     <p class="eyebrow">Confirmed / Pay at pickup</p>
                     <h2>Your car is booked.</h2>
-                    <p>We promise a fair rental price. If you show us a lower comparable quote before pickup, FairFares will review it, match the eligible price, and add another 10% off so your savings stay clear on your documents.</p>
+                    <p>FairFares shows the rental price, taxes, fees, hold, and pickup balance before you drive. Your savings stay visible on the booking, receipt, rental agreement, and confirmation email.</p>
                     {guest_account_note}
                 </div>
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
@@ -7197,6 +7438,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {guest_after_save_actions}
                     <p class="modify-status" id="customerInfoStatus" aria-live="polite"></p>
                 </form>
+                {payment_hold_card}
             </section>
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
@@ -7276,7 +7518,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_date=escape(booking["dropoff_date"] if booking else "Not scheduled"),
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
-            price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
+            price_text=escape(format_money(active_breakdown["total"]) if booking else "$0.00"),
+            price_breakdown_summary=price_breakdown_summary,
             savings_label=escape(booking_savings_label(booking) if booking else ""),
             price_match_note=escape(booking_savings_explainer(booking) if booking else ""),
             status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),
