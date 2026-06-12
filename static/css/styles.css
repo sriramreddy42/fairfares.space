@@ -14513,3 +14513,517 @@ body.modal-open {
     border-radius: 16px;
   }
 }
+
+/* Final requested corrections: left feedback, right-side Explorer nav, horizontal car terms, tighter Explorer hero. */
+.app-feedback-widget {
+  bottom: auto !important;
+  left: 0 !important;
+  right: auto !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+.app-feedback-tab {
+  border-radius: 0 10px 10px 0 !important;
+}
+
+.app-feedback-panel {
+  bottom: auto !important;
+  left: 58px !important;
+  right: auto !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+.nav-links {
+  width: 100% !important;
+}
+
+.nav-links a[href="/explorer"] {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
+.car-terms-grid {
+  align-items: stretch !important;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 8px !important;
+  overflow-x: auto !important;
+  padding-bottom: 2px !important;
+}
+
+.car-terms-grid span {
+  align-items: center !important;
+  display: flex !important;
+  flex: 0 0 auto !important;
+  font-size: 0.82rem !important;
+  justify-content: center !important;
+  line-height: 1.2 !important;
+  min-height: 42px !important;
+  padding: 8px 10px !important;
+  text-align: center !important;
+  width: min(230px, 62vw) !important;
+}
+
+@media (min-width: 901px) {
+  .explorer-screen .main-nav .nav-links {
+    width: 100% !important;
+  }
+
+  .explorer-screen .main-nav .nav-links a[href="/explorer"] {
+    margin-left: auto !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    gap: clamp(18px, 3.2vw, 42px) !important;
+    grid-template-columns: minmax(420px, 0.9fr) minmax(360px, 0.8fr) !important;
+    min-height: clamp(390px, 33vw, 500px) !important;
+    padding: clamp(34px, 3.5vw, 50px) clamp(44px, 5vw, 72px) !important;
+  }
+
+  .explorer-screen .explorer-hero-title {
+    animation-delay: 0s !important;
+    font-size: clamp(1.72rem, 2.18vw, 2.55rem) !important;
+    max-width: min(440px, 34vw) !important;
+    top: clamp(46px, 4.5vw, 66px) !important;
+  }
+
+  .explorer-screen .explorer-hero-title .hero-line-one {
+    animation-delay: 0.45s !important;
+  }
+
+  .explorer-screen .explorer-hero-title .hero-line-two {
+    animation-delay: 0.58s !important;
+  }
+
+  .explorer-screen .explorer-hero-title .hero-line-three {
+    animation-delay: 0.71s !important;
+  }
+
+  .explorer-screen .explorer-hero-subcopy {
+    animation-delay: 0.92s !important;
+    font-size: clamp(0.85rem, 0.95vw, 1rem) !important;
+    max-width: min(430px, 34vw) !important;
+    top: clamp(182px, 14vw, 220px) !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+    max-width: min(390px, 34vw) !important;
+    opacity: 1 !important;
+    top: clamp(82px, 8.2vw, 104px) !important;
+    transform: translateY(0) !important;
+    animation: none !important;
+    z-index: 4 !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 56px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip {
+    gap: 8px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 50px !important;
+    padding: 7px 9px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: clamp(1rem, 1.35vw, 1.35rem) !important;
+  }
+
+  .explorer-screen .explorer-profile-strip small {
+    font-size: 0.72rem !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    max-width: min(390px, 34vw) !important;
+    opacity: 1 !important;
+    padding: 10px 12px !important;
+    top: clamp(172px, 15.5vw, 204px) !important;
+    transform: translateY(0) !important;
+    animation: none !important;
+    z-index: 4 !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    border-radius: 12px !important;
+    max-width: min(430px, 34vw) !important;
+    padding: clamp(12px, 1.3vw, 18px) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: min(100%, 220px) !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.08rem, 1.45vw, 1.55rem) !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: clamp(0.76rem, 0.85vw, 0.9rem) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-feedback-widget {
+    left: 0 !important;
+    right: auto !important;
+    top: 50% !important;
+  }
+
+  .app-feedback-tab {
+    min-height: 134px !important;
+    width: 42px !important;
+  }
+
+  .app-feedback-panel {
+    left: 50px !important;
+    right: auto !important;
+    width: calc(100vw - 68px) !important;
+  }
+
+  .nav-links a[href="/explorer"] {
+    margin-left: 0 !important;
+  }
+
+  .car-terms-grid span {
+    width: min(218px, 72vw) !important;
+  }
+}
+
+/* Mobile correction pass: compact public nav, hide empty booking fallback, and
+   keep Explorer usable on small screens. */
+.trip-card.is-hidden,
+.manage-panels.is-hidden {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .main-nav {
+    align-items: center !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: auto minmax(0, 1fr) 44px !important;
+    padding: 10px 12px !important;
+  }
+
+  .nav-links,
+  .nav-actions {
+    display: contents !important;
+  }
+
+  .nav-links a,
+  .nav-actions > span,
+  .nav-actions > a:not(.user-chip) {
+    display: none !important;
+  }
+
+  .nav-links a:first-child {
+    align-items: center !important;
+    display: inline-flex !important;
+    grid-column: 1 !important;
+    justify-self: start !important;
+    min-height: 38px !important;
+    padding: 9px 12px !important;
+  }
+
+  .nav-actions > .user-chip {
+    align-items: center !important;
+    display: inline-grid !important;
+    grid-column: 2 !important;
+    grid-template-columns: 26px minmax(0, auto) !important;
+    justify-self: end !important;
+    max-width: min(178px, 42vw) !important;
+    min-height: 38px !important;
+    padding: 7px 10px !important;
+  }
+
+  .nav-actions > .user-chip b,
+  .nav-actions > .user-chip small {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .menu-button {
+    display: inline-flex !important;
+    grid-column: 3 !important;
+    height: 42px !important;
+    justify-self: end !important;
+    width: 42px !important;
+  }
+
+  .mobile-menu {
+    grid-column: 1 / -1 !important;
+    padding: 10px !important;
+  }
+
+  .mobile-menu a {
+    align-items: center !important;
+    display: flex !important;
+    justify-content: center !important;
+    min-height: 44px !important;
+    padding: 10px 12px !important;
+  }
+
+  .mobile-menu a[href="/wiki"],
+  .mobile-menu .user-chip {
+    display: none !important;
+  }
+
+  .nav-links a[href="/explorer"] {
+    margin-left: 0 !important;
+  }
+
+  .manage-screen .trip-card.is-hidden,
+  .manage-screen .manage-panels.is-hidden {
+    display: none !important;
+  }
+
+  .results-side-rail .results-promo,
+  .results-side-rail .results-ad-card {
+    display: none !important;
+  }
+
+  .results-layout {
+    gap: 10px !important;
+    padding-inline: 8px !important;
+  }
+
+  .results-side-rail,
+  .filters,
+  .cars-panel {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .explorer-screen .top-brand {
+    min-height: 58px !important;
+    padding: 8px 12px !important;
+  }
+
+  .explorer-screen .top-benefits {
+    display: none !important;
+  }
+
+  .explorer-screen .logo-lockup img {
+    max-height: 44px !important;
+    max-width: 210px !important;
+  }
+
+  .explorer-page {
+    gap: 10px !important;
+    padding: 8px !important;
+    width: 100% !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    background: linear-gradient(135deg, #071a3d 0%, #182e61 100%) !important;
+    border-radius: 10px !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 12px !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    display: grid !important;
+    gap: 9px !important;
+    min-width: 0 !important;
+  }
+
+  .explorer-screen .explorer-hero-title,
+  .explorer-screen .explorer-hero-subcopy {
+    display: none !important;
+  }
+
+  .explorer-screen .explorer-hero-tagline {
+    animation: none !important;
+    color: rgba(255, 255, 255, 0.82) !important;
+    font-size: 0.84rem !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .explorer-screen .explorer-hero .eyebrow {
+    font-size: 0.72rem !important;
+    margin: 0 !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    align-items: center !important;
+    animation: none !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: 50px minmax(0, 1fr) !important;
+    margin: 0 !important;
+    max-width: none !important;
+    opacity: 1 !important;
+    position: relative !important;
+    top: auto !important;
+    transform: none !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 50px !important;
+  }
+
+  .explorer-screen .explorer-user-photo em {
+    display: none !important;
+  }
+
+  .explorer-screen .explorer-profile-strip {
+    animation: none !important;
+    display: grid !important;
+    gap: 6px !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    margin: 0 !important;
+    transform: none !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    border-radius: 7px !important;
+    min-height: 44px !important;
+    padding: 6px 5px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: 0.94rem !important;
+    line-height: 1 !important;
+  }
+
+  .explorer-screen .explorer-profile-strip small,
+  .explorer-screen .explorer-profile-strip span {
+    font-size: 0.68rem !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    animation: none !important;
+    margin: 0 !important;
+    max-width: none !important;
+    opacity: 1 !important;
+    padding: 8px !important;
+    position: relative !important;
+    top: auto !important;
+    transform: none !important;
+  }
+
+  .explorer-screen .explorer-xp-meter div {
+    font-size: 0.8rem !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    border-radius: 9px !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: 96px minmax(0, 1fr) !important;
+    max-width: none !important;
+    padding: 10px !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    display: block !important;
+    max-width: 96px !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: 1rem !important;
+    line-height: 1.12 !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: 0.78rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .explorer-builder,
+  .explorer-form,
+  .quest-output,
+  .explorer-community {
+    gap: 10px !important;
+    padding: 10px !important;
+  }
+
+  .explorer-builder {
+    grid-template-columns: 1fr !important;
+    padding: 0 !important;
+  }
+
+  .mood-grid {
+    gap: 7px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .mood-grid label {
+    gap: 8px !important;
+    grid-template-columns: 38px minmax(0, 1fr) 18px !important;
+    min-height: 54px !important;
+    padding: 7px 8px !important;
+  }
+
+  .mood-grid .mood-art {
+    height: 36px !important;
+    width: 36px !important;
+  }
+
+  .mood-grid .mood-name {
+    font-size: 0.9rem !important;
+    line-height: 1.1 !important;
+    white-space: normal !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    min-height: 0 !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    display: grid !important;
+    gap: 6px !important;
+    min-height: 0 !important;
+  }
+
+  .explorer-screen .explorer-xp-meter meter {
+    height: 10px !important;
+    min-height: 10px !important;
+  }
+
+  .explorer-screen .explorer-memory-rail {
+    bottom: 12px !important;
+    left: 10px !important;
+    top: auto !important;
+    z-index: 44 !important;
+  }
+
+  .explorer-screen .explorer-memory-rail-button {
+    border-radius: 12px !important;
+    height: 44px !important;
+    width: 44px !important;
+  }
+
+  .explorer-screen .rail-play-icon {
+    border-radius: 7px !important;
+    height: 24px !important;
+    width: 24px !important;
+  }
+
+  .explorer-screen .rail-play-icon::before {
+    border-bottom-width: 6px !important;
+    border-left-width: 9px !important;
+    border-top-width: 6px !important;
+    left: 8px !important;
+    top: 3px !important;
+  }
+
+  .explorer-screen .rail-hover-label {
+    display: none !important;
+  }
+}
