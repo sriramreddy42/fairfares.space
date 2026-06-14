@@ -31,6 +31,8 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
+DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
+DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 
 
 def refresh_storage_paths() -> None:
@@ -114,6 +116,65 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
     columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def configured_admin_credentials() -> tuple[str, str]:
+    email = os.environ.get("FAIRFARES_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL).strip().lower()
+    password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+    return email, password
+
+
+def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
+    email = email.strip().lower()
+    if not email or not password:
+        return
+    admin = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    password_hash = hash_password(password)
+    if not admin:
+        con.execute(
+            """
+            INSERT INTO users
+            (name, email, password_hash, is_admin, role, is_verified, verified_at)
+            VALUES (?, ?, ?, 1, 'ADMIN', 1, CURRENT_TIMESTAMP)
+            """,
+            ("FairFares Admin", email, password_hash),
+        )
+        return
+    if not verify_password(password, admin["password_hash"]):
+        con.execute(
+            """
+            UPDATE users
+            SET name = COALESCE(NULLIF(name, ''), 'FairFares Admin'),
+                password_hash = ?,
+                is_admin = 1,
+                role = 'ADMIN',
+                is_verified = 1,
+                verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                guest_account = 0
+            WHERE id = ?
+            """,
+            (password_hash, admin["id"]),
+        )
+    else:
+        con.execute(
+            """
+            UPDATE users
+            SET is_admin = 1,
+                role = 'ADMIN',
+                is_verified = 1,
+                verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                guest_account = 0
+            WHERE id = ?
+            """,
+            (admin["id"],),
+        )
+
+
+def ensure_default_admin(con: sqlite3.Connection) -> None:
+    ensure_admin_account(con, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+    configured_email, configured_password = configured_admin_credentials()
+    if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
+        ensure_admin_account(con, configured_email, configured_password)
 
 
 def create_verification(user_id: int, email: str, purpose: str = "ACCOUNT") -> str:
@@ -1262,12 +1323,7 @@ def init_db() -> None:
                 badge,
             )
 
-        admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
-        if not admin_exists:
-            con.execute(
-                "INSERT INTO users (name, email, password_hash, is_admin, role) VALUES (?, ?, ?, 1, 'ADMIN')",
-                ("FairFares Admin", "admin@fairfares.com", hash_password("ChangeMe123!")),
-            )
+        ensure_default_admin(con)
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
