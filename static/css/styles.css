@@ -15375,3 +15375,112 @@ body.modal-open {
     flex-basis: min(280px, 82vw) !important;
   }
 }
+
+/* Final correction: car details belong to the full card width, not the price
+   column. Keep each detail readable and horizontal without pushing the card. */
+.car-card {
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+.car-card > .price-box {
+  min-width: 0 !important;
+}
+
+.car-card > .car-terms {
+  grid-column: 1 / -1 !important;
+  margin-top: 4px !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+.car-card > .car-terms summary {
+  align-items: center !important;
+  border: 2px solid #0b63ce !important;
+  border-radius: 6px !important;
+  color: var(--red) !important;
+  display: inline-flex !important;
+  font-weight: 900 !important;
+  min-height: 40px !important;
+  padding: 4px 14px !important;
+  width: auto !important;
+}
+
+.car-card > .car-terms .car-terms-grid {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  padding: 8px 2px 4px !important;
+}
+
+.car-card > .car-terms .car-terms-grid span {
+  align-items: center !important;
+  display: flex !important;
+  flex: 0 0 230px !important;
+  justify-content: center !important;
+  line-height: 1.2 !important;
+  min-height: 56px !important;
+  text-align: center !important;
+  white-space: normal !important;
+  width: 230px !important;
+}
+
+@media (max-width: 900px) {
+  .car-card > .car-terms .car-terms-grid span {
+    flex-basis: min(220px, 74vw) !important;
+    width: min(220px, 74vw) !important;
+  }
+}
+
+.admin-car-edit {
+  margin-top: 10px !important;
+  max-width: min(820px, 82vw) !important;
+}
+
+.admin-car-edit summary {
+  color: var(--red) !important;
+  cursor: pointer !important;
+  font-weight: 900 !important;
+  padding: 4px 0 !important;
+}
+
+.admin-car-edit-grid {
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: repeat(2, minmax(190px, 1fr)) !important;
+  padding-top: 8px !important;
+}
+
+.admin-car-edit-grid label {
+  display: grid !important;
+  gap: 4px !important;
+}
+
+.admin-car-edit-grid label span {
+  color: #4d5666 !important;
+  font-size: 0.78rem !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+}
+
+.admin-car-edit-grid .wide {
+  grid-column: 1 / -1 !important;
+}
+
+.admin-car-edit button {
+  margin-top: 8px !important;
+}
+
+@media (max-width: 760px) {
+  .admin-car-edit {
+    max-width: 100% !important;
+  }
+
+  .admin-car-edit-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

@@ -152,11 +152,18 @@ test("manage booking page desktop and mobile visual smoke", async ({ page }) => 
 
 test("uploaded Explorer avatar follows the user into the header", async ({ page }) => {
   const avatarData =
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' fill='%2300c2ff'/%3E%3Ccircle cx='20' cy='20' r='12' fill='%23ed001c'/%3E%3C/svg%3E";
-  await page.addInitScript((src) => {
-    window.localStorage.setItem("fairfaresExplorerProfilePhoto", src);
-  }, avatarData);
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+PHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjMDBjMmZmIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9IiNlZDAwMWMiLz48L3N2Zz4=";
   await loginAsAdmin(page);
+  await page.goto("/explorer");
+  const saveResult = await page.evaluate(async (src) => {
+    const response = await fetch("/profile/photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ photo: src }),
+    });
+    return response.json();
+  }, avatarData);
+  expect(saveResult.ok).toBeTruthy();
   await page.goto("/manage-booking");
   await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /data:image/);
 });

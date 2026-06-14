@@ -30,6 +30,7 @@ OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
+MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 
 
 def refresh_storage_paths() -> None:
@@ -1159,6 +1160,7 @@ def init_db() -> None:
         ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
         ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "transactions", "cardholder_name", "cardholder_name TEXT NOT NULL DEFAULT ''")
@@ -1570,7 +1572,7 @@ def get_cars() -> list[sqlite3.Row]:
                 ) latest ON latest.latest_id = b.id
             ) active ON active.car_id = cars.id
                     AND UPPER(TRIM(cars.status)) = 'BOOKED'
-            WHERE UPPER(TRIM(cars.status)) != 'MAINTENANCE'
+            WHERE UPPER(TRIM(cars.status)) NOT IN ('MAINTENANCE', 'DELETED')
             ORDER BY sort_order, daily_price, id
             """
         ).fetchall()
@@ -1582,6 +1584,7 @@ def get_inventory_locations() -> list[str]:
             """
             SELECT DISTINCT location FROM cars
             WHERE location != ''
+              AND UPPER(TRIM(status)) != 'DELETED'
             ORDER BY location
             """
         ).fetchall()
@@ -1725,7 +1728,11 @@ def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict
     discount = float(row_value(row, "discount_amount") or 0)
     breakdown = rental_price_breakdown(daily, row_value(row, "days") or 1, discount)
     stored_total = float(row_value(row, "total_price") or 0)
-    if stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
+    has_stored_breakdown = any(
+        float(row_value(row, key) or 0) > 0
+        for key in ("tax_fee_amount", "booking_hold_amount", "due_at_pickup_amount", "estimated_market_total")
+    )
+    if has_stored_breakdown and stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
         hold = float(row_value(row, "booking_hold_amount") or round(stored_total * BOOKING_HOLD_RATE, 2))
         tax_fee = float(row_value(row, "tax_fee_amount") or max(0, stored_total - float(breakdown["base"]) + discount))
         breakdown.update(
@@ -2786,7 +2793,7 @@ def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int
 
 def get_admin_cars() -> list[sqlite3.Row]:
     with db() as con:
-        return con.execute("SELECT * FROM cars ORDER BY sort_order, daily_price, id").fetchall()
+        return con.execute("SELECT * FROM cars WHERE UPPER(TRIM(status)) != 'DELETED' ORDER BY sort_order, daily_price, id").fetchall()
 
 
 def get_car(car_id: int) -> sqlite3.Row | None:
@@ -3823,6 +3830,23 @@ def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "")
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+def profile_photo_url(user: sqlite3.Row | dict[str, object] | None) -> str:
+    if not user:
+        return ""
+    return row_value(user, "profile_photo_url")
+
+
+def user_avatar_span(user: sqlite3.Row | dict[str, object] | None) -> str:
+    photo = profile_photo_url(user)
+    style = ""
+    if photo:
+        style = (
+            f' style="background-image:url(&quot;{escape(photo)}&quot;) !important;'
+            'background-size:cover !important;background-position:center !important;"'
+        )
+    return f"<span{style}></span>"
+
+
 PRICE_MATCH_PROMISE = (
     "Bring a lower comparable quote before pickup. FairFares will review it, match the eligible price, "
     "and add another 10% off so your savings stay clear on your documents."
@@ -3857,7 +3881,8 @@ def booking_savings_label(row: sqlite3.Row | dict[str, object] | None) -> str:
     if discount_amount > 0:
         code = row_value(row, "discount_code")
         return f"FairFares saved you {format_money(discount_amount)}{f' with {code}' if code else ''}."
-    return f"Estimated FairFares savings: {format_money(breakdown['savings'])}."
+    savings = float(breakdown["savings"] or 0)
+    return f"Estimated FairFares savings: {format_money(savings)} (typically 10-25% vs major rental totals)."
 
 
 def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, include_terms: bool = False) -> str:
@@ -3877,7 +3902,7 @@ def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, inclu
         )
     terms = " Terms and conditions apply." if include_terms else ""
     return (
-        f"FairFares estimates {format_money(breakdown['savings'])} in savings against a comparable major-rental total. "
+        f"FairFares estimates {format_money(breakdown['savings'])} in savings, typically 10-25% against comparable major-rental totals. "
         f"Your 10% hold is {format_money(breakdown['booking_hold'])}; the remaining "
         f"{format_money(breakdown['due_at_pickup'])} is due at pickup after review.{terms}"
     )
@@ -4343,6 +4368,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
             "/profile/update": self.update_user_profile,
+            "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
             "/wiki/ask": self.ask_wiki_agent,
@@ -4592,9 +4618,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def explorer_page(self) -> None:
         user = self.current_user()
         profile = get_explorer_profile(user["id"] if user else None)
+        photo = profile_photo_url(user)
         body = render_template(
             "explorer.html",
             auth_link='<span class="explorer-nav-tag">Explorer by FairFares</span>' if user else '<a href="/login">Sign in / Join</a>',
+            profile_photo_url=escape(photo),
+            explorer_photo_class="has-photo" if photo else "has-empty-photo",
+            explorer_photo_src=escape(photo),
+            explorer_photo_hidden="" if photo else "hidden",
+            explorer_photo_label="Change photo" if photo else "Upload your photo",
             level=escape(str(profile["level"])),
             xp=escape(str(profile["xp"])),
             trips=escape(str(profile["trips"])),
@@ -4899,18 +4931,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
-                <details class="car-terms">
-                    <summary>View Details</summary>
-                    <div class="car-terms-grid">
-                        <span>Daily rate from inventory</span>
-                        <span>Taxes and provider fees itemized before confirmation</span>
-                        <span>10% hold is deducted at pickup</span>
-                        <span>Price-match review before pickup</span>
-                        <span>Eligible cancellation up to 24 hours before pickup</span>
-                        <span>Mileage, insurance, and pickup rules follow your rental agreement</span>
-                    </div>
-                </details>
             </div>
+            <details class="car-terms">
+                <summary>View Details</summary>
+                <div class="car-terms-grid">
+                    <span>Daily rate from inventory</span>
+                    <span>Taxes and provider fees itemized before confirmation</span>
+                    <span>10% hold is deducted at pickup</span>
+                    <span>Price-match review before pickup</span>
+                    <span>Eligible cancellation up to 24 hours before pickup</span>
+                    <span>Mileage, insurance, and pickup rules follow your rental agreement</span>
+                </div>
+            </details>
         </article>
         """
 
@@ -5591,6 +5623,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 result["referral_status"] = reward["status"]
         self.send_json(result, 200 if result["ok"] else 400)
 
+    def update_profile_photo(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to save your profile photo."}, 401)
+            return
+        form = self.read_form()
+        photo = (form.get("photo") or "").strip()
+        if photo.startswith("data:image/svg xml"):
+            photo = photo.replace("data:image/svg xml", "data:image/svg+xml", 1)
+        if not photo.startswith("data:image/"):
+            self.send_json({"ok": False, "message": "Upload a valid image."}, 400)
+            return
+        if ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+            self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
+            return
+        with db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (photo, user["id"]))
+        self.send_json({"ok": True, "photo": photo, "message": "Profile photo saved."})
+
     def create_guest_booking(self) -> None:
         form = self.read_form()
         first_name = form.get("first_name", "").strip()
@@ -6249,6 +6300,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status}</option>'
             for status in ("AVAILABLE", "BOOKED", "MAINTENANCE")
         )
+        edit_fields = f"""
+            <div class="admin-car-edit-grid">
+                <label><span>Brand</span><input form="car-update-{row["id"]}" name="brand" value="{escape(row["brand"])}"></label>
+                <label><span>Model</span><input form="car-update-{row["id"]}" name="model" value="{escape(row["model"])}"></label>
+                <label><span>Year</span><input form="car-update-{row["id"]}" name="year" type="number" value="{escape(row["year"] or "")}"></label>
+                <label><span>Category</span><input form="car-update-{row["id"]}" name="category" value="{escape(row["category"])}"></label>
+                <label><span>Type</span><input form="car-update-{row["id"]}" name="type" value="{escape(row["type"])}"></label>
+                <label><span>Fuel</span><input form="car-update-{row["id"]}" name="fuel_type" value="{escape(row["fuel_type"])}"></label>
+                <label><span>Seats</span><input form="car-update-{row["id"]}" name="seats" type="number" value="{escape(row["seats"])}"></label>
+                <label><span>Bags</span><input form="car-update-{row["id"]}" name="bags" type="number" value="{escape(row["bags"])}"></label>
+                <label><span>Doors</span><input form="car-update-{row["id"]}" name="doors" type="number" value="{escape(row["doors"])}"></label>
+                <label><span>Transmission</span><input form="car-update-{row["id"]}" name="transmission" value="{escape(row["transmission"])}"></label>
+                <label><span>Badge</span><input form="car-update-{row["id"]}" name="badge" value="{escape(row["badge"])}"></label>
+                <label><span>Color</span><input form="car-update-{row["id"]}" name="color" value="{escape(row["color"])}"></label>
+                <label class="wide"><span>Image URL</span><input form="car-update-{row["id"]}" name="image_url" value="{escape(row["image_url"])}"></label>
+                <label class="wide"><span>Features</span><input form="car-update-{row["id"]}" name="features" value="{escape(row["features"])}"></label>
+                <label><span>License plate</span><input form="car-update-{row["id"]}" name="license_plate" value="{escape(row["license_plate"])}"></label>
+                <label><span>VIN</span><input form="car-update-{row["id"]}" name="vin_number" value="{escape(row["vin_number"])}"></label>
+                <label><span>Sort order</span><input form="car-update-{row["id"]}" name="sort_order" type="number" value="{escape(row["sort_order"])}"></label>
+            </div>
+        """
         return f"""
         <tr>
             <td><b>{escape(row["name"])}</b><span>{escape(row["brand"] or "-")} {escape(row["model"] or "")}</span></td>
@@ -6265,6 +6337,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </form>
             </td>
             <td>
+                <details class="admin-car-edit">
+                    <summary>Edit details</summary>
+                    {edit_fields}
+                    <button form="car-update-{row["id"]}" type="submit">Save full details</button>
+                </details>
                 <form method="post" action="/admin/cars/delete" class="inline-form">
                     <input type="hidden" name="car_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
@@ -6587,15 +6664,71 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             daily_price = max(0.0, float(form.get("daily_price") or 0))
         except ValueError:
             daily_price = 0.0
+        try:
+            year = int(form.get("year") or 0)
+        except ValueError:
+            year = 0
+        def int_field(name: str, fallback: int) -> int:
+            try:
+                return int(form.get(name) or fallback)
+            except ValueError:
+                return fallback
         location = form.get("location", "").strip()
         with db() as con:
-            current = con.execute("SELECT daily_price, location FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            current = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            brand = form.get("brand", row_value(current, "brand")).strip()
+            model = form.get("model", row_value(current, "model")).strip()
+            name = f"{brand} {model}".strip() or row_value(current, "name") or "Vehicle"
             con.execute(
-                "UPDATE cars SET status = ?, daily_price = ?, location = ? WHERE id = ?",
+                """
+                UPDATE cars
+                SET name = ?,
+                    brand = ?,
+                    model = ?,
+                    year = ?,
+                    category = ?,
+                    type = ?,
+                    fuel_type = ?,
+                    seats = ?,
+                    bags = ?,
+                    doors = ?,
+                    transmission = ?,
+                    daily_price = ?,
+                    total_price = ?,
+                    badge = ?,
+                    color = ?,
+                    features = ?,
+                    location = ?,
+                    image_url = ?,
+                    status = ?,
+                    license_plate = ?,
+                    vin_number = ?,
+                    sort_order = ?
+                WHERE id = ?
+                """,
                 (
+                    name,
+                    brand,
+                    model,
+                    year or int(row_value(current, "year") or 2026),
+                    form.get("category", row_value(current, "category")) or "Economy",
+                    form.get("type", row_value(current, "type")) or "Sedan",
+                    form.get("fuel_type", row_value(current, "fuel_type")) or "Gasoline",
+                    int_field("seats", int(row_value(current, "seats") or 5)),
+                    int_field("bags", int(row_value(current, "bags") or 2)),
+                    int_field("doors", int(row_value(current, "doors") or 4)),
+                    form.get("transmission", row_value(current, "transmission")) or "Automatic",
+                    daily_price or float(row_value(current, "daily_price") or 0),
+                    (daily_price or float(row_value(current, "daily_price") or 0)) * 7,
+                    form.get("badge", row_value(current, "badge")) or "Available",
+                    form.get("color", row_value(current, "color")) or "white",
+                    form.get("features", row_value(current, "features")) or "Free Cancellation|Unlimited Mileage|24/7 Support",
+                    location or row_value(current, "location") or "Denver International Airport (DEN)",
+                    form.get("image_url", row_value(current, "image_url")),
                     status,
-                    daily_price or (current["daily_price"] if current else 0),
-                    location or (current["location"] if current else "Denver International Airport (DEN)"),
+                    form.get("license_plate", row_value(current, "license_plate")),
+                    form.get("vin_number", row_value(current, "vin_number")),
+                    int_field("sort_order", int(row_value(current, "sort_order") or 99)),
                     form.get("car_id"),
                 ),
             )
@@ -6609,7 +6742,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             booked = con.execute("SELECT 1 FROM bookings WHERE car_id = ? LIMIT 1", (form.get("car_id"),)).fetchone()
             if booked:
-                con.execute("UPDATE cars SET status = 'MAINTENANCE' WHERE id = ?", (form.get("car_id"),))
+                con.execute("UPDATE cars SET status = 'DELETED' WHERE id = ?", (form.get("car_id"),))
             else:
                 con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
         self.redirect("/admin")
@@ -7479,14 +7612,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<div class=\"support-summary support-ticket-state\"><b>{escape(owner)} is working on ticket {escape(latest_ticket['ticket_id'])}</b>"
                 f"<span>Status: {escape(status)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
             )
-        signed_out_auth = '<a class="user-chip" href="/login"><span></span><b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
+        signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "FairFares Member"),
             role="Admin" if user and user["is_admin"] else "Student",
             admin_panel=admin_panel,
             manage_auth=(
-                f'<a class="user-chip" href="/dashboard"><span></span><b>Hi, {escape(user["name"])}</b><small>Student</small></a><a href="/logout">Log out</a>'
+                f'<a class="user-chip" href="/dashboard">{user_avatar_span(user)}<b>Hi, {escape(user["name"])}</b><small>Student</small></a><a href="/logout">Log out</a>'
                 if user
                 else signed_out_auth
             ),

@@ -86,6 +86,7 @@ const explorerMemoryBackdrop = document.getElementById("explorerMemoryBackdrop")
 const explorerUserPhoto = document.getElementById("explorerUserPhoto");
 const explorerUserPhotoInput = document.getElementById("explorerUserPhotoInput");
 const explorerUserPhotoPreview = document.getElementById("explorerUserPhotoPreview");
+const serverProfilePhoto = document.body?.dataset.profilePhoto || "";
 const explorerCityStep = document.getElementById("explorerCityStep");
 const explorerBookingStep = document.getElementById("explorerBookingStep");
 const explorerMoodStep = document.getElementById("explorerMoodStep");
@@ -102,16 +103,11 @@ let explorerDirectionsRenderer = null;
 const EXPLORER_PHOTO_STORAGE_KEY = "fairfaresExplorerProfilePhoto";
 
 function syncStoredProfilePhotoToNav(src = savedExplorerUserPhoto()) {
+  if (!src) return;
   document.querySelectorAll(".user-chip span").forEach((avatar) => {
-    if (src) {
-      avatar.style.backgroundImage = `url("${src}")`;
-      avatar.style.backgroundSize = "cover";
-      avatar.style.backgroundPosition = "center";
-    } else {
-      avatar.style.removeProperty("background-image");
-      avatar.style.removeProperty("background-size");
-      avatar.style.removeProperty("background-position");
-    }
+    avatar.style.setProperty("background-image", `url("${src}")`, "important");
+    avatar.style.setProperty("background-size", "cover", "important");
+    avatar.style.setProperty("background-position", "center", "important");
   });
 }
 
@@ -143,7 +139,7 @@ function savedExplorerUserPhoto() {
   }
 }
 
-setExplorerUserPhoto(savedExplorerUserPhoto());
+setExplorerUserPhoto(serverProfilePhoto || savedExplorerUserPhoto());
 
 explorerUserPhoto?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
@@ -155,7 +151,7 @@ explorerUserPhotoInput?.addEventListener("change", () => {
   const file = explorerUserPhotoInput.files?.[0];
   if (!file || !file.type.startsWith("image/")) return;
   const reader = new FileReader();
-  reader.addEventListener("load", () => {
+  reader.addEventListener("load", async () => {
     const src = String(reader.result || "");
     setExplorerUserPhoto(src);
     try {
@@ -163,6 +159,19 @@ explorerUserPhotoInput?.addEventListener("change", () => {
       syncStoredProfilePhotoToNav(src);
     } catch {
       // Large local photos may exceed storage; preview still works for this session.
+    }
+    try {
+      const response = await fetch("/profile/photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ photo: src }),
+      });
+      const payload = await response.json();
+      if (payload?.ok && payload.photo) {
+        setExplorerUserPhoto(String(payload.photo));
+      }
+    } catch {
+      // Guests still get a local preview; signed-in users get persistence when the network call succeeds.
     }
   });
   reader.readAsDataURL(file);
