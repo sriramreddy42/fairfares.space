@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-56">
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-57">
   $maps_loader
-  <script defer src="/static/js/app.js?v=explorer-21"></script>
+  <script defer src="/static/js/app.js?v=explorer-22"></script>
 </head>
-<body class="explorer-screen">
+<body class="explorer-screen" data-profile-photo="$profile_photo_url">
   <header class="top-brand">
     <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
     <div class="top-benefits">
@@ -85,11 +85,11 @@
         <p class="explorer-hero-subcopy">Explorer turns your trip into a personal travel adviser with timed stops, weather fit, XP, badges, and memories worth sharing.</p>
         <p class="explorer-hero-tagline">Your personal travel memories and city guide.</p>
         <div class="explorer-profile-cluster">
-          <label class="explorer-user-photo has-empty-photo" id="explorerUserPhoto" aria-label="Upload Explorer profile photo" tabindex="0">
+          <label class="explorer-user-photo $explorer_photo_class" id="explorerUserPhoto" aria-label="Upload Explorer profile photo" tabindex="0">
             <input type="file" id="explorerUserPhotoInput" accept="image/*">
-            <img id="explorerUserPhotoPreview" alt="Explorer profile photo" hidden>
+            <img id="explorerUserPhotoPreview" src="$explorer_photo_src" alt="Explorer profile photo" $explorer_photo_hidden>
             <span>FF</span>
-            <em>Upload your photo</em>
+            <em>$explorer_photo_label</em>
           </label>
           <div class="explorer-profile-strip">
             <span><b id="explorerLevel">$level</b>Level</span>
