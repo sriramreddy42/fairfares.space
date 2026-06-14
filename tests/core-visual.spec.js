@@ -96,7 +96,8 @@ async function loginAsAdmin(page) {
   await page.fill("input[name='password']", "ChangeMe123!");
   await page.click("button[type='submit']");
   await page.waitForLoadState("networkidle");
-  await expect(page).toHaveURL(/\/admin|\/activation-pending/);
+  await expect(page).toHaveURL(/\/admin/);
+  await expect(page.locator("body")).toContainText("Admin");
 }
 
 async function expectFeedbackWidget(page) {
