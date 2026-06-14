@@ -97,6 +97,31 @@ class AuthBootstrapTest(unittest.TestCase):
         self.assertEqual(configured_admin["is_verified"], 1)
         self.assertTrue(app.verify_password("OpsPassword123!", configured_admin["password_hash"]))
 
+    def test_email_marketing_calendar_seeds_empty_planner_once(self):
+        app.init_db()
+
+        app.ensure_email_marketing_calendar_plans()
+
+        with app.db() as con:
+            total = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
+            types = {
+                row["campaign_type"]
+                for row in con.execute("SELECT DISTINCT campaign_type FROM email_campaigns").fetchall()
+            }
+        self.assertEqual(total, len(app.default_email_campaign_plans()))
+        self.assertIn("Transactional", types)
+        self.assertIn("Reminder", types)
+        self.assertIn("Re-engagement", types)
+        self.assertIn("Seasonal", types)
+        self.assertIn("Behavioral", types)
+        self.assertIn("Referral", types)
+
+        app.ensure_email_marketing_calendar_plans()
+
+        with app.db() as con:
+            total_after_second_call = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
+        self.assertEqual(total_after_second_call, total)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3815,6 +3815,161 @@ EMAIL_SEASONAL_PLAN = [
 ]
 
 
+def default_email_campaign_plans(today: date | None = None) -> list[dict[str, str]]:
+    today = today or date.today()
+    year = today.year
+    next_year = year + 1
+    plans = [
+        {
+            "campaign_date": today.isoformat(),
+            "campaign_type": draft["type"],
+            "audience": draft["audience"],
+            "trigger_rule": draft["timing"],
+            "subject_line": draft["subject"],
+            "headline": draft["headline"],
+            "message_body": draft["body"],
+            "cta_label": draft["cta"],
+            "status": "DRAFT",
+            "notes": "Lifecycle calendar draft. Send a test before sending to subscribers.",
+        }
+        for draft in EMAIL_MARKETING_DRAFTS
+    ]
+    plans.extend(
+        [
+            {
+                "campaign_date": (today + timedelta(days=60)).isoformat(),
+                "campaign_type": "Re-engagement",
+                "audience": "Inactive users",
+                "trigger_rule": "60 days inactive",
+                "subject_line": "A FairFares offer is waiting for your next ride",
+                "headline": "Come back with a cleaner deal.",
+                "message_body": "Your next FairFares booking can show savings, documents, and trip details clearly before pickup.",
+                "cta_label": "Search Cars",
+                "status": "DRAFT",
+                "notes": "Calendar item: exclusive offer for 60-day inactive users.",
+            },
+            {
+                "campaign_date": (today + timedelta(days=90)).isoformat(),
+                "campaign_type": "Re-engagement",
+                "audience": "Inactive users",
+                "trigger_rule": "90 days inactive",
+                "subject_line": "Ready for another fair ride?",
+                "headline": "Come back and save.",
+                "message_body": "FairFares keeps pricing transparent, documents easy to find, and Explorer memories ready when you travel again.",
+                "cta_label": "Book Again",
+                "status": "DRAFT",
+                "notes": "Calendar item: comeback offer for 90-day inactive users.",
+            },
+        ]
+    )
+    month_dates = {
+        "January": date(next_year if today.month > 1 else year, 1, 1),
+        "March": date(next_year if today.month > 3 else year, 3, 1),
+        "May": date(next_year if today.month > 5 else year, 5, 1),
+        "July": date(next_year if today.month > 7 else year, 6, 15),
+        "August": date(next_year if today.month > 8 else year, 8, 1),
+        "September": date(next_year if today.month > 9 else year, 8, 15),
+        "October": date(next_year if today.month > 10 else year, 10, 1),
+        "November": date(next_year if today.month > 11 else year, 11, 1),
+        "December": date(next_year if today.month > 12 else year, 12, 1),
+    }
+    for month, title, window in EMAIL_SEASONAL_PLAN:
+        plans.append(
+            {
+                "campaign_date": month_dates[month].isoformat(),
+                "campaign_type": "Seasonal",
+                "audience": "Subscribed users",
+                "trigger_rule": window,
+                "subject_line": title,
+                "headline": title,
+                "message_body": f"Plan the {title.lower()} campaign with one clear offer, one short message, and one FairFares booking action.",
+                "cta_label": "Search Cars",
+                "status": "DRAFT",
+                "notes": f"Seasonal calendar item for {month}. Add offer, artwork, segment, and test send.",
+            }
+        )
+    plans.extend(
+        [
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Customers with birthdays this month",
+                "trigger_rule": "Birthday",
+                "subject_line": "A birthday ride from FairFares",
+                "headline": "Celebrate with a fairer trip.",
+                "message_body": "Add a birthday discount code and keep the message short, warm, and easy to redeem.",
+                "cta_label": "Claim Birthday Offer",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: birthday discount.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users watching a saved route or car",
+                "trigger_rule": "Price drop detected",
+                "subject_line": "A lower FairFares price is available",
+                "headline": "Your watched trip just got easier.",
+                "message_body": "Send only when the new daily price or total estimate is lower than the previous saved view.",
+                "cta_label": "View Lower Price",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: price drop detected.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users who started but did not finish booking",
+                "trigger_rule": "Abandoned booking",
+                "subject_line": "Finish your FairFares booking",
+                "headline": "Your car search is still saved.",
+                "message_body": "Remind the user what they searched for and bring them back to the booking flow.",
+                "cta_label": "Complete Booking",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: abandoned booking.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Returning customers",
+                "trigger_rule": "Repeat customer",
+                "subject_line": "Welcome back to FairFares",
+                "headline": "Your next ride should feel simple too.",
+                "message_body": "Thank repeat customers and point them to saved profile, documents, and Explorer memories.",
+                "cta_label": "Book Again",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: welcome-back offer.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users near active FairFares cities",
+                "trigger_rule": "Location-based offers",
+                "subject_line": "Popular FairFares routes near you",
+                "headline": "Find a nearby ride and a memory worth keeping.",
+                "message_body": "Feature monthly popular destinations and Explorer ideas by city.",
+                "cta_label": "Explore Nearby",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: monthly popular destinations.",
+            },
+        ]
+    )
+    return plans
+
+
+def ensure_email_marketing_calendar_plans() -> None:
+    with db() as con:
+        existing = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
+        if existing:
+            return
+        con.executemany(
+            """
+            INSERT INTO email_campaigns
+            (campaign_date, campaign_type, audience, trigger_rule, subject_line, headline, message_body, cta_label, status, notes)
+            VALUES (:campaign_date, :campaign_type, :audience, :trigger_rule, :subject_line, :headline, :message_body, :cta_label, :status, :notes)
+            """,
+            default_email_campaign_plans(),
+        )
+
+
 def get_email_campaigns() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -6284,6 +6439,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
+        ensure_email_marketing_calendar_plans()
         draft_cards = "\n".join(self.render_email_draft_card(draft) for draft in EMAIL_MARKETING_DRAFTS)
         seasonal_rows = "\n".join(
             f"<li><b>{escape(month)}</b><span>{escape(title)}</span><small>{escape(window)}</small></li>"
