@@ -15089,6 +15089,25 @@ body.modal-open {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.booking-hold-timer {
+  background: #fff7e8;
+  border: 1px solid #f4c46a;
+  border-radius: 8px;
+  color: #7a4a00;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.booking-hold-expired-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.booking-hold-expired-actions button {
+  min-height: 48px;
+}
+
 .payment-hold-form {
   display: grid;
   gap: 10px;
@@ -15315,6 +15334,7 @@ body.modal-open {
   }
 
   .booking-hold-breakdown,
+  .booking-hold-expired-actions,
   .payment-hold-form,
   .price-breakdown-summary {
     grid-template-columns: 1fr !important;

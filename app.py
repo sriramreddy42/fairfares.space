@@ -33,6 +33,7 @@ SESSION_COOKIE = "fairfares_session"
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
+BOOKING_HOLD_MINUTES = 10
 
 
 def refresh_storage_paths() -> None:
@@ -776,7 +777,10 @@ def save_booking_contact_and_send_confirmation(
         refreshed_booking = get_booking_for_user(user_id)
         if refreshed_booking:
             outbox_file, delivery_status = send_booking_confirmation_email(clean_email, full_name, refreshed_booking, origin)
-    message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
+    if booking and booking["booking_status"] == "PENDING_HOLD":
+        message = "Details saved. Pay the 10% hold within the reservation window to confirm this car."
+    else:
+        message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
     if delivery_status != "not sent" and not delivery_status.startswith("sent"):
         message = "Details saved. A local confirmation email copy was created for this booking."
     return {
@@ -902,6 +906,8 @@ def init_db() -> None:
                 additional_driver_name TEXT NOT NULL DEFAULT '',
                 additional_driver_age TEXT NOT NULL DEFAULT '',
                 saved_by_user INTEGER NOT NULL DEFAULT 0,
+                hold_started_at TEXT,
+                hold_expires_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
@@ -1253,6 +1259,8 @@ def init_db() -> None:
         ensure_column(con, "bookings", "due_at_pickup_amount", "due_at_pickup_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "estimated_market_total", "estimated_market_total REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "fairfares_savings_amount", "fairfares_savings_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "hold_started_at", "hold_started_at TEXT")
+        ensure_column(con, "bookings", "hold_expires_at", "hold_expires_at TEXT")
         ensure_column(con, "bookings", "additional_driver_name", "additional_driver_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "additional_driver_age", "additional_driver_age TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "saved_by_user", "saved_by_user INTEGER NOT NULL DEFAULT 0")
@@ -1609,6 +1617,7 @@ def get_services() -> list[sqlite3.Row]:
 
 
 def get_cars() -> list[sqlite3.Row]:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -1624,10 +1633,16 @@ def get_cars() -> list[sqlite3.Row]:
                     SELECT car_id, MAX(id) AS latest_id
                     FROM bookings
                     WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                       OR (
+                           booking_status = 'PENDING_HOLD'
+                           AND payment_status = 'HOLD_PENDING'
+                           AND hold_expires_at IS NOT NULL
+                           AND datetime(hold_expires_at) > datetime('now')
+                       )
                     GROUP BY car_id
                 ) latest ON latest.latest_id = b.id
             ) active ON active.car_id = cars.id
-                    AND UPPER(TRIM(cars.status)) = 'BOOKED'
+                    AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
             WHERE UPPER(TRIM(cars.status)) NOT IN ('MAINTENANCE', 'DELETED')
             ORDER BY sort_order, daily_price, id
             """
@@ -1773,6 +1788,37 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
     }
 
 
+def expire_stale_booking_holds() -> None:
+    with db() as con:
+        expired_rows = con.execute(
+            """
+            SELECT id, car_id
+            FROM bookings
+            WHERE booking_status = 'PENDING_HOLD'
+              AND payment_status = 'HOLD_PENDING'
+              AND hold_expires_at IS NOT NULL
+              AND datetime(hold_expires_at) <= datetime('now')
+            """
+        ).fetchall()
+        if not expired_rows:
+            return
+        expired_ids = [row["id"] for row in expired_rows]
+        expired_car_ids = {row["car_id"] for row in expired_rows}
+        placeholders = ",".join("?" for _ in expired_ids)
+        con.execute(
+            f"""
+            UPDATE bookings
+            SET booking_status = 'EXPIRED_HOLD',
+                status = 'EXPIRED_HOLD',
+                payment_status = 'HOLD_EXPIRED'
+            WHERE id IN ({placeholders})
+            """,
+            expired_ids,
+        )
+        for car_id in expired_car_ids:
+            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ? AND UPPER(TRIM(status)) = 'HOLD'", (car_id,))
+
+
 def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
     if not row:
         return rental_price_breakdown(0, 1, 0)
@@ -1788,7 +1834,11 @@ def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict
         float(row_value(row, key) or 0) > 0
         for key in ("tax_fee_amount", "booking_hold_amount", "due_at_pickup_amount", "estimated_market_total")
     )
-    if has_stored_breakdown and stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
+    has_admin_total_adjustment = any(
+        float(row_value(row, key) or 0) > 0
+        for key in ("late_fee_amount", "price_match_amount", "price_match_discount_amount")
+    )
+    if has_stored_breakdown and has_admin_total_adjustment and stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
         hold = float(row_value(row, "booking_hold_amount") or round(stored_total * BOOKING_HOLD_RATE, 2))
         tax_fee = float(row_value(row, "tax_fee_amount") or max(0, stored_total - float(breakdown["base"]) + discount))
         breakdown.update(
@@ -2853,6 +2903,7 @@ def get_admin_cars() -> list[sqlite3.Row]:
 
 
 def get_car(car_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
 
@@ -3048,6 +3099,7 @@ def get_wiki_article(article_id: int, include_internal: bool = False) -> sqlite3
 
 
 def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -3066,6 +3118,7 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
 
 
 def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -3087,10 +3140,10 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
     rows = []
     for booking in bookings:
         status = booking["booking_status"]
-        trip_type = "past" if status in {"CANCELLED", "RETURNED"} else "upcoming"
+        trip_type = "past" if status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"} else "upcoming"
         if row_value(booking, "saved_by_user"):
             trip_type = f"{trip_type} favorites"
-        status_text = "Cancelled" if status == "CANCELLED" else ("Not picked up" if status not in {"PICKED_UP", "RETURNED"} else status.replace("_", " ").title())
+        status_text = booking_status_label(status, row_value(booking, "payment_status"))
         details = {
             "bookingId": booking["booking_id"],
             "car": booking["car_name"],
@@ -3141,6 +3194,10 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
 
 
 def booking_status_label(status: str, payment_status: str = "") -> str:
+    if status == "PENDING_HOLD":
+        return "Hold pending / Pay within 10 min"
+    if status == "EXPIRED_HOLD":
+        return "Hold expired"
     if status == "CONFIRMED":
         return "Confirmed / Hold paid" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
     labels = {
@@ -3154,9 +3211,9 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
 
 
 def booking_status_class(status: str) -> str:
-    if status in {"CANCELLATION_REQUESTED", "MODIFIED"}:
+    if status in {"CANCELLATION_REQUESTED", "MODIFIED", "PENDING_HOLD"}:
         return "status-pending"
-    if status in {"CANCELLED", "RETURNED"}:
+    if status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}:
         return "status-muted"
     return "status-confirmed"
 
@@ -3164,6 +3221,8 @@ def booking_status_class(status: str) -> str:
 def payment_status_label(status: str) -> str:
     labels = {
         "PAY_AT_PICKUP": "Pay at pickup",
+        "HOLD_PENDING": "Hold payment pending",
+        "HOLD_EXPIRED": "Hold expired",
         "HOLD_DUE": "10% hold due",
         "HOLD_PAID": "10% hold paid",
         "PAID": "Paid",
@@ -3416,6 +3475,7 @@ def parse_booking_datetime(date_value: str, time_value: str) -> datetime | None:
 
 
 def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -3423,8 +3483,16 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.car_id = ?
-              AND UPPER(TRIM(cars.status)) = 'BOOKED'
-              AND bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+              AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
+              AND (
+                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                OR (
+                    bookings.booking_status = 'PENDING_HOLD'
+                    AND bookings.payment_status = 'HOLD_PENDING'
+                    AND bookings.hold_expires_at IS NOT NULL
+                    AND datetime(bookings.hold_expires_at) > datetime('now')
+                )
+              )
             ORDER BY bookings.id DESC
             LIMIT 1
             """,
@@ -3434,6 +3502,39 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
 
 def booking_datetime_from_row(row: sqlite3.Row, date_key: str, time_key: str) -> datetime | None:
     return parse_booking_datetime(row_value(row, date_key), row_value(row, time_key))
+
+
+def parse_sqlite_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(text.split(".")[0], fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def booking_hold_remaining_seconds(booking: sqlite3.Row | dict[str, object] | None) -> int:
+    if not booking or row_value(booking, "booking_status") != "PENDING_HOLD":
+        return 0
+    expires_at = parse_sqlite_datetime(row_value(booking, "hold_expires_at"))
+    if not expires_at:
+        return BOOKING_HOLD_MINUTES * 60
+    return max(0, int((expires_at - datetime.now()).total_seconds()))
+
+
+def booking_hold_remaining_label(booking: sqlite3.Row | dict[str, object] | None) -> str:
+    seconds = booking_hold_remaining_seconds(booking)
+    if seconds <= 0:
+        return "Expired"
+    minutes = seconds // 60
+    remainder = seconds % 60
+    return f"{minutes}:{remainder:02d}"
 
 
 def calculate_late_fee(row: sqlite3.Row, actual_return_date: str, actual_return_time: str) -> tuple[float, str]:
@@ -3499,6 +3600,7 @@ def create_booking_for_user(
     requested_end = parse_booking_datetime(return_date, return_time)
     if requested_start and requested_end and requested_end <= requested_start:
         raise ValueError("Return date and time must be after pickup date and time.")
+    expire_stale_booking_holds()
     candidates = [requested_car] if requested_car else get_cars()
     car = None
     for candidate in candidates:
@@ -3540,8 +3642,8 @@ def create_booking_for_user(
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
              tax_fee_amount, booking_hold_amount, due_at_pickup_amount, estimated_market_total, fairfares_savings_amount,
-             total_price, status, booking_status, payment_status, contact_name, contact_email, contact_phone)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP', ?, ?, ?)
+             total_price, status, booking_status, payment_status, hold_started_at, hold_expires_at, contact_name, contact_email, contact_phone)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_HOLD', 'HOLD_PENDING', CURRENT_TIMESTAMP, datetime('now', '+10 minutes'), ?, ?, ?)
             """,
             (
                 booking_id,
@@ -3564,7 +3666,7 @@ def create_booking_for_user(
                 price_breakdown["market_total"],
                 price_breakdown["savings"],
                 final_total,
-                "CONFIRMED",
+                "PENDING_HOLD",
                 (user["name"] or "") if user else "",
                 (user["email"] or "") if user else "",
                 (user["phone"] or "") if user else "",
@@ -3572,7 +3674,7 @@ def create_booking_for_user(
         )
         if applied_code:
             con.execute("UPDATE discounts SET used_count = used_count + 1 WHERE code = ?", (applied_code,))
-        con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (car["id"],))
+        con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (car["id"],))
     booking = get_booking_for_user(user_id)
     if not booking:
         raise RuntimeError("Booking creation failed")
@@ -3620,9 +3722,11 @@ def build_booking_preview(
         "estimated_market_total": price_breakdown["market_total"],
         "fairfares_savings_amount": price_breakdown["savings"],
         "total_price": price_breakdown["total"],
-        "status": "CONFIRMED",
-        "booking_status": "CONFIRMED",
-        "payment_status": "PAY_AT_PICKUP",
+        "status": "PENDING_HOLD",
+        "booking_status": "PENDING_HOLD",
+        "payment_status": "HOLD_PENDING",
+        "hold_started_at": "",
+        "hold_expires_at": "",
         "car_name": car["name"],
         "category": car["category"],
         "seats": car["seats"],
@@ -3687,6 +3791,12 @@ def ensure_booking_for_user(
     if existing and not car_id:
         return existing
     if car_id:
+        if (
+            existing
+            and int(row_value(existing, "car_id") or 0) == car_id
+            and row_value(existing, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKED_UP"}
+        ):
+            return existing
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
             try:
@@ -4570,6 +4680,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
             "/payment/hold": self.pay_booking_hold,
+            "/booking/hold/continue": self.continue_booking_hold,
+            "/booking/hold/remove": self.remove_booking_hold,
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
             "/guest-booking": self.create_guest_booking,
@@ -5655,10 +5767,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay the booking hold."}, 401)
             return
+        expire_stale_booking_holds()
         form = self.read_form()
         booking = get_booking_for_user(user["id"])
         if not booking:
             self.send_json({"ok": False, "message": "Book a car before paying a hold."}, 404)
+            return
+        if booking["booking_status"] == "EXPIRED_HOLD":
+            self.send_json({"ok": False, "message": "This 10-minute hold expired. Continue the hold or remove it before paying."}, 409)
             return
         if booking["booking_status"] in {"CANCELLED", "RETURNED"}:
             self.send_json({"ok": False, "message": "This booking cannot accept a payment hold."}, 400)
@@ -5705,12 +5821,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 UPDATE bookings
                 SET payment_status = 'HOLD_PAID',
+                    booking_status = 'CONFIRMED',
+                    status = 'CONFIRMED',
                     booking_hold_amount = ?,
-                    due_at_pickup_amount = ?
+                    due_at_pickup_amount = ?,
+                    hold_expires_at = NULL
                 WHERE id = ? AND user_id = ?
                 """,
                 (hold_amount, breakdown["due_at_pickup"], booking["id"], user["id"]),
             )
+            con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
         self.send_json(
             {
                 "ok": True,
@@ -5723,6 +5843,83 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "invoice_number": invoice_number,
             }
         )
+
+    def continue_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to continue this hold."}, 401)
+            return
+        expire_stale_booking_holds()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "No booking hold found."}, 404)
+            return
+        if booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "This booking does not need a hold renewal."}, 400)
+            return
+        active = active_booking_for_car(booking["car_id"])
+        if active and int(active["id"]) != int(booking["id"]):
+            self.send_json({"ok": False, "message": "That car is no longer available. Please choose another vehicle."}, 409)
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'PENDING_HOLD',
+                    status = 'PENDING_HOLD',
+                    payment_status = 'HOLD_PENDING',
+                    hold_started_at = CURRENT_TIMESTAMP,
+                    hold_expires_at = datetime('now', '+10 minutes')
+                WHERE id = ? AND user_id = ?
+                """,
+                (booking["id"], user["id"]),
+            )
+            con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (booking["car_id"],))
+        self.send_json(
+            {
+                "ok": True,
+                "message": "Your car is held for another 10 minutes. Pay the 10% hold to confirm it.",
+                "status_label": booking_status_label("PENDING_HOLD", "HOLD_PENDING"),
+                "status_class": booking_status_class("PENDING_HOLD"),
+                "remaining": f"{BOOKING_HOLD_MINUTES}:00",
+            }
+        )
+
+    def remove_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to remove this hold."}, 401)
+            return
+        booking = get_booking_for_user(user["id"])
+        if not booking or booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "No removable booking hold found."}, 404)
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'CANCELLED',
+                    status = 'CANCELLED',
+                    payment_status = 'HOLD_EXPIRED',
+                    cancellation_reason = 'Customer removed unpaid booking hold.'
+                WHERE id = ? AND user_id = ?
+                """,
+                (booking["id"], user["id"]),
+            )
+            active = con.execute(
+                """
+                SELECT 1
+                FROM bookings
+                WHERE car_id = ?
+                  AND id != ?
+                  AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                LIMIT 1
+                """,
+                (booking["car_id"], booking["id"]),
+            ).fetchone()
+            if not active:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+        self.send_json({"ok": True, "message": "Hold removed. The car is available again.", "redirect": "/#results"})
 
     def save_search_car(self) -> None:
         user = self.current_user()
@@ -6599,6 +6796,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
         booking_status_options = (
+            ("PENDING_HOLD", "Pending 10-min hold"),
+            ("EXPIRED_HOLD", "Expired hold"),
             ("CONFIRMED", "Confirmed / Pay at pickup"),
             ("MODIFIED", "Modification pending"),
             ("CANCELLATION_REQUESTED", "Cancellation requested"),
@@ -6610,7 +6809,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{escape(label)}</option>'
             for status, label in booking_status_options
         )
-        payment_options = '<option value="PAY_AT_PICKUP" selected>Pay at pickup</option>'
+        payment_status_options = (
+            ("HOLD_PENDING", "Hold payment pending"),
+            ("HOLD_EXPIRED", "Hold expired"),
+            ("HOLD_PAID", "10% hold paid"),
+            ("PAY_AT_PICKUP", "Pay at pickup"),
+        )
+        payment_options = "".join(
+            f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{escape(label)}</option>'
+            for status, label in payment_status_options
+        )
         request_note = ""
         if is_request:
             request_type = "Cancellation approval requested" if row["booking_status"] == "CANCELLATION_REQUESTED" else "Modification approval requested"
@@ -6966,9 +7174,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking_status = form.get("booking_status", "CONFIRMED")
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
-        if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
+        if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status != "PAY_AT_PICKUP":
+        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAY_AT_PICKUP"}:
             payment_status = "PAY_AT_PICKUP"
         reason = form.get("reason", "")
         if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}:
@@ -6987,11 +7195,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (booking_status, payment_status, booking_status, reason, form.get("booking_id")),
             )
-            if booking_status == "CANCELLED":
+            if booking_status in {"CANCELLED", "EXPIRED_HOLD"}:
                 con.execute(
                     """
                     UPDATE cars
                     SET status = 'AVAILABLE'
+                    WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
+                    """,
+                    (form.get("booking_id"),),
+                )
+            elif booking_status == "PENDING_HOLD":
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'HOLD'
                     WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
                     """,
                     (form.get("booking_id"),),
@@ -7558,8 +7775,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         show_start_experience = bool(user and is_first_time_user and not selected_car_id)
         show_signed_out_empty = bool(not user and not selected_car_id)
         trip_rows = render_user_trip_rows(user_bookings, saved_cars)
-        upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
-        past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
+        upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         live_status = live_status_for_booking(booking)
         default_pickup, default_return = default_trip_dates()
         modify_pickup_date = display_date_to_input(booking["pickup_date"] if booking else "", default_pickup)
@@ -7618,6 +7835,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         first_booking_promo = ""
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
+        booking_status = row_value(booking, "booking_status") if booking else ""
+        hold_pending = booking_status == "PENDING_HOLD"
+        hold_expired = booking_status == "EXPIRED_HOLD"
         if is_guest_checkout:
             dashboard_booking_title = "Complete Your Booking"
             dashboard_booking_body = "Enter your contact details and we will save this trip under your email and phone."
@@ -7629,6 +7849,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dashboard_booking_body = (
                 "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
             )
+        elif hold_expired:
+            dashboard_booking_title = "Hold Expired"
+            dashboard_booking_body = "Continue the hold if you still want this car, or remove it and search again."
+        elif hold_pending:
+            dashboard_booking_title = "Car Held"
+            dashboard_booking_body = "Your car is temporarily held. Pay the 10% hold to confirm it before the timer ends."
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
             dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
@@ -7694,7 +7920,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
-        if booking and selected_car_id:
+        if booking and (selected_car_id or hold_pending or hold_expired):
             name_parts = ((user["name"] if user else "") or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
@@ -7736,20 +7962,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
             referral_share_url = f"{self.public_origin()}/deals"
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
+            hold_remaining = booking_hold_remaining_label(booking)
+            hold_decision = ""
+            if hold_expired:
+                hold_decision = """
+                    <div class="booking-hold-expired-actions">
+                        <button type="button" class="select-button" id="continueHoldButton">Continue hold</button>
+                        <button type="button" class="light-button" id="removeHoldButton">Remove</button>
+                    </div>
+                """
+            elif hold_pending:
+                hold_decision = f'<p class="booking-hold-timer">Reserved for <b id="holdCountdown">{escape(hold_remaining)}</b>. Pay the hold to confirm.</p>'
             payment_hold_card = f"""
                 <section class="booking-hold-panel" id="bookingHoldPanel">
                     <div>
-                        <p class="eyebrow">Payment hold</p>
-                        <h3>Pay 10% now, finish at pickup.</h3>
-                        <p>The hold is deducted from your pickup balance. It becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.</p>
+                        <p class="eyebrow">{'Hold expired' if hold_expired else '10-minute reservation hold'}</p>
+                        <h3>{'Continue this car hold?' if hold_expired else 'Pay 10% now, finish at pickup.'}</h3>
+                        <p>{'This car is no longer reserved. Continue the hold to reopen a fresh 10-minute payment window, or remove it and search again.' if hold_expired else 'The car is held for 10 minutes while you enter details and payment. The 10% hold is deducted from your pickup balance and becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.'}</p>
                     </div>
+                    {hold_decision}
                     <div class="booking-hold-breakdown">
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
                         <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>10% hold</span>
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
                     </div>
                     {'<p class="payment-hold-paid">Hold paid. Your pickup balance is updated.</p>' if hold_paid else ''}
-                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid) else ''}>
+                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
                         <label><span>Cardholder name *</span><input name="cardholder_name" autocomplete="cc-name" required></label>
                         <label><span>Card last 4 *</span><input name="card_last4" inputmode="numeric" maxlength="19" placeholder="1234" required></label>
                         <input type="hidden" name="payment_method" value="Card">
@@ -7763,9 +8001,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
-                    <p class="eyebrow">Confirmed / Pay at pickup</p>
-                    <h2>Your car is booked.</h2>
-                    <p>FairFares shows the rental price, taxes, fees, hold, and pickup balance before you drive. Your savings stay visible on the booking, receipt, rental agreement, and confirmation email.</p>
+                    <p class="eyebrow">{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</p>
+                    <h2>{'Your car hold expired.' if hold_expired else ('Your car is held for 10 minutes.' if hold_pending else 'Your car is booked.')}</h2>
+                    <p>{'Continue the hold to keep checkout moving, or remove it if you are done.' if hold_expired else 'FairFares shows the rental price, taxes, fees, hold, and pickup balance before you drive. Your savings stay visible on the booking, receipt, rental agreement, and confirmation email.'}</p>
                     {guest_account_note}
                 </div>
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>

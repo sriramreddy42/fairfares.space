@@ -2227,6 +2227,40 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
     });
 });
 
+document.getElementById("continueHoldButton")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  button.disabled = true;
+  fetch("/booking/hold/continue", { method: "POST" })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Hold continued.";
+      window.setTimeout(() => window.location.reload(), 450);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Unable to continue this hold.";
+      button.disabled = false;
+    });
+});
+
+document.getElementById("removeHoldButton")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  button.disabled = true;
+  fetch("/booking/hold/remove", { method: "POST" })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Hold removed.";
+      window.setTimeout(() => {
+        window.location.href = payload.redirect || "/#results";
+      }, 650);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Unable to remove this hold.";
+      button.disabled = false;
+    });
+});
+
 function referralNameSlug(form) {
   const firstName = form?.querySelector("[name='first_name']")?.value || "";
   const lastName = form?.querySelector("[name='last_name']")?.value || "";
