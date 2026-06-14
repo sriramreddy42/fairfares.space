@@ -124,8 +124,10 @@ def configured_admin_credentials() -> tuple[str, str]:
     return email, password
 
 
-def ensure_default_admin(con: sqlite3.Connection) -> None:
-    email, password = configured_admin_credentials()
+def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
+    email = email.strip().lower()
+    if not email or not password:
+        return
     admin = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     password_hash = hash_password(password)
     if not admin:
@@ -166,6 +168,13 @@ def ensure_default_admin(con: sqlite3.Connection) -> None:
             """,
             (admin["id"],),
         )
+
+
+def ensure_default_admin(con: sqlite3.Connection) -> None:
+    ensure_admin_account(con, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+    configured_email, configured_password = configured_admin_credentials()
+    if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
+        ensure_admin_account(con, configured_email, configured_password)
 
 
 def create_verification(user_id: int, email: str, purpose: str = "ACCOUNT") -> str:
