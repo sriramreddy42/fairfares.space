@@ -72,6 +72,18 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(refreshed["payment_status"], "HOLD_EXPIRED")
         self.assertEqual(released_car["status"], "AVAILABLE")
 
+    def test_customer_checkout_labels_are_clean(self):
+        self.assertEqual(app.booking_status_label("PENDING_HOLD", "HOLD_PENDING"), "Payment window")
+        self.assertEqual(app.booking_status_label("EXPIRED_HOLD", "HOLD_EXPIRED"), "Expired")
+        self.assertEqual(app.payment_status_label("HOLD_PENDING"), "Payment pending")
+        self.assertEqual(app.payment_status_label("HOLD_PAID"), "10% paid")
+
+    def test_checkout_timer_frontend_hook_exists(self):
+        js = Path("static/js/app.js").read_text()
+        self.assertIn("startBookingCountdown", js)
+        self.assertIn("data-hold-seconds", js)
+        self.assertIn("Complete payment in", Path("app.py").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
