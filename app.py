@@ -3057,6 +3057,195 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def assistant_user_role(user: sqlite3.Row | None) -> str:
+    if not user:
+        return "guest"
+    if int(row_value(user, "is_admin") or 0) == 1 or row_value(user, "role") == "ADMIN":
+        return "admin"
+    return "user"
+
+
+def assistant_car_context(limit: int = 5) -> list[dict[str, object]]:
+    cars = [
+        car for car in get_cars()
+        if str(row_value(car, "status") or "").upper().strip() == "AVAILABLE"
+    ]
+    cars.sort(key=lambda car: float(row_value(car, "daily_price") or 0))
+    return [
+        {
+            "id": row_value(car, "id"),
+            "name": row_value(car, "name"),
+            "category": row_value(car, "category"),
+            "fuel": row_value(car, "fuel_type"),
+            "daily_price": float(row_value(car, "daily_price") or 0),
+            "seats": row_value(car, "seats"),
+            "bags": row_value(car, "bags"),
+            "status": row_value(car, "status"),
+            "select_url": f"/manage-booking?car_id={row_value(car, 'id')}",
+        }
+        for car in cars[:limit]
+    ]
+
+
+def assistant_booking_context(user: sqlite3.Row | None) -> dict[str, object] | None:
+    if not user:
+        return None
+    booking = get_booking_for_user(int(user["id"]))
+    if not booking:
+        return None
+    breakdown = booking_price_breakdown(booking)
+    return {
+        "booking_id": row_value(booking, "booking_id"),
+        "car": row_value(booking, "car_name"),
+        "status": booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")),
+        "raw_status": row_value(booking, "booking_status"),
+        "pickup": f"{row_value(booking, 'pickup_location')} · {row_value(booking, 'pickup_date')} {row_value(booking, 'pickup_time')}",
+        "dropoff": f"{row_value(booking, 'dropoff_location')} · {row_value(booking, 'dropoff_date')} {row_value(booking, 'dropoff_time')}",
+        "total": format_money(breakdown["total"]),
+        "due_now": format_money(breakdown["booking_hold"]),
+        "due_at_pickup": format_money(breakdown["due_at_pickup"]),
+        "manage_url": "/manage-booking",
+        "cancel_url": "/manage-booking?agent=cancel#cancel",
+        "documents_url": "/manage-booking?agent=documents#documents",
+    }
+
+
+def assistant_database_context(question: str, user: sqlite3.Row | None, include_internal: bool) -> dict[str, object]:
+    articles = search_wiki_articles(question, include_internal=include_internal)
+    context: dict[str, object] = {
+        "role": assistant_user_role(user),
+        "cars": assistant_car_context(),
+        "booking": assistant_booking_context(user),
+        "wiki": [
+            {
+                "title": row_value(article, "title"),
+                "body": row_value(article, "body"),
+                "visibility": row_value(article, "visibility"),
+            }
+            for article in articles[:4]
+        ],
+    }
+    if include_internal:
+        context["fleet"] = get_fleet_summary()
+        context["admin_metrics"] = get_admin_metrics()
+    return context
+
+
+def assistant_actions(question: str, context: dict[str, object]) -> list[dict[str, str]]:
+    lower = question.lower()
+    cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
+    actions: list[dict[str, str]] = []
+    if any(word in lower for word in ("book", "cheapest", "car", "suv", "sedan", "select")):
+        cheapest = cars[0] if cars else None
+        if isinstance(cheapest, dict):
+            actions.append({"label": f"Book {cheapest['name']}", "href": str(cheapest["select_url"]), "kind": "book"})
+        actions.append({"label": "Browse all cars", "href": "/#results", "kind": "browse"})
+    if any(word in lower for word in ("cancel", "refund")):
+        actions.append({"label": "Review cancellation", "href": "/manage-booking?agent=cancel#cancel", "kind": "cancel"})
+    if any(word in lower for word in ("booking", "pickup", "drop", "receipt", "invoice", "document", "agreement")) and booking:
+        actions.append({"label": "Open my booking", "href": "/manage-booking", "kind": "booking"})
+        actions.append({"label": "Download documents", "href": "/manage-booking?agent=documents#documents", "kind": "documents"})
+    if any(word in lower for word in ("support", "help", "issue", "problem")):
+        actions.append({"label": "Open support", "href": "/manage-booking?agent=support#support", "kind": "support"})
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for action in actions:
+        key = action["href"] + action["label"]
+        if key not in seen:
+            deduped.append(action)
+            seen.add(key)
+    return deduped[:4]
+
+
+def local_assistant_answer(question: str, context: dict[str, object]) -> str:
+    lower = question.lower()
+    cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
+    wiki = context.get("wiki") if isinstance(context.get("wiki"), list) else []
+    if any(word in lower for word in ("cheapest", "cheap", "lowest", "price", "car", "suv", "sedan", "book")) and cars:
+        cheapest = cars[0]
+        return (
+            f"The lowest available option I see is {cheapest['name']} at "
+            f"{format_money(float(cheapest['daily_price']))}/day. I can take you to checkout or show all cars."
+        )
+    if booking and any(word in lower for word in ("my booking", "pickup", "drop", "status", "receipt", "invoice", "document")):
+        return (
+            f"Your booking {booking['booking_id']} is {booking['status']} for {booking['car']}. "
+            f"Pickup: {booking['pickup']}. Total estimate: {booking['total']}; due now: {booking['due_now']}; "
+            f"due at pickup: {booking['due_at_pickup']}."
+        )
+    if any(word in lower for word in ("cancel", "refund")):
+        policy = wiki[0] if wiki else None
+        policy_text = f" {policy['title']}: {policy['body']}" if isinstance(policy, dict) else ""
+        return (
+            "Cancellation and refund review depends on timing, booking status, payment record, and provider terms."
+            f"{policy_text} I can open your cancellation screen so you can confirm the request."
+        )
+    if any(word in lower for word in ("admin", "database", "fleet", "users")) and context.get("role") == "admin":
+        metrics = context.get("admin_metrics") or {}
+        return (
+            "Admin database snapshot: "
+            f"{row_value(metrics, 'available') if isinstance(metrics, dict) else ''} available cars, "
+            f"{row_value(metrics, 'booked') if isinstance(metrics, dict) else ''} bookings, "
+            f"{row_value(metrics, 'users') if isinstance(metrics, dict) else ''} student users."
+        )
+    if wiki:
+        primary = wiki[0]
+        return f"{primary['title']}: {primary['body']}"
+    return (
+        "I can help with cars, booking status, cancellation, refunds, receipts, Explorer trips, discounts, and support. "
+        "Ask for the cheapest car, your pickup time, refund policy, or help booking."
+    )
+
+
+def openai_assistant_answer(question: str, context: dict[str, object]) -> str | None:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    payload = {
+        "model": os.environ.get("OPENAI_AGENT_MODEL", "gpt-4o-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You are FairFares Assistant. Answer using only the provided context. "
+                    "Respect role permissions. Do not claim you completed booking, cancellation, or payment; "
+                    "tell the user which action button to use for those steps. Keep answers concise."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({"question": question, "context": context}, default=str),
+            },
+        ],
+        "max_output_tokens": 260,
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    output_text = data.get("output_text")
+    if output_text:
+        return str(output_text).strip()
+    chunks: list[str] = []
+    for item in data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            if content.get("type") in {"output_text", "text"} and content.get("text"):
+                chunks.append(str(content["text"]))
+    return " ".join(chunks).strip() or None
+
+
 def search_wiki_articles(query: str = "", include_internal: bool = False) -> list[sqlite3.Row]:
     clean_query = " ".join((query or "").split())[:120]
     clauses = ["status = 'PUBLISHED'"]
@@ -6183,47 +6372,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def ask_wiki_agent(self) -> None:
         user = self.current_user()
-        include_internal = bool(user and (int(user["is_admin"] or 0) == 1 or row_value(user, "role") == "ADMIN"))
+        include_internal = assistant_user_role(user) == "admin"
         form = self.read_form()
         question = " ".join((form.get("question") or "").split())[:180]
         if not question:
-            self.send_json({"ok": False, "message": "Ask a question like cheapest cars, refund policy, or Explorer memories."}, 400)
+            self.send_json({"ok": False, "message": "Ask about cars, booking, cancellation, refunds, Explorer, or support."}, 400)
             return
-        articles = search_wiki_articles(question, include_internal=include_internal)
-        if not articles:
-            self.send_json(
-                {
-                    "ok": True,
-                    "answer": "I could not find a close Wiki match yet. Try asking about cheapest cars, refund policy, Explorer, receipts, pickup, or cancellation.",
-                    "sources": [],
-                    "scope": "Admin Wiki" if include_internal else "Public Wiki",
-                }
-            )
-            return
-
-        primary = articles[0]
-        supporting = articles[1:3]
-        answer_parts = [
-            f"{row_value(primary, 'title')}: {row_value(primary, 'body')}",
-        ]
-        if supporting:
-            answer_parts.append(
-                "Related notes: "
-                + " ".join(f"{row_value(row, 'title')}." for row in supporting)
-            )
+        context = assistant_database_context(question, user, include_internal)
+        answer = openai_assistant_answer(question, context) or local_assistant_answer(question, context)
+        wiki_sources = context.get("wiki") if isinstance(context.get("wiki"), list) else []
         sources = [
             {
-                "title": row_value(row, "title"),
-                "visibility": row_value(row, "visibility"),
+                "title": str(row.get("title", "")),
+                "visibility": str(row.get("visibility", "")),
             }
-            for row in articles[:3]
+            for row in wiki_sources[:3]
+            if isinstance(row, dict)
         ]
         self.send_json(
             {
                 "ok": True,
-                "answer": " ".join(answer_parts),
+                "answer": answer,
                 "sources": sources,
-                "scope": "Admin Wiki" if include_internal else "Public Wiki",
+                "actions": assistant_actions(question, context),
+                "scope": "Admin database + Wiki" if include_internal else ("Your FairFares data + public Wiki" if user else "Public FairFares data"),
+                "agent": "FairFares Assistant",
             }
         )
 

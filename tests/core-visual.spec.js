@@ -187,9 +187,12 @@ test("wiki search respects public and internal visibility", async ({ page }) => 
   await expect(page.locator(".wiki-agent-prompt")).toContainText(/cheapest cars|refund policy|Explorer memories|pickup documents|student savings/);
   await page.locator(".wiki-agent-orb").click();
   await expect(page.locator(".wiki-agent-panel")).toBeVisible();
+  await expect(page.locator(".wiki-agent-backdrop")).toBeVisible();
+  await expect(page.locator(".wiki-agent-head")).toContainText("FairFares Assistant");
   await page.locator(".wiki-agent-panel input[name='question']").fill("refund policy");
   await page.locator(".wiki-agent-submit").click();
   await expect(page.locator(".wiki-agent-answer")).toContainText("Refund and cancellation policy");
+  await expect(page.locator(".wiki-agent-actions a", { hasText: "Review cancellation" })).toBeVisible();
 
   await page.goto("/wiki?q=rag");
   await page.waitForLoadState("networkidle");
