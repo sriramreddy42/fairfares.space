@@ -14295,11 +14295,27 @@ body.modal-open {
 
 .wiki-agent-orb,
 .wiki-agent-prompt,
-.wiki-agent-panel {
+.wiki-agent-panel,
+.wiki-agent-backdrop {
   pointer-events: auto;
 }
 
+.wiki-agent-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.48);
+  cursor: pointer;
+  z-index: 88;
+}
+
+.wiki-agent-backdrop[hidden] {
+  display: none;
+}
+
 .wiki-agent-orb {
+  position: relative;
+  z-index: 91;
   width: 74px;
   height: 74px;
   border: 0;
@@ -14332,6 +14348,8 @@ body.modal-open {
 }
 
 .wiki-agent-prompt {
+  position: relative;
+  z-index: 91;
   margin-bottom: 14px;
   min-width: 152px;
   max-width: 220px;
@@ -14352,16 +14370,17 @@ body.modal-open {
 }
 
 .wiki-agent-panel {
-  position: absolute;
-  right: 0;
-  bottom: 92px;
-  width: min(390px, calc(100vw - 32px));
+  position: fixed;
+  right: 24px;
+  bottom: 112px;
+  width: min(680px, calc(100vw - 48px));
   border: 1px solid #d8e1ee;
   border-radius: 18px;
   background: #fff;
   color: #071845;
   box-shadow: 0 24px 70px rgba(7, 24, 69, 0.28);
   padding: 18px;
+  z-index: 92;
 }
 
 .wiki-agent-panel[hidden] {
@@ -14460,6 +14479,32 @@ body.modal-open {
   padding: 12px;
 }
 
+.wiki-agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.wiki-agent-actions a {
+  align-items: center;
+  background: #07143f;
+  border: 1px solid #07143f;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 950;
+  min-height: 40px;
+  padding: 8px 13px;
+  text-decoration: none;
+}
+
+.wiki-agent-actions a[data-agent-action="cancel"] {
+  background: #fff;
+  border-color: #ed001c;
+  color: #ed001c;
+}
+
 @media (max-width: 900px) {
   .wiki-layout {
     padding: 12px;
@@ -14508,10 +14553,20 @@ body.modal-open {
   }
 
   .wiki-agent-panel {
-    right: 0;
-    bottom: 78px;
+    right: 10px;
+    bottom: 88px;
+    width: calc(100vw - 20px);
     padding: 14px;
     border-radius: 16px;
+  }
+
+  .wiki-agent-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .wiki-agent-actions a {
+    justify-content: center;
   }
 }
 

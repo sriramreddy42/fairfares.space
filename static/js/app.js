@@ -2565,40 +2565,46 @@ function initWikiAgentWidget() {
   if (document.getElementById("wikiAgentWidget")) return;
   const prompts = [
     "cheapest cars",
+    "cancel my booking",
+    "my pickup time",
     "refund policy",
+    "book an SUV",
     "Explorer memories",
     "pickup documents",
-    "student savings",
+    "support help",
   ];
   const widget = document.createElement("section");
   widget.className = "wiki-agent-widget";
   widget.id = "wikiAgentWidget";
   widget.innerHTML = `
+    <button class="wiki-agent-backdrop" type="button" aria-label="Close FairFares Assistant" hidden></button>
     <div class="wiki-agent-prompt" aria-live="polite"><span>${prompts[0]}</span></div>
-    <button class="wiki-agent-orb" type="button" aria-expanded="false" aria-controls="wikiAgentPanel" aria-label="Ask FairFares Wiki agent">
+    <button class="wiki-agent-orb" type="button" aria-expanded="false" aria-controls="wikiAgentPanel" aria-label="Ask FairFares Assistant">
       <b>AI</b>
     </button>
     <form class="wiki-agent-panel" id="wikiAgentPanel" hidden>
       <div class="wiki-agent-head">
         <div>
-          <b>Ask Wiki Agent</b>
-          <span>Answers come from FairFares Wiki access you are allowed to see.</span>
+          <b>FairFares Assistant</b>
+          <span>Ask about cars, bookings, refunds, Explorer trips, discounts, or support. Actions still ask you to confirm.</span>
         </div>
-        <button type="button" class="wiki-agent-close" aria-label="Close Wiki agent">x</button>
+        <button type="button" class="wiki-agent-close" aria-label="Close FairFares Assistant">x</button>
       </div>
       <div class="wiki-agent-chips" aria-label="Suggested questions">
-        ${prompts.slice(0, 4).map((prompt) => `<button type="button" data-agent-question="${prompt}">${prompt}</button>`).join("")}
+        ${prompts.slice(0, 6).map((prompt) => `<button type="button" data-agent-question="${prompt}">${prompt}</button>`).join("")}
       </div>
       <label>
         <span>Your question</span>
-        <input name="question" autocomplete="off" placeholder="Ask about cheapest cars or refund policy">
+        <input name="question" autocomplete="off" placeholder="Ask to book, cancel, compare cars, or find a policy">
       </label>
       <button class="wiki-agent-submit" type="submit">Ask</button>
-      <div class="wiki-agent-answer" aria-live="polite">Pick a suggestion or ask a FairFares question.</div>
+      <div class="wiki-agent-answer" aria-live="polite">Pick a suggestion or ask anything about FairFares.</div>
+      <div class="wiki-agent-actions" aria-label="Assistant actions"></div>
     </form>
   `;
   document.body.appendChild(widget);
 
+  const backdrop = widget.querySelector(".wiki-agent-backdrop");
   const promptBubble = widget.querySelector(".wiki-agent-prompt");
   const promptText = promptBubble?.querySelector("span");
   const orb = widget.querySelector(".wiki-agent-orb");
@@ -2606,11 +2612,13 @@ function initWikiAgentWidget() {
   const close = widget.querySelector(".wiki-agent-close");
   const input = widget.querySelector("input[name='question']");
   const answer = widget.querySelector(".wiki-agent-answer");
+  const actionsBox = widget.querySelector(".wiki-agent-actions");
   const submit = widget.querySelector(".wiki-agent-submit");
   let promptIndex = 0;
 
   const setOpen = (open) => {
     panel.hidden = !open;
+    backdrop.hidden = !open;
     orb.setAttribute("aria-expanded", open ? "true" : "false");
     widget.classList.toggle("is-open", open);
     if (open) input?.focus();
@@ -2629,6 +2637,7 @@ function initWikiAgentWidget() {
   window.setInterval(rotatePrompt, 2000);
   orb.addEventListener("click", () => setOpen(panel.hidden));
   close.addEventListener("click", () => setOpen(false));
+  backdrop.addEventListener("click", () => setOpen(false));
 
   widget.querySelectorAll("[data-agent-question]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2645,7 +2654,8 @@ function initWikiAgentWidget() {
       return;
     }
     submit.disabled = true;
-    answer.textContent = "Searching FairFares Wiki...";
+    answer.textContent = "Checking FairFares data...";
+    if (actionsBox) actionsBox.innerHTML = "";
     fetch("/wiki/ask", {
       method: "POST",
       body: new URLSearchParams({ question }),
@@ -2656,9 +2666,14 @@ function initWikiAgentWidget() {
           ? ` Sources: ${payload.sources.map((source) => source.title).join(", ")}.`
           : "";
         answer.textContent = `${payload.answer || payload.message || "No answer found."}${sourceText}`;
+        if (actionsBox && Array.isArray(payload.actions)) {
+          actionsBox.innerHTML = payload.actions
+            .map((action) => `<a href="${action.href || "#"}" data-agent-action="${action.kind || "open"}">${action.label || "Open"}</a>`)
+            .join("");
+        }
       })
       .catch((payload) => {
-        answer.textContent = payload?.message || "Wiki Agent could not answer right now.";
+        answer.textContent = payload?.message || "FairFares Assistant could not answer right now.";
       })
       .finally(() => {
         submit.disabled = false;
@@ -2671,3 +2686,16 @@ function initWikiAgentWidget() {
 }
 
 initWikiAgentWidget();
+
+function openManageTabFromAgentQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const target = params.get("agent") || window.location.hash.replace("#", "");
+  if (!target) return;
+  const allowed = new Set(["modify", "cancel", "documents", "details", "support"]);
+  if (!allowed.has(target)) return;
+  if (typeof showManagePanel === "function") {
+    showManagePanel(target);
+  }
+}
+
+openManageTabFromAgentQuery();
