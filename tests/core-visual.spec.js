@@ -96,7 +96,8 @@ async function loginAsAdmin(page) {
   await page.fill("input[name='password']", "ChangeMe123!");
   await page.click("button[type='submit']");
   await page.waitForLoadState("networkidle");
-  await expect(page).toHaveURL(/\/admin|\/activation-pending/);
+  await expect(page).toHaveURL(/\/admin/);
+  await expect(page.locator("body")).toContainText("Admin");
 }
 
 async function expectFeedbackWidget(page) {
@@ -152,11 +153,18 @@ test("manage booking page desktop and mobile visual smoke", async ({ page }) => 
 
 test("uploaded Explorer avatar follows the user into the header", async ({ page }) => {
   const avatarData =
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' fill='%2300c2ff'/%3E%3Ccircle cx='20' cy='20' r='12' fill='%23ed001c'/%3E%3C/svg%3E";
-  await page.addInitScript((src) => {
-    window.localStorage.setItem("fairfaresExplorerProfilePhoto", src);
-  }, avatarData);
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+PHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjMDBjMmZmIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9IiNlZDAwMWMiLz48L3N2Zz4=";
   await loginAsAdmin(page);
+  await page.goto("/explorer");
+  const saveResult = await page.evaluate(async (src) => {
+    const response = await fetch("/profile/photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ photo: src }),
+    });
+    return response.json();
+  }, avatarData);
+  expect(saveResult.ok).toBeTruthy();
   await page.goto("/manage-booking");
   await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /data:image/);
 });
@@ -169,6 +177,38 @@ test("deals and buy cars pages visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/deals", "deals-mobile.png");
   await smokePage(page, "/buy-cars", "buy-cars-mobile.png");
+});
+
+test("wiki search respects public and internal visibility", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await smokePage(page, "/wiki", "wiki-desktop.png");
+  await expect(page.locator(".wiki-result-card", { hasText: "How FairFares savings work" })).toBeVisible();
+  await expect(page.locator("#wikiAgentWidget")).toBeVisible();
+  await expect(page.locator(".wiki-agent-prompt")).toContainText(/cheapest cars|refund policy|Explorer memories|pickup documents|student savings/);
+  await page.locator(".wiki-agent-orb").click();
+  await expect(page.locator(".wiki-agent-panel")).toBeVisible();
+  await expect(page.locator(".wiki-agent-backdrop")).toBeVisible();
+  await expect(page.locator(".wiki-agent-head")).toContainText("FairFares Assistant");
+  await page.locator(".wiki-agent-panel input[name='question']").fill("refund policy");
+  await page.locator(".wiki-agent-submit").click();
+  await expect(page.locator(".wiki-agent-answer")).toContainText("Refund and cancellation policy");
+  await expect(page.locator(".wiki-agent-actions a", { hasText: "Review cancellation" })).toBeVisible();
+
+  await page.goto("/wiki?q=rag");
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("body")).not.toContainText("Your files flow into a vector database");
+
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await smokePage(page, "/wiki", "wiki-mobile.png");
+
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await loginAsAdmin(page);
+  await smokePage(page, "/admin/wiki?q=rag", "admin-wiki-desktop.png");
+  await expect(page.locator("body")).toContainText("Your files flow into a vector database");
+  await page.locator(".wiki-agent-orb").click();
+  await page.locator(".wiki-agent-panel input[name='question']").fill("rag");
+  await page.locator(".wiki-agent-submit").click();
+  await expect(page.locator(".wiki-agent-answer")).toContainText("OpenAI + RAG knowledge flow");
 });
 
 test("auth pages desktop and mobile visual smoke", async ({ page }) => {
@@ -193,6 +233,7 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin/users", "admin-users-desktop.png"],
     ["/admin/tickets", "admin-tickets-desktop.png"],
     ["/admin/discounts", "admin-discounts-desktop.png"],
+    ["/admin/wiki", "admin-wiki-loop-desktop.png"],
     ["/admin/email-marketing", "admin-email-marketing-desktop.png"],
     ["/admin/pickup", "admin-pickup-desktop.png"],
   ]) {
@@ -207,6 +248,7 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin/users", "admin-users-mobile.png"],
     ["/admin/tickets", "admin-tickets-mobile.png"],
     ["/admin/discounts", "admin-discounts-mobile.png"],
+    ["/admin/wiki", "admin-wiki-mobile.png"],
     ["/admin/email-marketing", "admin-email-marketing-mobile.png"],
     ["/admin/pickup", "admin-pickup-mobile.png"],
   ]) {

@@ -30,6 +30,10 @@ OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
+MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
+DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
+DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
+BOOKING_HOLD_MINUTES = 10
 
 
 def refresh_storage_paths() -> None:
@@ -113,6 +117,65 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
     columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def configured_admin_credentials() -> tuple[str, str]:
+    email = os.environ.get("FAIRFARES_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL).strip().lower()
+    password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+    return email, password
+
+
+def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
+    email = email.strip().lower()
+    if not email or not password:
+        return
+    admin = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    password_hash = hash_password(password)
+    if not admin:
+        con.execute(
+            """
+            INSERT INTO users
+            (name, email, password_hash, is_admin, role, is_verified, verified_at)
+            VALUES (?, ?, ?, 1, 'ADMIN', 1, CURRENT_TIMESTAMP)
+            """,
+            ("FairFares Admin", email, password_hash),
+        )
+        return
+    if not verify_password(password, admin["password_hash"]):
+        con.execute(
+            """
+            UPDATE users
+            SET name = COALESCE(NULLIF(name, ''), 'FairFares Admin'),
+                password_hash = ?,
+                is_admin = 1,
+                role = 'ADMIN',
+                is_verified = 1,
+                verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                guest_account = 0
+            WHERE id = ?
+            """,
+            (password_hash, admin["id"]),
+        )
+    else:
+        con.execute(
+            """
+            UPDATE users
+            SET is_admin = 1,
+                role = 'ADMIN',
+                is_verified = 1,
+                verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                guest_account = 0
+            WHERE id = ?
+            """,
+            (admin["id"],),
+        )
+
+
+def ensure_default_admin(con: sqlite3.Connection) -> None:
+    ensure_admin_account(con, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+    configured_email, configured_password = configured_admin_credentials()
+    if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
+        ensure_admin_account(con, configured_email, configured_password)
 
 
 def create_verification(user_id: int, email: str, purpose: str = "ACCOUNT") -> str:
@@ -300,12 +363,17 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     support_phone = "9372518688"
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
     savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
+    breakdown = booking_price_breakdown(booking)
     booking_summary = (
         f"Booking ID: {booking['booking_id']}\n"
         f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
         f"Pickup: {booking['pickup_location']} on {booking['pickup_date']} at {booking['pickup_time']}\n"
         f"Drop-off: {booking['dropoff_location']} on {booking['dropoff_date']} at {booking['dropoff_time']}\n"
-        f"Total due at pickup: {format_money(booking['total_price'])}\n"
+        f"Rental subtotal: {format_money(breakdown['base'])}\n"
+        f"Taxes and fees estimate: {format_money(breakdown['tax_fee_amount'])}\n"
+        f"FairFares total: {format_money(breakdown['total'])}\n"
+        f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+        f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
         f"Payment: {payment_status_label(booking['payment_status'])}\n"
         f"Questions: {support_phone}\n"
     )
@@ -327,7 +395,11 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>Vehicle</b></td><td>{html.escape(booking['category'])} | {html.escape(booking['car_name'])} or similar</td></tr>
             <tr><td><b>Pickup</b></td><td>{html.escape(booking['pickup_location'])}<br>{html.escape(booking['pickup_date'])} at {html.escape(booking['pickup_time'])}</td></tr>
             <tr><td><b>Drop-off</b></td><td>{html.escape(booking['dropoff_location'])}<br>{html.escape(booking['dropoff_date'])} at {html.escape(booking['dropoff_time'])}</td></tr>
-            <tr><td><b>Total due</b></td><td>{html.escape(format_money(booking['total_price']))}</td></tr>
+            <tr><td><b>Rental subtotal</b></td><td>{html.escape(format_money(breakdown['base']))}</td></tr>
+            <tr><td><b>Taxes and fees</b></td><td>{html.escape(format_money(breakdown['tax_fee_amount']))}</td></tr>
+            <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
+            <tr><td><b>10% booking hold</b></td><td>{html.escape(format_money(breakdown['booking_hold']))}</td></tr>
+            <tr><td><b>Due at pickup</b></td><td>{html.escape(format_money(breakdown['due_at_pickup']))}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
           </table>
           <p><b>{'FairFares savings' if float(row_value(booking, 'discount_amount') or 0) > 0 else 'Price match promise'}:</b> {html.escape(savings_or_price_promise)}</p>
@@ -442,6 +514,57 @@ def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, do
         f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
         encoding="utf-8",
     )
+    return outbox_file, delivery_status
+
+
+def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = "Reset your FairFares password"
+    text_body = (
+        f"Hi {name},\n\n"
+        "We received a request to reset your FairFares password. Click the link below to set a new password:\n"
+        f"{reset_link}\n\n"
+        "This link expires in 30 minutes for your security.\n\n"
+        "If you didn't request a password reset, ignore this email and your password will remain unchanged.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <p>Hi {html.escape(name)},</p>
+          <p>We received a request to reset your FairFares password.</p>
+          <p><a href="{html.escape(reset_link)}" style="background:#e60019;color:#fff;padding:12px 24px;border-radius:5px;text-decoration:none;display:inline-block;font-weight:700">Reset Password</a></p>
+          <p><small>This link expires in 30 minutes for your security.</small></p>
+          <p><small>If you didn't request a password reset, ignore this email and your password will remain unchanged.</small></p>
+        </div>
+    """
+
+    outbox_file = OUTBOX_DIR / f"password-reset-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
+
     return outbox_file, delivery_status
 
 
@@ -654,7 +777,10 @@ def save_booking_contact_and_send_confirmation(
         refreshed_booking = get_booking_for_user(user_id)
         if refreshed_booking:
             outbox_file, delivery_status = send_booking_confirmation_email(clean_email, full_name, refreshed_booking, origin)
-    message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
+    if booking and booking["booking_status"] == "PENDING_HOLD":
+        message = "Details saved. Pay the 10% hold within the reservation window to confirm this car."
+    else:
+        message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
     if delivery_status != "not sent" and not delivery_status.startswith("sent"):
         message = "Details saved. A local confirmation email copy was created for this booking."
     return {
@@ -766,6 +892,11 @@ def init_db() -> None:
                 subtotal_price REAL NOT NULL DEFAULT 0,
                 discount_code TEXT NOT NULL DEFAULT '',
                 discount_amount REAL NOT NULL DEFAULT 0,
+                tax_fee_amount REAL NOT NULL DEFAULT 0,
+                booking_hold_amount REAL NOT NULL DEFAULT 0,
+                due_at_pickup_amount REAL NOT NULL DEFAULT 0,
+                estimated_market_total REAL NOT NULL DEFAULT 0,
+                fairfares_savings_amount REAL NOT NULL DEFAULT 0,
                 total_price REAL NOT NULL,
                 status TEXT NOT NULL,
                 booking_status TEXT NOT NULL DEFAULT 'CONFIRMED',
@@ -775,6 +906,8 @@ def init_db() -> None:
                 additional_driver_name TEXT NOT NULL DEFAULT '',
                 additional_driver_age TEXT NOT NULL DEFAULT '',
                 saved_by_user INTEGER NOT NULL DEFAULT 0,
+                hold_started_at TEXT,
+                hold_expires_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
@@ -896,6 +1029,20 @@ def init_db() -> None:
                 user_agent TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS wiki_articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                subtitle TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                visibility TEXT NOT NULL DEFAULT 'PUBLIC',
+                status TEXT NOT NULL DEFAULT 'PUBLISHED',
+                created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(created_by) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS saved_cars (
@@ -1080,6 +1227,7 @@ def init_db() -> None:
         ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
         ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "transactions", "cardholder_name", "cardholder_name TEXT NOT NULL DEFAULT ''")
@@ -1106,6 +1254,13 @@ def init_db() -> None:
         ensure_column(con, "bookings", "subtotal_price", "subtotal_price REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "discount_code", "discount_code TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "discount_amount", "discount_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "tax_fee_amount", "tax_fee_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "booking_hold_amount", "booking_hold_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "due_at_pickup_amount", "due_at_pickup_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "estimated_market_total", "estimated_market_total REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "fairfares_savings_amount", "fairfares_savings_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "hold_started_at", "hold_started_at TEXT")
+        ensure_column(con, "bookings", "hold_expires_at", "hold_expires_at TEXT")
         ensure_column(con, "bookings", "additional_driver_name", "additional_driver_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "additional_driver_age", "additional_driver_age TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "saved_by_user", "saved_by_user INTEGER NOT NULL DEFAULT 0")
@@ -1135,6 +1290,11 @@ def init_db() -> None:
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "support_tickets", "priority", "priority TEXT NOT NULL DEFAULT 'P3'")
+        ensure_column(con, "wiki_articles", "tags", "tags TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "wiki_articles", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
+        ensure_column(con, "wiki_articles", "status", "status TEXT NOT NULL DEFAULT 'PUBLISHED'")
+        ensure_column(con, "wiki_articles", "created_by", "created_by INTEGER")
+        ensure_column(con, "wiki_articles", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "email_campaigns", "sent_at", "sent_at TEXT")
         ensure_column(con, "email_campaigns", "sent_count", "sent_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "email_campaigns", "last_delivery_status", "last_delivery_status TEXT NOT NULL DEFAULT ''")
@@ -1171,14 +1331,149 @@ def init_db() -> None:
                 badge,
             )
 
-        admin_exists = con.execute("SELECT 1 FROM users WHERE is_admin = 1").fetchone()
-        if not admin_exists:
-            con.execute(
-                "INSERT INTO users (name, email, password_hash, is_admin, role) VALUES (?, ?, ?, 1, 'ADMIN')",
-                ("FairFares Admin", "admin@fairfares.com", hash_password("ChangeMe123!")),
-            )
+        ensure_default_admin(con)
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
+
+        default_wiki_articles = [
+            (
+                "How FairFares savings work",
+                "Where discounts, price-match review, receipts, and rental agreements connect.",
+                "FairFares keeps the savings story visible from search to checkout. If a student or promo discount is applied, the saved amount appears on the booking, receipt, rental agreement, and confirmation email. If a customer brings a lower comparable quote before pickup, FairFares can review it, match the eligible price, and add another 10% off after review.",
+                "savings, discount, receipt, agreement, price match",
+                "PUBLIC",
+            ),
+            (
+                "Explorer personal travel guide",
+                "Routes, weather-smart stops, XP, badges, and memories in one travel book.",
+                "Explorer helps customers turn a rental day into a personal travel guide. It can suggest timing, weather fit, stop types, and memory prompts so the trip becomes easier to plan and easier to remember.",
+                "explorer, travel guide, memories, route, weather",
+                "PUBLIC",
+            ),
+            (
+                "Cheapest cars and best value",
+                "How to find low daily rates, compact cars, and student-ready deals.",
+                "To find the cheapest cars, sort results by Price (Low to High), compare compact and economy vehicles first, and check the savings note on each car card. FairFares also highlights fuel-efficient and electric options when they can reduce trip costs beyond the daily rate.",
+                "cheapest cars, low price, economy, compact, deals, student savings",
+                "PUBLIC",
+            ),
+            (
+                "Refund and cancellation policy",
+                "What customers should know before canceling or changing a booking.",
+                "Most bookings can be reviewed for cancellation before pickup. If a booking has a provider rule, late cancellation window, no-show condition, or discount restriction, FairFares shows the status in Manage Booking and keeps support available for review. Refund timing depends on the booking status, payment record, and provider terms.",
+                "refund policy, cancellation, cancel booking, manage booking, provider terms",
+                "PUBLIC",
+            ),
+            (
+                "OpenAI + RAG knowledge flow",
+                "Future admin-only plan for files, vector search, and GPT answers.",
+                "Your files flow into a vector database. Search retrieves the closest safe passages, then GPT-4o or GPT-5 writes an answer. Internal files and private operational notes must stay admin-only and must never be returned to public Wiki search.",
+                "rag, openai, vector database, internal files, gpt",
+                "INTERNAL",
+            ),
+            (
+                "Booking help FAQ",
+                "How customers book, change, extend, shorten, check status, and contact support.",
+                "Q: How do I book a car? A: Search cars, choose Select, review the checkout window, save your details, and pay the 10% amount due now to confirm. Q: How far in advance can I book? A: Book as early as inventory is shown on FairFares; earlier booking gives better vehicle choice. Q: Can I modify my booking? A: Use Manage Booking to request date, time, location, or vehicle changes. Q: Can I cancel my booking? A: Use Manage Booking > Cancel Reservation. Some cancellations are automatic before the cutoff; others go to admin review. Q: What is the cancellation policy? A: Cancellation depends on pickup timing, provider terms, payment record, no-show rules, and discounts. Q: Can I extend my rental? A: Ask support or use Manage Booking before the return time; approval depends on vehicle availability. Q: Can I shorten my rental? A: Ask support before return; unused days may depend on provider terms and discount rules. Q: How do I check booking status? A: Open Manage Booking or ask the assistant while signed in. Q: How do I retrieve my booking confirmation? A: Check email or Manage Booking documents. Q: How do I contact support regarding a booking? A: Use Manage Booking > Support Center.",
+                "booking, book a car, advance booking, modify booking, cancel booking, cancellation policy, extend rental, shorten rental, booking status, booking confirmation, booking support",
+                "PUBLIC",
+            ),
+            (
+                "Pricing and discounts FAQ",
+                "Daily rates, taxes, deposits, hidden fees, price match, and student savings.",
+                "Q: How much does it cost to rent a car? A: The car card shows the daily inventory rate; checkout shows taxes, fees, due now, and due at pickup. Q: What is included in the rental price? A: The rental subtotal covers the selected vehicle period; taxes, fees, mileage, insurance, and pickup rules are shown separately when applicable. Q: Are taxes included? A: Taxes and fees are itemized in checkout before confirmation. Q: Are airport fees included? A: Airport and location fees appear in the taxes and fees section when applicable. Q: Are there hidden fees? A: FairFares is designed to show the estimate, taxes, fees, due-now amount, and pickup balance before confirmation. Q: What is the security deposit? A: Deposit rules depend on vehicle, provider, payment method, and risk review. Q: When is the security deposit returned? A: Release timing depends on bank and provider review after return. Q: Do you offer discounts? A: FairFares can show student, promo, referral, and campaign discounts. Q: What is the FairFares price match guarantee? A: Bring a comparable lower quote before pickup; FairFares reviews eligibility and can match the price. Q: How does the additional 10% discount work? A: If the price match qualifies, FairFares can apply another 10% off after review.",
+                "pricing, cost, rental price, taxes, airport fees, hidden fees, security deposit, discounts, price match guarantee, additional 10 discount, student savings",
+                "PUBLIC",
+            ),
+            (
+                "Driver eligibility FAQ",
+                "Age, license, international drivers, additional drivers, and required documents.",
+                "Q: How old do I need to be to rent? A: Age eligibility depends on FairFares and provider rules shown during checkout or support review. Q: Can international drivers rent? A: International drivers may need a valid license, passport, and any required international driving permit. Q: Can I rent with a temporary license? A: Temporary licenses require review and may not be accepted by every provider. Q: Can I rent with a learner permit? A: Learner permits are generally not enough to rent. Q: Can someone else drive my rental? A: Only approved drivers listed on the booking or agreement may drive. Q: How do I add an additional driver? A: Use Manage Booking or pickup review to add driver information. Q: Are there extra driver fees? A: Additional driver fees depend on provider and rental terms. Q: What documents are required? A: Bring driver's license, payment method, insurance information if required, student ID or verification when using student benefits, and booking confirmation.",
+                "driver eligibility, age, international driver, temporary license, learner permit, additional driver, driver fees, required documents, license",
+                "PUBLIC",
+            ),
+            (
+                "Payment FAQ",
+                "Payment methods, debit cards, card holds, refunds, declines, and split payment.",
+                "Q: Which payment methods are accepted? A: Accepted methods depend on the checkout and provider; card payment is used for the due-now amount in the FairFares flow. Q: Do you accept debit cards? A: Debit cards may require extra review and may have provider restrictions. Q: Do you accept prepaid cards? A: Prepaid cards are usually restricted and may not satisfy deposit or identity rules. Q: Can I pay with cash? A: Cash depends on provider and pickup approval; online due-now payment must follow checkout rules. Q: When will my card be charged? A: The due-now amount is charged during checkout; pickup balance is handled at pickup. Q: Why is there a hold on my card? A: A card hold can secure the booking, deposit, or provider authorization. Q: How long does a refund take? A: Refund timing depends on admin review, provider timing, and bank processing. Q: Why was my payment declined? A: Declines can happen due to bank rules, card mismatch, insufficient funds, or verification failure. Q: Can I split payment between two cards? A: Split payment requires support/provider review and is not always available.",
+                "payment, debit card, prepaid card, cash, card charged, hold on card, refund time, payment declined, split payment, due now",
+                "PUBLIC",
+            ),
+            (
+                "Pickup and return FAQ",
+                "Pickup requirements, late arrival, inspection, return location, fuel, cleaning, and after-hours return.",
+                "Q: What do I need to bring for pickup? A: Bring license, payment method, booking confirmation, insurance if required, and any student verification. Q: Where do I pick up the car? A: Your booking shows pickup location and time in Manage Booking. Q: Can someone else pick up the vehicle? A: The primary renter or approved driver must pick up unless support approves otherwise. Q: What if I arrive late? A: Contact support; late arrival can affect availability or provider rules. Q: Can I inspect the vehicle before accepting it? A: Yes, inspect and document photos before pickup acceptance. Q: What if I find damage before pickup? A: Report it before leaving and capture photos. Q: Where do I return the vehicle? A: Return location is listed in Manage Booking and rental agreement. Q: What happens if I return late? A: Late return may create extra charges or support review. Q: What happens if I return early? A: Early return refunds depend on provider and booking terms. Q: Do I get a refund for unused days? A: Not always; refund review depends on terms and timing. Q: Do I need to refill the fuel tank? A: Follow the fuel level and agreement rules. Q: What happens if the car is dirty? A: Excess cleaning can create a cleaning fee. Q: Can I return after hours? A: After-hours return depends on location and provider instructions.",
+                "pickup, bring for pickup, pickup location, late pickup, inspect vehicle, damage before pickup, return location, late return, early return, unused days, fuel tank, dirty car, after hours return",
+                "PUBLIC",
+            ),
+            (
+                "Insurance and accident FAQ",
+                "Insurance requirements, accidents, deductibles, damage responsibility, and reporting steps.",
+                "Q: Do I need insurance? A: Insurance requirements depend on provider, vehicle, and location; bring proof if required. Q: What insurance is required? A: Required coverage is shown in rental terms or support review. Q: Does my personal insurance cover rentals? A: Ask your insurer; FairFares cannot guarantee personal policy coverage. Q: What happens if I have no insurance? A: Pickup may be blocked or require provider-approved coverage. Q: What happens if I get into an accident? A: Make sure everyone is safe, call emergency services if needed, contact support/provider, document photos, and collect information. Q: What is my deductible? A: Deductible depends on insurance and agreement terms. Q: What damages am I responsible for? A: You may be responsible for damage, loss, cleaning, tire, glass, key, toll, ticket, or misuse charges under the agreement. Q: Does FairFares offer insurance products? A: Insurance products depend on provider and market availability. Q: Who do I call after an accident? A: Call emergency services if needed, then FairFares support/provider. Q: How do I submit an accident report? A: Use support and provide photos, police report if any, other driver info, location, and time. Q: Will my insurance be contacted? A: Insurance contact depends on claim and agreement requirements. Q: Am I responsible if someone hits me? A: Liability depends on facts, police/insurance review, and agreement terms.",
+                "insurance, accident, deductible, damages, personal insurance, no insurance, accident report, roadside accident, claim, responsible for damage",
+                "PUBLIC",
+            ),
+            (
+                "Vehicle rules and availability FAQ",
+                "Available cars, cleaning, inspections, SUVs, EVs, vans, pets, and smoking.",
+                "Q: What cars are available? A: Search results show current available inventory and daily rates. Q: Are vehicles cleaned before rental? A: Vehicles should be prepared before pickup; report concerns immediately. Q: Are vehicles inspected? A: Vehicles are reviewed before/after rentals according to provider processes. Q: Do you offer SUVs? A: SUV inventory appears when available. Q: Do you offer electric vehicles? A: Electric options appear when available, like EV badges or fuel type Electric. Q: Do you offer luxury cars? A: Luxury inventory depends on market availability. Q: Do you offer vans? A: Vans appear when available. Q: Are pets allowed? A: Pet rules depend on provider agreement and may require cleaning review. Q: Is smoking allowed? A: Smoking is not allowed and can lead to cleaning or smoking fees.",
+                "available cars, cleaned vehicles, inspected vehicles, SUV, electric vehicles, luxury cars, vans, pets allowed, smoking allowed, vehicle rules",
+                "PUBLIC",
+            ),
+            (
+                "Fees, tolls, tickets, and roadside FAQ",
+                "Smoking fee, cleaning fee, keys, tires, windshield, tolls, citations, and breakdown help.",
+                "Q: What is the smoking fee? A: Smoking fees depend on cleaning/damage review and agreement terms. Q: What is the cleaning fee? A: Cleaning fees apply for excessive dirt, smoke, pet mess, spills, or misuse. Q: What happens if I lose the keys? A: Lost keys can create replacement, towing, downtime, and admin charges. Q: What happens if I damage a tire? A: Tire damage may be renter responsibility unless covered by terms. Q: What happens if I damage the windshield? A: Glass damage is reviewed under insurance/agreement responsibility. Q: What is the late return fee? A: Late fees depend on provider rules and length of delay. Q: What happens if I run out of fuel? A: You may need roadside help and may be responsible for fuel/service charges. Q: Who pays tolls? A: The renter is responsible for tolls during the rental. Q: Who pays parking tickets? A: The renter is responsible for parking tickets. Q: Who pays traffic tickets? A: The renter is responsible for traffic citations. Q: What happens if I receive a citation? A: Report it and pay/resolve according to instructions. Q: Why was I charged after returning the vehicle? A: Post-return charges can include tolls, tickets, fuel, cleaning, damage, late return, or admin fees. Q: What do I do if the car breaks down? A: Move to safety and contact support/provider roadside assistance. Q: What do I do if I lock the keys inside? A: Contact support/provider roadside assistance. Q: What do I do if I get a flat tire? A: Stop safely, contact roadside assistance, and document the issue. Q: What do I do if the battery dies? A: Contact roadside assistance. Q: What do I do if I run out of gas? A: Get to safety and contact roadside/support.",
+                "smoking fee, cleaning fee, lost keys, tire damage, windshield damage, late return fee, fuel, tolls, parking tickets, traffic tickets, citation, charged after return, breakdown, locked keys, flat tire, battery dies, roadside assistance",
+                "PUBLIC",
+            ),
+            (
+                "Explorer FAQ",
+                "Quests, stop selection, XP, badges, cities, uploads, reels, and rewards.",
+                "Q: What is FairFares Explorer? A: Explorer is a personal travel guide that turns a rental into routes, timed stops, memories, XP, and badges. Q: How does Explorer work? A: Choose vibes, city, timing, and trip context; Explorer generates stops with weather and timing guidance. Q: How do I start a quest? A: Open Explorer, choose preferences, and generate a quest. Q: How are quest locations selected? A: Stops are selected from vibe, timing, travel style, available place data, and local context. Q: Can I create my own quest? A: Custom quest options can be supported through Explorer preferences and future tools. Q: How do I earn XP? A: Complete stops, check in, upload memories, and finish challenges. Q: What are Explorer badges? A: Badges mark achievements such as first quest, hidden gems, or repeat exploring. Q: How do I unlock new cities? A: Progress, XP, and future city availability can unlock more areas. Q: Can I upload photos? A: Yes, memory uploads can attach trip proof and profile photos. Q: Can I upload reels? A: Reels/video proof can be part of memory challenges when supported. Q: How do Explorer rewards work? A: Rewards are tied to XP, badges, memory challenges, and FairFares campaigns.",
+                "Explorer, FairFares Explorer, quest, quest locations, create quest, XP, badges, unlock cities, upload photos, upload reels, Explorer rewards, memories",
+                "PUBLIC",
+            ),
+            (
+                "Price match FAQ",
+                "Competitor quotes, screenshots, eligibility, and the additional 10% discount.",
+                "Q: How does price matching work? A: Bring a comparable lower quote for the same rental period, location, vehicle class, and terms before pickup. FairFares reviews it and can match eligible quotes. Q: Which competitors qualify? A: Major rental companies such as Avis, Enterprise, Hertz, and comparable providers may qualify when terms match. Q: How do I submit a quote? A: Upload or send the quote through support/admin review before pickup. Q: When do I receive the additional 10% discount? A: After FairFares verifies the comparable quote and approves the match. Q: Can I submit a screenshot? A: Yes, screenshots can help, but they must clearly show provider, dates, vehicle class, price, fees, and terms.",
+                "price match, competitors, Avis, Enterprise, Hertz, submit quote, screenshot, additional 10 discount, lower quote",
+                "PUBLIC",
+            ),
+            (
+                "Account FAQ",
+                "Accounts, password reset, email changes, account deletion, and driver info.",
+                "Q: How do I create an account? A: Use Sign in / Join and register with your email. Q: How do I reset my password? A: Use Forgot Password on the login page. Q: How do I change my email? A: Update profile or contact support if verification is required. Q: How do I delete my account? A: Contact support/admin for deletion review, because bookings, receipts, agreements, and legal records may need retention. Q: How do I update my driver information? A: Use Manage Booking/profile details or upload required documents when available.",
+                "account, create account, reset password, change email, delete account, update driver information, profile",
+                "PUBLIC",
+            ),
+            (
+                "Marketplace and future host program FAQ",
+                "Future owner/host questions about listing cars, pricing, screening, damage, insurance, and payouts.",
+                "Q: Can I list my car on FairFares? A: A future host marketplace can allow owners to list vehicles after eligibility, insurance, and screening rules are ready. Q: How much can I earn? A: Earnings would depend on vehicle type, market demand, price, availability, and utilization. Q: How do I set pricing? A: FairFares can suggest prices from market data, vehicle class, season, and demand. Q: How does FairFares suggest prices? A: Suggested pricing can consider location, demand, competitor rates, vehicle age, class, fuel type, and availability. Q: What insurance is required? A: Host insurance requirements must be approved before launch. Q: How are renters screened? A: Screening can include identity, license, payment, booking history, and risk checks. Q: What happens if my vehicle is damaged? A: Damage handling would follow host agreement, insurance, photos, renter responsibility, and claims review. Q: How do I get paid? A: Host payouts would follow completed rental, inspection, fees, claims, and payout schedule.",
+                "marketplace, host program, list my car, host earnings, set pricing, suggested prices, host insurance, renter screening, vehicle damaged, host payout",
+                "PUBLIC",
+            ),
+            (
+                "Assistant actions and safety",
+                "What the FairFares Assistant can answer or help start, and what still needs confirmation.",
+                "The FairFares Assistant can answer questions using public wiki content, signed-in user booking data, car inventory, and admin-only data when the viewer is an admin. It can guide users to book, cancel, modify, view documents, or contact support, but final actions like payment, cancellation, account changes, and admin changes require the user to confirm in the app.",
+                "assistant, AI agent, actions, book through assistant, cancel through assistant, permissions, admin data, user data, safety",
+                "PUBLIC",
+            ),
+        ]
+        for article in default_wiki_articles:
+            con.execute(
+                """
+                INSERT INTO wiki_articles (title, subtitle, body, tags, visibility, status)
+                SELECT ?, ?, ?, ?, ?, 'PUBLISHED'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM wiki_articles WHERE title = ? AND status = 'PUBLISHED'
+                )
+                """,
+                (*article, article[0]),
+            )
 
         seed_defaults = os.environ.get("FAIRFARES_SEED_DEFAULTS", "0").strip() == "1"
         if not seed_defaults:
@@ -1413,6 +1708,7 @@ def get_services() -> list[sqlite3.Row]:
 
 
 def get_cars() -> list[sqlite3.Row]:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -1428,11 +1724,17 @@ def get_cars() -> list[sqlite3.Row]:
                     SELECT car_id, MAX(id) AS latest_id
                     FROM bookings
                     WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                       OR (
+                           booking_status = 'PENDING_HOLD'
+                           AND payment_status = 'HOLD_PENDING'
+                           AND hold_expires_at IS NOT NULL
+                           AND datetime(hold_expires_at) > datetime('now')
+                       )
                     GROUP BY car_id
                 ) latest ON latest.latest_id = b.id
             ) active ON active.car_id = cars.id
-                    AND UPPER(TRIM(cars.status)) = 'BOOKED'
-            WHERE UPPER(TRIM(cars.status)) != 'MAINTENANCE'
+                    AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
+            WHERE UPPER(TRIM(cars.status)) NOT IN ('MAINTENANCE', 'DELETED')
             ORDER BY sort_order, daily_price, id
             """
         ).fetchall()
@@ -1444,6 +1746,7 @@ def get_inventory_locations() -> list[str]:
             """
             SELECT DISTINCT location FROM cars
             WHERE location != ''
+              AND UPPER(TRIM(status)) != 'DELETED'
             ORDER BY location
             """
         ).fetchall()
@@ -1524,11 +1827,122 @@ def format_money(value: object) -> str:
 
 def daily_price_range(price: object) -> tuple[int, int]:
     daily = float(price or 0)
-    low = max(25, round(daily * 0.85))
-    high = min(52, round(daily * 1.1))
+    low = max(25, round(daily * 0.9))
+    high = max(low, round(daily * 1.08))
     if high < low:
         high = low
     return low, high
+
+
+BOOKING_HOLD_RATE = 0.10
+MARKET_COMPARISON_RATE = 0.12
+DAILY_FEE_LINES = (
+    ("CO road safety fee", 2.44),
+    ("CO congestion impact fee", 3.13),
+    ("VLF recovery", 0.20),
+)
+PERCENT_FEE_LINES = (
+    ("Ownership tax", 0.020),
+    ("Sales tax", 0.040),
+    ("Rental tax items", 0.0725),
+)
+
+
+def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
+    rental_days = max(1, min(int(float(days or 1)), 366))
+    daily = round(float(daily_price or 0), 2)
+    base = round(daily * rental_days, 2)
+    daily_fees = [(label, round(amount * rental_days, 2)) for label, amount in DAILY_FEE_LINES]
+    percent_fees = [(label, round(base * rate, 2)) for label, rate in PERCENT_FEE_LINES]
+    tax_fee_lines = daily_fees + percent_fees
+    tax_fee_amount = round(sum(amount for _, amount in tax_fee_lines), 2)
+    discount = round(max(0.0, min(float(discount_amount or 0), base + tax_fee_amount)), 2)
+    total = round(max(0.0, base + tax_fee_amount - discount), 2)
+    booking_hold = round(total * BOOKING_HOLD_RATE, 2)
+    due_at_pickup = round(max(0.0, total - booking_hold), 2)
+    market_total = round(total * (1 + MARKET_COMPARISON_RATE), 2)
+    savings = round(max(0.0, market_total - total + discount), 2)
+    return {
+        "daily": daily,
+        "days": rental_days,
+        "weeks": rental_days // 7,
+        "extra_days": rental_days % 7,
+        "base": base,
+        "tax_fee_amount": tax_fee_amount,
+        "tax_fee_lines": tax_fee_lines,
+        "discount_amount": discount,
+        "total": total,
+        "booking_hold": booking_hold,
+        "due_at_pickup": due_at_pickup,
+        "market_total": market_total,
+        "savings": savings,
+    }
+
+
+def expire_stale_booking_holds() -> None:
+    with db() as con:
+        expired_rows = con.execute(
+            """
+            SELECT id, car_id
+            FROM bookings
+            WHERE booking_status = 'PENDING_HOLD'
+              AND payment_status = 'HOLD_PENDING'
+              AND hold_expires_at IS NOT NULL
+              AND datetime(hold_expires_at) <= datetime('now')
+            """
+        ).fetchall()
+        if not expired_rows:
+            return
+        expired_ids = [row["id"] for row in expired_rows]
+        expired_car_ids = {row["car_id"] for row in expired_rows}
+        placeholders = ",".join("?" for _ in expired_ids)
+        con.execute(
+            f"""
+            UPDATE bookings
+            SET booking_status = 'EXPIRED_HOLD',
+                status = 'EXPIRED_HOLD',
+                payment_status = 'HOLD_EXPIRED'
+            WHERE id IN ({placeholders})
+            """,
+            expired_ids,
+        )
+        for car_id in expired_car_ids:
+            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ? AND UPPER(TRIM(status)) = 'HOLD'", (car_id,))
+
+
+def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
+    if not row:
+        return rental_price_breakdown(0, 1, 0)
+    daily = row_value(row, "daily_price")
+    if not daily:
+        days = max(1, int(float(row_value(row, "days") or 1)))
+        subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
+        daily = subtotal / days if days else subtotal
+    discount = float(row_value(row, "discount_amount") or 0)
+    breakdown = rental_price_breakdown(daily, row_value(row, "days") or 1, discount)
+    stored_total = float(row_value(row, "total_price") or 0)
+    has_stored_breakdown = any(
+        float(row_value(row, key) or 0) > 0
+        for key in ("tax_fee_amount", "booking_hold_amount", "due_at_pickup_amount", "estimated_market_total")
+    )
+    has_admin_total_adjustment = any(
+        float(row_value(row, key) or 0) > 0
+        for key in ("late_fee_amount", "price_match_amount", "price_match_discount_amount")
+    )
+    if has_stored_breakdown and has_admin_total_adjustment and stored_total and abs(stored_total - float(breakdown["total"])) > 0.01:
+        hold = float(row_value(row, "booking_hold_amount") or round(stored_total * BOOKING_HOLD_RATE, 2))
+        tax_fee = float(row_value(row, "tax_fee_amount") or max(0, stored_total - float(breakdown["base"]) + discount))
+        breakdown.update(
+            {
+                "tax_fee_amount": round(tax_fee, 2),
+                "total": round(stored_total, 2),
+                "booking_hold": round(hold, 2),
+                "due_at_pickup": round(max(0.0, stored_total - hold), 2),
+                "market_total": round(float(row_value(row, "estimated_market_total") or stored_total * (1 + MARKET_COMPARISON_RATE)), 2),
+                "savings": round(float(row_value(row, "fairfares_savings_amount") or max(0.0, stored_total * MARKET_COMPARISON_RATE + discount)), 2),
+            }
+        )
+    return breakdown
 
 
 def default_trip_dates() -> tuple[str, str]:
@@ -2576,10 +2990,11 @@ def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int
 
 def get_admin_cars() -> list[sqlite3.Row]:
     with db() as con:
-        return con.execute("SELECT * FROM cars ORDER BY sort_order, daily_price, id").fetchall()
+        return con.execute("SELECT * FROM cars WHERE UPPER(TRIM(status)) != 'DELETED' ORDER BY sort_order, daily_price, id").fetchall()
 
 
 def get_car(car_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
 
@@ -2733,12 +3148,243 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def assistant_user_role(user: sqlite3.Row | None) -> str:
+    if not user:
+        return "guest"
+    if int(row_value(user, "is_admin") or 0) == 1 or row_value(user, "role") == "ADMIN":
+        return "admin"
+    return "user"
+
+
+def assistant_car_context(limit: int = 5) -> list[dict[str, object]]:
+    cars = [
+        car for car in get_cars()
+        if str(row_value(car, "status") or "").upper().strip() == "AVAILABLE"
+    ]
+    cars.sort(key=lambda car: float(row_value(car, "daily_price") or 0))
+    return [
+        {
+            "id": row_value(car, "id"),
+            "name": row_value(car, "name"),
+            "category": row_value(car, "category"),
+            "fuel": row_value(car, "fuel_type"),
+            "daily_price": float(row_value(car, "daily_price") or 0),
+            "seats": row_value(car, "seats"),
+            "bags": row_value(car, "bags"),
+            "status": row_value(car, "status"),
+            "select_url": f"/manage-booking?car_id={row_value(car, 'id')}",
+        }
+        for car in cars[:limit]
+    ]
+
+
+def assistant_booking_context(user: sqlite3.Row | None) -> dict[str, object] | None:
+    if not user:
+        return None
+    booking = get_booking_for_user(int(user["id"]))
+    if not booking:
+        return None
+    breakdown = booking_price_breakdown(booking)
+    return {
+        "booking_id": row_value(booking, "booking_id"),
+        "car": row_value(booking, "car_name"),
+        "status": booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")),
+        "raw_status": row_value(booking, "booking_status"),
+        "pickup": f"{row_value(booking, 'pickup_location')} · {row_value(booking, 'pickup_date')} {row_value(booking, 'pickup_time')}",
+        "dropoff": f"{row_value(booking, 'dropoff_location')} · {row_value(booking, 'dropoff_date')} {row_value(booking, 'dropoff_time')}",
+        "total": format_money(breakdown["total"]),
+        "due_now": format_money(breakdown["booking_hold"]),
+        "due_at_pickup": format_money(breakdown["due_at_pickup"]),
+        "manage_url": "/manage-booking",
+        "cancel_url": "/manage-booking?agent=cancel#cancel",
+        "documents_url": "/manage-booking?agent=documents#documents",
+    }
+
+
+def assistant_database_context(question: str, user: sqlite3.Row | None, include_internal: bool) -> dict[str, object]:
+    articles = search_wiki_articles(question, include_internal=include_internal)
+    context: dict[str, object] = {
+        "role": assistant_user_role(user),
+        "cars": assistant_car_context(),
+        "booking": assistant_booking_context(user),
+        "wiki": [
+            {
+                "title": row_value(article, "title"),
+                "body": row_value(article, "body"),
+                "visibility": row_value(article, "visibility"),
+            }
+            for article in articles[:4]
+        ],
+    }
+    if include_internal:
+        context["fleet"] = get_fleet_summary()
+        context["admin_metrics"] = get_admin_metrics()
+    return context
+
+
+def assistant_actions(question: str, context: dict[str, object]) -> list[dict[str, str]]:
+    lower = question.lower()
+    cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
+    actions: list[dict[str, str]] = []
+    if any(word in lower for word in ("book", "cheapest", "car", "suv", "sedan", "select")):
+        cheapest = cars[0] if cars else None
+        if isinstance(cheapest, dict):
+            actions.append({"label": f"Book {cheapest['name']}", "href": str(cheapest["select_url"]), "kind": "book"})
+        actions.append({"label": "Browse all cars", "href": "/#results", "kind": "browse"})
+    if any(word in lower for word in ("cancel", "refund")):
+        actions.append({"label": "Review cancellation", "href": "/manage-booking?agent=cancel#cancel", "kind": "cancel"})
+    if any(word in lower for word in ("booking", "pickup", "drop", "receipt", "invoice", "document", "agreement")) and booking:
+        actions.append({"label": "Open my booking", "href": "/manage-booking", "kind": "booking"})
+        actions.append({"label": "Download documents", "href": "/manage-booking?agent=documents#documents", "kind": "documents"})
+    if any(word in lower for word in ("support", "help", "issue", "problem")):
+        actions.append({"label": "Open support", "href": "/manage-booking?agent=support#support", "kind": "support"})
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for action in actions:
+        key = action["href"] + action["label"]
+        if key not in seen:
+            deduped.append(action)
+            seen.add(key)
+    return deduped[:4]
+
+
+def local_assistant_answer(question: str, context: dict[str, object]) -> str:
+    lower = question.lower()
+    cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
+    wiki = context.get("wiki") if isinstance(context.get("wiki"), list) else []
+    if any(word in lower for word in ("cheapest", "cheap", "lowest", "price", "car", "suv", "sedan", "book")) and cars:
+        cheapest = cars[0]
+        return (
+            f"The lowest available option I see is {cheapest['name']} at "
+            f"{format_money(float(cheapest['daily_price']))}/day. I can take you to checkout or show all cars."
+        )
+    if booking and any(word in lower for word in ("my booking", "pickup", "drop", "status", "receipt", "invoice", "document")):
+        return (
+            f"Your booking {booking['booking_id']} is {booking['status']} for {booking['car']}. "
+            f"Pickup: {booking['pickup']}. Total estimate: {booking['total']}; due now: {booking['due_now']}; "
+            f"due at pickup: {booking['due_at_pickup']}."
+        )
+    if any(word in lower for word in ("cancel", "refund")):
+        policy = wiki[0] if wiki else None
+        policy_text = f" {policy['title']}: {policy['body']}" if isinstance(policy, dict) else ""
+        return (
+            "Cancellation and refund review depends on timing, booking status, payment record, and provider terms."
+            f"{policy_text} I can open your cancellation screen so you can confirm the request."
+        )
+    if any(word in lower for word in ("admin", "database", "fleet", "users")) and context.get("role") == "admin":
+        metrics = context.get("admin_metrics") or {}
+        return (
+            "Admin database snapshot: "
+            f"{row_value(metrics, 'available') if isinstance(metrics, dict) else ''} available cars, "
+            f"{row_value(metrics, 'booked') if isinstance(metrics, dict) else ''} bookings, "
+            f"{row_value(metrics, 'users') if isinstance(metrics, dict) else ''} student users."
+        )
+    if wiki:
+        primary = wiki[0]
+        return f"{primary['title']}: {primary['body']}"
+    return (
+        "I can help with cars, booking status, cancellation, refunds, receipts, Explorer trips, discounts, and support. "
+        "Ask for the cheapest car, your pickup time, refund policy, or help booking."
+    )
+
+
+def openai_assistant_answer(question: str, context: dict[str, object]) -> str | None:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    payload = {
+        "model": os.environ.get("OPENAI_AGENT_MODEL", "gpt-4o-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You are FairFares Assistant. Answer using only the provided context. "
+                    "Respect role permissions. Do not claim you completed booking, cancellation, or payment; "
+                    "tell the user which action button to use for those steps. Keep answers concise."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({"question": question, "context": context}, default=str),
+            },
+        ],
+        "max_output_tokens": 260,
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    output_text = data.get("output_text")
+    if output_text:
+        return str(output_text).strip()
+    chunks: list[str] = []
+    for item in data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            if content.get("type") in {"output_text", "text"} and content.get("text"):
+                chunks.append(str(content["text"]))
+    return " ".join(chunks).strip() or None
+
+
+def search_wiki_articles(query: str = "", include_internal: bool = False) -> list[sqlite3.Row]:
+    clean_query = " ".join((query or "").split())[:120]
+    clauses = ["status = 'PUBLISHED'"]
+    params: list[object] = []
+    if not include_internal:
+        clauses.append("visibility = 'PUBLIC'")
+    if clean_query:
+        like = f"%{clean_query.lower()}%"
+        clauses.append(
+            "(LOWER(title) LIKE ? OR LOWER(subtitle) LIKE ? OR LOWER(body) LIKE ? OR LOWER(tags) LIKE ?)"
+        )
+        params.extend([like, like, like, like])
+    where = " AND ".join(clauses)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT wiki_articles.*, users.name AS author_name
+            FROM wiki_articles
+            LEFT JOIN users ON users.id = wiki_articles.created_by
+            WHERE {where}
+            ORDER BY
+              CASE visibility WHEN 'PUBLIC' THEN 0 ELSE 1 END,
+              updated_at DESC,
+              id DESC
+            """,
+            params,
+        ).fetchall()
+
+
+def get_wiki_article(article_id: int, include_internal: bool = False) -> sqlite3.Row | None:
+    clauses = ["id = ?", "status = 'PUBLISHED'"]
+    params: list[object] = [article_id]
+    if not include_internal:
+        clauses.append("visibility = 'PUBLIC'")
+    with db() as con:
+        return con.execute(
+            f"SELECT * FROM wiki_articles WHERE {' AND '.join(clauses)}",
+            params,
+        ).fetchone()
+
+
 def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
-                   cars.doors, cars.transmission, cars.color, cars.image_url
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -2752,10 +3398,11 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
 
 
 def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
-            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url, cars.daily_price
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.user_id = ?
@@ -2773,10 +3420,10 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
     rows = []
     for booking in bookings:
         status = booking["booking_status"]
-        trip_type = "past" if status in {"CANCELLED", "RETURNED"} else "upcoming"
+        trip_type = "past" if status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"} else "upcoming"
         if row_value(booking, "saved_by_user"):
             trip_type = f"{trip_type} favorites"
-        status_text = "Cancelled" if status == "CANCELLED" else ("Not picked up" if status not in {"PICKED_UP", "RETURNED"} else status.replace("_", " ").title())
+        status_text = booking_status_label(status, row_value(booking, "payment_status"))
         details = {
             "bookingId": booking["booking_id"],
             "car": booking["car_name"],
@@ -2827,8 +3474,12 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
 
 
 def booking_status_label(status: str, payment_status: str = "") -> str:
+    if status == "PENDING_HOLD":
+        return "Payment window"
+    if status == "EXPIRED_HOLD":
+        return "Expired"
     if status == "CONFIRMED":
-        return "Confirmed / Pay at pickup"
+        return "Confirmed" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
     labels = {
         "CANCELLATION_REQUESTED": "Request sent to admin",
         "CANCELLED": "Cancelled",
@@ -2840,9 +3491,9 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
 
 
 def booking_status_class(status: str) -> str:
-    if status in {"CANCELLATION_REQUESTED", "MODIFIED"}:
+    if status in {"CANCELLATION_REQUESTED", "MODIFIED", "PENDING_HOLD"}:
         return "status-pending"
-    if status in {"CANCELLED", "RETURNED"}:
+    if status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}:
         return "status-muted"
     return "status-confirmed"
 
@@ -2850,6 +3501,10 @@ def booking_status_class(status: str) -> str:
 def payment_status_label(status: str) -> str:
     labels = {
         "PAY_AT_PICKUP": "Pay at pickup",
+        "HOLD_PENDING": "Payment pending",
+        "HOLD_EXPIRED": "Expired",
+        "HOLD_DUE": "10% due now",
+        "HOLD_PAID": "10% paid",
         "PAID": "Paid",
         "PENDING": "Payment pending",
         "REFUND_REVIEW": "Refund review",
@@ -3100,6 +3755,7 @@ def parse_booking_datetime(date_value: str, time_value: str) -> datetime | None:
 
 
 def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
     with db() as con:
         return con.execute(
             """
@@ -3107,8 +3763,16 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
             FROM bookings
             JOIN cars ON cars.id = bookings.car_id
             WHERE bookings.car_id = ?
-              AND UPPER(TRIM(cars.status)) = 'BOOKED'
-              AND bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+              AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
+              AND (
+                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                OR (
+                    bookings.booking_status = 'PENDING_HOLD'
+                    AND bookings.payment_status = 'HOLD_PENDING'
+                    AND bookings.hold_expires_at IS NOT NULL
+                    AND datetime(bookings.hold_expires_at) > datetime('now')
+                )
+              )
             ORDER BY bookings.id DESC
             LIMIT 1
             """,
@@ -3118,6 +3782,39 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
 
 def booking_datetime_from_row(row: sqlite3.Row, date_key: str, time_key: str) -> datetime | None:
     return parse_booking_datetime(row_value(row, date_key), row_value(row, time_key))
+
+
+def parse_sqlite_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(text.split(".")[0], fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def booking_hold_remaining_seconds(booking: sqlite3.Row | dict[str, object] | None) -> int:
+    if not booking or row_value(booking, "booking_status") != "PENDING_HOLD":
+        return 0
+    expires_at = parse_sqlite_datetime(row_value(booking, "hold_expires_at"))
+    if not expires_at:
+        return BOOKING_HOLD_MINUTES * 60
+    return max(0, int((expires_at - datetime.now()).total_seconds()))
+
+
+def booking_hold_remaining_label(booking: sqlite3.Row | dict[str, object] | None) -> str:
+    seconds = booking_hold_remaining_seconds(booking)
+    if seconds <= 0:
+        return "Expired"
+    minutes = seconds // 60
+    remainder = seconds % 60
+    return f"{minutes}:{remainder:02d}"
 
 
 def calculate_late_fee(row: sqlite3.Row, actual_return_date: str, actual_return_time: str) -> tuple[float, str]:
@@ -3183,6 +3880,7 @@ def create_booking_for_user(
     requested_end = parse_booking_datetime(return_date, return_time)
     if requested_start and requested_end and requested_end <= requested_start:
         raise ValueError("Return date and time must be after pickup date and time.")
+    expire_stale_booking_holds()
     candidates = [requested_car] if requested_car else get_cars()
     car = None
     for candidate in candidates:
@@ -3215,15 +3913,17 @@ def create_booking_for_user(
         rental_days = max(1, min(int(days or 1), 366))
         subtotal = round(float(car["daily_price"]) * rental_days, 2)
         discount_amount = calculate_discount_amount(subtotal, discount)
-        final_total = round(subtotal - discount_amount, 2)
+        price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+        final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
         con.execute(
             """
             INSERT INTO bookings
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
-             total_price, status, booking_status, payment_status, contact_name, contact_email, contact_phone)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', 'PAY_AT_PICKUP', ?, ?, ?)
+             tax_fee_amount, booking_hold_amount, due_at_pickup_amount, estimated_market_total, fairfares_savings_amount,
+             total_price, status, booking_status, payment_status, hold_started_at, hold_expires_at, contact_name, contact_email, contact_phone)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_HOLD', 'HOLD_PENDING', CURRENT_TIMESTAMP, datetime('now', '+10 minutes'), ?, ?, ?)
             """,
             (
                 booking_id,
@@ -3240,8 +3940,13 @@ def create_booking_for_user(
                 subtotal,
                 applied_code,
                 discount_amount,
+                price_breakdown["tax_fee_amount"],
+                price_breakdown["booking_hold"],
+                price_breakdown["due_at_pickup"],
+                price_breakdown["market_total"],
+                price_breakdown["savings"],
                 final_total,
-                "CONFIRMED",
+                "PENDING_HOLD",
                 (user["name"] or "") if user else "",
                 (user["email"] or "") if user else "",
                 (user["phone"] or "") if user else "",
@@ -3249,7 +3954,7 @@ def create_booking_for_user(
         )
         if applied_code:
             con.execute("UPDATE discounts SET used_count = used_count + 1 WHERE code = ?", (applied_code,))
-        con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (car["id"],))
+        con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (car["id"],))
     booking = get_booking_for_user(user_id)
     if not booking:
         raise RuntimeError("Booking creation failed")
@@ -3275,6 +3980,7 @@ def build_booking_preview(
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
     discount_amount = calculate_discount_amount(subtotal, discount)
+    price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
     return {
         "id": None,
         "booking_id": "Pending details",
@@ -3290,10 +3996,17 @@ def build_booking_preview(
         "subtotal_price": subtotal,
         "discount_code": discount["code"] if discount else "",
         "discount_amount": discount_amount,
-        "total_price": round(subtotal - discount_amount, 2),
-        "status": "CONFIRMED",
-        "booking_status": "CONFIRMED",
-        "payment_status": "PAY_AT_PICKUP",
+        "tax_fee_amount": price_breakdown["tax_fee_amount"],
+        "booking_hold_amount": price_breakdown["booking_hold"],
+        "due_at_pickup_amount": price_breakdown["due_at_pickup"],
+        "estimated_market_total": price_breakdown["market_total"],
+        "fairfares_savings_amount": price_breakdown["savings"],
+        "total_price": price_breakdown["total"],
+        "status": "PENDING_HOLD",
+        "booking_status": "PENDING_HOLD",
+        "payment_status": "HOLD_PENDING",
+        "hold_started_at": "",
+        "hold_expires_at": "",
         "car_name": car["name"],
         "category": car["category"],
         "seats": car["seats"],
@@ -3302,6 +4015,7 @@ def build_booking_preview(
         "transmission": car["transmission"],
         "color": car["color"],
         "image_url": car["image_url"],
+        "daily_price": car["daily_price"],
     }
 
 
@@ -3357,6 +4071,12 @@ def ensure_booking_for_user(
     if existing and not car_id:
         return existing
     if car_id:
+        if (
+            existing
+            and int(row_value(existing, "car_id") or 0) == car_id
+            and row_value(existing, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKED_UP"}
+        ):
+            return existing
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
             try:
@@ -3485,6 +4205,161 @@ EMAIL_SEASONAL_PLAN = [
 ]
 
 
+def default_email_campaign_plans(today: date | None = None) -> list[dict[str, str]]:
+    today = today or date.today()
+    year = today.year
+    next_year = year + 1
+    plans = [
+        {
+            "campaign_date": today.isoformat(),
+            "campaign_type": draft["type"],
+            "audience": draft["audience"],
+            "trigger_rule": draft["timing"],
+            "subject_line": draft["subject"],
+            "headline": draft["headline"],
+            "message_body": draft["body"],
+            "cta_label": draft["cta"],
+            "status": "DRAFT",
+            "notes": "Lifecycle calendar draft. Send a test before sending to subscribers.",
+        }
+        for draft in EMAIL_MARKETING_DRAFTS
+    ]
+    plans.extend(
+        [
+            {
+                "campaign_date": (today + timedelta(days=60)).isoformat(),
+                "campaign_type": "Re-engagement",
+                "audience": "Inactive users",
+                "trigger_rule": "60 days inactive",
+                "subject_line": "A FairFares offer is waiting for your next ride",
+                "headline": "Come back with a cleaner deal.",
+                "message_body": "Your next FairFares booking can show savings, documents, and trip details clearly before pickup.",
+                "cta_label": "Search Cars",
+                "status": "DRAFT",
+                "notes": "Calendar item: exclusive offer for 60-day inactive users.",
+            },
+            {
+                "campaign_date": (today + timedelta(days=90)).isoformat(),
+                "campaign_type": "Re-engagement",
+                "audience": "Inactive users",
+                "trigger_rule": "90 days inactive",
+                "subject_line": "Ready for another fair ride?",
+                "headline": "Come back and save.",
+                "message_body": "FairFares keeps pricing transparent, documents easy to find, and Explorer memories ready when you travel again.",
+                "cta_label": "Book Again",
+                "status": "DRAFT",
+                "notes": "Calendar item: comeback offer for 90-day inactive users.",
+            },
+        ]
+    )
+    month_dates = {
+        "January": date(next_year if today.month > 1 else year, 1, 1),
+        "March": date(next_year if today.month > 3 else year, 3, 1),
+        "May": date(next_year if today.month > 5 else year, 5, 1),
+        "July": date(next_year if today.month > 7 else year, 6, 15),
+        "August": date(next_year if today.month > 8 else year, 8, 1),
+        "September": date(next_year if today.month > 9 else year, 8, 15),
+        "October": date(next_year if today.month > 10 else year, 10, 1),
+        "November": date(next_year if today.month > 11 else year, 11, 1),
+        "December": date(next_year if today.month > 12 else year, 12, 1),
+    }
+    for month, title, window in EMAIL_SEASONAL_PLAN:
+        plans.append(
+            {
+                "campaign_date": month_dates[month].isoformat(),
+                "campaign_type": "Seasonal",
+                "audience": "Subscribed users",
+                "trigger_rule": window,
+                "subject_line": title,
+                "headline": title,
+                "message_body": f"Plan the {title.lower()} campaign with one clear offer, one short message, and one FairFares booking action.",
+                "cta_label": "Search Cars",
+                "status": "DRAFT",
+                "notes": f"Seasonal calendar item for {month}. Add offer, artwork, segment, and test send.",
+            }
+        )
+    plans.extend(
+        [
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Customers with birthdays this month",
+                "trigger_rule": "Birthday",
+                "subject_line": "A birthday ride from FairFares",
+                "headline": "Celebrate with a fairer trip.",
+                "message_body": "Add a birthday discount code and keep the message short, warm, and easy to redeem.",
+                "cta_label": "Claim Birthday Offer",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: birthday discount.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users watching a saved route or car",
+                "trigger_rule": "Price drop detected",
+                "subject_line": "A lower FairFares price is available",
+                "headline": "Your watched trip just got easier.",
+                "message_body": "Send only when the new daily price or total estimate is lower than the previous saved view.",
+                "cta_label": "View Lower Price",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: price drop detected.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users who started but did not finish booking",
+                "trigger_rule": "Abandoned booking",
+                "subject_line": "Finish your FairFares booking",
+                "headline": "Your car search is still saved.",
+                "message_body": "Remind the user what they searched for and bring them back to the booking flow.",
+                "cta_label": "Complete Booking",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: abandoned booking.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Returning customers",
+                "trigger_rule": "Repeat customer",
+                "subject_line": "Welcome back to FairFares",
+                "headline": "Your next ride should feel simple too.",
+                "message_body": "Thank repeat customers and point them to saved profile, documents, and Explorer memories.",
+                "cta_label": "Book Again",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: welcome-back offer.",
+            },
+            {
+                "campaign_date": today.isoformat(),
+                "campaign_type": "Behavioral",
+                "audience": "Users near active FairFares cities",
+                "trigger_rule": "Location-based offers",
+                "subject_line": "Popular FairFares routes near you",
+                "headline": "Find a nearby ride and a memory worth keeping.",
+                "message_body": "Feature monthly popular destinations and Explorer ideas by city.",
+                "cta_label": "Explore Nearby",
+                "status": "DRAFT",
+                "notes": "Behavioral calendar item: monthly popular destinations.",
+            },
+        ]
+    )
+    return plans
+
+
+def ensure_email_marketing_calendar_plans() -> None:
+    with db() as con:
+        existing = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
+        if existing:
+            return
+        con.executemany(
+            """
+            INSERT INTO email_campaigns
+            (campaign_date, campaign_type, audience, trigger_rule, subject_line, headline, message_body, cta_label, status, notes)
+            VALUES (:campaign_date, :campaign_type, :audience, :trigger_rule, :subject_line, :headline, :message_body, :cta_label, :status, :notes)
+            """,
+            default_email_campaign_plans(),
+        )
+
+
 def get_email_campaigns() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -3556,6 +4431,23 @@ def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "")
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+def profile_photo_url(user: sqlite3.Row | dict[str, object] | None) -> str:
+    if not user:
+        return ""
+    return row_value(user, "profile_photo_url")
+
+
+def user_avatar_span(user: sqlite3.Row | dict[str, object] | None) -> str:
+    photo = profile_photo_url(user)
+    style = ""
+    if photo:
+        style = (
+            f' style="background-image:url(&quot;{escape(photo)}&quot;) !important;'
+            'background-size:cover !important;background-position:center !important;"'
+        )
+    return f"<span{style}></span>"
+
+
 PRICE_MATCH_PROMISE = (
     "Bring a lower comparable quote before pickup. FairFares will review it, match the eligible price, "
     "and add another 10% off so your savings stay clear on your documents."
@@ -3563,6 +4455,7 @@ PRICE_MATCH_PROMISE = (
 
 
 def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bool = False) -> str:
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     if discount_amount > 0:
         code = row_value(row, "discount_code")
@@ -3574,22 +4467,29 @@ def booking_savings_note(row: sqlite3.Row | dict[str, object], include_terms: bo
             f"Original total {format_money(subtotal)}; final total {format_money(total)}."
         )
     terms = " Terms and conditions apply." if include_terms else ""
-    return f"{PRICE_MATCH_PROMISE}{terms}"
+    return (
+        f"Estimated market total {format_money(breakdown['market_total'])}; FairFares total "
+        f"{format_money(breakdown['total'])}. A 10% hold of {format_money(breakdown['booking_hold'])} "
+        f"is deducted from your pickup balance.{terms}"
+    )
 
 
 def booking_savings_label(row: sqlite3.Row | dict[str, object] | None) -> str:
     if not row:
         return ""
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     if discount_amount > 0:
         code = row_value(row, "discount_code")
         return f"FairFares saved you {format_money(discount_amount)}{f' with {code}' if code else ''}."
-    return "FairFares price-match promise is included."
+    savings = float(breakdown["savings"] or 0)
+    return f"Estimated FairFares savings: {format_money(savings)} (typically 10-25% vs major rental totals)."
 
 
 def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, include_terms: bool = False) -> str:
     if not row:
         return ""
+    breakdown = booking_price_breakdown(row)
     discount_amount = float(row_value(row, "discount_amount") or 0)
     subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
     total = float(row_value(row, "total_price") or 0)
@@ -3597,13 +4497,15 @@ def booking_savings_explainer(row: sqlite3.Row | dict[str, object] | None, inclu
         code = row_value(row, "discount_code")
         code_part = f" using {code}" if code else ""
         return (
-            f"We lowered your trip from {format_money(subtotal)} to {format_money(total)}{code_part}. "
-            f"Your savings are already applied to this booking, receipt, rental agreement, and email copy."
+            f"We lowered your rental from {format_money(subtotal)} to {format_money(total)}{code_part}. "
+            f"Taxes and fees are itemized, and a 10% hold of {format_money(breakdown['booking_hold'])} "
+            f"is deducted from your pickup balance."
         )
     terms = " Terms and conditions apply." if include_terms else ""
     return (
-        "If you find a lower comparable quote before pickup, FairFares will review it, match the eligible price, "
-        f"and add another 10% off so the savings are easy to see on your documents.{terms}"
+        f"FairFares estimates {format_money(breakdown['savings'])} in savings, typically 10-25% against comparable major-rental totals. "
+        f"Your 10% hold is {format_money(breakdown['booking_hold'])}; the remaining "
+        f"{format_money(breakdown['due_at_pickup'])} is due at pickup after review.{terms}"
     )
 
 
@@ -3867,11 +4769,13 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
         if license_row and license_row["license_number"]
         else "Driver license not captured yet."
     )
-    tax_amount = float(booking["total_price"]) * 0.0825
-    fee_amount = float(booking["total_price"]) * 0.045
-    base_amount = float(booking["total_price"]) - tax_amount - fee_amount
+    breakdown = booking_price_breakdown(booking)
     status_line = f"Trip status: {booking_status_label(booking['booking_status'], booking['payment_status'])}"
     savings_line = booking_savings_explainer(booking)
+    tax_fee_lines = "\n".join(
+        f"{label}: {format_money(amount)}"
+        for label, amount in breakdown["tax_fee_lines"]  # type: ignore[index]
+    )
 
     return {
         "Invoice / Receipt": {
@@ -3884,10 +4788,13 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Vehicle: {booking['car_name']}\n"
                 f"Dates: {booking['pickup_date']} {booking['pickup_time']} to {booking['dropoff_date']} {booking['dropoff_time']}\n"
                 f"Payment: {payment_method} · {transaction_status}\n"
-                f"Subtotal: {format_money(booking['subtotal_price'] or booking['total_price'])}\n"
+                f"Rental subtotal: {format_money(breakdown['base'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"Taxes and fees: {format_money(breakdown['tax_fee_amount'])}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+                f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
                 f"FairFares savings: {savings_line}\n"
-                f"Total due: {format_money(booking['total_price'])}"
+                f"Estimated total: {format_money(breakdown['total'])}"
             ),
             "status": f"Generated from booking {booking['booking_id']} and admin payment records.",
         },
@@ -3896,6 +4803,9 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "content": (
                 f"{status_line}\n\n"
                 f"{agreement_text}\n\n"
+                f"Estimated total: {format_money(breakdown['total'])}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}. This hold is deducted from the pickup balance. Holds become non-refundable inside 24 hours before pickup unless FairFares approves an exception.\n"
+                f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
                 f"DL: {license_line}\n"
                 f"Insurance: {insurance_line}\n"
                 f"Signature: {agreement['signature_text'] if agreement and agreement['signature_text'] else 'Pending'}"
@@ -3907,13 +4817,16 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             "content": (
                 f"{status_line}\n"
                 f"Booking: {booking['booking_id']}\n"
-                f"Rental subtotal: ${base_amount:.2f}\n"
+                f"Rental days: {breakdown['weeks']} week(s), {breakdown['extra_days']} day(s)\n"
+                f"Daily rate: {format_money(breakdown['daily'])}\n"
+                f"Rental subtotal: {format_money(breakdown['base'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
+                f"{tax_fee_lines}\n"
                 f"FairFares savings: {savings_line}\n"
-                f"Taxes estimate: ${tax_amount:.2f}\n"
-                f"Airport/provider fees estimate: ${fee_amount:.2f}\n"
+                f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+                f"Due at pickup: {format_money(breakdown['due_at_pickup'])}\n"
                 f"Insurance: {insurance_line}\n"
-                f"Final total: ${float(booking['total_price']):.2f}"
+                f"Final total: {format_money(breakdown['total'])}"
             ),
             "status": "Generated from booking total, insurance, and invoice records.",
         },
@@ -4003,6 +4916,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/": self.home,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
+            "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
@@ -4010,6 +4924,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/healthz": self.healthz,
             "/login": self.login_page,
             "/signup": self.signup_page,
+            "/forgot-password": self.forgot_password_page,
+            "/reset-password": self.reset_password_page,
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
@@ -4017,6 +4933,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/users": self.admin_users_page,
             "/admin/tickets": self.admin_tickets_page,
             "/admin/discounts": self.admin_discounts_page,
+            "/admin/wiki": self.admin_wiki_page,
             "/admin/commercials": self.admin_commercials_page,
             "/admin/email-marketing": self.admin_email_marketing_page,
             "/admin/pickup": self.admin_pickup_page,
@@ -4036,10 +4953,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/login": self.login,
             "/signup": self.signup,
+            "/forgot-password": self.forgot_password,
+            "/reset-password": self.reset_password,
             "/bookings/modify": self.update_user_booking,
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
+            "/payment/hold": self.pay_booking_hold,
+            "/booking/hold/continue": self.continue_booking_hold,
+            "/booking/hold/remove": self.remove_booking_hold,
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
             "/guest-booking": self.create_guest_booking,
@@ -4049,8 +4971,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
             "/profile/update": self.update_user_profile,
+            "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
+            "/wiki/ask": self.ask_wiki_agent,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
             "/referrals/claim": self.claim_referral_bonus,
@@ -4061,6 +4985,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/wiki": self.create_admin_wiki_article,
+            "/admin/wiki/delete": self.delete_admin_wiki_article,
             "/admin/commercials": self.create_admin_commercial,
             "/admin/commercials/status": self.update_admin_commercial_status,
             "/admin/commercials/delete": self.delete_admin_commercial,
@@ -4082,7 +5008,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
 
     def allow_post_from_same_origin(self, path: str) -> bool:
-        if path in {"/login", "/signup"}:
+        if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
             return True
         expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
         for header_name in ("Origin", "Referer"):
@@ -4167,6 +5093,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def student_verification_url(self, token: str) -> str:
         return f"{self.public_origin().rstrip('/')}/student-verify?token={urllib.parse.quote(token)}"
+
+    def reset_password_url(self, token: str) -> str:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        if public_base_url:
+            return f"{public_base_url}/reset-password?token={urllib.parse.quote(token)}"
+        host = self.headers.get("Host") or "127.0.0.1:8000"
+        scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return f"{scheme}://{host}/reset-password?token={urllib.parse.quote(token)}"
 
     def public_origin(self) -> str:
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -4287,9 +5221,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def explorer_page(self) -> None:
         user = self.current_user()
         profile = get_explorer_profile(user["id"] if user else None)
+        photo = profile_photo_url(user)
         body = render_template(
             "explorer.html",
             auth_link='<span class="explorer-nav-tag">Explorer by FairFares</span>' if user else '<a href="/login">Sign in / Join</a>',
+            profile_photo_url=escape(photo),
+            explorer_photo_class="has-photo" if photo else "has-empty-photo",
+            explorer_photo_src=escape(photo),
+            explorer_photo_hidden="" if photo else "hidden",
+            explorer_photo_label="Change photo" if photo else "Upload your photo",
             level=escape(str(profile["level"])),
             xp=escape(str(profile["xp"])),
             trips=escape(str(profile["trips"])),
@@ -4498,6 +5438,65 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def wiki_page(self) -> None:
+        user = self.current_user()
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query).get("q", [""])[0].strip()
+        articles = search_wiki_articles(query, include_internal=False)
+        article_cards = "\n".join(self.render_wiki_article_card(row, admin=False) for row in articles)
+        body = render_template(
+            "wiki.html",
+            query=escape(query),
+            result_count=escape(len(articles)),
+            wiki_results=article_cards or self.render_wiki_empty_state(query, admin=False),
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def render_wiki_article_card(self, row: sqlite3.Row, admin: bool = False) -> str:
+        visibility = row_value(row, "visibility") or "PUBLIC"
+        visibility_badge = (
+            f'<span class="wiki-visibility wiki-visibility-{escape(visibility.lower())}">{escape(visibility.title())}</span>'
+            if admin
+            else ""
+        )
+        tags = [
+            tag.strip()
+            for tag in (row_value(row, "tags") or "").split(",")
+            if tag.strip()
+        ]
+        tag_html = "".join(f"<span>{escape(tag)}</span>" for tag in tags[:8])
+        body_text = row_value(row, "body")
+        return f"""
+        <article class="wiki-result-card">
+          <div class="wiki-result-head">
+            <div>
+              <h2>{escape(row_value(row, "title"))}</h2>
+              <p>{escape(row_value(row, "subtitle"))}</p>
+            </div>
+            {visibility_badge}
+          </div>
+          <div class="wiki-body">{escape(body_text)}</div>
+          <div class="wiki-tags">{tag_html}</div>
+          <small>Updated {escape(row_value(row, "updated_at"))}{(' · ' + escape(row_value(row, 'author_name'))) if row_value(row, 'author_name') else ''}</small>
+        </article>
+        """
+
+    def render_wiki_empty_state(self, query: str, admin: bool = False) -> str:
+        if query:
+            return f"""
+            <article class="wiki-empty">
+              <b>No Wiki result found for "{escape(query)}".</b>
+              <span>{'Create an article below or adjust your search.' if admin else 'Try a simpler search like savings, Explorer, pickup, receipt, or cancellation.'}</span>
+            </article>
+            """
+        return """
+        <article class="wiki-empty">
+          <b>No Wiki articles yet.</b>
+          <span>Admin can create title, subtitle, body, tags, and visibility rules.</span>
+        </article>
+        """
+
     def render_car_card(self, row: sqlite3.Row, saved_car_ids: set[int] | None = None) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         car_visual = (
@@ -4507,7 +5506,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
-        low, high = daily_price_range(row["daily_price"])
+        daily_rate = round(float(row["daily_price"] or 0))
         is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
         save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
@@ -4528,22 +5527,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <ul>{features}</ul>
             </div>
             <div class="price-box">
-                <strong data-price-range>${low}-${high}</strong><span>/day est.</span>
+                <strong data-price-range>${daily_rate}</strong><span>/day</span>
                 <small class="availability-note" data-availability-note></small>
-                <em>FairFares keeps your savings visible before you book, then carries the final price into your receipt, agreement, and confirmation email.</em>
+                <em>Daily rate comes from FairFares inventory. Taxes, fees, 10% hold, and pickup balance are shown before confirmation.</em>
                 <div class="card-actions-row">
                     <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
-                <details class="car-terms">
-                    <summary>View Details</summary>
-                    <div class="car-terms-grid">
-                        <span>Price-match review before pickup</span>
-                        <span>Eligible cancellation up to 24 hours before pickup</span>
-                        <span>Taxes, fees, mileage, insurance, and pickup rules follow your rental agreement</span>
-                    </div>
-                </details>
             </div>
+            <details class="car-terms">
+                <summary>View Details</summary>
+                <div class="car-terms-grid">
+                    <span>Daily rate from inventory</span>
+                    <span>Taxes and provider fees itemized before confirmation</span>
+                    <span>10% hold is deducted at pickup</span>
+                    <span>Price-match review before pickup</span>
+                    <span>Eligible cancellation up to 24 hours before pickup</span>
+                    <span>Mileage, insurance, and pickup rules follow your rental agreement</span>
+                </div>
+            </details>
         </article>
         """
 
@@ -4713,6 +5715,132 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
         self.set_session(verification["user_id"])
+
+    def forgot_password_page(self) -> None:
+        self.send_html(
+            render_template(
+                "forgot_password.html",
+                error="",
+            )
+        )
+
+    def forgot_password(self) -> None:
+        form = self.read_form()
+        email = form.get("email", "").lower().strip()
+
+        if not email or "@" not in email:
+            self.send_html(
+                render_template(
+                    "forgot_password.html",
+                    error="Please enter a valid email address.",
+                )
+            )
+            return
+
+        with db() as con:
+            user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
+        token = create_verification(user["id"] if user else 1, email, purpose="PASSWORD_RESET")
+
+        if user:
+            link = self.reset_password_url(token)
+            outbox_file, delivery_status = send_password_reset_email(email, user["name"], link)
+
+        self.send_html(
+            render_template(
+                "forgot_password_sent.html",
+                email=escape(email),
+            )
+        )
+
+    def reset_password_page(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        token = query.get("token", [""])[0]
+
+        if not token:
+            self.activation_message_page("Reset link missing", "Please use the password reset link from your FairFares email.")
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.email
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        self.send_html(
+            render_template(
+                "reset_password.html",
+                token=escape(token),
+                error="",
+            )
+        )
+
+    def reset_password(self) -> None:
+        form = self.read_form()
+        token = form.get("token", "").strip()
+        new_password = form.get("password", "")
+
+        if not token or len(new_password) < 8:
+            self.send_html(
+                render_template(
+                    "reset_password.html",
+                    token=escape(token),
+                    error="Password must be at least 8 characters.",
+                )
+            )
+            return
+
+        with db() as con:
+            verification = con.execute(
+                """
+                SELECT email_verifications.*, users.id
+                FROM email_verifications
+                JOIN users ON users.id = email_verifications.user_id
+                WHERE token = ? AND purpose = 'PASSWORD_RESET' AND used_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+
+        if not verification:
+            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            return
+
+        created_time = datetime.fromisoformat(verification["created_at"])
+        expires_at = created_time + timedelta(minutes=30)
+        if datetime.now(UTC).replace(tzinfo=None) > expires_at:
+            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            return
+
+        with db() as con:
+            con.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), verification["user_id"]),
+            )
+            con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+            con.execute("DELETE FROM sessions WHERE user_id = ?", (verification["user_id"],))
+
+        self.activation_message_page(
+            "Password reset successful",
+            "Your password has been reset. You can now sign in with your new password.",
+            "Go to Login",
+            "/login"
+        )
 
     def update_user_booking(self) -> None:
         user = self.current_user()
@@ -4914,6 +6042,165 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE bookings SET saved_by_user = 1 WHERE id = ? AND user_id = ?", (booking["id"], user["id"]))
         self.send_json({"ok": True, "message": "Current trip saved."})
 
+    def pay_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay and confirm this car."}, 401)
+            return
+        expire_stale_booking_holds()
+        form = self.read_form()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "Choose a car before paying."}, 404)
+            return
+        if booking["booking_status"] == "EXPIRED_HOLD":
+            self.send_json({"ok": False, "message": "This payment window expired. Continue checkout or remove this car before paying."}, 409)
+            return
+        if booking["booking_status"] in {"CANCELLED", "RETURNED"}:
+            self.send_json({"ok": False, "message": "This booking cannot accept payment right now."}, 400)
+            return
+        breakdown = booking_price_breakdown(booking)
+        hold_amount = float(breakdown["booking_hold"])
+        cardholder = form.get("cardholder_name", "").strip()
+        raw_card = re.sub(r"\D+", "", form.get("card_last4", ""))
+        payment_method = form.get("payment_method", "Card").strip() or "Card"
+        if not cardholder or len(raw_card) < 4:
+            self.send_json({"ok": False, "message": "Enter the cardholder name and last 4 card digits."}, 400)
+            return
+        card_last4 = raw_card[-4:]
+        billing_status, billing_notes = evaluate_billing_name(
+            payment_method,
+            cardholder,
+            booking["contact_name"] or user["name"],
+            "",
+        )
+        if billing_status == "REVIEW_REQUIRED":
+            billing_status = "MATCHED"
+            billing_notes = "Billing name captured for 10% payment."
+        invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
+        with db() as con:
+            while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
+                invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
+            con.execute(
+                """
+                INSERT INTO transactions
+                (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+                VALUES (?, ?, ?, ?, 'HOLD_PAID', ?, ?, ?)
+                """,
+                (
+                    booking["id"],
+                    f"{payment_method} ending {card_last4}",
+                    cardholder,
+                    hold_amount,
+                    billing_status,
+                    billing_notes,
+                    invoice_number,
+                ),
+            )
+            con.execute(
+                """
+                UPDATE bookings
+                SET payment_status = 'HOLD_PAID',
+                    booking_status = 'CONFIRMED',
+                    status = 'CONFIRMED',
+                    booking_hold_amount = ?,
+                    due_at_pickup_amount = ?,
+                    hold_expires_at = NULL
+                WHERE id = ? AND user_id = ?
+                """,
+                (hold_amount, breakdown["due_at_pickup"], booking["id"], user["id"]),
+            )
+            con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
+        self.send_json(
+            {
+                "ok": True,
+                "message": f"Payment recorded: {format_money(hold_amount)}. It will be deducted from pickup balance.",
+                "payment_status": "HOLD_PAID",
+                "payment_label": payment_status_label("HOLD_PAID"),
+                "status_label": booking_status_label("CONFIRMED", "HOLD_PAID"),
+                "hold_amount": format_money(hold_amount),
+                "due_at_pickup": format_money(breakdown["due_at_pickup"]),
+                "invoice_number": invoice_number,
+            }
+        )
+
+    def continue_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to continue checkout."}, 401)
+            return
+        expire_stale_booking_holds()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "No checkout window found."}, 404)
+            return
+        if booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "This booking does not need a new payment window."}, 400)
+            return
+        active = active_booking_for_car(booking["car_id"])
+        if active and int(active["id"]) != int(booking["id"]):
+            self.send_json({"ok": False, "message": "That car is no longer available. Please choose another vehicle."}, 409)
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'PENDING_HOLD',
+                    status = 'PENDING_HOLD',
+                    payment_status = 'HOLD_PENDING',
+                    hold_started_at = CURRENT_TIMESTAMP,
+                    hold_expires_at = datetime('now', '+10 minutes')
+                WHERE id = ? AND user_id = ?
+                """,
+                (booking["id"], user["id"]),
+            )
+            con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (booking["car_id"],))
+        self.send_json(
+            {
+                "ok": True,
+                "message": "Checkout restarted for 10 minutes. Pay 10% to confirm this car.",
+                "status_label": booking_status_label("PENDING_HOLD", "HOLD_PENDING"),
+                "status_class": booking_status_class("PENDING_HOLD"),
+                "remaining": f"{BOOKING_HOLD_MINUTES}:00",
+            }
+        )
+
+    def remove_booking_hold(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to remove this car."}, 401)
+            return
+        booking = get_booking_for_user(user["id"])
+        if not booking or booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "No removable checkout item found."}, 404)
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'CANCELLED',
+                    status = 'CANCELLED',
+                    payment_status = 'HOLD_EXPIRED',
+                    cancellation_reason = 'Customer removed unpaid checkout item.'
+                WHERE id = ? AND user_id = ?
+                """,
+                (booking["id"], user["id"]),
+            )
+            active = con.execute(
+                """
+                SELECT 1
+                FROM bookings
+                WHERE car_id = ?
+                  AND id != ?
+                  AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                LIMIT 1
+                """,
+                (booking["car_id"], booking["id"]),
+            ).fetchone()
+            if not active:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+        self.send_json({"ok": True, "message": "Removed. The car is available again.", "redirect": "/#results"})
+
     def save_search_car(self) -> None:
         user = self.current_user()
         if not user:
@@ -5023,6 +6310,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 result["referral_code"] = reward["code"]
                 result["referral_status"] = reward["status"]
         self.send_json(result, 200 if result["ok"] else 400)
+
+    def update_profile_photo(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to save your profile photo."}, 401)
+            return
+        form = self.read_form()
+        photo = (form.get("photo") or "").strip()
+        if photo.startswith("data:image/svg xml"):
+            photo = photo.replace("data:image/svg xml", "data:image/svg+xml", 1)
+        if not photo.startswith("data:image/"):
+            self.send_json({"ok": False, "message": "Upload a valid image."}, 400)
+            return
+        if ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+            self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
+            return
+        with db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (photo, user["id"]))
+        self.send_json({"ok": True, "photo": photo, "message": "Profile photo saved."})
 
     def create_guest_booking(self) -> None:
         form = self.read_form()
@@ -5154,6 +6460,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (user["id"] if user else None, rating, message, page, user_agent),
             )
         self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
+
+    def ask_wiki_agent(self) -> None:
+        user = self.current_user()
+        include_internal = assistant_user_role(user) == "admin"
+        form = self.read_form()
+        question = " ".join((form.get("question") or "").split())[:180]
+        if not question:
+            self.send_json({"ok": False, "message": "Ask about cars, booking, cancellation, refunds, Explorer, or support."}, 400)
+            return
+        context = assistant_database_context(question, user, include_internal)
+        answer = openai_assistant_answer(question, context) or local_assistant_answer(question, context)
+        wiki_sources = context.get("wiki") if isinstance(context.get("wiki"), list) else []
+        sources = [
+            {
+                "title": str(row.get("title", "")),
+                "visibility": str(row.get("visibility", "")),
+            }
+            for row in wiki_sources[:3]
+            if isinstance(row, dict)
+        ]
+        self.send_json(
+            {
+                "ok": True,
+                "answer": answer,
+                "sources": sources,
+                "actions": assistant_actions(question, context),
+                "scope": "Admin database + Wiki" if include_internal else ("Your FairFares data + public Wiki" if user else "Public FairFares data"),
+                "agent": "FairFares Assistant",
+            }
+        )
 
     def generate_referral_code(self) -> None:
         form = self.read_form()
@@ -5519,6 +6855,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def admin_wiki_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query).get("q", [""])[0].strip()
+        articles = search_wiki_articles(query, include_internal=True)
+        article_cards = "\n".join(self.render_admin_wiki_article(row) for row in articles)
+        body = render_template(
+            "admin_wiki.html",
+            admin_name=escape(user["name"]),
+            query=escape(query),
+            article_count=escape(len(articles)),
+            wiki_articles=article_cards or self.render_wiki_empty_state(query, admin=True),
+        )
+        self.send_html(body)
+
+    def render_admin_wiki_article(self, row: sqlite3.Row) -> str:
+        card = self.render_wiki_article_card(row, admin=True)
+        return f"""
+        <div class="admin-wiki-item">
+          {card}
+          <form method="post" action="/admin/wiki/delete" class="inline-form">
+            <input type="hidden" name="article_id" value="{row["id"]}">
+            <button class="danger-button" type="submit">Delete</button>
+          </form>
+        </div>
+        """
+
     def admin_commercials_page(self) -> None:
         user = self.require_admin()
         if not user:
@@ -5535,6 +6900,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
+        ensure_email_marketing_calendar_plans()
         draft_cards = "\n".join(self.render_email_draft_card(draft) for draft in EMAIL_MARKETING_DRAFTS)
         seasonal_rows = "\n".join(
             f"<li><b>{escape(month)}</b><span>{escape(title)}</span><small>{escape(window)}</small></li>"
@@ -5607,6 +6973,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status}</option>'
             for status in ("AVAILABLE", "BOOKED", "MAINTENANCE")
         )
+        edit_fields = f"""
+            <div class="admin-car-edit-grid">
+                <label><span>Brand</span><input form="car-update-{row["id"]}" name="brand" value="{escape(row["brand"])}"></label>
+                <label><span>Model</span><input form="car-update-{row["id"]}" name="model" value="{escape(row["model"])}"></label>
+                <label><span>Year</span><input form="car-update-{row["id"]}" name="year" type="number" value="{escape(row["year"] or "")}"></label>
+                <label><span>Category</span><input form="car-update-{row["id"]}" name="category" value="{escape(row["category"])}"></label>
+                <label><span>Type</span><input form="car-update-{row["id"]}" name="type" value="{escape(row["type"])}"></label>
+                <label><span>Fuel</span><input form="car-update-{row["id"]}" name="fuel_type" value="{escape(row["fuel_type"])}"></label>
+                <label><span>Seats</span><input form="car-update-{row["id"]}" name="seats" type="number" value="{escape(row["seats"])}"></label>
+                <label><span>Bags</span><input form="car-update-{row["id"]}" name="bags" type="number" value="{escape(row["bags"])}"></label>
+                <label><span>Doors</span><input form="car-update-{row["id"]}" name="doors" type="number" value="{escape(row["doors"])}"></label>
+                <label><span>Transmission</span><input form="car-update-{row["id"]}" name="transmission" value="{escape(row["transmission"])}"></label>
+                <label><span>Badge</span><input form="car-update-{row["id"]}" name="badge" value="{escape(row["badge"])}"></label>
+                <label><span>Color</span><input form="car-update-{row["id"]}" name="color" value="{escape(row["color"])}"></label>
+                <label class="wide"><span>Image URL</span><input form="car-update-{row["id"]}" name="image_url" value="{escape(row["image_url"])}"></label>
+                <label class="wide"><span>Features</span><input form="car-update-{row["id"]}" name="features" value="{escape(row["features"])}"></label>
+                <label><span>License plate</span><input form="car-update-{row["id"]}" name="license_plate" value="{escape(row["license_plate"])}"></label>
+                <label><span>VIN</span><input form="car-update-{row["id"]}" name="vin_number" value="{escape(row["vin_number"])}"></label>
+                <label><span>Sort order</span><input form="car-update-{row["id"]}" name="sort_order" type="number" value="{escape(row["sort_order"])}"></label>
+            </div>
+        """
         return f"""
         <tr>
             <td><b>{escape(row["name"])}</b><span>{escape(row["brand"] or "-")} {escape(row["model"] or "")}</span></td>
@@ -5623,6 +7010,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </form>
             </td>
             <td>
+                <details class="admin-car-edit">
+                    <summary>Edit details</summary>
+                    {edit_fields}
+                    <button form="car-update-{row["id"]}" type="submit">Save full details</button>
+                </details>
                 <form method="post" action="/admin/cars/delete" class="inline-form">
                     <input type="hidden" name="car_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
@@ -5668,6 +7060,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
         booking_status_options = (
+            ("PENDING_HOLD", "Pending 10-min hold"),
+            ("EXPIRED_HOLD", "Expired hold"),
             ("CONFIRMED", "Confirmed / Pay at pickup"),
             ("MODIFIED", "Modification pending"),
             ("CANCELLATION_REQUESTED", "Cancellation requested"),
@@ -5679,7 +7073,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{escape(label)}</option>'
             for status, label in booking_status_options
         )
-        payment_options = '<option value="PAY_AT_PICKUP" selected>Pay at pickup</option>'
+        payment_status_options = (
+            ("HOLD_PENDING", "Hold payment pending"),
+            ("HOLD_EXPIRED", "Expired"),
+            ("HOLD_PAID", "10% hold paid"),
+            ("PAY_AT_PICKUP", "Pay at pickup"),
+        )
+        payment_options = "".join(
+            f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{escape(label)}</option>'
+            for status, label in payment_status_options
+        )
         request_note = ""
         if is_request:
             request_type = "Cancellation approval requested" if row["booking_status"] == "CANCELLATION_REQUESTED" else "Modification approval requested"
@@ -5945,15 +7348,71 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             daily_price = max(0.0, float(form.get("daily_price") or 0))
         except ValueError:
             daily_price = 0.0
+        try:
+            year = int(form.get("year") or 0)
+        except ValueError:
+            year = 0
+        def int_field(name: str, fallback: int) -> int:
+            try:
+                return int(form.get(name) or fallback)
+            except ValueError:
+                return fallback
         location = form.get("location", "").strip()
         with db() as con:
-            current = con.execute("SELECT daily_price, location FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            current = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            brand = form.get("brand", row_value(current, "brand")).strip()
+            model = form.get("model", row_value(current, "model")).strip()
+            name = f"{brand} {model}".strip() or row_value(current, "name") or "Vehicle"
             con.execute(
-                "UPDATE cars SET status = ?, daily_price = ?, location = ? WHERE id = ?",
+                """
+                UPDATE cars
+                SET name = ?,
+                    brand = ?,
+                    model = ?,
+                    year = ?,
+                    category = ?,
+                    type = ?,
+                    fuel_type = ?,
+                    seats = ?,
+                    bags = ?,
+                    doors = ?,
+                    transmission = ?,
+                    daily_price = ?,
+                    total_price = ?,
+                    badge = ?,
+                    color = ?,
+                    features = ?,
+                    location = ?,
+                    image_url = ?,
+                    status = ?,
+                    license_plate = ?,
+                    vin_number = ?,
+                    sort_order = ?
+                WHERE id = ?
+                """,
                 (
+                    name,
+                    brand,
+                    model,
+                    year or int(row_value(current, "year") or 2026),
+                    form.get("category", row_value(current, "category")) or "Economy",
+                    form.get("type", row_value(current, "type")) or "Sedan",
+                    form.get("fuel_type", row_value(current, "fuel_type")) or "Gasoline",
+                    int_field("seats", int(row_value(current, "seats") or 5)),
+                    int_field("bags", int(row_value(current, "bags") or 2)),
+                    int_field("doors", int(row_value(current, "doors") or 4)),
+                    form.get("transmission", row_value(current, "transmission")) or "Automatic",
+                    daily_price or float(row_value(current, "daily_price") or 0),
+                    (daily_price or float(row_value(current, "daily_price") or 0)) * 7,
+                    form.get("badge", row_value(current, "badge")) or "Available",
+                    form.get("color", row_value(current, "color")) or "white",
+                    form.get("features", row_value(current, "features")) or "Free Cancellation|Unlimited Mileage|24/7 Support",
+                    location or row_value(current, "location") or "Denver International Airport (DEN)",
+                    form.get("image_url", row_value(current, "image_url")),
                     status,
-                    daily_price or (current["daily_price"] if current else 0),
-                    location or (current["location"] if current else "Denver International Airport (DEN)"),
+                    form.get("license_plate", row_value(current, "license_plate")),
+                    form.get("vin_number", row_value(current, "vin_number")),
+                    int_field("sort_order", int(row_value(current, "sort_order") or 99)),
                     form.get("car_id"),
                 ),
             )
@@ -5967,7 +7426,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             booked = con.execute("SELECT 1 FROM bookings WHERE car_id = ? LIMIT 1", (form.get("car_id"),)).fetchone()
             if booked:
-                con.execute("UPDATE cars SET status = 'MAINTENANCE' WHERE id = ?", (form.get("car_id"),))
+                con.execute("UPDATE cars SET status = 'DELETED' WHERE id = ?", (form.get("car_id"),))
             else:
                 con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
         self.redirect("/admin")
@@ -5979,9 +7438,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking_status = form.get("booking_status", "CONFIRMED")
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
-        if booking_status not in {"CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
+        if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status != "PAY_AT_PICKUP":
+        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAY_AT_PICKUP"}:
             payment_status = "PAY_AT_PICKUP"
         reason = form.get("reason", "")
         if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}:
@@ -6000,11 +7459,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (booking_status, payment_status, booking_status, reason, form.get("booking_id")),
             )
-            if booking_status == "CANCELLED":
+            if booking_status in {"CANCELLED", "EXPIRED_HOLD"}:
                 con.execute(
                     """
                     UPDATE cars
                     SET status = 'AVAILABLE'
+                    WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
+                    """,
+                    (form.get("booking_id"),),
+                )
+            elif booking_status == "PENDING_HOLD":
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'HOLD'
                     WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
                     """,
                     (form.get("booking_id"),),
@@ -6096,6 +7564,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute("DELETE FROM discounts WHERE id = ?", (form.get("discount_id"),))
         self.redirect("/admin/discounts")
+
+    def create_admin_wiki_article(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        title = (form.get("title") or "").strip()[:180]
+        subtitle = (form.get("subtitle") or "").strip()[:260]
+        body = (form.get("body") or "").strip()[:10000]
+        tags = (form.get("tags") or "").strip()[:400]
+        visibility = (form.get("visibility") or "PUBLIC").upper()
+        if visibility not in {"PUBLIC", "INTERNAL"}:
+            visibility = "PUBLIC"
+        if not title or not body:
+            self.redirect("/admin/wiki")
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO wiki_articles (title, subtitle, body, tags, visibility, status, created_by)
+                VALUES (?, ?, ?, ?, ?, 'PUBLISHED', ?)
+                """,
+                (title, subtitle, body, tags, visibility, user["id"]),
+            )
+        self.redirect("/admin/wiki")
+
+    def delete_admin_wiki_article(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute(
+                "UPDATE wiki_articles SET status = 'ARCHIVED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (form.get("article_id"),),
+            )
+        self.redirect("/admin/wiki")
 
     def create_admin_commercial(self) -> None:
         user = self.require_admin()
@@ -6534,8 +8039,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         show_start_experience = bool(user and is_first_time_user and not selected_car_id)
         show_signed_out_empty = bool(not user and not selected_car_id)
         trip_rows = render_user_trip_rows(user_bookings, saved_cars)
-        upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED"})
-        past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED"})
+        upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         live_status = live_status_for_booking(booking)
         default_pickup, default_return = default_trip_dates()
         modify_pickup_date = display_date_to_input(booking["pickup_date"] if booking else "", default_pickup)
@@ -6594,6 +8099,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         first_booking_promo = ""
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
+        booking_status = row_value(booking, "booking_status") if booking else ""
+        hold_pending = booking_status == "PENDING_HOLD"
+        hold_expired = booking_status == "EXPIRED_HOLD"
         if is_guest_checkout:
             dashboard_booking_title = "Complete Your Booking"
             dashboard_booking_body = "Enter your contact details and we will save this trip under your email and phone."
@@ -6605,6 +8113,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dashboard_booking_body = (
                 "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
             )
+        elif hold_expired:
+            dashboard_booking_title = "Reservation Expired"
+            dashboard_booking_body = "Continue checkout if you still want this car, or remove it and search again."
+        elif hold_pending:
+            dashboard_booking_title = "Complete Payment"
+            dashboard_booking_body = "Finish the 10% payment before the timer ends to confirm this car."
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
             dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
@@ -6624,6 +8138,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
+        active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
+        price_breakdown_summary = ""
+        if booking:
+            price_breakdown_summary = f"""
+              <div class="price-breakdown-summary">
+                <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
+                <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees</span>
+                <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% due now</span>
+                <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
+              </div>
+            """
         first_time_manage_content = ""
         if show_start_experience or show_signed_out_empty:
             first_time_manage_content = """
@@ -6659,7 +8184,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
-        if booking and selected_car_id:
+        if booking and (selected_car_id or hold_pending or hold_expired):
             name_parts = ((user["name"] if user else "") or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
@@ -6700,12 +8225,62 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
             referral_share_url = f"{self.public_origin()}/deals"
+            hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
+            hold_remaining = booking_hold_remaining_label(booking)
+            hold_decision = ""
+            if hold_expired:
+                hold_decision = """
+                    <div class="booking-hold-expired-actions">
+                        <button type="button" class="select-button" id="continueHoldButton">Continue checkout</button>
+                        <button type="button" class="light-button" id="removeHoldButton">Remove</button>
+                    </div>
+                """
+            elif hold_pending:
+                hold_decision = f"""
+                    <div class="booking-hold-timer" data-hold-seconds="{booking_hold_remaining_seconds(booking)}">
+                        <span>Complete payment in</span>
+                        <b id="holdCountdown">{escape(hold_remaining)}</b>
+                    </div>
+                """
+            payment_hold_card = f"""
+                <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
+                    <div class="booking-hold-panel-copy">
+                        <p class="eyebrow">{'Expired' if hold_expired else 'Secure checkout'}</p>
+                        <h3>{'Payment window expired.' if hold_expired else 'Pay 10% now, finish at pickup.'}</h3>
+                        <p>{'Continue checkout to reopen a fresh 10-minute payment window, or remove this car and search again.' if hold_expired else 'Your 10% payment is deducted from the pickup balance. It becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.'}</p>
+                    </div>
+                    {hold_decision}
+                    <div class="booking-hold-breakdown">
+                        <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
+                        <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>
+                        <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
+                    </div>
+                    {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
+                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
+                        <label><span>Cardholder name *</span><input name="cardholder_name" autocomplete="cc-name" required></label>
+                        <label><span>Card last 4 *</span><input name="card_last4" inputmode="numeric" maxlength="19" placeholder="1234" required></label>
+                        <input type="hidden" name="payment_method" value="Card">
+                        <button type="submit">Pay 10% Now</button>
+                        <small>Demo payment flow. Full card numbers are not stored.</small>
+                    </form>
+                    {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
+                    <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
+                </section>
+            """
+            booking_summary_heading = "Payment window expired." if hold_expired else ("Review your booking." if hold_pending else "Your car is booked.")
+            booking_summary_copy = (
+                "Continue checkout if you still want this car, or remove it from your trip."
+                if hold_expired
+                else "Confirm your details, review the price, and pay 10% now. The remaining balance is due at pickup."
+                if hold_pending
+                else "FairFares keeps the rental price, taxes, fees, and pickup balance visible on your booking, receipt, agreement, and email."
+            )
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
-                    <p class="eyebrow">Confirmed / Pay at pickup</p>
-                    <h2>Your car is booked.</h2>
-                    <p>We promise a fair rental price. If you show us a lower comparable quote before pickup, FairFares will review it, match the eligible price, and add another 10% off so your savings stay clear on your documents.</p>
+                    <p class="eyebrow">{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</p>
+                    <h2>{booking_summary_heading}</h2>
+                    <p>{booking_summary_copy}</p>
                     {guest_account_note}
                 </div>
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
@@ -6723,6 +8298,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {guest_after_save_actions}
                     <p class="modify-status" id="customerInfoStatus" aria-live="polite"></p>
                 </form>
+                {payment_hold_card}
             </section>
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
@@ -6763,14 +8339,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<div class=\"support-summary support-ticket-state\"><b>{escape(owner)} is working on ticket {escape(latest_ticket['ticket_id'])}</b>"
                 f"<span>Status: {escape(status)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
             )
-        signed_out_auth = '<a class="user-chip" href="/login"><span></span><b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
+        signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "FairFares Member"),
             role="Admin" if user and user["is_admin"] else "Student",
             admin_panel=admin_panel,
             manage_auth=(
-                f'<a class="user-chip" href="/dashboard"><span></span><b>Hi, {escape(user["name"])}</b><small>Student</small></a><a href="/logout">Log out</a>'
+                f'<a class="user-chip" href="/dashboard">{user_avatar_span(user)}<b>Hi, {escape(user["name"])}</b><small>Student</small></a><a href="/logout">Log out</a>'
                 if user
                 else signed_out_auth
             ),
@@ -6802,7 +8378,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_date=escape(booking["dropoff_date"] if booking else "Not scheduled"),
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
-            price_text=f"${float(booking['total_price'] if booking else 0):.2f}",
+            price_text=escape(format_money(active_breakdown["total"]) if booking else "$0.00"),
+            price_breakdown_summary=price_breakdown_summary,
             savings_label=escape(booking_savings_label(booking) if booking else ""),
             price_match_note=escape(booking_savings_explainer(booking) if booking else ""),
             status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),

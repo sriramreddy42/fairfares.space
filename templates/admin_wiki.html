@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Wiki | FairFares</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=site-60">
+  <script defer src="/static/js/app.js?v=53"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    <nav>
+      <a href="/">User Portal</a>
+      <a href="/admin/bookings">Booked Cars</a>
+      <a href="/admin/users">Users</a>
+      <a href="/admin/tickets">Tickets</a>
+      <a href="/admin/discounts">Discounts</a>
+      <a class="active" href="/admin/wiki">Wiki</a>
+      <a href="/admin/commercials">Commercials</a>
+      <a href="/admin/email-marketing">Email Marketing</a>
+      <a href="/admin/pickup">User Pickup</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </header>
+
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Admin Wiki</p>
+        <h1>Knowledge base, public answers, and internal-only files</h1>
+        <span>Signed in as $admin_name · $article_count matching articles</span>
+      </div>
+    </section>
+
+    <section class="admin-grid wiki-admin-grid">
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Create Wiki Article</h2>
+            <p>Use title, subtitle, body, tags, and visibility. Internal articles are admin-only and never shown on public Wiki search.</p>
+          </div>
+        </div>
+        <form class="admin-form wiki-admin-form" method="post" action="/admin/wiki">
+          <label><span>Title</span><input name="title" required placeholder="Pickup rules"></label>
+          <label><span>Subtitle</span><input name="subtitle" placeholder="Short answer summary"></label>
+          <label class="wide-field"><span>Body</span><textarea name="body" rows="8" required placeholder="Write the answer or paste safe source notes here."></textarea></label>
+          <label><span>Tags</span><input name="tags" placeholder="pickup, cancellation, receipt"></label>
+          <label><span>Visibility</span><select name="visibility"><option value="PUBLIC">Public</option><option value="INTERNAL">Internal / Admin only</option></select></label>
+          <button type="submit">Create Wiki Article</button>
+        </form>
+      </article>
+
+      <article class="admin-card wiki-rag-card">
+        <h2>OpenAI + RAG Plan</h2>
+        <ol>
+          <li><b>Your Files</b><span>Upload or paste source material.</span></li>
+          <li><b>Vector Database</b><span>Store searchable embeddings with visibility rules.</span></li>
+          <li><b>GPT-4o / GPT-5</b><span>Answer only from allowed retrieved content.</span></li>
+          <li><b>Answer</b><span>Public sees public. Admin can search internal notes.</span></li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Search Wiki</h2>
+          <p>Admin search includes public and internal articles.</p>
+        </div>
+        <form class="inline-form wiki-inline-search" method="get" action="/admin/wiki">
+          <input name="q" value="$query" placeholder="Search all Wiki articles">
+          <button type="submit">Search</button>
+        </form>
+      </div>
+      <div class="admin-wiki-list">$wiki_articles</div>
+    </section>
+  </main>
+</body>
+</html>

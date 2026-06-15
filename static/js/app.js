@@ -86,6 +86,7 @@ const explorerMemoryBackdrop = document.getElementById("explorerMemoryBackdrop")
 const explorerUserPhoto = document.getElementById("explorerUserPhoto");
 const explorerUserPhotoInput = document.getElementById("explorerUserPhotoInput");
 const explorerUserPhotoPreview = document.getElementById("explorerUserPhotoPreview");
+const serverProfilePhoto = document.body?.dataset.profilePhoto || "";
 const explorerCityStep = document.getElementById("explorerCityStep");
 const explorerBookingStep = document.getElementById("explorerBookingStep");
 const explorerMoodStep = document.getElementById("explorerMoodStep");
@@ -102,16 +103,11 @@ let explorerDirectionsRenderer = null;
 const EXPLORER_PHOTO_STORAGE_KEY = "fairfaresExplorerProfilePhoto";
 
 function syncStoredProfilePhotoToNav(src = savedExplorerUserPhoto()) {
+  if (!src) return;
   document.querySelectorAll(".user-chip span").forEach((avatar) => {
-    if (src) {
-      avatar.style.backgroundImage = `url("${src}")`;
-      avatar.style.backgroundSize = "cover";
-      avatar.style.backgroundPosition = "center";
-    } else {
-      avatar.style.removeProperty("background-image");
-      avatar.style.removeProperty("background-size");
-      avatar.style.removeProperty("background-position");
-    }
+    avatar.style.setProperty("background-image", `url("${src}")`, "important");
+    avatar.style.setProperty("background-size", "cover", "important");
+    avatar.style.setProperty("background-position", "center", "important");
   });
 }
 
@@ -143,7 +139,7 @@ function savedExplorerUserPhoto() {
   }
 }
 
-setExplorerUserPhoto(savedExplorerUserPhoto());
+setExplorerUserPhoto(serverProfilePhoto || savedExplorerUserPhoto());
 
 explorerUserPhoto?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
@@ -155,7 +151,7 @@ explorerUserPhotoInput?.addEventListener("change", () => {
   const file = explorerUserPhotoInput.files?.[0];
   if (!file || !file.type.startsWith("image/")) return;
   const reader = new FileReader();
-  reader.addEventListener("load", () => {
+  reader.addEventListener("load", async () => {
     const src = String(reader.result || "");
     setExplorerUserPhoto(src);
     try {
@@ -163,6 +159,19 @@ explorerUserPhotoInput?.addEventListener("change", () => {
       syncStoredProfilePhotoToNav(src);
     } catch {
       // Large local photos may exceed storage; preview still works for this session.
+    }
+    try {
+      const response = await fetch("/profile/photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ photo: src }),
+      });
+      const payload = await response.json();
+      if (payload?.ok && payload.photo) {
+        setExplorerUserPhoto(String(payload.photo));
+      }
+    } catch {
+      // Guests still get a local preview; signed-in users get persistence when the network call succeeds.
     }
   });
   reader.readAsDataURL(file);
@@ -580,10 +589,18 @@ if (mainNav && menuButton) {
   mobileMenu.className = "mobile-menu";
   mobileMenu.hidden = true;
 
+  const seenMobileItems = new Set();
   const hiddenNavItems = [
     ...document.querySelectorAll(".nav-links a"),
-    ...document.querySelectorAll(".nav-actions > a"),
-  ];
+    ...document.querySelectorAll(".nav-actions > a:not(.user-chip)"),
+  ].filter((item) => {
+    const href = item.getAttribute("href") || "";
+    const label = item.textContent.trim().replace(/\s+/g, " ");
+    const key = `${href}|${label}`;
+    if (!href || href === "/wiki" || seenMobileItems.has(key)) return false;
+    seenMobileItems.add(key);
+    return true;
+  });
 
   hiddenNavItems.forEach((item) => {
     const clone = item.cloneNode(true);
@@ -1576,16 +1593,27 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
 
 function renderExplorerReviews(stop) {
   const reviews = Array.isArray(stop.reviews) ? stop.reviews : [];
-  if (!reviews.length) return "";
+  const fallback = [
+    {
+      author: "Google review summary",
+      rating: stop.rating || "",
+      text: stop.review_count
+        ? `${stop.review_count} Google reviews are linked to this live place result. Open the listing for the full thread.`
+        : "Live Google comments appear here when Places returns review text.",
+    },
+  ];
+  const reviewList = reviews.length ? reviews : fallback;
   return `
     <div class="quest-place-reviews">
       <b class="review-loop-title">Explorer review loop</b>
-      ${reviews.slice(0, 2).map((review) => `
+      <div class="quest-review-strip" aria-label="Google comments">
+      ${reviewList.slice(0, 6).map((review) => `
         <blockquote>
           <b>${escapeHtml(review.author || "Google reviewer")} ${review.rating ? `· ${escapeHtml(review.rating)}★` : ""}</b>
           <span>${escapeHtml(review.text || "")}</span>
         </blockquote>
       `).join("")}
+      </div>
     </div>
   `;
 }
@@ -2169,6 +2197,97 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
     });
 });
 
+document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
+  fetch("/payment/hold", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Payment recorded.";
+      const badge = document.getElementById("bookingStatusBadge");
+      if (badge && payload.status_label) badge.textContent = payload.status_label;
+      const holdLabel = document.getElementById("holdAmountLabel");
+      if (holdLabel && payload.hold_amount) holdLabel.textContent = payload.hold_amount;
+      const dueLabel = document.getElementById("dueAtPickupLabel");
+      if (dueLabel && payload.due_at_pickup) dueLabel.textContent = payload.due_at_pickup;
+      const paid = document.createElement("p");
+      paid.className = "payment-hold-paid";
+      paid.textContent = `Payment received. Invoice ${payload.invoice_number || ""}`.trim();
+      form.replaceWith(paid);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Payment hold could not be recorded.";
+      if (submitButton) submitButton.disabled = false;
+    });
+});
+
+document.getElementById("continueHoldButton")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  button.disabled = true;
+  fetch("/booking/hold/continue", { method: "POST" })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Checkout window restarted.";
+      window.setTimeout(() => window.location.reload(), 450);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Unable to continue checkout.";
+      button.disabled = false;
+    });
+});
+
+document.getElementById("removeHoldButton")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById("paymentHoldStatus");
+  button.disabled = true;
+  fetch("/booking/hold/remove", { method: "POST" })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "Removed from checkout.";
+      window.setTimeout(() => {
+        window.location.href = payload.redirect || "/#results";
+      }, 650);
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Unable to remove this car.";
+      button.disabled = false;
+    });
+});
+
+function startBookingCountdown() {
+  const timer = document.querySelector("[data-hold-seconds]");
+  const label = document.getElementById("holdCountdown");
+  if (!timer || !label) return;
+  let seconds = Number.parseInt(timer.getAttribute("data-hold-seconds") || "0", 10);
+  const format = (value) => {
+    const safe = Math.max(0, value);
+    const minutes = Math.floor(safe / 60);
+    const remainder = String(safe % 60).padStart(2, "0");
+    return `${minutes}:${remainder}`;
+  };
+  label.textContent = format(seconds);
+  const tick = window.setInterval(() => {
+    seconds -= 1;
+    label.textContent = format(seconds);
+    if (seconds <= 0) {
+      window.clearInterval(tick);
+      timer.classList.add("is-expired");
+      const status = document.getElementById("paymentHoldStatus");
+      if (status) status.textContent = "Expired. Continue checkout or remove this car.";
+      window.setTimeout(() => window.location.reload(), 900);
+    }
+  }, 1000);
+}
+
+startBookingCountdown();
+
 function referralNameSlug(form) {
   const firstName = form?.querySelector("[name='first_name']")?.value || "";
   const lastName = form?.querySelector("[name='last_name']")?.value || "";
@@ -2441,3 +2560,142 @@ function initAppFeedbackWidget() {
 }
 
 initAppFeedbackWidget();
+
+function initWikiAgentWidget() {
+  if (document.getElementById("wikiAgentWidget")) return;
+  const prompts = [
+    "cheapest cars",
+    "cancel my booking",
+    "my pickup time",
+    "refund policy",
+    "book an SUV",
+    "Explorer memories",
+    "pickup documents",
+    "support help",
+  ];
+  const widget = document.createElement("section");
+  widget.className = "wiki-agent-widget";
+  widget.id = "wikiAgentWidget";
+  widget.innerHTML = `
+    <button class="wiki-agent-backdrop" type="button" aria-label="Close FairFares Assistant" hidden></button>
+    <div class="wiki-agent-prompt" aria-live="polite"><span>${prompts[0]}</span></div>
+    <button class="wiki-agent-orb" type="button" aria-expanded="false" aria-controls="wikiAgentPanel" aria-label="Ask FairFares Assistant">
+      <b>AI</b>
+    </button>
+    <form class="wiki-agent-panel" id="wikiAgentPanel" hidden>
+      <div class="wiki-agent-head">
+        <div>
+          <b>FairFares Assistant</b>
+          <span>Ask about cars, bookings, refunds, Explorer trips, discounts, or support. Actions still ask you to confirm.</span>
+        </div>
+        <button type="button" class="wiki-agent-close" aria-label="Close FairFares Assistant">x</button>
+      </div>
+      <div class="wiki-agent-chips" aria-label="Suggested questions">
+        ${prompts.slice(0, 6).map((prompt) => `<button type="button" data-agent-question="${prompt}">${prompt}</button>`).join("")}
+      </div>
+      <label>
+        <span>Your question</span>
+        <input name="question" autocomplete="off" placeholder="Ask to book, cancel, compare cars, or find a policy">
+      </label>
+      <button class="wiki-agent-submit" type="submit">Ask</button>
+      <div class="wiki-agent-answer" aria-live="polite">Pick a suggestion or ask anything about FairFares.</div>
+      <div class="wiki-agent-actions" aria-label="Assistant actions"></div>
+    </form>
+  `;
+  document.body.appendChild(widget);
+
+  const backdrop = widget.querySelector(".wiki-agent-backdrop");
+  const promptBubble = widget.querySelector(".wiki-agent-prompt");
+  const promptText = promptBubble?.querySelector("span");
+  const orb = widget.querySelector(".wiki-agent-orb");
+  const panel = widget.querySelector(".wiki-agent-panel");
+  const close = widget.querySelector(".wiki-agent-close");
+  const input = widget.querySelector("input[name='question']");
+  const answer = widget.querySelector(".wiki-agent-answer");
+  const actionsBox = widget.querySelector(".wiki-agent-actions");
+  const submit = widget.querySelector(".wiki-agent-submit");
+  let promptIndex = 0;
+
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    backdrop.hidden = !open;
+    orb.setAttribute("aria-expanded", open ? "true" : "false");
+    widget.classList.toggle("is-open", open);
+    if (open) input?.focus();
+  };
+
+  const rotatePrompt = () => {
+    if (!promptBubble || !promptText || widget.classList.contains("is-open")) return;
+    promptBubble.classList.add("is-switching");
+    window.setTimeout(() => {
+      promptIndex = (promptIndex + 1) % prompts.length;
+      promptText.textContent = prompts[promptIndex];
+      promptBubble.classList.remove("is-switching");
+    }, 240);
+  };
+
+  window.setInterval(rotatePrompt, 2000);
+  orb.addEventListener("click", () => setOpen(panel.hidden));
+  close.addEventListener("click", () => setOpen(false));
+  backdrop.addEventListener("click", () => setOpen(false));
+
+  widget.querySelectorAll("[data-agent-question]").forEach((button) => {
+    button.addEventListener("click", () => {
+      input.value = button.dataset.agentQuestion || "";
+      panel.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  });
+
+  panel.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const question = input.value.trim();
+    if (!question) {
+      answer.textContent = "Ask something like cheapest cars, refund policy, or Explorer memories.";
+      return;
+    }
+    submit.disabled = true;
+    answer.textContent = "Checking FairFares data...";
+    if (actionsBox) actionsBox.innerHTML = "";
+    fetch("/wiki/ask", {
+      method: "POST",
+      body: new URLSearchParams({ question }),
+    })
+      .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+      .then((payload) => {
+        const sourceText = Array.isArray(payload.sources) && payload.sources.length
+          ? ` Sources: ${payload.sources.map((source) => source.title).join(", ")}.`
+          : "";
+        answer.textContent = `${payload.answer || payload.message || "No answer found."}${sourceText}`;
+        if (actionsBox && Array.isArray(payload.actions)) {
+          actionsBox.innerHTML = payload.actions
+            .map((action) => `<a href="${action.href || "#"}" data-agent-action="${action.kind || "open"}">${action.label || "Open"}</a>`)
+            .join("");
+        }
+      })
+      .catch((payload) => {
+        answer.textContent = payload?.message || "FairFares Assistant could not answer right now.";
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) setOpen(false);
+  });
+}
+
+initWikiAgentWidget();
+
+function openManageTabFromAgentQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const target = params.get("agent") || window.location.hash.replace("#", "");
+  if (!target) return;
+  const allowed = new Set(["modify", "cancel", "documents", "details", "support"]);
+  if (!allowed.has(target)) return;
+  if (typeof showManagePanel === "function") {
+    showManagePanel(target);
+  }
+}
+
+openManageTabFromAgentQuery();
