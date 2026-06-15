@@ -15596,3 +15596,23 @@ body.modal-open {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* 2026-06-15 Explorer hero cleanup: remove the top label in markup and let
+   the intro/profile cluster sit higher in the hero. */
+.explorer-screen .explorer-hero-copy {
+  padding-top: 0 !important;
+}
+
+.explorer-screen .explorer-hero-subcopy {
+  margin-top: 0 !important;
+}
+
+.explorer-screen .explorer-profile-cluster {
+  margin-top: -18px !important;
+}
+
+@media (max-width: 900px) {
+  .explorer-screen .explorer-hero-copy {
+    padding-top: 10px !important;
+  }
+}
