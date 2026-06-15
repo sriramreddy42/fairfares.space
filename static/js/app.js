@@ -2209,7 +2209,7 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
-      if (status) status.textContent = payload.message || "Booking hold recorded.";
+      if (status) status.textContent = payload.message || "Payment recorded.";
       const badge = document.getElementById("bookingStatusBadge");
       if (badge && payload.status_label) badge.textContent = payload.status_label;
       const holdLabel = document.getElementById("holdAmountLabel");
@@ -2218,7 +2218,7 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
       if (dueLabel && payload.due_at_pickup) dueLabel.textContent = payload.due_at_pickup;
       const paid = document.createElement("p");
       paid.className = "payment-hold-paid";
-      paid.textContent = `Hold paid. Invoice ${payload.invoice_number || ""}`.trim();
+      paid.textContent = `Payment received. Invoice ${payload.invoice_number || ""}`.trim();
       form.replaceWith(paid);
     })
     .catch((payload) => {
@@ -2234,11 +2234,11 @@ document.getElementById("continueHoldButton")?.addEventListener("click", (event)
   fetch("/booking/hold/continue", { method: "POST" })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
-      if (status) status.textContent = payload.message || "Hold continued.";
+      if (status) status.textContent = payload.message || "Checkout window restarted.";
       window.setTimeout(() => window.location.reload(), 450);
     })
     .catch((payload) => {
-      if (status) status.textContent = payload?.message || "Unable to continue this hold.";
+      if (status) status.textContent = payload?.message || "Unable to continue checkout.";
       button.disabled = false;
     });
 });
@@ -2250,16 +2250,43 @@ document.getElementById("removeHoldButton")?.addEventListener("click", (event) =
   fetch("/booking/hold/remove", { method: "POST" })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
-      if (status) status.textContent = payload.message || "Hold removed.";
+      if (status) status.textContent = payload.message || "Removed from checkout.";
       window.setTimeout(() => {
         window.location.href = payload.redirect || "/#results";
       }, 650);
     })
     .catch((payload) => {
-      if (status) status.textContent = payload?.message || "Unable to remove this hold.";
+      if (status) status.textContent = payload?.message || "Unable to remove this car.";
       button.disabled = false;
     });
 });
+
+function startBookingCountdown() {
+  const timer = document.querySelector("[data-hold-seconds]");
+  const label = document.getElementById("holdCountdown");
+  if (!timer || !label) return;
+  let seconds = Number.parseInt(timer.getAttribute("data-hold-seconds") || "0", 10);
+  const format = (value) => {
+    const safe = Math.max(0, value);
+    const minutes = Math.floor(safe / 60);
+    const remainder = String(safe % 60).padStart(2, "0");
+    return `${minutes}:${remainder}`;
+  };
+  label.textContent = format(seconds);
+  const tick = window.setInterval(() => {
+    seconds -= 1;
+    label.textContent = format(seconds);
+    if (seconds <= 0) {
+      window.clearInterval(tick);
+      timer.classList.add("is-expired");
+      const status = document.getElementById("paymentHoldStatus");
+      if (status) status.textContent = "Expired. Continue checkout or remove this car.";
+      window.setTimeout(() => window.location.reload(), 900);
+    }
+  }, 1000);
+}
+
+startBookingCountdown();
 
 function referralNameSlug(form) {
   const firstName = form?.querySelector("[name='first_name']")?.value || "";

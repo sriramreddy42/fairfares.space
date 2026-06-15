@@ -3195,11 +3195,11 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
 
 def booking_status_label(status: str, payment_status: str = "") -> str:
     if status == "PENDING_HOLD":
-        return "Hold pending / Pay within 10 min"
+        return "Payment window"
     if status == "EXPIRED_HOLD":
-        return "Hold expired"
+        return "Expired"
     if status == "CONFIRMED":
-        return "Confirmed / Hold paid" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
+        return "Confirmed" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
     labels = {
         "CANCELLATION_REQUESTED": "Request sent to admin",
         "CANCELLED": "Cancelled",
@@ -3221,10 +3221,10 @@ def booking_status_class(status: str) -> str:
 def payment_status_label(status: str) -> str:
     labels = {
         "PAY_AT_PICKUP": "Pay at pickup",
-        "HOLD_PENDING": "Hold payment pending",
-        "HOLD_EXPIRED": "Hold expired",
-        "HOLD_DUE": "10% hold due",
-        "HOLD_PAID": "10% hold paid",
+        "HOLD_PENDING": "Payment pending",
+        "HOLD_EXPIRED": "Expired",
+        "HOLD_DUE": "10% due now",
+        "HOLD_PAID": "10% paid",
         "PAID": "Paid",
         "PENDING": "Payment pending",
         "REFUND_REVIEW": "Refund review",
@@ -5765,19 +5765,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def pay_booking_hold(self) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay the booking hold."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay and confirm this car."}, 401)
             return
         expire_stale_booking_holds()
         form = self.read_form()
         booking = get_booking_for_user(user["id"])
         if not booking:
-            self.send_json({"ok": False, "message": "Book a car before paying a hold."}, 404)
+            self.send_json({"ok": False, "message": "Choose a car before paying."}, 404)
             return
         if booking["booking_status"] == "EXPIRED_HOLD":
-            self.send_json({"ok": False, "message": "This 10-minute hold expired. Continue the hold or remove it before paying."}, 409)
+            self.send_json({"ok": False, "message": "This payment window expired. Continue checkout or remove this car before paying."}, 409)
             return
         if booking["booking_status"] in {"CANCELLED", "RETURNED"}:
-            self.send_json({"ok": False, "message": "This booking cannot accept a payment hold."}, 400)
+            self.send_json({"ok": False, "message": "This booking cannot accept payment right now."}, 400)
             return
         breakdown = booking_price_breakdown(booking)
         hold_amount = float(breakdown["booking_hold"])
@@ -5796,7 +5796,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         if billing_status == "REVIEW_REQUIRED":
             billing_status = "MATCHED"
-            billing_notes = "Billing name captured for 10% booking hold."
+            billing_notes = "Billing name captured for 10% payment."
         invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
         with db() as con:
             while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
@@ -5834,7 +5834,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "message": f"10% booking hold recorded: {format_money(hold_amount)}. It will be deducted from pickup balance.",
+                "message": f"Payment recorded: {format_money(hold_amount)}. It will be deducted from pickup balance.",
                 "payment_status": "HOLD_PAID",
                 "payment_label": payment_status_label("HOLD_PAID"),
                 "status_label": booking_status_label("CONFIRMED", "HOLD_PAID"),
@@ -5847,15 +5847,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def continue_booking_hold(self) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to continue this hold."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to continue checkout."}, 401)
             return
         expire_stale_booking_holds()
         booking = get_booking_for_user(user["id"])
         if not booking:
-            self.send_json({"ok": False, "message": "No booking hold found."}, 404)
+            self.send_json({"ok": False, "message": "No checkout window found."}, 404)
             return
         if booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
-            self.send_json({"ok": False, "message": "This booking does not need a hold renewal."}, 400)
+            self.send_json({"ok": False, "message": "This booking does not need a new payment window."}, 400)
             return
         active = active_booking_for_car(booking["car_id"])
         if active and int(active["id"]) != int(booking["id"]):
@@ -5878,7 +5878,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "message": "Your car is held for another 10 minutes. Pay the 10% hold to confirm it.",
+                "message": "Checkout restarted for 10 minutes. Pay 10% to confirm this car.",
                 "status_label": booking_status_label("PENDING_HOLD", "HOLD_PENDING"),
                 "status_class": booking_status_class("PENDING_HOLD"),
                 "remaining": f"{BOOKING_HOLD_MINUTES}:00",
@@ -5888,11 +5888,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def remove_booking_hold(self) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to remove this hold."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to remove this car."}, 401)
             return
         booking = get_booking_for_user(user["id"])
         if not booking or booking["booking_status"] not in {"PENDING_HOLD", "EXPIRED_HOLD"}:
-            self.send_json({"ok": False, "message": "No removable booking hold found."}, 404)
+            self.send_json({"ok": False, "message": "No removable checkout item found."}, 404)
             return
         with db() as con:
             con.execute(
@@ -5901,7 +5901,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 SET booking_status = 'CANCELLED',
                     status = 'CANCELLED',
                     payment_status = 'HOLD_EXPIRED',
-                    cancellation_reason = 'Customer removed unpaid booking hold.'
+                    cancellation_reason = 'Customer removed unpaid checkout item.'
                 WHERE id = ? AND user_id = ?
                 """,
                 (booking["id"], user["id"]),
@@ -5919,7 +5919,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
             if not active:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
-        self.send_json({"ok": True, "message": "Hold removed. The car is available again.", "redirect": "/#results"})
+        self.send_json({"ok": True, "message": "Removed. The car is available again.", "redirect": "/#results"})
 
     def save_search_car(self) -> None:
         user = self.current_user()
@@ -6811,7 +6811,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         payment_status_options = (
             ("HOLD_PENDING", "Hold payment pending"),
-            ("HOLD_EXPIRED", "Hold expired"),
+            ("HOLD_EXPIRED", "Expired"),
             ("HOLD_PAID", "10% hold paid"),
             ("PAY_AT_PICKUP", "Pay at pickup"),
         )
@@ -7850,11 +7850,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
             )
         elif hold_expired:
-            dashboard_booking_title = "Hold Expired"
-            dashboard_booking_body = "Continue the hold if you still want this car, or remove it and search again."
+            dashboard_booking_title = "Reservation Expired"
+            dashboard_booking_body = "Continue checkout if you still want this car, or remove it and search again."
         elif hold_pending:
-            dashboard_booking_title = "Car Held"
-            dashboard_booking_body = "Your car is temporarily held. Pay the 10% hold to confirm it before the timer ends."
+            dashboard_booking_title = "Complete Payment"
+            dashboard_booking_body = "Finish the 10% payment before the timer ends to confirm this car."
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
             dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
@@ -7881,7 +7881,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
               <div class="price-breakdown-summary">
                 <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
                 <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees</span>
-                <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% hold</span>
+                <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% due now</span>
                 <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
               </div>
             """
@@ -7967,43 +7967,56 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if hold_expired:
                 hold_decision = """
                     <div class="booking-hold-expired-actions">
-                        <button type="button" class="select-button" id="continueHoldButton">Continue hold</button>
+                        <button type="button" class="select-button" id="continueHoldButton">Continue checkout</button>
                         <button type="button" class="light-button" id="removeHoldButton">Remove</button>
                     </div>
                 """
             elif hold_pending:
-                hold_decision = f'<p class="booking-hold-timer">Reserved for <b id="holdCountdown">{escape(hold_remaining)}</b>. Pay the hold to confirm.</p>'
+                hold_decision = f"""
+                    <div class="booking-hold-timer" data-hold-seconds="{booking_hold_remaining_seconds(booking)}">
+                        <span>Complete payment in</span>
+                        <b id="holdCountdown">{escape(hold_remaining)}</b>
+                    </div>
+                """
             payment_hold_card = f"""
-                <section class="booking-hold-panel" id="bookingHoldPanel">
-                    <div>
-                        <p class="eyebrow">{'Hold expired' if hold_expired else '10-minute reservation hold'}</p>
-                        <h3>{'Continue this car hold?' if hold_expired else 'Pay 10% now, finish at pickup.'}</h3>
-                        <p>{'This car is no longer reserved. Continue the hold to reopen a fresh 10-minute payment window, or remove it and search again.' if hold_expired else 'The car is held for 10 minutes while you enter details and payment. The 10% hold is deducted from your pickup balance and becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.'}</p>
+                <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
+                    <div class="booking-hold-panel-copy">
+                        <p class="eyebrow">{'Expired' if hold_expired else 'Secure checkout'}</p>
+                        <h3>{'Payment window expired.' if hold_expired else 'Pay 10% now, finish at pickup.'}</h3>
+                        <p>{'Continue checkout to reopen a fresh 10-minute payment window, or remove this car and search again.' if hold_expired else 'Your 10% payment is deducted from the pickup balance. It becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.'}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
-                        <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>10% hold</span>
+                        <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
                     </div>
-                    {'<p class="payment-hold-paid">Hold paid. Your pickup balance is updated.</p>' if hold_paid else ''}
+                    {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
                         <label><span>Cardholder name *</span><input name="cardholder_name" autocomplete="cc-name" required></label>
                         <label><span>Card last 4 *</span><input name="card_last4" inputmode="numeric" maxlength="19" placeholder="1234" required></label>
                         <input type="hidden" name="payment_method" value="Card">
-                        <button type="submit">Pay 10% Hold</button>
-                        <small>Local payment hold flow. Full card numbers are not stored.</small>
+                        <button type="submit">Pay 10% Now</button>
+                        <small>Demo payment flow. Full card numbers are not stored.</small>
                     </form>
-                    {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay the hold.</p>' if is_guest_checkout else ''}
+                    {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
                 </section>
             """
+            booking_summary_heading = "Payment window expired." if hold_expired else ("Review your booking." if hold_pending else "Your car is booked.")
+            booking_summary_copy = (
+                "Continue checkout if you still want this car, or remove it from your trip."
+                if hold_expired
+                else "Confirm your details, review the price, and pay 10% now. The remaining balance is due at pickup."
+                if hold_pending
+                else "FairFares keeps the rental price, taxes, fees, and pickup balance visible on your booking, receipt, agreement, and email."
+            )
             booking_confirmation_card = f"""
             <section class="booking-confirmation-card" id="bookingConfirmation">
                 <div>
                     <p class="eyebrow">{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</p>
-                    <h2>{'Your car hold expired.' if hold_expired else ('Your car is held for 10 minutes.' if hold_pending else 'Your car is booked.')}</h2>
-                    <p>{'Continue the hold to keep checkout moving, or remove it if you are done.' if hold_expired else 'FairFares shows the rental price, taxes, fees, hold, and pickup balance before you drive. Your savings stay visible on the booking, receipt, rental agreement, and confirmation email.'}</p>
+                    <h2>{booking_summary_heading}</h2>
+                    <p>{booking_summary_copy}</p>
                     {guest_account_note}
                 </div>
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>

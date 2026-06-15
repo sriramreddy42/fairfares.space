@@ -7048,11 +7048,12 @@ legend { font-size: 0.86rem; font-weight: 700; text-transform: uppercase; }
 }
 
 .booking-confirmation-card {
-  border: 1px solid #b7dfbf;
+  border: 1px solid #d9deea;
   border-radius: 8px;
-  background: linear-gradient(180deg, #f4fff5, #fff);
+  background: #fff;
+  box-shadow: 0 16px 42px rgba(7, 20, 63, 0.08);
   display: grid;
-  gap: 1rem;
+  gap: 1.1rem;
   margin-top: 1rem;
   padding: 1.35rem;
 }
@@ -15071,11 +15072,13 @@ body.modal-open {
 }
 
 .booking-hold-panel {
+  background: linear-gradient(180deg, #f9fbff, #fff);
   border: 1px solid #d9deea;
-  border-radius: 10px;
+  border-radius: 8px;
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr);
+  padding: 16px;
 }
 
 .booking-hold-panel h3,
@@ -15083,24 +15086,51 @@ body.modal-open {
   margin: 0;
 }
 
+.booking-hold-panel-copy {
+  align-self: center;
+  display: grid;
+  gap: 5px;
+}
+
 .booking-hold-breakdown {
   display: grid;
   gap: 8px;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .booking-hold-timer {
-  background: #fff7e8;
-  border: 1px solid #f4c46a;
+  align-items: center;
+  background: #07143f;
+  border: 1px solid #07143f;
   border-radius: 8px;
-  color: #7a4a00;
+  color: #fff;
+  display: flex;
   font-weight: 800;
-  padding: 10px 12px;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.booking-hold-timer b {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  font-size: 1.25rem;
+  line-height: 1;
+  min-width: 84px;
+  padding: 9px 12px;
+  text-align: center;
+}
+
+.booking-hold-timer.is-expired {
+  background: #e30613;
+  border-color: #e30613;
 }
 
 .booking-hold-expired-actions {
   display: grid;
   gap: 10px;
+  align-self: center;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -15111,6 +15141,7 @@ body.modal-open {
 .payment-hold-form {
   display: grid;
   gap: 10px;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -15331,6 +15362,12 @@ body.modal-open {
 @media (max-width: 900px) {
   .booking-confirmation-card {
     grid-template-columns: 1fr !important;
+    padding: 1rem !important;
+  }
+
+  .booking-hold-panel {
+    grid-template-columns: 1fr !important;
+    padding: 14px !important;
   }
 
   .booking-hold-breakdown,
