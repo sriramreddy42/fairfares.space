@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Staff Requests | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Staff Requests</p>
+        <h1>Admins and employees</h1>
+        <span>Request staff access and approve pending profiles with a second admin.</span>
+      </div>
+    </section>
+    <section class="admin-card staff-admin-card">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">New profile</p>
+          <h2>Request staff account</h2>
+          <span>A different active admin must approve before the account is created.</span>
+        </div>
+      </div>
+      $staff_create_card
+    </section>
+    <section class="admin-card staff-admin-card">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Approvals</p>
+          <h2>Pending staff requests</h2>
+          <span>Admins cannot approve their own request.</span>
+        </div>
+      </div>
+      <div class="admin-table-scroll">
+        <table class="admin-mini-table staff-admin-table">
+          <thead><tr><th>Profile</th><th>Role</th><th>Status</th><th>Requested by</th><th>Reviewed / Created</th><th>Action</th></tr></thead>
+          <tbody>$staff_request_rows</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="admin-card staff-admin-card">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Directory</p>
+          <h2>Active staff accounts</h2>
+          <span>Admins have full access. Employees only see operational pages.</span>
+        </div>
+      </div>
+      <div class="admin-table-scroll">
+        <table class="admin-mini-table staff-admin-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>$staff_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

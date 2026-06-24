@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">System</p>
+        <h1>Feedback and backups</h1>
+        <span>Website feedback, database location, and backup files - $admin_name</span>
+      </div>
+    </section>
+    <section class="admin-card website-feedback-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Website Feedback</h2>
+          <p>Ratings and comments submitted from the floating feedback button across FairFares pages.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Rating</th><th>User</th><th>Page</th><th>Feedback</th><th>Browser</th></tr></thead>
+          <tbody>$feedback_rows</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Database Backups</h2>
+          <p>Automatic startup backups and admin-created backups are stored on the persistent disk.</p>
+        </div>
+        <form method="post" action="/admin/backups/create" class="inline-form">
+          <button type="submit">Create Backup</button>
+        </form>
+      </div>
+      <div class="backup-meta">
+        <span><b>Database</b>$db_path</span>
+        <span><b>Backups</b>$backup_dir</span>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Backup</th><th>Size</th><th>Folder</th><th>Action</th></tr></thead>
+          <tbody>$backup_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

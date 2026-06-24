@@ -34,7 +34,7 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260624l"
+ASSET_VERSION = "20260624m"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -5048,12 +5048,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin": self.admin_portal,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/users": self.admin_users_page,
+            "/admin/requests": self.admin_requests_page,
             "/admin/tickets": self.admin_tickets_page,
             "/admin/discounts": self.admin_discounts_page,
             "/admin/wiki": self.admin_wiki_page,
             "/admin/commercials": self.admin_commercials_page,
             "/admin/email-marketing": self.admin_email_marketing_page,
             "/admin/pickup": self.admin_pickup_page,
+            "/admin/system": self.admin_system_page,
             "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
             "/api/site": self.api_site,
@@ -6740,12 +6742,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("portal", "/admin", "Inventory"),
             ("bookings", "/admin/bookings", "Booked Cars"),
             ("users", "/admin/users", "Users"),
+            ("requests", "/admin/requests", "Staff Requests"),
             ("tickets", "/admin/tickets", "Tickets"),
             ("discounts", "/admin/discounts", "Discounts"),
             ("wiki", "/admin/wiki", "Wiki"),
             ("commercials", "/admin/commercials", "Commercials"),
             ("email", "/admin/email-marketing", "Email Marketing"),
             ("pickup", "/admin/pickup", "User Pickup"),
+            ("system", "/admin/system", "System"),
         ]
         employee_items = [
             ("bookings", "/admin/bookings", "Booked Cars"),
@@ -6788,8 +6792,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         metrics = get_admin_metrics()
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
         fleet_summary = "\n".join(self.render_fleet_summary_row(row) for row in get_fleet_summary())
-        backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
-        feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
         body = render_template(
             "admin.html",
             admin_name=escape(user["name"]),
@@ -6800,10 +6802,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user_count=metrics["users"],
             cars=cars or '<tr><td colspan="8">No inventory yet.</td></tr>',
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
-            db_path=escape(DB_PATH),
-            backup_dir=escape(BACKUP_DIR),
-            backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
-            feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -6863,17 +6861,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
-        can_manage_staff = is_admin_user(user)
-        staff_rows = "\n".join(self.render_staff_account_row(row) for row in get_staff_accounts())
-        request_rows = "\n".join(self.render_staff_request_row(row, user) for row in get_staff_account_requests())
         body = render_template(
             "admin_users.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "users"),
             users=users or '<p class="admin-empty">No users yet.</p>',
-            staff_create_card=self.render_staff_create_card() if can_manage_staff else '<p class="admin-empty">Employee access is enabled. Only admins can request or approve new staff accounts.</p>',
+        )
+        self.send_html(body)
+
+    def admin_requests_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        staff_rows = "\n".join(self.render_staff_account_row(row) for row in get_staff_accounts())
+        request_rows = "\n".join(self.render_staff_request_row(row, user) for row in get_staff_account_requests())
+        body = render_template(
+            "admin_requests.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "requests"),
+            staff_create_card=self.render_staff_create_card(),
             staff_rows=staff_rows or '<tr><td colspan="5">No staff accounts yet.</td></tr>',
             staff_request_rows=request_rows or '<tr><td colspan="6">No pending staff requests.</td></tr>',
+        )
+        self.send_html(body)
+
+    def admin_system_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
+        feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
+        body = render_template(
+            "admin_system.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "system"),
+            db_path=escape(DB_PATH),
+            backup_dir=escape(BACKUP_DIR),
+            backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
+            feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -6938,7 +6963,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         if not is_admin_user(user):
-            self.redirect("/admin/users")
+            self.redirect("/admin/requests")
             return
         form = self.read_form()
         name = (form.get("name") or "").strip()
@@ -6947,7 +6972,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         role = normalized_staff_role(form.get("role", "EMPLOYEE"))
         password = form.get("password", "")
         if not name or "@" not in email or len(password) < 8:
-            self.redirect("/admin/users")
+            self.redirect("/admin/requests")
             return
         with db() as con:
             existing_user = con.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
@@ -6964,26 +6989,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (name, email, phone, role, hash_password(password), user["id"]),
                 )
-        self.redirect("/admin/users")
+        self.redirect("/admin/requests")
 
     def review_staff_account_request(self) -> None:
         user = self.require_owner_admin()
         if not user:
             return
         if not is_admin_user(user):
-            self.redirect("/admin/users")
+            self.redirect("/admin/requests")
             return
         form = self.read_form()
         request_id = int(form.get("request_id") or 0)
         decision = (form.get("decision") or "").upper()
         note = (form.get("admin_note") or "").strip()
         if decision not in {"APPROVE", "REJECT"}:
-            self.redirect("/admin/users")
+            self.redirect("/admin/requests")
             return
         with db() as con:
             request = con.execute("SELECT * FROM staff_account_requests WHERE id = ?", (request_id,)).fetchone()
             if not request or request["status"] != "PENDING" or int(request["requested_by"]) == int(user["id"]):
-                self.redirect("/admin/users")
+                self.redirect("/admin/requests")
                 return
             if decision == "REJECT":
                 con.execute(
@@ -7031,7 +7056,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """,
                         (user["id"], request_id),
                     )
-        self.redirect("/admin/users")
+        self.redirect("/admin/requests")
 
     def admin_tickets_page(self) -> None:
         user = self.require_admin()
@@ -7612,7 +7637,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         create_db_backup("admin")
-        self.redirect("/admin")
+        self.redirect("/admin/system")
 
     def download_admin_backup(self) -> None:
         user = self.require_owner_admin()

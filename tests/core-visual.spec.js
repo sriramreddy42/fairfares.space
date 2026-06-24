@@ -137,6 +137,7 @@ test("website feedback submits and appears in admin", async ({ page }) => {
   await expect(page.locator(".app-feedback-status")).toContainText("website feedback");
 
   await loginAsAdmin(page);
+  await page.goto("/admin/system");
   await expect(page.locator(".website-feedback-card", { hasText: "Website Feedback" })).toBeVisible();
   await expect(page.locator(".website-feedback-card")).toContainText(message);
 });
@@ -231,11 +232,13 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin", "admin-dashboard-desktop.png"],
     ["/admin/bookings", "admin-bookings-desktop.png"],
     ["/admin/users", "admin-users-desktop.png"],
+    ["/admin/requests", "admin-requests-desktop.png"],
     ["/admin/tickets", "admin-tickets-desktop.png"],
     ["/admin/discounts", "admin-discounts-desktop.png"],
     ["/admin/wiki", "admin-wiki-loop-desktop.png"],
     ["/admin/email-marketing", "admin-email-marketing-desktop.png"],
     ["/admin/pickup", "admin-pickup-desktop.png"],
+    ["/admin/system", "admin-system-desktop.png"],
   ]) {
     await smokePage(page, route, name);
     await expectReadableCards(page, ".admin-card, .admin-hero, .admin-user-card, .pickup-record");
@@ -246,11 +249,13 @@ test("admin pages desktop and mobile visual smoke", async ({ page }) => {
     ["/admin", "admin-dashboard-mobile.png"],
     ["/admin/bookings", "admin-bookings-mobile.png"],
     ["/admin/users", "admin-users-mobile.png"],
+    ["/admin/requests", "admin-requests-mobile.png"],
     ["/admin/tickets", "admin-tickets-mobile.png"],
     ["/admin/discounts", "admin-discounts-mobile.png"],
     ["/admin/wiki", "admin-wiki-mobile.png"],
     ["/admin/email-marketing", "admin-email-marketing-mobile.png"],
     ["/admin/pickup", "admin-pickup-mobile.png"],
+    ["/admin/system", "admin-system-mobile.png"],
   ]) {
     await smokePage(page, route, name);
     await expectReadableCards(page, ".admin-card, .admin-hero, .admin-user-card, .pickup-record");

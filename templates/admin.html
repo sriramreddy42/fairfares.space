@@ -17,7 +17,7 @@
     <section class="admin-hero">
       <div>
         <p class="eyebrow">Developer Portal</p>
-        <h1>Inventory, bookings, users, documents, and invoices</h1>
+        <h1>Inventory</h1>
         <span>Signed in as $admin_name</span>
       </div>
     </section>
@@ -32,49 +32,14 @@
     <section class="admin-link-grid">
       <a href="/admin/bookings"><b>Booked Cars</b><span>Status, cancel/modify reason, payment status</span></a>
       <a href="/admin/users"><b>Users</b><span>Customer profile, bookings, DL, insurance, transactions, agreements</span></a>
+      <a href="/admin/requests"><b>Staff Requests</b><span>Create and approve employee or admin profiles</span></a>
       <a href="/admin/tickets"><b>Tickets</b><span>Support requests, owner claims, comments, follow-ups, and closed status</span></a>
       <a href="/admin/discounts"><b>Discounts</b><span>Add, delete, expire, and validate codes</span></a>
       <a href="/admin/wiki"><b>Wiki</b><span>Public answers, internal notes, and future RAG knowledge flow</span></a>
       <a href="/admin/commercials"><b>Commercials</b><span>Change hero video links, live mode, and playback time</span></a>
       <a href="/admin/email-marketing"><b>Email Marketing</b><span>Draft campaigns, lifecycle calendar, and planned send dates</span></a>
       <a href="/admin/pickup"><b>User Pickup Info</b><span>DL, insurance, payment, agreement, signature, print</span></a>
-    </section>
-
-    <section class="admin-card website-feedback-card">
-      <div class="admin-card-head">
-        <div>
-          <h2>Website Feedback</h2>
-          <p>Ratings and comments submitted from the floating feedback button across FairFares pages.</p>
-        </div>
-      </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead><tr><th>Rating</th><th>User</th><th>Page</th><th>Feedback</th><th>Browser</th></tr></thead>
-          <tbody>$feedback_rows</tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="admin-card">
-      <div class="admin-card-head">
-        <div>
-          <h2>Database Backups</h2>
-          <p>Automatic startup backups and admin-created backups are stored on the persistent disk.</p>
-        </div>
-        <form method="post" action="/admin/backups/create" class="inline-form">
-          <button type="submit">Create Backup</button>
-        </form>
-      </div>
-      <div class="backup-meta">
-        <span><b>Database</b>$db_path</span>
-        <span><b>Backups</b>$backup_dir</span>
-      </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead><tr><th>Backup</th><th>Size</th><th>Folder</th><th>Action</th></tr></thead>
-          <tbody>$backup_rows</tbody>
-        </table>
-      </div>
+      <a href="/admin/system"><b>System</b><span>Website feedback, database path, and backups</span></a>
     </section>
 
     <section class="admin-grid">
