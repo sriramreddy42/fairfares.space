@@ -19,6 +19,7 @@
   inset: 0;
   justify-content: center;
   opacity: 1;
+  padding: 24px;
   position: fixed;
   transition: opacity 180ms ease, visibility 180ms ease;
   visibility: visible;
@@ -34,7 +35,6 @@
   display: grid;
   gap: 18px;
   justify-items: center;
-  transform: translateY(-8vh);
   width: min(360px, 70vw);
 }
 .site-loader-mark img {
@@ -64,6 +64,23 @@
 @keyframes fairfares-loader-line {
   0% { left: -42%; }
   100% { left: 100%; }
+}
+
+@media (max-width: 760px) {
+  .site-loader {
+    align-items: center;
+    justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  }
+
+  .site-loader-mark {
+    width: min(300px, 76vw);
+  }
+
+  .site-loader-mark img {
+    max-height: 78px;
+    width: min(240px, 68vw);
+  }
 }
 html {
   overflow-x: hidden;

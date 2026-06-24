@@ -461,17 +461,6 @@
   background-size: contain !important;
 }
 
-.app-feedback-tab {
-  min-height: 172px !important;
-  width: 54px !important;
-}
-
-.app-feedback-tab span {
-  line-height: 1 !important;
-  transform: rotate(180deg) !important;
-  writing-mode: vertical-rl !important;
-}
-
 @media (max-width: 760px) {
   .promo-brand-row {
     grid-template-columns: 112px minmax(0, 1fr) !important;
@@ -483,11 +472,6 @@
 
   .results-promo h2 {
     font-size: 1.62rem !important;
-  }
-
-  .app-feedback-tab {
-    min-height: 166px !important;
-    width: 46px !important;
   }
 }
 

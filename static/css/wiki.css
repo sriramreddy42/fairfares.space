@@ -453,6 +453,7 @@
     right: 14px;
     bottom: 14px;
     gap: 8px;
+    z-index: 140;
   }
 
   .wiki-agent-orb {
@@ -479,6 +480,7 @@
     width: calc(100vw - 20px);
     padding: 14px;
     border-radius: 16px;
+    z-index: 142;
   }
 
   .wiki-agent-actions {
@@ -491,27 +493,72 @@
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 760px) {
   .wiki-agent-widget {
     align-items: flex-end;
-    bottom: 12px;
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 72px));
     left: auto;
-    right: 12px;
+    right: 14px;
+    z-index: 140;
   }
 
   .wiki-agent-prompt {
-    display: none;
+    display: none !important;
   }
 
   .wiki-agent-orb {
-    height: 58px;
-    width: 58px;
+    border-radius: 16px;
+    height: 48px;
+    width: 64px;
+  }
+
+  .wiki-agent-orb:hover {
+    transform: none;
+  }
+
+  .wiki-agent-orb b {
+    background: transparent;
+    border-radius: 0;
+    font-size: 0.86rem;
+    height: auto;
+    width: auto;
   }
 
   .wiki-agent-panel {
-    bottom: 78px;
-    max-height: calc(100vh - 96px);
+    bottom: max(132px, calc(env(safe-area-inset-bottom) + 132px));
+    left: 10px;
+    max-height: calc(100vh - 156px);
     overflow: auto;
+    right: 10px;
+    width: auto;
+  }
+
+  .wiki-agent-head {
+    align-items: start;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wiki-agent-chips {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-agent-chips button {
+    border-radius: 8px;
+    min-height: 42px;
+    padding: 8px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 420px) {
+  .wiki-agent-panel {
+    max-height: calc(100vh - 140px);
+  }
+
+  .wiki-agent-chips {
+    grid-template-columns: 1fr;
   }
 }
 

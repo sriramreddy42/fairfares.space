@@ -2614,7 +2614,7 @@ function initWikiAgentWidget() {
     <button class="wiki-agent-backdrop" type="button" aria-label="Close FairFares Assistant" hidden></button>
     <div class="wiki-agent-prompt" aria-live="polite"><span>${prompts[0]}</span></div>
     <button class="wiki-agent-orb" type="button" aria-expanded="false" aria-controls="wikiAgentPanel" aria-label="Ask FairFares Assistant">
-      <b>AI</b>
+      <b>Ask</b>
     </button>
     <form class="wiki-agent-panel" id="wikiAgentPanel" hidden>
       <div class="wiki-agent-head">

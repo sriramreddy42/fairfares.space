@@ -1,8 +1,9 @@
 /* Site-wide application rating and feedback tab. */
 .app-feedback-widget {
-  bottom: 118px;
+  left: 0;
   position: fixed;
-  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 120;
 }
 
@@ -10,7 +11,7 @@
   align-items: center;
   background: #061641;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 10px 0 0 10px;
+  border-radius: 0 10px 10px 0;
   box-shadow: 0 18px 38px rgba(6, 22, 65, 0.24);
   color: #ffffff;
   display: flex;
@@ -23,23 +24,26 @@
 
 .app-feedback-tab span {
   display: block;
+  line-height: 1;
   letter-spacing: 0;
-  transform: rotate(-90deg);
+  transform: rotate(180deg);
   white-space: nowrap;
+  writing-mode: vertical-rl;
 }
 
 .app-feedback-panel {
   background: #ffffff;
   border: 1px solid #d7deea;
   border-radius: 12px;
-  bottom: 0;
   box-shadow: 0 28px 70px rgba(6, 22, 65, 0.24);
   color: #061641;
   display: grid;
   gap: 16px;
+  left: 58px;
   padding: 20px;
   position: absolute;
-  right: 58px;
+  top: 50%;
+  transform: translateY(-50%);
   width: min(360px, calc(100vw - 86px));
 }
 
@@ -143,76 +147,35 @@
   min-height: 1.2em;
 }
 
-@media (max-width: 640px) {
-  .app-feedback-widget {
-    bottom: 20px;
-    right: 0;
-  }
-
-  .app-feedback-tab {
-    min-height: 118px;
-    width: 42px;
-  }
-
-  .app-feedback-panel {
-    bottom: 0;
-    right: 52px;
-    width: calc(100vw - 70px);
-  }
-}
-
-/* Final placement: keep the feedback launcher on the left edge. */
-.app-feedback-widget {
-  bottom: auto !important;
-  left: 0 !important;
-  right: auto !important;
-  top: 50% !important;
-  transform: translateY(-50%) !important;
-}
-
-.app-feedback-tab {
-  border-radius: 0 10px 10px 0 !important;
-}
-
-.app-feedback-panel {
-  bottom: auto !important;
-  left: 58px !important;
-  right: auto !important;
-  top: 50% !important;
-  transform: translateY(-50%) !important;
-}
-
 @media (max-width: 760px) {
   .app-feedback-widget {
-    bottom: 12px !important;
-    left: 12px !important;
-    right: auto !important;
-    top: auto !important;
-    transform: none !important;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: 12px;
+    top: auto;
+    transform: none;
   }
 
   .app-feedback-tab {
-    display: inline-flex !important;
-    border-radius: 8px !important;
-    height: 40px !important;
-    min-height: 40px !important;
-    padding: 8px 12px !important;
-    width: auto !important;
+    border-radius: 8px;
+    min-height: 40px;
+    padding: 8px 12px;
+    width: auto;
   }
 
   .app-feedback-tab span {
-    display: inline !important;
-    transform: none !important;
-    writing-mode: horizontal-tb !important;
+    display: inline;
+    transform: none;
+    writing-mode: horizontal-tb;
   }
 
   .app-feedback-panel {
-    bottom: 52px !important;
-    left: 0 !important;
-    right: auto !important;
-    top: auto !important;
-    transform: none !important;
-    width: calc(100vw - 68px) !important;
+    bottom: 52px;
+    left: 0;
+    max-height: calc(100vh - 84px);
+    overflow: auto;
+    top: auto;
+    transform: none;
+    width: calc(100vw - 68px);
   }
 }
 
