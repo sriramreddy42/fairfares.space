@@ -37,6 +37,37 @@
         <input id="adminUserSearch" placeholder="First name, last name, phone number, email, booking ID, or user ID">
       </label>
     </section>
+    <section class="admin-card staff-admin-card">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Staff access</p>
+          <h2>Admins and employees</h2>
+          <span>Request staff accounts here. A different active admin must approve before the profile is created.</span>
+        </div>
+      </div>
+      $staff_create_card
+      <div class="admin-table-scroll">
+        <table class="admin-mini-table staff-admin-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>$staff_rows</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="admin-card staff-admin-card">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Approvals</p>
+          <h2>Pending staff requests</h2>
+          <span>Admins cannot approve their own request.</span>
+        </div>
+      </div>
+      <div class="admin-table-scroll">
+        <table class="admin-mini-table staff-admin-table">
+          <thead><tr><th>Profile</th><th>Role</th><th>Status</th><th>Requested by</th><th>Reviewed / Created</th><th>Action</th></tr></thead>
+          <tbody>$staff_request_rows</tbody>
+        </table>
+      </div>
+    </section>
     <section class="admin-users-list">$users</section>
   </main>
 </body>

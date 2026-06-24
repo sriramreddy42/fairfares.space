@@ -34,7 +34,7 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260624j"
+ASSET_VERSION = "20260624k"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -861,6 +861,25 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS staff_account_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                phone TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                requested_by INTEGER NOT NULL,
+                approved_by INTEGER,
+                created_user_id INTEGER,
+                admin_note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT,
+                FOREIGN KEY(requested_by) REFERENCES users(id),
+                FOREIGN KEY(approved_by) REFERENCES users(id),
+                FOREIGN KEY(created_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS site_content (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -1252,6 +1271,9 @@ def init_db() -> None:
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "staff_account_requests", "phone", "phone TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "staff_account_requests", "admin_note", "admin_note TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "staff_account_requests", "created_user_id", "created_user_id INTEGER")
         ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
         ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "transactions", "cardholder_name", "cardholder_name TEXT NOT NULL DEFAULT ''")
@@ -3066,11 +3088,63 @@ def get_admin_users() -> list[sqlite3.Row]:
             LEFT JOIN bookings ON bookings.user_id = users.id
             LEFT JOIN transactions ON transactions.booking_id = bookings.id
             WHERE users.is_admin = 0
+              AND users.role NOT IN ('ADMIN', 'EMPLOYEE')
             GROUP BY users.id
             ORDER BY users.name COLLATE NOCASE
             LIMIT 100
             """
         ).fetchall()
+
+
+def get_staff_accounts() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT id, name, email, phone, role, is_admin, is_verified, created_at
+            FROM users
+            WHERE is_admin = 1 OR role IN ('ADMIN', 'EMPLOYEE')
+            ORDER BY
+                CASE WHEN role = 'ADMIN' OR is_admin = 1 THEN 0 ELSE 1 END,
+                name COLLATE NOCASE
+            """
+        ).fetchall()
+
+
+def get_staff_account_requests() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT staff_account_requests.*,
+                   requester.name AS requester_name,
+                   requester.email AS requester_email,
+                   approver.name AS approver_name,
+                   created_user.email AS created_user_email
+            FROM staff_account_requests
+            JOIN users AS requester ON requester.id = staff_account_requests.requested_by
+            LEFT JOIN users AS approver ON approver.id = staff_account_requests.approved_by
+            LEFT JOIN users AS created_user ON created_user.id = staff_account_requests.created_user_id
+            ORDER BY
+                CASE staff_account_requests.status
+                    WHEN 'PENDING' THEN 0
+                    WHEN 'APPROVED' THEN 1
+                    ELSE 2
+                END,
+                staff_account_requests.created_at DESC
+            """
+        ).fetchall()
+
+
+def normalized_staff_role(value: str) -> str:
+    role = (value or "").strip().upper()
+    return role if role in {"ADMIN", "EMPLOYEE"} else "EMPLOYEE"
+
+
+def is_admin_user(user: sqlite3.Row | None) -> bool:
+    return bool(user and (int(row_value(user, "is_admin") or 0) == 1 or row_value(user, "role") == "ADMIN"))
+
+
+def is_staff_user(user: sqlite3.Row | None) -> bool:
+    return bool(user and (is_admin_user(user) or row_value(user, "role") == "EMPLOYEE"))
 
 
 def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:
@@ -3175,7 +3249,7 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
 def assistant_user_role(user: sqlite3.Row | None) -> str:
     if not user:
         return "guest"
-    if int(row_value(user, "is_admin") or 0) == 1 or row_value(user, "role") == "ADMIN":
+    if is_staff_user(user):
         return "admin"
     return "user"
 
@@ -5028,6 +5102,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/staff/request": self.create_staff_account_request,
+            "/admin/staff/review": self.review_staff_account_request,
             "/admin/wiki": self.create_admin_wiki_article,
             "/admin/wiki/delete": self.delete_admin_wiki_article,
             "/admin/commercials": self.create_admin_commercial,
@@ -5120,8 +5196,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         token = secrets.token_urlsafe(32)
         with db() as con:
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
+            user = con.execute("SELECT is_admin, role FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_response(303)
-        self.send_header("Location", "/dashboard")
+        self.send_header("Location", "/admin" if is_staff_user(user) else "/dashboard")
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
         self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
@@ -6634,7 +6711,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.redirect("/login")
             return
-        if user["is_admin"]:
+        if is_staff_user(user):
             self.redirect("/admin")
             return
         self.render_manage_booking(user)
@@ -6644,7 +6721,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.redirect("/login")
             return None
-        if not user["is_admin"]:
+        if not is_staff_user(user):
             self.redirect("/dashboard")
             return None
         return user
@@ -6720,12 +6797,174 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
+        can_manage_staff = is_admin_user(user)
+        staff_rows = "\n".join(self.render_staff_account_row(row) for row in get_staff_accounts())
+        request_rows = "\n".join(self.render_staff_request_row(row, user) for row in get_staff_account_requests())
         body = render_template(
             "admin_users.html",
             admin_name=escape(user["name"]),
             users=users or '<p class="admin-empty">No users yet.</p>',
+            staff_create_card=self.render_staff_create_card() if can_manage_staff else '<p class="admin-empty">Employee access is enabled. Only admins can request or approve new staff accounts.</p>',
+            staff_rows=staff_rows or '<tr><td colspan="5">No staff accounts yet.</td></tr>',
+            staff_request_rows=request_rows or '<tr><td colspan="6">No pending staff requests.</td></tr>',
         )
         self.send_html(body)
+
+    def render_staff_create_card(self) -> str:
+        return """
+        <form method="post" action="/admin/staff/request" class="staff-request-form">
+          <label><span>Full name</span><input name="name" required></label>
+          <label><span>Email</span><input name="email" type="email" required></label>
+          <label><span>Phone</span><input name="phone" autocomplete="tel"></label>
+          <label><span>Role</span><select name="role"><option value="EMPLOYEE">Employee</option><option value="ADMIN">Admin</option></select></label>
+          <label><span>Temporary password</span><input name="password" type="password" minlength="8" required></label>
+          <button type="submit">Request Staff Account</button>
+          <small>Another active admin must approve before the account is created.</small>
+        </form>
+        """
+
+    def render_staff_account_row(self, row: sqlite3.Row) -> str:
+        role = "Admin" if int(row_value(row, "is_admin") or 0) == 1 or row_value(row, "role") == "ADMIN" else "Employee"
+        status = "Active" if row_value(row, "is_verified") else "Not verified"
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "name"))}</b><span>#{escape(row_value(row, "id"))}</span></td>
+          <td>{escape(row_value(row, "email"))}<span>{escape(row_value(row, "phone") or "No phone")}</span></td>
+          <td>{escape(role)}</td>
+          <td>{escape(status)}</td>
+          <td>{escape(row_value(row, "created_at"))}</td>
+        </tr>
+        """
+
+    def render_staff_request_row(self, row: sqlite3.Row, current_admin: sqlite3.Row) -> str:
+        status = row_value(row, "status")
+        role = "Admin" if row_value(row, "role") == "ADMIN" else "Employee"
+        requester = f"{row_value(row, 'requester_name')} ({row_value(row, 'requester_email')})"
+        reviewer = row_value(row, "approver_name") or "Pending"
+        can_review = status == "PENDING" and is_admin_user(current_admin) and int(row_value(row, "requested_by") or 0) != int(row_value(current_admin, "id") or 0)
+        action = (
+            f"""
+            <form method="post" action="/admin/staff/review" class="inline-form staff-review-actions">
+              <input type="hidden" name="request_id" value="{escape(row_value(row, "id"))}">
+              <input name="admin_note" placeholder="Optional note">
+              <button type="submit" name="decision" value="APPROVE">Approve</button>
+              <button class="danger-button" type="submit" name="decision" value="REJECT">Reject</button>
+            </form>
+            """
+            if can_review
+            else ("Waiting for another admin" if status == "PENDING" else escape(reviewer))
+        )
+        created = row_value(row, "created_user_email")
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "name"))}</b><span>{escape(row_value(row, "email"))}</span></td>
+          <td>{escape(role)}</td>
+          <td>{escape(status.title())}<span>{escape(row_value(row, "admin_note") or "")}</span></td>
+          <td>{escape(requester)}</td>
+          <td>{escape(created or reviewer)}</td>
+          <td>{action}</td>
+        </tr>
+        """
+
+    def create_staff_account_request(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        if not is_admin_user(user):
+            self.redirect("/admin/users")
+            return
+        form = self.read_form()
+        name = (form.get("name") or "").strip()
+        email = (form.get("email") or "").strip().lower()
+        phone = (form.get("phone") or "").strip()
+        role = normalized_staff_role(form.get("role", "EMPLOYEE"))
+        password = form.get("password", "")
+        if not name or "@" not in email or len(password) < 8:
+            self.redirect("/admin/users")
+            return
+        with db() as con:
+            existing_user = con.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+            existing_request = con.execute(
+                "SELECT id FROM staff_account_requests WHERE email = ? AND status = 'PENDING'",
+                (email,),
+            ).fetchone()
+            if not existing_user and not existing_request:
+                con.execute(
+                    """
+                    INSERT INTO staff_account_requests
+                    (name, email, phone, role, password_hash, requested_by)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (name, email, phone, role, hash_password(password), user["id"]),
+                )
+        self.redirect("/admin/users")
+
+    def review_staff_account_request(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        if not is_admin_user(user):
+            self.redirect("/admin/users")
+            return
+        form = self.read_form()
+        request_id = int(form.get("request_id") or 0)
+        decision = (form.get("decision") or "").upper()
+        note = (form.get("admin_note") or "").strip()
+        if decision not in {"APPROVE", "REJECT"}:
+            self.redirect("/admin/users")
+            return
+        with db() as con:
+            request = con.execute("SELECT * FROM staff_account_requests WHERE id = ?", (request_id,)).fetchone()
+            if not request or request["status"] != "PENDING" or int(request["requested_by"]) == int(user["id"]):
+                self.redirect("/admin/users")
+                return
+            if decision == "REJECT":
+                con.execute(
+                    """
+                    UPDATE staff_account_requests
+                    SET status = 'REJECTED', approved_by = ?, admin_note = ?, reviewed_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (user["id"], note, request_id),
+                )
+            else:
+                is_admin = 1 if request["role"] == "ADMIN" else 0
+                role = "ADMIN" if is_admin else "EMPLOYEE"
+                try:
+                    con.execute(
+                        """
+                        INSERT INTO users
+                        (name, email, phone, password_hash, is_admin, role, is_verified, verified_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        """,
+                        (request["name"], request["email"], request["phone"], request["password_hash"], is_admin, role),
+                    )
+                    created_user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+                    con.execute(
+                        """
+                        UPDATE staff_account_requests
+                        SET status = 'APPROVED',
+                            approved_by = ?,
+                            created_user_id = ?,
+                            admin_note = ?,
+                            reviewed_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (user["id"], created_user_id, note, request_id),
+                    )
+                except sqlite3.IntegrityError:
+                    con.execute(
+                        """
+                        UPDATE staff_account_requests
+                        SET status = 'REJECTED',
+                            approved_by = ?,
+                            admin_note = 'Email already exists.',
+                            reviewed_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (user["id"], request_id),
+                    )
+        self.redirect("/admin/users")
 
     def admin_tickets_page(self) -> None:
         user = self.require_admin()

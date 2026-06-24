@@ -630,6 +630,88 @@
   display: grid;
   gap: 12px;
 }
+.admin-section-head {
+  align-items: start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.admin-section-head h2 {
+  color: var(--navy);
+  margin: 0;
+}
+.admin-section-head span {
+  color: var(--muted);
+  display: block;
+  font-weight: 700;
+  margin-top: 4px;
+}
+.staff-admin-card {
+  display: grid;
+  gap: 14px;
+}
+.staff-request-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+}
+.staff-request-form label {
+  display: grid;
+  gap: 6px;
+}
+.staff-request-form label span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.staff-request-form input,
+.staff-request-form select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--navy);
+  min-height: 42px;
+  padding: 9px 10px;
+}
+.staff-request-form button {
+  align-self: end;
+  background: var(--red);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  min-height: 42px;
+  padding: 9px 14px;
+}
+.staff-request-form small {
+  color: var(--muted);
+  font-weight: 700;
+  grid-column: 1 / -1;
+}
+.admin-table-scroll {
+  overflow-x: auto;
+}
+.staff-admin-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 10px 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
+.staff-admin-table b,
+.staff-admin-table span {
+  display: block;
+}
+.staff-review-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.staff-review-actions input {
+  min-width: 160px;
+}
 .admin-user-card {
   background: #fff;
   border: 1px solid var(--line);
@@ -707,6 +789,22 @@
   color: var(--muted);
   font-size: 0.875rem;
   text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .staff-request-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .staff-request-form button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .staff-request-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media print {
