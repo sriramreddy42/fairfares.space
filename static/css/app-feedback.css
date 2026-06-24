@@ -178,3 +178,290 @@
   }
 }
 
+/* Site-wide FairFares ask agent. */
+.wiki-agent-widget {
+  align-items: flex-end;
+  display: flex;
+  gap: 12px;
+  pointer-events: none;
+  position: fixed;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 130;
+}
+
+.wiki-agent-orb,
+.wiki-agent-panel,
+.wiki-agent-backdrop {
+  pointer-events: auto;
+}
+
+.wiki-agent-backdrop {
+  background: rgba(0, 0, 0, 0.48);
+  border: 0;
+  cursor: pointer;
+  inset: 0;
+  position: fixed;
+  z-index: 128;
+}
+
+.wiki-agent-backdrop[hidden],
+.wiki-agent-panel[hidden],
+.wiki-agent-prompt {
+  display: none;
+}
+
+.wiki-agent-orb {
+  background:
+    radial-gradient(circle at 34% 30%, rgba(113, 235, 255, 0.95), transparent 30%),
+    linear-gradient(145deg, #061641, #061028 68%, #ed001c);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 18px 48px rgba(6, 18, 45, 0.36), 0 0 0 5px rgba(255, 255, 255, 0.92);
+  color: #ffffff;
+  cursor: pointer;
+  display: grid;
+  height: 74px;
+  place-items: center;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  width: 74px;
+  z-index: 131;
+}
+
+.wiki-agent-orb:hover {
+  box-shadow: 0 24px 56px rgba(6, 18, 45, 0.42), 0 0 0 5px rgba(255, 255, 255, 0.92);
+  transform: translateY(-3px) scale(1.03);
+}
+
+.wiki-agent-orb b {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  display: grid;
+  font-size: 1rem;
+  height: 42px;
+  letter-spacing: 0;
+  place-items: center;
+  width: 42px;
+}
+
+.wiki-agent-panel {
+  background: #ffffff;
+  border: 1px solid #d8e1ee;
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(7, 24, 69, 0.28);
+  color: #071845;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  position: fixed;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(680px, calc(100vw - 48px));
+  z-index: 132;
+}
+
+.wiki-agent-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.wiki-agent-head b {
+  display: block;
+  font-size: 1.2rem;
+}
+
+.wiki-agent-head span,
+.wiki-agent-panel label span {
+  color: #566176;
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.wiki-agent-close {
+  background: #f7f9fc;
+  border: 1px solid #d8e1ee;
+  border-radius: 50%;
+  color: #071845;
+  font-weight: 900;
+  height: 36px;
+  width: 36px;
+}
+
+.wiki-agent-chips,
+.wiki-agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wiki-agent-chips {
+  margin-bottom: 14px;
+}
+
+.wiki-agent-chips button {
+  background: #f7f9fc;
+  border: 1px solid #d8e1ee;
+  border-radius: 999px;
+  color: #071845;
+  cursor: pointer;
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.wiki-agent-panel label {
+  display: grid;
+  gap: 7px;
+}
+
+.wiki-agent-panel input {
+  border: 1px solid #d8e1ee;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 800;
+  padding: 12px 13px;
+  width: 100%;
+}
+
+.wiki-agent-submit {
+  background: #ed001c;
+  border: 0;
+  border-radius: 12px;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 950;
+  margin-top: 12px;
+  padding: 12px;
+  width: 100%;
+}
+
+.wiki-agent-submit:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.wiki-agent-answer {
+  background: #f7f9fc;
+  border-radius: 12px;
+  color: #4e596c;
+  font-weight: 800;
+  line-height: 1.45;
+  margin-top: 12px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.wiki-agent-actions {
+  margin-top: 12px;
+}
+
+.wiki-agent-actions a {
+  align-items: center;
+  background: #07143f;
+  border: 1px solid #07143f;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-weight: 950;
+  min-height: 40px;
+  padding: 8px 13px;
+  text-decoration: none;
+}
+
+.wiki-agent-actions a[data-agent-action="cancel"] {
+  background: #ffffff;
+  border-color: #ed001c;
+  color: #ed001c;
+}
+
+@media (max-width: 900px) {
+  .wiki-agent-widget {
+    right: 14px;
+    z-index: 140;
+  }
+
+  .wiki-agent-panel {
+    border-radius: 16px;
+    padding: 14px;
+    right: 10px;
+    width: calc(100vw - 20px);
+    z-index: 142;
+  }
+}
+
+@media (max-width: 760px) {
+  .wiki-agent-widget {
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 72px));
+    right: 14px;
+    top: auto;
+    transform: none;
+  }
+
+  .wiki-agent-orb {
+    border-radius: 16px;
+    height: 48px;
+    width: 64px;
+  }
+
+  .wiki-agent-orb:hover {
+    transform: none;
+  }
+
+  .wiki-agent-orb b {
+    background: transparent;
+    border-radius: 0;
+    font-size: 0.86rem;
+    height: auto;
+    width: auto;
+  }
+
+  .wiki-agent-panel {
+    bottom: max(132px, calc(env(safe-area-inset-bottom) + 132px));
+    left: 10px;
+    max-height: calc(100vh - 156px);
+    right: 10px;
+    top: auto;
+    transform: none;
+    width: auto;
+  }
+
+  .wiki-agent-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wiki-agent-chips,
+  .wiki-agent-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-agent-chips button,
+  .wiki-agent-actions a {
+    border-radius: 8px;
+    justify-content: center;
+    min-height: 42px;
+    padding: 8px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 420px) {
+  .wiki-agent-panel {
+    max-height: calc(100vh - 140px);
+  }
+
+  .wiki-agent-chips,
+  .wiki-agent-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
