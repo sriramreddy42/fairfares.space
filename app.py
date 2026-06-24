@@ -34,7 +34,7 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260624k"
+ASSET_VERSION = "20260624l"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -6726,9 +6726,64 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return None
         return user
 
+    def require_owner_admin(self, fallback: str = "/admin/bookings") -> sqlite3.Row | None:
+        user = self.require_admin()
+        if not user:
+            return None
+        if not is_admin_user(user):
+            self.redirect(fallback)
+            return None
+        return user
+
+    def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
+        admin_items = [
+            ("portal", "/admin", "Inventory"),
+            ("bookings", "/admin/bookings", "Booked Cars"),
+            ("users", "/admin/users", "Users"),
+            ("tickets", "/admin/tickets", "Tickets"),
+            ("discounts", "/admin/discounts", "Discounts"),
+            ("wiki", "/admin/wiki", "Wiki"),
+            ("commercials", "/admin/commercials", "Commercials"),
+            ("email", "/admin/email-marketing", "Email Marketing"),
+            ("pickup", "/admin/pickup", "User Pickup"),
+        ]
+        employee_items = [
+            ("bookings", "/admin/bookings", "Booked Cars"),
+            ("tickets", "/admin/tickets", "Tickets"),
+            ("pickup", "/admin/pickup", "User Pickup"),
+            ("portal", "/", "User Portal"),
+        ]
+        items = admin_items if is_admin_user(user) else employee_items
+        links = []
+        for key, href, label in items:
+            active_class = ' class="active"' if key == active else ""
+            links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+        links.append('<a href="/logout">Log out</a>')
+        return f'<nav class="admin-nav">{"".join(links)}</nav>'
+
+    def render_booking_status_filter_options(self, selected: str) -> str:
+        options = [
+            ("ALL", "All bookings"),
+            ("PENDING_HOLD", "Pending payment"),
+            ("EXPIRED_HOLD", "Expired payment"),
+            ("CONFIRMED", "Confirmed"),
+            ("MODIFIED", "Modification requests"),
+            ("CANCELLATION_REQUESTED", "Cancellation requests"),
+            ("CANCELLED", "Cancelled"),
+            ("PICKED_UP", "Picked up"),
+            ("RETURNED", "Returned"),
+        ]
+        return "".join(
+            f'<option value="{value}" {"selected" if selected == value else ""}>{escape(label)}</option>'
+            for value, label in options
+        )
+
     def admin_portal(self) -> None:
         user = self.require_admin()
         if not user:
+            return
+        if not is_admin_user(user):
+            self.redirect("/admin/bookings")
             return
         metrics = get_admin_metrics()
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
@@ -6738,6 +6793,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "portal"),
             total_cars=metrics["cars"],
             available_cars=metrics["available"],
             booked_count=metrics["booked"],
@@ -6784,16 +6840,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
-        bookings = "\n".join(self.render_admin_booking_row(row) for row in get_admin_bookings())
+        parsed = urllib.parse.urlparse(self.path)
+        selected_status = urllib.parse.parse_qs(parsed.query).get("status", ["ALL"])[0].upper()
+        allowed_statuses = {"ALL", "PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}
+        if selected_status not in allowed_statuses:
+            selected_status = "ALL"
+        booking_rows = get_admin_bookings()
+        if selected_status != "ALL":
+            booking_rows = [row for row in booking_rows if row["booking_status"] == selected_status]
+        bookings = "\n".join(self.render_admin_booking_row(row) for row in booking_rows)
         body = render_template(
             "admin_bookings.html",
             admin_name=escape(user["name"]),
-            bookings=bookings or '<tr><td colspan="7">No bookings yet.</td></tr>',
+            admin_nav=self.render_admin_nav(user, "bookings"),
+            booking_status_options=self.render_booking_status_filter_options(selected_status),
+            bookings=bookings or '<tr><td colspan="7">No bookings match this filter.</td></tr>',
         )
         self.send_html(body)
 
     def admin_users_page(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
@@ -6803,6 +6869,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_users.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "users"),
             users=users or '<p class="admin-empty">No users yet.</p>',
             staff_create_card=self.render_staff_create_card() if can_manage_staff else '<p class="admin-empty">Employee access is enabled. Only admins can request or approve new staff accounts.</p>',
             staff_rows=staff_rows or '<tr><td colspan="5">No staff accounts yet.</td></tr>',
@@ -6867,7 +6934,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def create_staff_account_request(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         if not is_admin_user(user):
@@ -6900,7 +6967,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/users")
 
     def review_staff_account_request(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         if not is_admin_user(user):
@@ -6974,6 +7041,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_tickets.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "tickets"),
             tickets=tickets or '<tr><td colspan="8">No support tickets yet.</td></tr>',
         )
         self.send_html(body)
@@ -7115,19 +7183,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def admin_discounts_page(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         discounts = "\n".join(self.render_discount_row(row) for row in get_all_discounts())
         body = render_template(
             "admin_discounts.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "discounts"),
             discounts=discounts or '<tr><td colspan="7">No discount codes yet.</td></tr>',
         )
         self.send_html(body)
 
     def admin_wiki_page(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         parsed = urllib.parse.urlparse(self.path)
@@ -7137,6 +7206,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_wiki.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "wiki"),
             query=escape(query),
             article_count=escape(len(articles)),
             wiki_articles=article_cards or self.render_wiki_empty_state(query, admin=True),
@@ -7156,19 +7226,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def admin_commercials_page(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         commercials = "\n".join(self.render_commercial_row(row) for row in get_all_commercials())
         body = render_template(
             "admin_commercials.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "commercials"),
             commercials=commercials or '<tr><td colspan="6">No commercials yet.</td></tr>',
         )
         self.send_html(body)
 
     def admin_email_marketing_page(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         ensure_email_marketing_calendar_plans()
@@ -7182,6 +7253,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_email_marketing.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "email"),
             draft_cards=draft_cards,
             seasonal_rows=seasonal_rows,
             campaign_rows=campaign_rows or '<tr><td colspan="7">No planned campaigns yet.</td></tr>',
@@ -7235,6 +7307,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_pickup.html",
             admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "pickup"),
             records=records or '<p class="admin-empty">No pickup records yet.</p>',
         )
         self.send_html(body)
@@ -7535,14 +7608,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def create_admin_backup(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         create_db_backup("admin")
         self.redirect("/admin")
 
     def download_admin_backup(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         parsed = urllib.parse.urlparse(self.path)
@@ -7562,7 +7635,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def create_admin_car(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7608,7 +7681,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin")
 
     def update_admin_car_status(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7690,7 +7763,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin")
 
     def delete_admin_car(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7796,7 +7869,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/tickets")
 
     def create_admin_discount(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7828,7 +7901,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/discounts")
 
     def delete_admin_discount(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7837,7 +7910,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/discounts")
 
     def create_admin_wiki_article(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7862,7 +7935,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/wiki")
 
     def delete_admin_wiki_article(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7874,7 +7947,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/wiki")
 
     def create_admin_commercial(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7902,7 +7975,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/commercials")
 
     def update_admin_commercial_status(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7935,7 +8008,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/commercials")
 
     def delete_admin_commercial(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7944,7 +8017,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/commercials")
 
     def create_email_campaign(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7971,7 +8044,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/email-marketing")
 
     def delete_email_campaign(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7980,7 +8053,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/email-marketing")
 
     def send_email_campaign_now(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -7992,7 +8065,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/email-marketing")
 
     def send_email_campaign_test(self) -> None:
-        user = self.require_admin()
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -8704,9 +8777,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(body)
 
     def update_content(self) -> None:
-        user = self.current_user()
-        if not user or not user["is_admin"]:
-            self.redirect("/login")
+        user = self.require_owner_admin()
+        if not user:
             return
         form = self.read_form()
         with db() as con:
