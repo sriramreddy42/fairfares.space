@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Explorer | FairFares</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=site-61">
   $maps_loader
+  $stylesheet_links
   <script defer src="/static/js/app.js?v=explorer-26"></script>
 </head>
 <body class="explorer-screen" data-profile-photo="$profile_photo_url">
@@ -154,17 +154,17 @@
           <h2>What's today's vibe?</h2>
           <p>Choose 3 to 5 so Explorer can balance food, adventure, timing, and weather fit.</p>
           <div class="mood-grid" id="moodGrid">
-            <label data-icon="food"><input type="checkbox" name="moods" value="Food"><span class="mood-art">🍔</span><span class="mood-name">Food</span></label>
-            <label data-icon="peak"><input type="checkbox" name="moods" value="Adventure"><span class="mood-art">🏔</span><span class="mood-name">Adventure</span></label>
-            <label data-icon="leaf"><input type="checkbox" name="moods" value="Nature"><span class="mood-art">🌲</span><span class="mood-name">Nature</span></label>
-            <label data-icon="shot"><input type="checkbox" name="moods" value="Photography"><span class="mood-art">📷</span><span class="mood-name">Photography</span></label>
-            <label data-icon="date"><input type="checkbox" name="moods" value="Date Night"><span class="mood-art">♥</span><span class="mood-name">Date Night</span></label>
-            <label data-icon="cafe"><input type="checkbox" name="moods" value="Coffee"><span class="mood-art">☕</span><span class="mood-name">Coffee</span></label>
-            <label data-icon="drive"><input type="checkbox" name="moods" value="Scenic Drive"><span class="mood-art">🚗</span><span class="mood-name">Scenic Drive</span></label>
-            <label data-icon="sun"><input type="checkbox" name="moods" value="Sunset"><span class="mood-art">🌅</span><span class="mood-name">Sunset</span></label>
-            <label data-icon="gem"><input type="checkbox" name="moods" value="Hidden Gems"><span class="mood-art">◆</span><span class="mood-name">Hidden Gems</span></label>
-            <label data-icon="live"><input type="checkbox" name="moods" value="Music"><span class="mood-art">♪</span><span class="mood-name">Music</span></label>
-            <label data-icon="shop"><input type="checkbox" name="moods" value="Shopping"><span class="mood-art">🛍</span><span class="mood-name">Shopping</span></label>
+            <label data-icon="food"><input type="checkbox" name="moods" value="Food"><span class="mood-art">ðŸ”</span><span class="mood-name">Food</span></label>
+            <label data-icon="peak"><input type="checkbox" name="moods" value="Adventure"><span class="mood-art">ðŸ”</span><span class="mood-name">Adventure</span></label>
+            <label data-icon="leaf"><input type="checkbox" name="moods" value="Nature"><span class="mood-art">ðŸŒ²</span><span class="mood-name">Nature</span></label>
+            <label data-icon="shot"><input type="checkbox" name="moods" value="Photography"><span class="mood-art">ðŸ“·</span><span class="mood-name">Photography</span></label>
+            <label data-icon="date"><input type="checkbox" name="moods" value="Date Night"><span class="mood-art">â™¥</span><span class="mood-name">Date Night</span></label>
+            <label data-icon="cafe"><input type="checkbox" name="moods" value="Coffee"><span class="mood-art">â˜•</span><span class="mood-name">Coffee</span></label>
+            <label data-icon="drive"><input type="checkbox" name="moods" value="Scenic Drive"><span class="mood-art">ðŸš—</span><span class="mood-name">Scenic Drive</span></label>
+            <label data-icon="sun"><input type="checkbox" name="moods" value="Sunset"><span class="mood-art">ðŸŒ…</span><span class="mood-name">Sunset</span></label>
+            <label data-icon="gem"><input type="checkbox" name="moods" value="Hidden Gems"><span class="mood-art">â—†</span><span class="mood-name">Hidden Gems</span></label>
+            <label data-icon="live"><input type="checkbox" name="moods" value="Music"><span class="mood-art">â™ª</span><span class="mood-name">Music</span></label>
+            <label data-icon="shop"><input type="checkbox" name="moods" value="Shopping"><span class="mood-art">ðŸ›</span><span class="mood-name">Shopping</span></label>
             <label data-icon="surprise"><input type="checkbox" name="moods" value="Surprise Me"><span class="mood-art">?</span><span class="mood-name">Surprise Me</span></label>
           </div>
           <p class="explorer-mood-helper" id="explorerMoodHelper">Pick at least 3 vibes. Date Night, Sunset, Adventure, and Food each get different timing rules.</p>
@@ -212,10 +212,10 @@
           <p class="eyebrow">Generated Quest</p>
           <h2 id="questTitle">Denver Sunset Adventure</h2>
           <p id="questDescription">A city quest will appear here after you generate your route.</p>
-          <p id="questMeta">5 stops · 4 hours · 36 miles · 250 XP</p>
+          <p id="questMeta">5 stops Â· 4 hours Â· 36 miles Â· 250 XP</p>
           <p class="quest-weather-summary" id="questWeatherSummary" hidden></p>
           <div class="quest-stats">
-            <span><b id="questDifficulty">★★☆☆☆</b>Difficulty</span>
+            <span><b id="questDifficulty">â˜…â˜…â˜†â˜†â˜†</b>Difficulty</span>
             <span><b id="questReward">350 XP</b>Reward</span>
             <span><b id="questStopCount">5</b>Stops</span>
             <span><b>Locked</b>Mystery Stop</span>
@@ -255,7 +255,7 @@
         </div>
         <div class="community-story-card">
           <b>Sriram's Adventure</b>
-          <span>★★★★★</span>
+          <span>â˜…â˜…â˜…â˜…â˜…</span>
           <p>"The best stop was the one we unlocked last."</p>
         </div>
         <div class="memory-gallery-wrap">
@@ -308,3 +308,4 @@
   </main>
 </body>
 </html>
+

@@ -1,0 +1,203 @@
+/* Site-wide application rating and feedback tab. */
+.app-feedback-widget {
+  bottom: 118px;
+  position: fixed;
+  right: 0;
+  z-index: 120;
+}
+
+.app-feedback-tab {
+  align-items: center;
+  background: #061641;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px 0 0 10px;
+  box-shadow: 0 18px 38px rgba(6, 22, 65, 0.24);
+  color: #ffffff;
+  display: flex;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 172px;
+  padding: 12px 8px;
+  width: 54px;
+}
+
+.app-feedback-tab span {
+  display: block;
+  letter-spacing: 0;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+}
+
+.app-feedback-panel {
+  background: #ffffff;
+  border: 1px solid #d7deea;
+  border-radius: 12px;
+  bottom: 0;
+  box-shadow: 0 28px 70px rgba(6, 22, 65, 0.24);
+  color: #061641;
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  position: absolute;
+  right: 58px;
+  width: min(360px, calc(100vw - 86px));
+}
+
+.app-feedback-panel[hidden] {
+  display: none;
+}
+
+.app-feedback-head {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.app-feedback-head b,
+.app-feedback-head span {
+  display: block;
+}
+
+.app-feedback-head b {
+  color: #061641;
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.app-feedback-head span {
+  color: #526071;
+  font-weight: 800;
+  margin-top: 3px;
+}
+
+.app-feedback-close {
+  background: #f4f7fb;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  color: #061641;
+  font-weight: 800;
+  height: 34px;
+  width: 34px;
+}
+
+.app-feedback-stars {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.app-feedback-stars button {
+  background: #f8fafc;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  color: #a6afbf;
+  font-size: 1.45rem;
+  min-height: 48px;
+  transition: transform 0.18s ease, color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.app-feedback-stars button:hover,
+.app-feedback-stars button.is-active {
+  background: #fff8e1;
+  border-color: #f1c94b;
+  color: #f0b400;
+  transform: translateY(-1px);
+}
+
+.app-feedback-panel label {
+  display: grid;
+  gap: 7px;
+}
+
+.app-feedback-panel label span {
+  color: #061641;
+  font-weight: 700;
+}
+
+.app-feedback-panel textarea {
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  color: #061641;
+  font: inherit;
+  min-height: 108px;
+  padding: 11px 12px;
+  resize: vertical;
+}
+
+.app-feedback-submit {
+  background: #ed001c;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 800;
+  min-height: 48px;
+  padding: 11px 14px;
+}
+
+.app-feedback-status {
+  color: #526071;
+  font-size: 0.92rem;
+  font-weight: 800;
+  margin: 0;
+  min-height: 1.2em;
+}
+
+@media (max-width: 640px) {
+  .app-feedback-widget {
+    bottom: 20px;
+    right: 0;
+  }
+
+  .app-feedback-tab {
+    min-height: 118px;
+    width: 42px;
+  }
+
+  .app-feedback-panel {
+    bottom: 0;
+    right: 52px;
+    width: calc(100vw - 70px);
+  }
+}
+
+/* Final placement: keep the feedback launcher on the left edge. */
+.app-feedback-widget {
+  bottom: auto !important;
+  left: 0 !important;
+  right: auto !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+.app-feedback-tab {
+  border-radius: 0 10px 10px 0 !important;
+}
+
+.app-feedback-panel {
+  bottom: auto !important;
+  left: 58px !important;
+  right: auto !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+@media (max-width: 760px) {
+  .app-feedback-widget {
+    left: 0 !important;
+    right: auto !important;
+    top: 50% !important;
+  }
+
+  .app-feedback-tab {
+    min-height: 134px !important;
+    width: 42px !important;
+  }
+
+  .app-feedback-panel {
+    left: 50px !important;
+    right: auto !important;
+    width: calc(100vw - 68px) !important;
+  }
+}
+

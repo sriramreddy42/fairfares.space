@@ -2,7 +2,10 @@
 .DS_Store
 __pycache__/
 *.pyc
+.tmp/
+.local-data/
 data/*.sqlite3
+data/*.sqlite3-journal
 data/outbox/
 data/backups/
 node_modules/

@@ -1,0 +1,166 @@
+/* Booking form typography and alignment polish. Loaded after styles.css. */
+.search-panel {
+  font-family: Aptos, "Segoe UI", Roboto, Arial, sans-serif !important;
+  gap: 18px 28px !important;
+}
+
+.search-panel h1 {
+  color: #071536 !important;
+  font-size: clamp(1.8rem, 2.2vw, 2.25rem) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.12 !important;
+}
+
+.search-panel label,
+.auth-card label {
+  font-weight: 600 !important;
+}
+
+.search-panel label > span:first-child,
+.rental-estimate span {
+  color: #071536 !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em !important;
+  line-height: 1.2 !important;
+}
+
+.search-panel label em {
+  font-style: italic !important;
+  font-weight: 600 !important;
+}
+
+.input-shell,
+.split-input {
+  align-items: stretch !important;
+  background: #fff !important;
+  display: grid !important;
+  min-height: 62px !important;
+}
+
+.input-shell {
+  grid-template-columns: 58px minmax(0, 1fr) !important;
+}
+
+.split-input {
+  grid-template-columns: minmax(150px, 1fr) minmax(128px, 0.78fr) !important;
+}
+
+.input-shell span {
+  align-items: center !important;
+  background: #f8fafc !important;
+  border-right: 1px solid var(--line) !important;
+  color: #071536 !important;
+  display: flex !important;
+  font-size: 0.84rem !important;
+  font-weight: 700 !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+  white-space: nowrap !important;
+}
+
+.input-shell select,
+.split-input input,
+.split-input select,
+.search-panel > label > input,
+.search-panel > label > select {
+  color: #0a1433 !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.2 !important;
+  min-height: 62px !important;
+  padding: 14px 18px !important;
+}
+
+.split-input input {
+  border-bottom: 0 !important;
+  border-right: 1px solid var(--line) !important;
+}
+
+.split-input input::-webkit-date-and-time-value {
+  text-align: left !important;
+}
+
+.search-panel input::placeholder {
+  color: #6b7280 !important;
+  font-weight: 600 !important;
+}
+
+.rental-estimate {
+  gap: 6px !important;
+  padding: 16px 18px !important;
+}
+
+.rental-estimate span {
+  color: var(--red) !important;
+}
+
+.rental-estimate b {
+  font-size: 1.05rem !important;
+  font-weight: 700 !important;
+}
+
+.rental-estimate small {
+  color: #4b5563 !important;
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  line-height: 1.42 !important;
+}
+
+@media (max-width: 900px) {
+  .search-panel {
+    gap: 16px !important;
+  }
+
+  .split-input {
+    grid-template-columns: minmax(148px, 1fr) minmax(118px, 40%) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .search-panel {
+    padding: 18px !important;
+  }
+
+  .search-panel h1 {
+    font-size: clamp(1.55rem, 8vw, 1.9rem) !important;
+    line-height: 1.16 !important;
+  }
+
+  .input-shell {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+  }
+
+  .input-shell,
+  .split-input {
+    min-height: 54px !important;
+  }
+
+  .input-shell select,
+  .split-input input,
+  .split-input select,
+  .search-panel > label > input,
+  .search-panel > label > select {
+    font-size: 0.95rem !important;
+    min-height: 54px !important;
+    padding: 11px 14px !important;
+  }
+
+  .split-input {
+    grid-template-columns: minmax(138px, 1fr) minmax(108px, 38%) !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .split-input {
+    grid-template-columns: 1fr !important;
+  }
+
+  .split-input input {
+    border-bottom: 1px solid var(--line) !important;
+    border-right: 0 !important;
+  }
+}

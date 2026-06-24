@@ -34,6 +34,21 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
+BASE_STYLESHEETS = [
+    "/static/css/sections/00-base-home.css?v=1",
+    "/static/css/sections/10-auth.css?v=1",
+    "/static/css/sections/20-admin.css?v=1",
+    "/static/css/sections/30-dashboard-manage.css?v=1",
+    "/static/css/sections/40-explorer.css?v=1",
+    "/static/css/sections/50-home-results-late-explorer.css?v=1",
+    "/static/css/sections/60-payment-admin-final.css?v=1",
+]
+PAGE_STYLESHEETS = {
+    "admin_wiki.html": ["/static/css/wiki.css?v=1"],
+    "index.html": ["/static/css/booking-form.css?v=1"],
+    "wiki.html": ["/static/css/wiki.css?v=1"],
+}
+SHARED_STYLESHEETS = ["/static/css/app-feedback.css?v=1"]
 
 
 def refresh_storage_paths() -> None:
@@ -55,9 +70,17 @@ def load_env_file() -> None:
     refresh_storage_paths()
 
 
+class FairFaresConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection)
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -4865,9 +4888,13 @@ def get_user_document_sets(user_id: int | None, active_booking_id: int | None = 
 
 
 def render_template(template_name: str, **context: object) -> bytes:
-    template = Template((TEMPLATE_DIR / template_name).read_text())
-    safe_context = {key: value for key, value in context.items()}
-    return template.safe_substitute(safe_context).encode()
+    template = Template((TEMPLATE_DIR / template_name).read_text(encoding="utf-8"))
+    stylesheet_urls = [*BASE_STYLESHEETS, *PAGE_STYLESHEETS.get(template_name, []), *SHARED_STYLESHEETS]
+    stylesheet_links = "\n".join(
+        f'  <link rel="stylesheet" href="{escape(url)}">' for url in stylesheet_urls
+    )
+    safe_context = {"stylesheet_links": stylesheet_links, **context}
+    return template.safe_substitute(safe_context).encode("utf-8")
 
 
 def escape(value: object) -> str:

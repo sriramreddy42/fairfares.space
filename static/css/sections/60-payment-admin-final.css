@@ -1,0 +1,527 @@
+/* Final 2026-06-12 UI/payment correction layer. Keep this last so it wins over
+   older sprint overrides. */
+.top-brand {
+  align-items: center !important;
+}
+
+.logo-lockup img {
+  display: block !important;
+  object-fit: contain !important;
+}
+
+.booking-hold-panel,
+.price-breakdown-summary {
+  color: #07143f;
+}
+
+.price-breakdown-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 10px 0 4px;
+  width: 100%;
+}
+
+.price-breakdown-summary span,
+.booking-hold-breakdown span {
+  background: #f5f7fb;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.price-breakdown-summary b,
+.booking-hold-breakdown b {
+  color: #07143f;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.booking-hold-panel {
+  background: linear-gradient(180deg, #f9fbff, #fff);
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr);
+  padding: 16px;
+}
+
+.booking-hold-panel h3,
+.booking-hold-panel p {
+  margin: 0;
+}
+
+.booking-hold-panel-copy {
+  align-self: center;
+  display: grid;
+  gap: 5px;
+}
+
+.booking-hold-breakdown {
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.booking-hold-timer {
+  align-items: center;
+  background: #07143f;
+  border: 1px solid #07143f;
+  border-radius: 8px;
+  color: #fff;
+  display: flex;
+  font-weight: 800;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.booking-hold-timer b {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  font-size: 1.25rem;
+  line-height: 1;
+  min-width: 84px;
+  padding: 9px 12px;
+  text-align: center;
+}
+
+.booking-hold-timer.is-expired {
+  background: #e30613;
+  border-color: #e30613;
+}
+
+.booking-hold-expired-actions {
+  display: grid;
+  gap: 10px;
+  align-self: center;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.booking-hold-expired-actions button {
+  min-height: 48px;
+}
+
+.payment-hold-form {
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.payment-hold-form button,
+.payment-hold-form small,
+.payment-hold-form .modify-status {
+  grid-column: 1 / -1;
+}
+
+.payment-hold-paid {
+  background: #eefaf0;
+  border: 1px solid #a5e8b1;
+  border-radius: 8px;
+  color: #21712f;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.quest-place-reviews {
+  display: grid !important;
+  gap: 8px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.quest-review-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+
+.quest-review-strip blockquote,
+.quest-place-reviews blockquote {
+  flex: 0 0 min(360px, 82vw) !important;
+  margin: 0 !important;
+  min-height: 70px !important;
+  white-space: normal !important;
+}
+
+@media (min-width: 901px) {
+  .top-brand {
+    grid-template-columns: minmax(300px, 0.74fr) minmax(0, 1.26fr) !important;
+    min-height: 112px !important;
+    padding: 18px clamp(42px, 5.5vw, 74px) 18px clamp(56px, 6vw, 86px) !important;
+  }
+
+  .logo-lockup {
+    align-self: center !important;
+    justify-self: start !important;
+  }
+
+  .logo-lockup img {
+    max-height: 76px !important;
+    max-width: 360px !important;
+  }
+
+  .top-benefits {
+    align-items: center !important;
+    gap: clamp(26px, 4vw, 70px) !important;
+    justify-content: flex-end !important;
+  }
+
+  .benefit-pill {
+    align-items: center !important;
+    grid-template-columns: 66px minmax(118px, auto) !important;
+  }
+
+  .main-nav .nav-links {
+    flex: 1 1 auto !important;
+    gap: clamp(22px, 3vw, 48px) !important;
+    width: auto !important;
+  }
+
+  .main-nav .nav-links a[href="/explorer"] {
+    margin-left: auto !important;
+    margin-right: clamp(34px, 5vw, 110px) !important;
+  }
+
+  .main-nav .nav-actions {
+    align-items: center !important;
+    flex: 0 0 auto !important;
+    gap: clamp(18px, 2.2vw, 34px) !important;
+  }
+
+  .main-nav .nav-actions > span {
+    margin-left: 0 !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    align-items: center !important;
+    gap: clamp(28px, 4.5vw, 72px) !important;
+    grid-template-columns: minmax(360px, 0.78fr) minmax(420px, 0.82fr) !important;
+    min-height: clamp(460px, 34vw, 570px) !important;
+    overflow: hidden !important;
+    padding: clamp(40px, 4vw, 62px) clamp(48px, 5vw, 78px) !important;
+  }
+
+  .explorer-screen .explorer-hero-copy {
+    align-content: start !important;
+    display: grid !important;
+    gap: 10px !important;
+    min-height: 0 !important;
+    padding-top: clamp(10px, 1.4vw, 22px) !important;
+    position: relative !important;
+  }
+
+  .explorer-screen .explorer-hero-title,
+  .explorer-screen .explorer-hero-subcopy,
+  .explorer-screen .explorer-profile-cluster,
+  .explorer-screen .explorer-xp-meter {
+    animation: none !important;
+    opacity: 1 !important;
+    position: static !important;
+    transform: none !important;
+  }
+
+  .explorer-screen .explorer-hero-title {
+    font-size: clamp(1.65rem, 2.05vw, 2.45rem) !important;
+    line-height: 1.05 !important;
+    margin: 0 !important;
+    max-width: 440px !important;
+  }
+
+  .explorer-screen .hero-explorer-word {
+    display: none !important;
+  }
+
+  .explorer-screen .explorer-hero-subcopy {
+    font-size: clamp(0.92rem, 1vw, 1.08rem) !important;
+    line-height: 1.35 !important;
+    margin: 0 !important;
+    max-width: 440px !important;
+  }
+
+  .explorer-screen .explorer-hero-tagline {
+    display: none !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    grid-template-columns: 62px minmax(0, 1fr) !important;
+    margin-top: -16px !important;
+    max-width: 430px !important;
+  }
+
+  .explorer-screen .explorer-user-photo {
+    width: 62px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 58px !important;
+    padding: 8px 10px !important;
+  }
+
+  .explorer-screen .explorer-profile-strip b {
+    font-size: clamp(1.08rem, 1.45vw, 1.55rem) !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    margin-top: 0 !important;
+    max-width: 430px !important;
+    padding: 12px 14px !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    justify-self: end !important;
+    max-width: 520px !important;
+    min-height: 330px !important;
+    padding: clamp(24px, 3vw, 40px) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: min(100%, 330px) !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.7rem, 2.4vw, 2.6rem) !important;
+    line-height: 1.08 !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: clamp(0.96rem, 1.15vw, 1.18rem) !important;
+  }
+
+  .car-card {
+    align-items: center !important;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(300px, 1.15fr) minmax(330px, 0.95fr) !important;
+  }
+
+  .price-box {
+    max-width: 420px !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+  }
+
+  .price-box strong[data-price-range] {
+    font-size: clamp(1.9rem, 2.8vw, 3rem) !important;
+    white-space: nowrap !important;
+  }
+
+  .car-terms-grid {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 10px !important;
+    overflow-x: auto !important;
+  }
+
+  .car-terms-grid span {
+    flex: 0 0 190px !important;
+    min-height: 54px !important;
+    white-space: normal !important;
+    width: 190px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .booking-confirmation-card {
+    grid-template-columns: 1fr !important;
+    padding: 1rem !important;
+  }
+
+  .booking-hold-panel {
+    grid-template-columns: 1fr !important;
+    padding: 14px !important;
+  }
+
+  .booking-hold-breakdown,
+  .booking-hold-expired-actions,
+  .payment-hold-form,
+  .price-breakdown-summary {
+    grid-template-columns: 1fr !important;
+  }
+
+  .car-card {
+    gap: 12px !important;
+    padding: 14px !important;
+  }
+
+  .price-box {
+    align-items: stretch !important;
+    text-align: left !important;
+  }
+
+  .price-box strong[data-price-range] {
+    font-size: 2rem !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .top-brand {
+    min-height: 64px !important;
+    padding: 8px 14px !important;
+  }
+
+  .logo-lockup img {
+    max-height: 48px !important;
+    max-width: 225px !important;
+  }
+
+  .explorer-screen .explorer-hero {
+    gap: 10px !important;
+    padding: 12px !important;
+  }
+
+  .explorer-screen .explorer-hero-title,
+  .explorer-screen .explorer-hero-subcopy {
+    display: none !important;
+  }
+
+  .explorer-screen .explorer-book-card {
+    grid-template-columns: 108px minmax(0, 1fr) !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    max-width: 108px !important;
+  }
+
+  .quest-review-strip blockquote,
+  .quest-place-reviews blockquote {
+    flex-basis: min(280px, 82vw) !important;
+  }
+}
+
+/* Final correction: car details belong to the full card width, not the price
+   column. Keep each detail readable and horizontal without pushing the card. */
+.car-card {
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+.car-card > .price-box {
+  min-width: 0 !important;
+}
+
+.car-card > .car-terms {
+  grid-column: 1 / -1 !important;
+  margin-top: 4px !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+.car-card > .car-terms summary {
+  align-items: center !important;
+  border: 2px solid #0b63ce !important;
+  border-radius: 6px !important;
+  color: var(--red) !important;
+  display: inline-flex !important;
+  font-weight: 900 !important;
+  min-height: 40px !important;
+  padding: 4px 14px !important;
+  width: auto !important;
+}
+
+.car-card > .car-terms .car-terms-grid {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  padding: 8px 2px 4px !important;
+}
+
+.car-card > .car-terms .car-terms-grid span {
+  align-items: center !important;
+  display: flex !important;
+  flex: 0 0 230px !important;
+  justify-content: center !important;
+  line-height: 1.2 !important;
+  min-height: 56px !important;
+  text-align: center !important;
+  white-space: normal !important;
+  width: 230px !important;
+}
+
+@media (max-width: 900px) {
+  .car-card > .car-terms .car-terms-grid span {
+    flex-basis: min(220px, 74vw) !important;
+    width: min(220px, 74vw) !important;
+  }
+}
+
+.admin-car-edit {
+  margin-top: 10px !important;
+  max-width: min(820px, 82vw) !important;
+}
+
+.admin-car-edit summary {
+  color: var(--red) !important;
+  cursor: pointer !important;
+  font-weight: 900 !important;
+  padding: 4px 0 !important;
+}
+
+.admin-car-edit-grid {
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: repeat(2, minmax(190px, 1fr)) !important;
+  padding-top: 8px !important;
+}
+
+.admin-car-edit-grid label {
+  display: grid !important;
+  gap: 4px !important;
+}
+
+.admin-car-edit-grid label span {
+  color: #4d5666 !important;
+  font-size: 0.78rem !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+}
+
+.admin-car-edit-grid .wide {
+  grid-column: 1 / -1 !important;
+}
+
+.admin-car-edit button {
+  margin-top: 8px !important;
+}
+
+@media (max-width: 760px) {
+  .admin-car-edit {
+    max-width: 100% !important;
+  }
+
+  .admin-car-edit-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* 2026-06-15 Explorer hero cleanup: remove the top label in markup and let
+   the intro/profile cluster sit higher in the hero. */
+.explorer-screen .explorer-hero-copy {
+  padding-top: 0 !important;
+}
+
+.explorer-screen .explorer-hero-subcopy {
+  margin-top: 0 !important;
+}
+
+.explorer-screen .explorer-profile-cluster {
+  margin-top: -18px !important;
+}
+
+@media (max-width: 900px) {
+  .explorer-screen .explorer-hero-copy {
+    padding-top: 10px !important;
+  }
+}
+

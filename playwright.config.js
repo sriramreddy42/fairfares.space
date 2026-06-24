@@ -12,7 +12,7 @@ module.exports = defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "python3 app.py",
+    command: "python app.py",
     url: "http://127.0.0.1:8000",
     reuseExistingServer: true,
     timeout: 15_000,
