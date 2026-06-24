@@ -1,8 +1,8 @@
 /* FairFares stylesheet entrypoint. Keep imports ordered; later files intentionally override earlier foundations. */
-@import url("./sections/00-base-home.css?v=20260624c");
-@import url("./sections/10-auth.css?v=20260624c");
-@import url("./sections/20-admin.css?v=20260624c");
-@import url("./sections/30-dashboard-manage.css?v=20260624c");
-@import url("./sections/40-explorer.css?v=20260624c");
-@import url("./sections/50-home-results-late-explorer.css?v=20260624c");
-@import url("./sections/60-payment-admin-final.css?v=20260624c");
+@import url("./sections/00-base-home.css?v=20260624d");
+@import url("./sections/10-auth.css?v=20260624d");
+@import url("./sections/20-admin.css?v=20260624d");
+@import url("./sections/30-dashboard-manage.css?v=20260624d");
+@import url("./sections/40-explorer.css?v=20260624d");
+@import url("./sections/50-home-results-late-explorer.css?v=20260624d");
+@import url("./sections/60-payment-admin-final.css?v=20260624d");
