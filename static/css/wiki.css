@@ -204,14 +204,15 @@
 
 /* Floating Wiki/RAG ask agent. */
 .wiki-agent-widget {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 90;
-  display: flex;
   align-items: flex-end;
+  display: flex;
   gap: 12px;
   pointer-events: none;
+  position: fixed;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 130;
 }
 
 .wiki-agent-orb,
@@ -269,20 +270,7 @@
 }
 
 .wiki-agent-prompt {
-  position: relative;
-  z-index: 91;
-  margin-bottom: 14px;
-  min-width: 152px;
-  max-width: 220px;
-  border: 1px solid #d8e1ee;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #071845;
-  box-shadow: 0 14px 34px rgba(7, 24, 69, 0.16);
-  font-weight: 900;
-  padding: 10px 14px;
-  text-align: center;
-  transition: opacity 0.24s ease, transform 0.24s ease;
+  display: none;
 }
 
 .wiki-agent-prompt.is-switching {
@@ -291,9 +279,12 @@
 }
 
 .wiki-agent-panel {
-  position: fixed;
   right: 24px;
-  bottom: 112px;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
   width: min(680px, calc(100vw - 48px));
   border: 1px solid #d8e1ee;
   border-radius: 18px;
@@ -450,9 +441,8 @@
   }
 
   .wiki-agent-widget {
-    right: 14px;
-    bottom: 14px;
     gap: 8px;
+    right: 14px;
     z-index: 140;
   }
 
@@ -476,7 +466,7 @@
 
   .wiki-agent-panel {
     right: 10px;
-    bottom: 88px;
+    top: 50%;
     width: calc(100vw - 20px);
     padding: 14px;
     border-radius: 16px;
@@ -499,6 +489,8 @@
     bottom: max(72px, calc(env(safe-area-inset-bottom) + 72px));
     left: auto;
     right: 14px;
+    top: auto;
+    transform: none;
     z-index: 140;
   }
 
@@ -530,6 +522,8 @@
     max-height: calc(100vh - 156px);
     overflow: auto;
     right: 10px;
+    top: auto;
+    transform: none;
     width: auto;
   }
 
