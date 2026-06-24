@@ -223,7 +223,7 @@
 .trip-card {
   display: grid;
   gap: 20px;
-  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr) minmax(230px, 1.15fr) minmax(118px, 130px);
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr) minmax(230px, 1.15fr);
   padding: 22px;
 }
 .first-booking-promo {
