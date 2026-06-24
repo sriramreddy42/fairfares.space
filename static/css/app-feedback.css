@@ -184,19 +184,34 @@
 
 @media (max-width: 760px) {
   .app-feedback-widget {
-    left: 0 !important;
+    bottom: 12px !important;
+    left: 12px !important;
     right: auto !important;
-    top: 50% !important;
+    top: auto !important;
+    transform: none !important;
   }
 
   .app-feedback-tab {
-    min-height: 134px !important;
-    width: 42px !important;
+    display: inline-flex !important;
+    border-radius: 8px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 8px 12px !important;
+    width: auto !important;
+  }
+
+  .app-feedback-tab span {
+    display: inline !important;
+    transform: none !important;
+    writing-mode: horizontal-tb !important;
   }
 
   .app-feedback-panel {
-    left: 50px !important;
+    bottom: 52px !important;
+    left: 0 !important;
     right: auto !important;
+    top: auto !important;
+    transform: none !important;
     width: calc(100vw - 68px) !important;
   }
 }

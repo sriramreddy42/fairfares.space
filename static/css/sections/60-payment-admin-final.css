@@ -477,7 +477,6 @@
 
 .manage-screen.manage-checkout-screen .manage-sidebar,
 .manage-screen.manage-checkout-screen .page-heading,
-.manage-screen.manage-checkout-screen .trip-card,
 .manage-screen.manage-checkout-screen .first-booking-promo,
 .manage-screen.manage-checkout-screen .first-time-founder-card {
   display: none !important;
@@ -501,6 +500,45 @@
   margin-right: calc(50% - 50vw);
   min-height: 136px;
   text-align: center;
+}
+
+.manage-screen.manage-checkout-screen .trip-card {
+  align-items: center !important;
+  box-shadow: 0 12px 30px rgba(7, 20, 63, 0.06);
+  display: grid !important;
+  gap: 22px !important;
+  grid-template-columns: minmax(170px, 220px) minmax(260px, 0.9fr) minmax(300px, 1.1fr) !important;
+  margin: 22px auto 0 !important;
+  max-width: 1180px !important;
+  padding: 18px 20px !important;
+  width: 100% !important;
+}
+
+.manage-screen.manage-checkout-screen .trip-card .price-summary {
+  display: none !important;
+}
+
+.manage-screen.manage-checkout-screen .trip-car {
+  align-items: center;
+  display: grid;
+  justify-items: start;
+}
+
+.manage-screen.manage-checkout-screen .trip-car-image {
+  max-height: 110px;
+  object-fit: contain;
+}
+
+.manage-screen.manage-checkout-screen .trip-details h2 {
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  line-height: 1.05;
+  margin: 2px 0 6px;
+}
+
+.manage-screen.manage-checkout-screen .trip-details p,
+.manage-screen.manage-checkout-screen .trip-route p {
+  color: #3f4858;
+  font-weight: 750;
 }
 
 .manage-screen.manage-checkout-screen .checkout-finalize-heading h2 {
@@ -682,6 +720,10 @@
 
   .manage-screen.manage-checkout-screen .checkout-finalize-heading {
     min-height: 108px;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-card {
+    grid-template-columns: 1fr !important;
   }
 
   .manage-screen.manage-checkout-screen .booking-confirmation-card {

@@ -491,3 +491,27 @@
   }
 }
 
+@media (max-width: 520px) {
+  .wiki-agent-widget {
+    align-items: flex-end;
+    bottom: 12px;
+    left: auto;
+    right: 12px;
+  }
+
+  .wiki-agent-prompt {
+    display: none;
+  }
+
+  .wiki-agent-orb {
+    height: 58px;
+    width: 58px;
+  }
+
+  .wiki-agent-panel {
+    bottom: 78px;
+    max-height: calc(100vh - 96px);
+    overflow: auto;
+  }
+}
+

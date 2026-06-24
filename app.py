@@ -34,7 +34,7 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260624d"
+ASSET_VERSION = "20260624e"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -8136,33 +8136,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         hold_expired = booking_status == "EXPIRED_HOLD"
         if is_guest_checkout:
             dashboard_booking_title = "Complete Your Booking"
-            dashboard_booking_body = "Enter your contact details and we will save this trip under your email and phone."
+            dashboard_booking_body = "Review the selected vehicle, confirm your contact details, and complete the payment window to reserve this trip."
         elif show_signed_out_empty:
             dashboard_booking_title = "Start Booking"
-            dashboard_booking_body = "Select a vehicle first, then enter your details to save the trip."
+            dashboard_booking_body = "Choose a vehicle to begin. Your booking tools will appear here after checkout starts."
         elif show_start_experience:
             dashboard_booking_title = "Start Your First Trip"
             dashboard_booking_body = (
-                "No bookings yet. Grab a student deal and your trip details will appear here after checkout."
+                "No active bookings yet. Search available cars and your trip details will appear here after checkout starts."
             )
         elif hold_expired:
             dashboard_booking_title = "Reservation Expired"
-            dashboard_booking_body = "Continue checkout if you still want this car, or remove it and search again."
+            dashboard_booking_body = "The payment window expired. Continue checkout to renew the hold, or remove this vehicle and search again."
         elif hold_pending:
             dashboard_booking_title = "Complete Payment"
-            dashboard_booking_body = "Finish the 10% payment before the timer ends to confirm this car."
+            dashboard_booking_body = "Complete the required payment before the timer ends to reserve this vehicle."
         elif has_current_booking:
             dashboard_booking_title = "Upcoming Trip"
-            dashboard_booking_body = "Your next adventure is all set! We're excited to have you on the road."
+            dashboard_booking_body = "Your upcoming rental details are ready to review and manage."
         else:
             dashboard_booking_title = "Last Booking"
-            dashboard_booking_body = "You do not have a current booking. Your most recent trip details are saved here."
+            dashboard_booking_body = "You do not have an active booking. Your most recent trip details remain available here."
         sidebar_title = "Start Booking" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else "Manage Booking"
         sidebar_primary_label = "Complete Booking" if is_guest_checkout else ("Find Your First Car" if (show_start_experience or show_signed_out_empty) else "Upcoming Trips")
         sidebar_primary_body = (
-            "Add your name, email, and phone to reserve this vehicle."
+            "Confirm your contact details to continue this reservation."
             if is_guest_checkout
-            else ("Select a car to begin booking" if show_signed_out_empty else ("Search student deals and create your first booking" if is_first_time_user else "View and manage your upcoming bookings"))
+            else ("Select a vehicle to begin booking." if show_signed_out_empty else ("Search available student deals and create your first booking." if is_first_time_user else "Review and manage your active reservations."))
         )
         booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
@@ -8278,8 +8278,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
                         <p class="eyebrow">{'Expired' if hold_expired else 'Secure checkout'}</p>
-                        <h3>{'Payment window expired.' if hold_expired else 'Pay 10% now, finish at pickup.'}</h3>
-                        <p>{'Continue checkout to reopen a fresh 10-minute payment window, or remove this car and search again.' if hold_expired else 'Your 10% payment is deducted from the pickup balance. It becomes non-refundable inside 24 hours before pickup unless FairFares approves an exception.'}</p>
+                    <h3>{'Payment window expired.' if hold_expired else 'Secure the reservation now.'}</h3>
+                    <p>{'Continue checkout to open a new payment window, or remove this vehicle and search again.' if hold_expired else 'The amount due now is applied to your pickup balance. Cancellation and refund eligibility follow the rental terms shown before confirmation.'}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
@@ -8303,9 +8303,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_summary_copy = (
                 "Continue checkout if you still want this car, or remove it from your trip."
                 if hold_expired
-                else "Confirm your details, review the price, and pay 10% now. The remaining balance is due at pickup."
+                else "Confirm your contact details and complete the amount due now. The remaining balance is handled at pickup."
                 if hold_pending
-                else "FairFares keeps the rental price, taxes, fees, and pickup balance visible on your booking, receipt, agreement, and email."
+                else "Your booking record keeps the vehicle, dates, pickup details, documents, and payment status organized in one place."
             )
             booking_confirmation_card = f"""
             <div class="checkout-finalize-heading" id="checkoutFinalizeHeading">
@@ -8376,6 +8376,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<span>Status: {escape(status)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
             )
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
+        booking_id_label = "No booking yet"
+        if booking:
+            booking_id_label = "Pending confirmation" if row_value(booking, "booking_id") == "Pending details" else row_value(booking, "booking_id")
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "FairFares Member"),
@@ -8386,7 +8389,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if user
                 else signed_out_auth
             ),
-            booking_id=escape(booking["booking_id"] if booking else "No booking yet"),
+            booking_id=escape(booking_id_label),
             dashboard_booking_title=escape(dashboard_booking_title),
             dashboard_booking_body=escape(dashboard_booking_body),
             sidebar_title=escape(sidebar_title),
