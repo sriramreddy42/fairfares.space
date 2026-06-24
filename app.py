@@ -34,21 +34,22 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
+ASSET_VERSION = "20260624c"
 BASE_STYLESHEETS = [
-    "/static/css/sections/00-base-home.css?v=1",
-    "/static/css/sections/10-auth.css?v=1",
-    "/static/css/sections/20-admin.css?v=1",
-    "/static/css/sections/30-dashboard-manage.css?v=1",
-    "/static/css/sections/40-explorer.css?v=1",
-    "/static/css/sections/50-home-results-late-explorer.css?v=1",
-    "/static/css/sections/60-payment-admin-final.css?v=1",
+    f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
+    f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
+    f"/static/css/sections/20-admin.css?v={ASSET_VERSION}",
+    f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
+    f"/static/css/sections/40-explorer.css?v={ASSET_VERSION}",
+    f"/static/css/sections/50-home-results-late-explorer.css?v={ASSET_VERSION}",
+    f"/static/css/sections/60-payment-admin-final.css?v={ASSET_VERSION}",
 ]
 PAGE_STYLESHEETS = {
-    "admin_wiki.html": ["/static/css/wiki.css?v=1"],
-    "index.html": ["/static/css/booking-form.css?v=1"],
-    "wiki.html": ["/static/css/wiki.css?v=1"],
+    "admin_wiki.html": [f"/static/css/wiki.css?v={ASSET_VERSION}"],
+    "index.html": [f"/static/css/booking-form.css?v={ASSET_VERSION}"],
+    "wiki.html": [f"/static/css/wiki.css?v={ASSET_VERSION}"],
 }
-SHARED_STYLESHEETS = ["/static/css/app-feedback.css?v=1"]
+SHARED_STYLESHEETS = [f"/static/css/app-feedback.css?v={ASSET_VERSION}"]
 
 
 def refresh_storage_paths() -> None:
@@ -4894,7 +4895,22 @@ def render_template(template_name: str, **context: object) -> bytes:
         f'  <link rel="stylesheet" href="{escape(url)}">' for url in stylesheet_urls
     )
     safe_context = {"stylesheet_links": stylesheet_links, **context}
-    return template.safe_substitute(safe_context).encode("utf-8")
+    html_text = template.safe_substitute(safe_context)
+    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
+    html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
+    return html_text.encode("utf-8")
+
+
+def render_site_loader() -> str:
+    return """
+  <div class="site-loader" id="siteLoader" aria-hidden="true">
+    <div class="site-loader-mark">
+      <img src="/static/img/fairfares-glow-logo.png" alt="">
+      <span></span>
+    </div>
+  </div>
+    """.rstrip()
 
 
 def escape(value: object) -> str:
@@ -8292,14 +8308,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else "FairFares keeps the rental price, taxes, fees, and pickup balance visible on your booking, receipt, agreement, and email."
             )
             booking_confirmation_card = f"""
+            <div class="checkout-finalize-heading" id="checkoutFinalizeHeading">
+                <h2>{'Payment window expired.' if hold_expired else "Let's finalize your trip!"}</h2>
+            </div>
             <section class="booking-confirmation-card" id="bookingConfirmation">
-                <div>
+                <div class="booking-confirmation-intro">
                     <p class="eyebrow">{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</p>
                     <h2>{booking_summary_heading}</h2>
                     <p>{booking_summary_copy}</p>
                     {guest_account_note}
                 </div>
+                {payment_hold_card}
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
+                    <h3>Your information</h3>
                     {hidden_guest_fields}
                     <label><span>First Name *</span><input name="first_name" value="{escape(first_name)}" required></label>
                     <label><span>Last Name *</span><input name="last_name" value="{escape(last_name)}" required></label>
@@ -8314,7 +8335,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {guest_after_save_actions}
                     <p class="modify-status" id="customerInfoStatus" aria-live="polite"></p>
                 </form>
-                {payment_hold_card}
             </section>
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
@@ -8372,6 +8392,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             sidebar_title=escape(sidebar_title),
             sidebar_primary_label=escape(sidebar_primary_label),
             sidebar_primary_body=escape(sidebar_primary_body),
+            manage_flow_class="manage-checkout-screen" if booking_confirmation_card else "",
             booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,

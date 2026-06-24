@@ -462,3 +462,151 @@
   }
 }
 
+/* Checkout finalization refresh: Avis-inspired structure without moving manage actions. */
+.manage-screen.manage-checkout-screen {
+  background:
+    linear-gradient(180deg, #aa001f 0 220px, #f4f5f7 220px 100%) !important;
+}
+
+.manage-screen.manage-checkout-screen .checkout-finalize-heading {
+  align-items: center;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  min-height: 96px;
+  text-align: center;
+}
+
+.manage-screen.manage-checkout-screen .checkout-finalize-heading h2 {
+  color: #fff;
+  font-size: clamp(1.45rem, 3vw, 2.35rem);
+  font-weight: 900;
+  line-height: 1.05;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.manage-screen.manage-checkout-screen .booking-confirmation-card {
+  align-items: start !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  display: grid !important;
+  gap: 14px !important;
+  grid-template-areas:
+    "intro summary"
+    "form summary";
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  margin-top: 0 !important;
+  padding: 0 !important;
+}
+
+.manage-screen.manage-checkout-screen .booking-confirmation-intro {
+  background: #fffaf2;
+  border: 1px solid #f0d8ae;
+  border-radius: 6px;
+  color: #07143f;
+  grid-area: intro;
+  padding: 14px 16px;
+}
+
+.manage-screen.manage-checkout-screen .booking-confirmation-intro h2,
+.manage-screen.manage-checkout-screen .booking-confirmation-intro p {
+  margin: 0;
+}
+
+.manage-screen.manage-checkout-screen .customer-info-form {
+  background: #fff;
+  border: 1px solid #e2e5ed;
+  border-radius: 7px;
+  box-shadow: 0 14px 32px rgba(7, 20, 63, 0.08);
+  gap: 14px;
+  grid-area: form;
+  padding: 24px;
+}
+
+.manage-screen.manage-checkout-screen .customer-info-form h3 {
+  color: #07143f;
+  font-size: 1rem;
+  font-weight: 900;
+  grid-column: 1 / -1;
+  line-height: 1.1;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}
+
+.manage-screen.manage-checkout-screen .customer-info-form label span {
+  color: #07143f;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.manage-screen.manage-checkout-screen .customer-info-form input {
+  border-radius: 3px;
+  min-height: 44px;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-panel {
+  background: #fff !important;
+  border: 1px solid #e2e5ed !important;
+  border-radius: 7px !important;
+  box-shadow: 0 14px 32px rgba(7, 20, 63, 0.08);
+  grid-area: summary;
+  grid-template-columns: 1fr !important;
+  padding: 18px !important;
+  position: sticky;
+  top: 18px;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-panel-copy {
+  border-bottom: 1px solid #e7e9ef;
+  padding-bottom: 12px;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-panel h3 {
+  font-size: 1.18rem;
+  line-height: 1.2;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-breakdown {
+  grid-template-columns: 1fr !important;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-breakdown span,
+.manage-screen.manage-checkout-screen .price-breakdown-summary span {
+  background: #fff !important;
+  border-color: #e7e9ef !important;
+  border-radius: 0 !important;
+  border-width: 0 0 1px !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-timer {
+  background: #fffaf2 !important;
+  border-color: #f0d8ae !important;
+  color: #07143f !important;
+}
+
+.manage-screen.manage-checkout-screen .booking-hold-timer b {
+  background: transparent !important;
+  color: #9a001b;
+}
+
+@media (max-width: 980px) {
+  .manage-screen.manage-checkout-screen {
+    background: linear-gradient(180deg, #aa001f 0 180px, #f4f5f7 180px 100%) !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-confirmation-card {
+    grid-template-areas:
+      "intro"
+      "form"
+      "summary";
+    grid-template-columns: 1fr;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-panel {
+    position: static;
+  }
+}
+

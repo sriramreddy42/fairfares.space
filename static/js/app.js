@@ -1,3 +1,37 @@
+const siteLoader = document.getElementById("siteLoader");
+
+function hideSiteLoader() {
+  if (siteLoader) siteLoader.classList.add("is-hidden");
+}
+
+function showSiteLoader() {
+  if (siteLoader) siteLoader.classList.remove("is-hidden");
+}
+
+if (siteLoader) {
+  window.addEventListener("load", () => window.setTimeout(hideSiteLoader, 220));
+  window.setTimeout(hideSiteLoader, 1400);
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const link = target?.closest("a[href]");
+    if (!link) return;
+    const href = link.getAttribute("href") || "";
+    if (
+      href.startsWith("#") ||
+      href.startsWith("mailto:") ||
+      href.startsWith("tel:") ||
+      link.target ||
+      link.hasAttribute("download")
+    ) {
+      return;
+    }
+    const nextUrl = new URL(link.href, window.location.href);
+    if (nextUrl.origin !== window.location.origin) return;
+    if (nextUrl.pathname === window.location.pathname && nextUrl.hash) return;
+    showSiteLoader();
+  });
+}
+
 const carList = document.getElementById("carList");
 const sortCars = document.getElementById("sortCars");
 const resultCount = document.getElementById("resultCount");
