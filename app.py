@@ -5562,17 +5562,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}">Select</a>
                 </div>
             </div>
-            <details class="car-terms">
-                <summary>View Details</summary>
-                <div class="car-terms-grid">
-                    <span>Daily rate from inventory</span>
-                    <span>Taxes and provider fees itemized before confirmation</span>
-                    <span>10% hold is deducted at pickup</span>
-                    <span>Price-match review before pickup</span>
-                    <span>Eligible cancellation up to 24 hours before pickup</span>
-                    <span>Mileage, insurance, and pickup rules follow your rental agreement</span>
-                </div>
-            </details>
         </article>
         """
 

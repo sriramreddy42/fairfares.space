@@ -1048,35 +1048,6 @@
   max-width: 300px !important;
 }
 
-.car-terms {
-  max-width: 100% !important;
-  width: 100% !important;
-}
-
-.car-terms summary {
-  border: 2px solid #0b63ce !important;
-  border-radius: 5px !important;
-  padding: 2px 8px !important;
-}
-
-.car-terms-grid {
-  display: grid !important;
-  gap: 8px !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  margin-top: 8px !important;
-}
-
-.car-terms-grid span {
-  background: #f7f9fc !important;
-  border: 1px solid var(--line) !important;
-  border-radius: 6px !important;
-  color: #4d5666 !important;
-  font-size: 0.875rem !important;
-  font-weight: 700 !important;
-  line-height: 1.22 !important;
-  padding: 8px !important;
-}
-
 .explorer-inline-button {
   background: transparent !important;
   border: 0 !important;
@@ -1131,10 +1102,6 @@
     padding-block: 12px !important;
   }
 
-  .car-terms-grid {
-    grid-template-columns: 1fr !important;
-  }
-
   .price-box em {
     max-width: none !important;
   }
@@ -1148,7 +1115,7 @@
   }
 }
 
-/* Final requested corrections: right-side Explorer nav, horizontal car terms, tighter Explorer hero. */
+/* Final requested corrections: right-side Explorer nav and tighter Explorer hero. */
 .nav-links {
   width: 100% !important;
 }
@@ -1156,29 +1123,6 @@
 .nav-links a[href="/explorer"] {
   margin-left: auto !important;
   margin-right: 0 !important;
-}
-
-.car-terms-grid {
-  align-items: stretch !important;
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
-  gap: 8px !important;
-  overflow-x: auto !important;
-  padding-bottom: 2px !important;
-}
-
-.car-terms-grid span {
-  align-items: center !important;
-  display: flex !important;
-  flex: 0 0 auto !important;
-  font-size: 0.82rem !important;
-  justify-content: center !important;
-  line-height: 1.2 !important;
-  min-height: 42px !important;
-  padding: 8px 10px !important;
-  text-align: center !important;
-  width: min(230px, 62vw) !important;
 }
 
 @media (min-width: 901px) {
@@ -1288,9 +1232,6 @@
     margin-left: 0 !important;
   }
 
-  .car-terms-grid span {
-    width: min(218px, 72vw) !important;
-  }
 }
 
 /* Mobile correction pass: compact public nav, hide empty booking fallback, and

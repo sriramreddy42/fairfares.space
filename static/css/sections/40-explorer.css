@@ -571,7 +571,7 @@
 
 .mission-checklist li::before {
   color: #12933a;
-  content: "âœ“";
+  content: "\2713";
   font-weight: 800;
 }
 
@@ -1881,10 +1881,6 @@
   white-space: nowrap;
 }
 
-.car-terms {
-  max-width: 280px;
-}
-
 .trip-card {
   grid-template-columns: minmax(220px, 300px) minmax(0, 1.1fr) minmax(280px, 1fr);
 }
@@ -1967,8 +1963,7 @@
     justify-items: stretch;
     text-align: center;
   }
-  .price-box em,
-  .car-terms {
+  .price-box em {
     max-width: none;
   }
 }

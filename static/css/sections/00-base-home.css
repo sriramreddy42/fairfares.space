@@ -837,7 +837,7 @@ legend { font-size: 0.86rem; font-weight: 700; text-transform: uppercase; }
 }
 .specs span { border-right: 1px solid var(--line); padding-right: 12px; }
 .car-info ul { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.car-info li::before { color: #0e9f35; content: "âœ“"; font-weight: 700; margin-right: 8px; }
+.car-info li::before { color: #0e9f35; content: "\2713"; font-weight: 700; margin-right: 8px; }
 .price-box {
   display: grid;
   gap: 8px;

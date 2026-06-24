@@ -312,20 +312,6 @@
     white-space: nowrap !important;
   }
 
-  .car-terms-grid {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    gap: 10px !important;
-    overflow-x: auto !important;
-  }
-
-  .car-terms-grid span {
-    flex: 0 0 190px !important;
-    min-height: 54px !important;
-    white-space: normal !important;
-    width: 190px !important;
-  }
 }
 
 @media (max-width: 900px) {
@@ -405,55 +391,6 @@
 
 .car-card > .price-box {
   min-width: 0 !important;
-}
-
-.car-card > .car-terms {
-  grid-column: 1 / -1 !important;
-  margin-top: 4px !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  width: 100% !important;
-}
-
-.car-card > .car-terms summary {
-  align-items: center !important;
-  border: 2px solid #0b63ce !important;
-  border-radius: 6px !important;
-  color: var(--red) !important;
-  display: inline-flex !important;
-  font-weight: 900 !important;
-  min-height: 40px !important;
-  padding: 4px 14px !important;
-  width: auto !important;
-}
-
-.car-card > .car-terms .car-terms-grid {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
-  gap: 10px !important;
-  max-width: 100% !important;
-  overflow-x: auto !important;
-  padding: 8px 2px 4px !important;
-}
-
-.car-card > .car-terms .car-terms-grid span {
-  align-items: center !important;
-  display: flex !important;
-  flex: 0 0 230px !important;
-  justify-content: center !important;
-  line-height: 1.2 !important;
-  min-height: 56px !important;
-  text-align: center !important;
-  white-space: normal !important;
-  width: 230px !important;
-}
-
-@media (max-width: 900px) {
-  .car-card > .car-terms .car-terms-grid span {
-    flex-basis: min(220px, 74vw) !important;
-    width: min(220px, 74vw) !important;
-  }
 }
 
 .admin-car-edit {
