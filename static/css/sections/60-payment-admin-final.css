@@ -498,7 +498,7 @@
   justify-content: center;
   margin-left: calc(50% - 50vw);
   margin-right: calc(50% - 50vw);
-  min-height: 136px;
+  min-height: 104px;
   text-align: center;
 }
 
@@ -506,11 +506,11 @@
   align-items: center !important;
   box-shadow: 0 12px 30px rgba(7, 20, 63, 0.06);
   display: grid !important;
-  gap: 22px !important;
+  gap: 18px !important;
   grid-template-columns: minmax(170px, 220px) minmax(260px, 0.9fr) minmax(300px, 1.1fr) !important;
-  margin: 22px auto 0 !important;
+  margin: 18px auto 0 !important;
   max-width: 1180px !important;
-  padding: 18px 20px !important;
+  padding: 16px 18px !important;
   width: 100% !important;
 }
 
@@ -543,7 +543,7 @@
 
 .manage-screen.manage-checkout-screen .checkout-finalize-heading h2 {
   color: #fff;
-  font-size: clamp(1.45rem, 3vw, 2.35rem);
+  font-size: clamp(1.25rem, 2.4vw, 1.85rem);
   font-weight: 900;
   line-height: 1.05;
   margin: 0;
@@ -556,7 +556,7 @@
   border: 0 !important;
   box-shadow: none !important;
   display: grid !important;
-  gap: 14px !important;
+  gap: 12px !important;
   grid-template-areas:
     "intro summary"
     "form summary";
@@ -575,8 +575,8 @@
   border-radius: 6px;
   color: #07143f;
   grid-area: intro;
-  min-height: 64px;
-  padding: 15px 18px;
+  min-height: 54px;
+  padding: 12px 16px;
 }
 
 .manage-screen.manage-checkout-screen .booking-confirmation-intro h2,
@@ -585,7 +585,7 @@
 }
 
 .manage-screen.manage-checkout-screen .booking-confirmation-intro h2 {
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-size: clamp(1.15rem, 1.8vw, 1.45rem);
   font-weight: 900;
   line-height: 1.05;
 }
@@ -595,10 +595,10 @@
   border: 1px solid #e2e5ed;
   border-radius: 7px;
   box-shadow: 0 14px 32px rgba(7, 20, 63, 0.08);
-  gap: 16px 20px;
+  gap: 14px 18px;
   grid-area: form;
-  min-height: 360px;
-  padding: 26px;
+  min-height: 320px;
+  padding: 22px;
 }
 
 .manage-screen.manage-checkout-screen .customer-info-form h3 {
@@ -653,8 +653,8 @@
   box-shadow: 0 14px 32px rgba(7, 20, 63, 0.08);
   grid-area: summary;
   grid-template-columns: 1fr !important;
-  min-height: 360px;
-  padding: 18px !important;
+  min-height: 320px;
+  padding: 16px !important;
   position: sticky;
   top: 18px;
 }
@@ -665,8 +665,18 @@
 }
 
 .manage-screen.manage-checkout-screen .booking-hold-panel h3 {
-  font-size: 1.18rem;
+  font-size: 1.08rem;
   line-height: 1.2;
+}
+
+.manage-screen.manage-checkout-screen .booking-confirmation-card.is-expired-checkout {
+  grid-template-areas:
+    "form summary";
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+}
+
+.manage-screen.manage-checkout-screen .booking-confirmation-card.is-expired-checkout .booking-confirmation-intro {
+  display: none;
 }
 
 .manage-screen.manage-checkout-screen .booking-hold-panel .eyebrow {
@@ -715,15 +725,19 @@
   }
 
   .manage-screen.manage-checkout-screen .manage-layout {
-    padding: 0 16px 42px !important;
+    padding: 0 12px 34px !important;
   }
 
   .manage-screen.manage-checkout-screen .checkout-finalize-heading {
-    min-height: 108px;
+    min-height: 68px;
+    padding: 0 16px;
   }
 
   .manage-screen.manage-checkout-screen .trip-card {
+    gap: 12px !important;
     grid-template-columns: 1fr !important;
+    margin-top: 12px !important;
+    padding: 14px !important;
   }
 
   .manage-screen.manage-checkout-screen .booking-confirmation-card {
@@ -734,8 +748,69 @@
     grid-template-columns: 1fr;
   }
 
+  .manage-screen.manage-checkout-screen .booking-confirmation-card.is-expired-checkout {
+    grid-template-areas:
+      "summary"
+      "form";
+    grid-template-columns: 1fr;
+  }
+
   .manage-screen.manage-checkout-screen .booking-hold-panel {
     position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .manage-screen.manage-checkout-screen .manage-content {
+    gap: 12px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-card {
+    display: grid !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-car-image {
+    max-height: 82px;
+    width: 150px;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-details h2 {
+    font-size: 1.15rem;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-route {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-confirmation-intro,
+  .manage-screen.manage-checkout-screen .booking-hold-panel,
+  .manage-screen.manage-checkout-screen .customer-info-form {
+    border-radius: 6px !important;
+    box-shadow: 0 8px 18px rgba(7, 20, 63, 0.06);
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-panel,
+  .manage-screen.manage-checkout-screen .customer-info-form {
+    min-height: 0;
+    padding: 14px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form {
+    gap: 11px;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form label:not(.toggle-row) {
+    grid-template-rows: auto 42px;
+    min-height: 64px;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-confirmation-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-expired-actions {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

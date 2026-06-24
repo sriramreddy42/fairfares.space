@@ -34,7 +34,7 @@ MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260624i"
+ASSET_VERSION = "20260624j"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -6086,7 +6086,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Choose a car before paying."}, 404)
             return
         if booking["booking_status"] == "EXPIRED_HOLD":
-            self.send_json({"ok": False, "message": "This payment window expired. Continue checkout or remove this car before paying."}, 409)
+            self.send_json({"ok": False, "message": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
             return
         if booking["booking_status"] in {"CANCELLED", "RETURNED"}:
             self.send_json({"ok": False, "message": "This booking cannot accept payment right now."}, 400)
@@ -8147,7 +8147,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         elif hold_expired:
             dashboard_booking_title = "Reservation Expired"
-            dashboard_booking_body = "The payment window expired. Continue checkout to renew the hold, or remove this vehicle and search again."
+            dashboard_booking_body = "Review the vehicle and choose whether to restart checkout or remove it from your trip."
         elif hold_pending:
             dashboard_booking_title = "Complete Payment"
             dashboard_booking_body = "Complete the required payment before the timer ends to reserve this vehicle."
@@ -8263,7 +8263,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if hold_expired:
                 hold_decision = """
                     <div class="booking-hold-expired-actions">
-                        <button type="button" class="select-button" id="continueHoldButton">Continue checkout</button>
+                        <button type="button" class="select-button" id="continueHoldButton">Restart checkout</button>
                         <button type="button" class="light-button" id="removeHoldButton">Remove</button>
                     </div>
                 """
@@ -8277,9 +8277,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
-                        <p class="eyebrow">{'Expired' if hold_expired else 'Secure checkout'}</p>
-                    <h3>{'Payment window expired.' if hold_expired else 'Secure the reservation now.'}</h3>
-                    <p>{'Continue checkout to open a new payment window, or remove this vehicle and search again.' if hold_expired else 'The amount due now is applied to your pickup balance. Cancellation and refund eligibility follow the rental terms shown before confirmation.'}</p>
+                        <p class="eyebrow">{'Action needed' if hold_expired else 'Secure checkout'}</p>
+                    <h3>{'Payment window expired' if hold_expired else 'Secure the reservation now.'}</h3>
+                    <p>{'Restart checkout to open a new payment window, or remove this vehicle from your trip.' if hold_expired else 'The amount due now is applied to your pickup balance. Cancellation and refund eligibility follow the rental terms shown before confirmation.'}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
@@ -8299,9 +8299,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
                 </section>
             """
-            booking_summary_heading = "Payment window expired." if hold_expired else ("Review your booking." if hold_pending else "Your car is booked.")
+            booking_summary_heading = "Review your booking." if hold_expired else ("Review your booking." if hold_pending else "Your car is booked.")
             booking_summary_copy = (
-                "Continue checkout if you still want this car, or remove it from your trip."
+                "Confirm your contact details before choosing the next step."
                 if hold_expired
                 else "Confirm your contact details and complete the amount due now. The remaining balance is handled at pickup."
                 if hold_pending
@@ -8309,9 +8309,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             booking_confirmation_card = f"""
             <div class="checkout-finalize-heading" id="checkoutFinalizeHeading">
-                <h2>{'Payment window expired.' if hold_expired else "Let's finalize your trip!"}</h2>
+                <h2>{'Review your trip' if hold_expired else "Let's finalize your trip!"}</h2>
             </div>
-            <section class="booking-confirmation-card" id="bookingConfirmation">
+            <section class="booking-confirmation-card {'is-expired-checkout' if hold_expired else ''}" id="bookingConfirmation">
                 <div class="booking-confirmation-intro">
                     <p class="eyebrow">{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</p>
                     <h2>{booking_summary_heading}</h2>

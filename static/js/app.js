@@ -2314,7 +2314,7 @@ function startBookingCountdown() {
       window.clearInterval(tick);
       timer.classList.add("is-expired");
       const status = document.getElementById("paymentHoldStatus");
-      if (status) status.textContent = "Expired. Continue checkout or remove this car.";
+      if (status) status.textContent = "Payment window closed. Restart checkout or remove this vehicle.";
       window.setTimeout(() => window.location.reload(), 900);
     }
   }, 1000);
