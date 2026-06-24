@@ -6908,7 +6908,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <label><span>Full name</span><input name="name" required></label>
           <label><span>Email</span><input name="email" type="email" required></label>
           <label><span>Phone</span><input name="phone" autocomplete="tel"></label>
-          <label><span>Role</span><select name="role"><option value="EMPLOYEE">Employee</option><option value="ADMIN">Admin</option></select></label>
+          <label><span>Role</span><select name="role"><option value="ADMIN">Admin</option><option value="EMPLOYEE">Employee</option></select></label>
           <label><span>Temporary password</span><input name="password" type="password" minlength="8" required></label>
           <button type="submit">Request Staff Account</button>
           <small>Another active admin must approve before the account is created.</small>
@@ -6969,7 +6969,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name = (form.get("name") or "").strip()
         email = (form.get("email") or "").strip().lower()
         phone = (form.get("phone") or "").strip()
-        role = normalized_staff_role(form.get("role", "EMPLOYEE"))
+        role = normalized_staff_role(form.get("role", "ADMIN"))
         password = form.get("password", "")
         if not name or "@" not in email or len(password) < 8:
             self.redirect("/admin/requests")
