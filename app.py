@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625i"
+ASSET_VERSION = "20260625j"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3716,12 +3716,42 @@ def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
     return {key: int(value or 0) for key, value in counts.items()}
 
 
+ADMIN_NAV_ICONS = {
+    "AI Agent": "&#129302;",
+    "Bookings": "&#128663;",
+    "Commercials": "&#127916;",
+    "Customers": "&#128100;",
+    "Dashboard": "&#127968;",
+    "Discounts": "&#127991;",
+    "Documents": "&#128196;",
+    "Email Marketing": "&#9993;",
+    "Employees": "&#128101;",
+    "Explorer": "&#129517;",
+    "Inventory": "&#128664;",
+    "Log out": "&#8617;",
+    "Marketing": "&#128227;",
+    "On-call": "&#128222;",
+    "Payments": "&#128179;",
+    "Reports": "&#128200;",
+    "Settings": "&#9881;",
+    "Staff Requests": "&#128101;",
+    "Tickets": "&#127903;",
+    "User Pickup": "&#129706;",
+    "User Portal": "&#127760;",
+    "Vehicles": "&#128664;",
+    "Verification": "&#129706;",
+    "Wiki": "&#129302;",
+    "Workspace": "&#127968;",
+}
+
+
 def render_admin_nav_label(label: str, count: int = 0) -> str:
+    icon = ADMIN_NAV_ICONS.get(label, "&bull;")
     badge = ""
     if count > 0:
         badge_text = "99+" if count > 99 else str(count)
         badge = f'<span class="admin-nav-badge" aria-label="{escape(str(count))} new items">{escape(badge_text)}</span>'
-    return f'<span class="admin-nav-label"><span class="admin-nav-text">{escape(label)}</span>{badge}</span>'
+    return f'<span class="admin-nav-label"><span class="admin-nav-icon" aria-hidden="true">{icon}</span><span class="admin-nav-text">{escape(label)}</span>{badge}</span>'
 
 
 def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:
@@ -7501,17 +7531,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
         admin_groups = [
-            ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
-            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
-            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
-            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
+            ("workspace", "Dashboard", "/admin/workspace", [("workspace", "/admin/workspace", "Dashboard")]),
+            ("bookings", "Bookings", "/admin/bookings", [("bookings", "/admin/bookings", "Bookings"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("payments", "/admin/bookings", "Payments"), ("documents", "/admin/pickup", "Documents")]),
+            ("vehicles", "Vehicles", "/admin", [("portal", "/admin", "Inventory")]),
+            ("customers", "Customers", "/admin/users", [("users", "/admin/users", "Customers")]),
+            ("verification", "Verification", "/admin/pickup", [("pickup", "/admin/pickup", "User Pickup")]),
+            ("employees", "Employees", "/admin/requests", [("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
-            ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
-            ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
+            ("reports", "Reports", "/admin/roi", [("roi", "/admin/roi", "Reports")]),
+            ("ai", "AI Agent", "/admin/wiki", [("wiki", "/admin/wiki", "AI Agent")]),
+            ("settings", "Settings", "/admin/system", [("system", "/admin/system", "Settings")]),
         ]
         employee_groups = [
-            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
-            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
+            ("workspace", "Dashboard", "/admin/workspace", [("workspace", "/admin/workspace", "Dashboard")]),
+            ("bookings", "Bookings", "/admin/bookings", [("bookings", "/admin/bookings", "Bookings"), ("tickets", "/admin/tickets", "Tickets")]),
+            ("verification", "Verification", "/admin/pickup", [("pickup", "/admin/pickup", "User Pickup")]),
             ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
         ]
         groups = admin_groups if is_admin_user(user) else employee_groups
@@ -7521,12 +7555,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         for key, label, href, _items in groups:
             active_class = ' class="active"' if key == active_group[0] else ""
             group_count = sum(badge_counts.get(item_key, 0) for item_key, _href, _label in _items)
-            primary_links.append(f'<a{active_class} href="{href}">{render_admin_nav_label(label, group_count)}</a>')
-        primary_links.append('<a href="/logout">Log out</a>')
+            primary_links.append(f'<a{active_class} href="{href}" title="{escape(label)}" aria-label="{escape(label)}">{render_admin_nav_label(label, group_count)}</a>')
+        primary_links.append(f'<a href="/logout" title="Log out" aria-label="Log out">{render_admin_nav_label("Log out")}</a>')
         sub_links = []
         for key, href, label in active_group[3]:
             active_class = ' class="active"' if key == active else ""
-            sub_links.append(f'<a{active_class} href="{href}">{render_admin_nav_label(label, badge_counts.get(key, 0))}</a>')
+            sub_links.append(f'<a{active_class} href="{href}" title="{escape(label)}" aria-label="{escape(label)}">{render_admin_nav_label(label, badge_counts.get(key, 0))}</a>')
         oncall_drawer = ""
         if is_admin_user(user):
             next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))

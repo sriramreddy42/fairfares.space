@@ -40,12 +40,17 @@
   align-items: center;
   background: rgba(255, 255, 255, 0.56);
   border: 1px solid rgba(126, 198, 232, 0.46);
-  border-radius: 6px;
+  border-radius: 14px;
   box-shadow: 0 8px 22px rgba(7, 20, 63, 0.06);
   color: var(--navy);
   display: inline-flex;
   gap: 8px;
-  padding: 10px 12px;
+  height: 48px;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  text-decoration: none;
+  width: 48px;
 }
 .admin-shell-header nav a.active,
 .admin-nav a.active {
@@ -59,11 +64,47 @@
 .admin-nav-label {
   align-items: center;
   display: inline-flex;
+  justify-content: center;
   min-width: 0;
   position: relative;
 }
-.admin-nav-text {
+.admin-nav-icon {
+  align-items: center;
   display: inline-flex;
+  font-size: 1.35rem;
+  justify-content: center;
+  line-height: 1;
+}
+.admin-nav-text {
+  background: rgba(7, 20, 63, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 12px 24px rgba(7, 20, 63, 0.22);
+  color: #fff;
+  display: none;
+  font-size: 0.78rem;
+  font-weight: 900;
+  left: 50%;
+  line-height: 1;
+  opacity: 0;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  white-space: nowrap;
+  z-index: 80;
+}
+.admin-shell-header nav a:hover .admin-nav-text,
+.admin-shell-header nav a:focus-visible .admin-nav-text,
+.admin-nav a:hover .admin-nav-text,
+.admin-nav a:focus-visible .admin-nav-text,
+.admin-subnav a:hover .admin-nav-text,
+.admin-subnav a:focus-visible .admin-nav-text {
+  display: inline-flex;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 .admin-nav-badge {
   align-items: center;
@@ -81,8 +122,8 @@
   min-width: 22px;
   padding: 2px 6px;
   position: absolute;
-  right: -16px;
-  top: -18px;
+  right: -18px;
+  top: -20px;
   z-index: 3;
 }
 .admin-nav a.active .admin-nav-badge,
@@ -107,7 +148,9 @@
   border: 1px solid rgba(132, 205, 238, 0.44) !important;
   color: var(--navy) !important;
   font-size: 0.88rem;
-  padding: 8px 10px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  width: 44px !important;
 }
 .admin-subnav a.active {
   background: rgba(7, 20, 63, 0.94) !important;
@@ -389,9 +432,14 @@
 .admin-shell-header .admin-subnav a {
   align-items: center !important;
   display: inline-flex !important;
-  height: auto !important;
-  min-height: 40px !important;
-  width: auto !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  width: 48px !important;
+}
+.admin-shell-header .admin-subnav a {
+  height: 44px !important;
+  min-height: 44px !important;
+  width: 44px !important;
 }
 .admin-layout {
   display: grid;
