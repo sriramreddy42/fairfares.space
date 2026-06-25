@@ -179,30 +179,28 @@
       </div>
     </section>
 
-    <aside class="workspace-right admin-social-chat" aria-label="Dummy admin chat">
+    <aside class="workspace-right admin-social-chat" aria-label="Slack messages">
       <div class="admin-chat-head">
         <div>
-          <b>Chats</b>
-          <span>Dummy operations log</span>
+          <b>Slack</b>
+          <span>Team messages and DMs</span>
         </div>
-        <button type="button" data-dashboard-action="new-chat"><i class="workspace-button-icon" aria-hidden="true">&#9993;</i>New</button>
+        <a class="admin-chat-primary" href="$workspace_slack_url" target="_blank" rel="noopener">
+          <i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Open
+        </a>
       </div>
-      <label class="admin-chat-search"><span>Search team messages</span><input placeholder="Search chat"></label>
+      <p class="admin-chat-note">Slack handles live chat, unread badges, and who messaged you. FairFares routes operations alerts into the right Slack channels.</p>
       <div class="admin-chat-tabs" role="tablist" aria-label="Chat filters">
-          <button type="button" class="active" data-dashboard-action="chat-all"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>All</button>
-          <button type="button" data-dashboard-action="chat-unread"><i class="workspace-button-icon" aria-hidden="true">&#128276;</i>Unread</button>
-          <button type="button" data-dashboard-action="chat-groups"><i class="workspace-button-icon" aria-hidden="true">&#128101;</i>Groups</button>
+          <a class="active" href="$workspace_slack_url" target="_blank" rel="noopener"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Messages</a>
+          <a href="https://slack.com/app_redirect?channel=bookings" target="_blank" rel="noopener"><i class="workspace-button-icon" aria-hidden="true">&#128663;</i>Bookings</a>
+          <a href="https://slack.com/app_redirect?channel=customer-support" target="_blank" rel="noopener"><i class="workspace-button-icon" aria-hidden="true">&#127903;</i>Support</a>
       </div>
       <div class="admin-chat-thread">
-        <article><b>On-call Admin</b><span>P0 ticket routed to today&apos;s on-call owner.</span><small>2 min ago</small></article>
-        <article><b>Pickup Desk</b><span>Insurance and DL review queue is ready.</span><small>12 min ago</small></article>
-        <article><b>Fleet Ops</b><span>Honda Civic marked available after maintenance check.</span><small>36 min ago</small></article>
-        <article><b>Marketing</b><span>Email campaign draft waiting for final review.</span><small>1 hr ago</small></article>
+        <article><b>#bookings</b><span>New reservations and booking changes post here.</span><small>Slack channel</small></article>
+        <article><b>#payments</b><span>Payment holds, failures, and paid status post here.</span><small>Slack channel</small></article>
+        <article><b>#customer-support</b><span>P0 tickets and escalations post here.</span><small>Slack channel</small></article>
+        <article><b>Direct messages</b><span>Use Slack&apos;s native DM list to see who messaged you.</span><small>Slack inbox</small></article>
       </div>
-      <form class="admin-chat-compose">
-        <input placeholder="Message team">
-        <button type="button" data-dashboard-action="send-dummy-chat"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Send</button>
-      </form>
     </aside>
   </main>
 

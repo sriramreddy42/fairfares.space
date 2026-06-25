@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625v"
+ASSET_VERSION = "20260625w"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -8251,6 +8251,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         posts = get_workspace_posts(user, group_id=selected_group_id)
         groups = get_workspace_groups(user)
         feed_scope = escape(row_value(selected_group, "name") if selected_group else "Company feed")
+        workspace_slack_url = row_value(selected_group, "slack_url") if selected_group else ""
+        if not workspace_slack_url:
+            workspace_slack_url = "https://slack.com/app_redirect?channel=general"
         visibility_controls = (
             """
             <label class="workspace-visibility-select">
@@ -8292,6 +8295,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             workspace_groups=render_workspace_groups(groups, selected_group_id),
             workspace_group_count=escape(str(len(groups))),
             workspace_feed_scope=feed_scope,
+            workspace_slack_url=escape(workspace_slack_url),
             workspace_visibility_controls=visibility_controls,
             workspace_group_target_controls=group_target_controls,
             workspace_posts=render_workspace_posts(posts),

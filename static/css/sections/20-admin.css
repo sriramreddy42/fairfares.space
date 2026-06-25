@@ -1021,7 +1021,9 @@
 .admin-feed-button-row a,
 .admin-feed-button-row button,
 .admin-chat-head button,
+.admin-chat-head a,
 .admin-chat-tabs button,
+.admin-chat-tabs a,
 .admin-chat-compose button {
   background: rgba(7, 20, 63, 0.92);
   border: 1px solid rgba(7, 20, 63, 0.92);
@@ -1034,7 +1036,9 @@
 }
 .admin-feed-button-row button,
 .admin-chat-head button,
+.admin-chat-head a,
 .admin-chat-tabs button:not(.active),
+.admin-chat-tabs a:not(.active),
 .admin-chat-compose button {
   background: rgba(255, 255, 255, 0.72);
   border-color: rgba(126, 198, 232, 0.46);
@@ -1045,11 +1049,37 @@
 .admin-feed-button-row button,
 .admin-feed-social-row button,
 .admin-chat-head button,
+.admin-chat-head a,
 .admin-chat-tabs button,
+.admin-chat-tabs a,
 .admin-chat-compose button {
   align-items: center;
   display: inline-flex;
   justify-content: center;
+}
+.admin-chat-primary {
+  position: relative;
+}
+.admin-chat-primary::after {
+  background: var(--red);
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #fff;
+  content: "Slack";
+  font-size: 0.58rem;
+  font-weight: 950;
+  line-height: 1;
+  padding: 4px 5px;
+  position: absolute;
+  right: -9px;
+  top: -10px;
+}
+.admin-chat-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 0;
 }
 .admin-feed-card {
   display: grid;
