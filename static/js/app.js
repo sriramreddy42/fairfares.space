@@ -41,6 +41,29 @@ function placeAdminSubnavInHero() {
 
 placeAdminSubnavInHero();
 
+const oncallDock = document.querySelector("[data-oncall-dock]");
+const oncallToggle = document.querySelector("[data-oncall-toggle]");
+const oncallClose = document.querySelector("[data-oncall-close]");
+
+function closeOncallDrawer() {
+  if (!oncallDock) return;
+  oncallDock.classList.remove("is-open");
+  oncallToggle?.setAttribute("aria-expanded", "false");
+}
+
+function toggleOncallDrawer() {
+  if (!oncallDock) return;
+  const isOpen = oncallDock.classList.toggle("is-open");
+  oncallToggle?.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+oncallToggle?.addEventListener("click", toggleOncallDrawer);
+oncallClose?.addEventListener("click", closeOncallDrawer);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeOncallDrawer();
+});
+
 const bookingCalendarModal = document.getElementById("bookingCalendarModal");
 
 function closeBookingCalendarModal() {

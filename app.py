@@ -3531,6 +3531,26 @@ def next_oncall_shift_for_user(user_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def upcoming_oncall_shifts(limit: int = 7) -> list[sqlite3.Row]:
+    today = datetime.now().date()
+    ensure_oncall_schedule_for_month(today.replace(day=1))
+    ensure_oncall_schedule_for_month(next_month_start(today.replace(day=1)))
+    with db() as con:
+        return con.execute(
+            """
+            SELECT oncall_shifts.*,
+                   admin.name AS admin_name,
+                   admin.email AS admin_email
+            FROM oncall_shifts
+            JOIN users admin ON admin.id = oncall_shifts.admin_user_id
+            WHERE shift_date >= ?
+            ORDER BY shift_date ASC
+            LIMIT ?
+            """,
+            (today.isoformat(), limit),
+        ).fetchall()
+
+
 def get_staff_account_requests() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -7231,19 +7251,48 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         for key, href, label in active_group[3]:
             active_class = ' class="active"' if key == active else ""
             sub_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
-        oncall_badge = ""
+        oncall_drawer = ""
         if is_admin_user(user):
             next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))
-            oncall_badge = (
-                f'<a class="admin-oncall-chip" href="/admin/oncall">On-call: {escape(row_value(next_shift, "shift_date"))}</a>'
-                if next_shift
-                else '<a class="admin-oncall-chip" href="/admin/oncall">On-call: Set schedule</a>'
+            next_label = row_value(next_shift, "shift_date") or "Set schedule"
+            upcoming_rows = "".join(
+                f"""
+                <article>
+                  <span>{escape(row_value(shift, "shift_date"))}</span>
+                  <b>{escape(row_value(shift, "admin_name"))}</b>
+                  <small>{escape(row_value(shift, "admin_email"))}</small>
+                </article>
+                """
+                for shift in upcoming_oncall_shifts(7)
             )
+            oncall_drawer = f"""
+            <aside class="admin-oncall-dock" data-oncall-dock>
+              <button class="admin-oncall-tab" type="button" data-oncall-toggle aria-expanded="false">
+                <span>On-call</span><b>{escape(next_label)}</b>
+              </button>
+              <section class="admin-oncall-drawer" aria-label="On-call dashboard">
+                <div class="admin-oncall-drawer-head">
+                  <p class="eyebrow">On-call dashboard</p>
+                  <h2>Upcoming coverage</h2>
+                  <button type="button" data-oncall-close aria-label="Close on-call dashboard">x</button>
+                </div>
+                <div class="admin-oncall-next">
+                  <span>Your next on-call</span>
+                  <b>{escape(next_label)}</b>
+                </div>
+                <div class="admin-oncall-list">
+                  {upcoming_rows or '<p>No upcoming shifts yet.</p>'}
+                </div>
+                <a class="admin-oncall-full-link" href="/admin/oncall">Open monthly schedule</a>
+              </section>
+            </aside>
+            """
         return f"""
         <div class="admin-nav-stack">
           <nav class="admin-nav admin-primary-nav" aria-label="Admin sections">{"".join(primary_links)}</nav>
-          <nav class="admin-subnav" aria-label="Admin filters">{oncall_badge}{"".join(sub_links)}</nav>
+          <nav class="admin-subnav" aria-label="Admin filters">{"".join(sub_links)}</nav>
         </div>
+        {oncall_drawer}
         """
 
     def render_booking_status_filter_options(self, selected: str) -> str:
