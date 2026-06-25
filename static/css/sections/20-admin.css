@@ -77,6 +77,11 @@
   border-color: rgba(7, 20, 63, 0.94) !important;
   color: #fff !important;
 }
+.admin-subnav .admin-oncall-chip {
+  background: rgba(236, 0, 22, 0.92) !important;
+  border-color: rgba(236, 0, 22, 0.92) !important;
+  color: #fff !important;
+}
 .admin-shell-header .admin-nav a,
 .admin-shell-header .admin-subnav a {
   align-items: center !important;
@@ -146,6 +151,9 @@
 }
 .employee-operations-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.oncall-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .admin-metrics article,
 .admin-card,
@@ -560,6 +568,93 @@
   font-weight: 800;
   margin: 4px 0 0;
   overflow-wrap: anywhere;
+}
+.oncall-calendar-card {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(226, 247, 255, 0.48)),
+    rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(20px);
+  border-color: rgba(135, 207, 238, 0.42);
+}
+.oncall-weekdays,
+.oncall-calendar-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.oncall-weekdays {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  margin: 8px 0 10px;
+  text-align: center;
+  text-transform: uppercase;
+}
+.oncall-day {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(134, 201, 232, 0.34);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-height: 210px;
+  padding: 10px;
+}
+.oncall-day.is-empty {
+  background: transparent;
+  border-color: transparent;
+}
+.oncall-day header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+.oncall-day header span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.oncall-day header b {
+  background: var(--navy);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.9rem;
+  justify-content: center;
+  min-width: 32px;
+  padding: 6px 8px;
+}
+.oncall-assignee {
+  display: grid;
+  gap: 4px;
+}
+.oncall-assignee b {
+  color: var(--navy);
+}
+.oncall-assignee span,
+.oncall-assignee small {
+  color: var(--muted);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.oncall-assign-form {
+  display: grid;
+  gap: 8px;
+}
+.oncall-assign-form select,
+.oncall-assign-form input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+.oncall-assign-form button {
+  background: var(--navy);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  min-height: 38px;
 }
 .admin-car-name {
   color: var(--navy);
@@ -1313,7 +1408,16 @@
   .roi-metrics,
   .employee-metrics,
   .employee-operations-grid,
+  .oncall-metrics,
   .vehicle-cost-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .oncall-weekdays {
+    display: none;
+  }
+
+  .oncall-calendar-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1323,9 +1427,18 @@
   .roi-metrics,
   .employee-metrics,
   .employee-operations-grid,
+  .oncall-metrics,
   .vehicle-cost-form,
   .admin-form {
     grid-template-columns: 1fr;
+  }
+
+  .oncall-calendar-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .oncall-day {
+    min-height: auto;
   }
 
   .vehicle-finance-hero {

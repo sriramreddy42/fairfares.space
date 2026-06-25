@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>On-call Schedule | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">On-call Admin</p>
+        <h1>$month_label</h1>
+        <span>Your next on-call date: $next_oncall</span>
+      </div>
+    </section>
+
+    <section class="admin-metrics oncall-metrics" aria-label="On-call metrics">
+      <article><span>Active admins</span><b>$active_admin_count</b></article>
+      <article><span>Schedule month</span><b>$month_value</b></article>
+      <article><span>Your next shift</span><b>$next_oncall</b></article>
+    </section>
+
+    <section class="admin-card oncall-calendar-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Monthly On-call Blocks</h2>
+          <p>Each day is blocked to one admin. The schedule auto-rotates active admins and can be changed manually.</p>
+        </div>
+        <nav class="booking-calendar-tabs" aria-label="On-call month navigation">
+          <a href="/admin/oncall?month=$previous_month">Previous</a>
+          <a class="active" href="/admin/oncall?month=$month_value">$month_label</a>
+          <a href="/admin/oncall?month=$next_month">Next</a>
+        </nav>
+      </div>
+      <div class="oncall-weekdays" aria-hidden="true">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+      </div>
+      <div class="oncall-calendar-grid">$oncall_days</div>
+    </section>
+  </main>
+</body>
+</html>

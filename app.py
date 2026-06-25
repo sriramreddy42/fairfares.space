@@ -1209,6 +1209,18 @@ def init_db() -> None:
                 FOREIGN KEY(ticket_id) REFERENCES support_tickets(id)
             );
 
+            CREATE TABLE IF NOT EXISTS oncall_shifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_date TEXT NOT NULL UNIQUE,
+                admin_user_id INTEGER NOT NULL,
+                assigned_by INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(admin_user_id) REFERENCES users(id),
+                FOREIGN KEY(assigned_by) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS app_feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -3421,6 +3433,104 @@ def get_staff_accounts() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_active_admin_accounts() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT id, name, email, phone, role, is_admin, is_verified
+            FROM users
+            WHERE is_verified = 1
+              AND (is_admin = 1 OR role = 'ADMIN')
+            ORDER BY name COLLATE NOCASE, id
+            """
+        ).fetchall()
+
+
+def month_start_from_query(value: str = "") -> date:
+    if value:
+        try:
+            parsed = datetime.strptime(value[:7], "%Y-%m").date()
+            return parsed.replace(day=1)
+        except ValueError:
+            pass
+    today = datetime.now().date()
+    return today.replace(day=1)
+
+
+def next_month_start(month_start: date) -> date:
+    return date(month_start.year + (1 if month_start.month == 12 else 0), 1 if month_start.month == 12 else month_start.month + 1, 1)
+
+
+def previous_month_start(month_start: date) -> date:
+    return date(month_start.year - (1 if month_start.month == 1 else 0), 12 if month_start.month == 1 else month_start.month - 1, 1)
+
+
+def ensure_oncall_schedule_for_month(month_start: date, assigned_by: int | None = None) -> None:
+    admins = get_active_admin_accounts()
+    if not admins:
+        return
+    next_month = next_month_start(month_start)
+    with db() as con:
+        existing = {
+            row["shift_date"]
+            for row in con.execute(
+                "SELECT shift_date FROM oncall_shifts WHERE shift_date >= ? AND shift_date < ?",
+                (month_start.isoformat(), next_month.isoformat()),
+            ).fetchall()
+        }
+        days = (next_month - month_start).days
+        for offset in range(days):
+            day = month_start + timedelta(days=offset)
+            if day.isoformat() in existing:
+                continue
+            admin = admins[offset % len(admins)]
+            con.execute(
+                """
+                INSERT INTO oncall_shifts (shift_date, admin_user_id, assigned_by, note)
+                VALUES (?, ?, ?, ?)
+                """,
+                (day.isoformat(), admin["id"], assigned_by, "Auto-rotated monthly schedule"),
+            )
+
+
+def get_oncall_shifts_for_month(month_start: date) -> list[sqlite3.Row]:
+    ensure_oncall_schedule_for_month(month_start)
+    next_month = next_month_start(month_start)
+    with db() as con:
+        return con.execute(
+            """
+            SELECT oncall_shifts.*,
+                   admin.name AS admin_name,
+                   admin.email AS admin_email,
+                   assigner.name AS assigned_by_name
+            FROM oncall_shifts
+            JOIN users admin ON admin.id = oncall_shifts.admin_user_id
+            LEFT JOIN users assigner ON assigner.id = oncall_shifts.assigned_by
+            WHERE shift_date >= ? AND shift_date < ?
+            ORDER BY shift_date ASC
+            """,
+            (month_start.isoformat(), next_month.isoformat()),
+        ).fetchall()
+
+
+def next_oncall_shift_for_user(user_id: int) -> sqlite3.Row | None:
+    today = datetime.now().date()
+    ensure_oncall_schedule_for_month(today.replace(day=1))
+    ensure_oncall_schedule_for_month(next_month_start(today.replace(day=1)))
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM oncall_shifts
+            WHERE admin_user_id = ?
+              AND shift_date >= ?
+            ORDER BY shift_date ASC
+            LIMIT 1
+            """,
+            (user_id, today.isoformat()),
+        ).fetchone()
+
+
 def get_staff_account_requests() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -5396,6 +5506,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/users": self.admin_users_page,
             "/admin/requests": self.admin_requests_page,
             "/admin/tickets": self.admin_tickets_page,
+            "/admin/oncall": self.admin_oncall_page,
             "/admin/discounts": self.admin_discounts_page,
             "/admin/wiki": self.admin_wiki_page,
             "/admin/commercials": self.admin_commercials_page,
@@ -5451,6 +5562,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/business-expenses": self.create_admin_business_expense,
             "/admin/business-expenses/delete": self.delete_admin_business_expense,
             "/admin/bookings/status": self.update_admin_booking_status,
+            "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
             "/admin/staff/request": self.create_staff_account_request,
@@ -7098,7 +7210,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
         admin_groups = [
             ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
-            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
+            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
             ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
@@ -7119,10 +7231,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         for key, href, label in active_group[3]:
             active_class = ' class="active"' if key == active else ""
             sub_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+        oncall_badge = ""
+        if is_admin_user(user):
+            next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))
+            oncall_badge = (
+                f'<a class="admin-oncall-chip" href="/admin/oncall">On-call: {escape(row_value(next_shift, "shift_date"))}</a>'
+                if next_shift
+                else '<a class="admin-oncall-chip" href="/admin/oncall">On-call: Set schedule</a>'
+            )
         return f"""
         <div class="admin-nav-stack">
           <nav class="admin-nav admin-primary-nav" aria-label="Admin sections">{"".join(primary_links)}</nav>
-          <nav class="admin-subnav" aria-label="Admin filters">{"".join(sub_links)}</nav>
+          <nav class="admin-subnav" aria-label="Admin filters">{oncall_badge}{"".join(sub_links)}</nav>
         </div>
         """
 
@@ -7807,6 +7927,66 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             tickets=tickets or '<tr><td colspan="8">No support tickets yet.</td></tr>',
         )
         self.send_html(body)
+
+    def admin_oncall_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        selected_month = month_start_from_query(urllib.parse.parse_qs(parsed.query).get("month", [""])[0])
+        ensure_oncall_schedule_for_month(selected_month, int(row_value(user, "id") or 0))
+        shifts = get_oncall_shifts_for_month(selected_month)
+        admins = get_active_admin_accounts()
+        shift_rows = {row_value(row, "shift_date"): row for row in shifts}
+        day_cards = []
+        for _ in range(selected_month.weekday()):
+            day_cards.append('<article class="oncall-day is-empty" aria-hidden="true"></article>')
+        next_month = next_month_start(selected_month)
+        for offset in range((next_month - selected_month).days):
+            day = selected_month + timedelta(days=offset)
+            day_cards.append(self.render_oncall_day(day, shift_rows.get(day.isoformat()), admins))
+        next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))
+        body = render_template(
+            "admin_oncall.html",
+            admin_name=escape(row_value(user, "name")),
+            admin_nav=self.render_admin_nav(user, "oncall"),
+            month_label=escape(selected_month.strftime("%B %Y")),
+            month_value=escape(selected_month.strftime("%Y-%m")),
+            previous_month=escape(previous_month_start(selected_month).strftime("%Y-%m")),
+            next_month=escape(next_month.strftime("%Y-%m")),
+            next_oncall=escape(row_value(next_shift, "shift_date") or "No upcoming shift"),
+            active_admin_count=escape(str(len(admins))),
+            oncall_days="".join(day_cards),
+        )
+        self.send_html(body)
+
+    def render_oncall_day(self, day: date, shift: sqlite3.Row | None, admins: list[sqlite3.Row]) -> str:
+        assigned_id = str(row_value(shift, "admin_user_id") or "")
+        admin_options = "".join(
+            f'<option value="{escape(row_value(admin, "id"))}" {"selected" if str(row_value(admin, "id")) == assigned_id else ""}>{escape(row_value(admin, "name"))}</option>'
+            for admin in admins
+        )
+        admin_name = row_value(shift, "admin_name") or "Unassigned"
+        admin_email = row_value(shift, "admin_email") or "No admin assigned"
+        note = row_value(shift, "note") or ""
+        assigned_by = row_value(shift, "assigned_by_name")
+        return f"""
+        <article class="oncall-day">
+          <header><span>{escape(day.strftime("%a"))}</span><b>{escape(str(day.day))}</b></header>
+          <div class="oncall-assignee">
+            <b>{escape(admin_name)}</b>
+            <span>{escape(admin_email)}</span>
+            {f'<small>{escape(note)}</small>' if note else ''}
+            {f'<small>Updated by {escape(assigned_by)}</small>' if assigned_by else ''}
+          </div>
+          <form method="post" action="/admin/oncall/assign" class="oncall-assign-form">
+            <input type="hidden" name="shift_date" value="{escape(day.isoformat())}">
+            <select name="admin_user_id">{admin_options}</select>
+            <input name="note" value="{escape(note)}" placeholder="Optional note">
+            <button type="submit">Set</button>
+          </form>
+        </article>
+        """
 
     def render_ticket_row(self, row: sqlite3.Row) -> str:
         status_options = "".join(
@@ -8779,6 +8959,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if updated_ticket:
                     queue_oncall_escalation_alert(con, updated_ticket, user, reason)
         self.redirect("/admin/tickets")
+
+    def assign_oncall_shift(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        shift_date = (form.get("shift_date") or "").strip()
+        try:
+            parsed_day = datetime.strptime(shift_date, "%Y-%m-%d").date()
+            admin_user_id = int(form.get("admin_user_id") or 0)
+        except ValueError:
+            self.redirect("/admin/oncall")
+            return
+        note = (form.get("note") or "").strip()
+        with db() as con:
+            admin = con.execute(
+                "SELECT id FROM users WHERE id = ? AND is_verified = 1 AND (is_admin = 1 OR role = 'ADMIN')",
+                (admin_user_id,),
+            ).fetchone()
+            if admin:
+                con.execute(
+                    """
+                    INSERT INTO oncall_shifts (shift_date, admin_user_id, assigned_by, note)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(shift_date) DO UPDATE SET
+                        admin_user_id = excluded.admin_user_id,
+                        assigned_by = excluded.assigned_by,
+                        note = excluded.note,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (parsed_day.isoformat(), admin_user_id, row_value(user, "id"), note),
+                )
+        self.redirect(f"/admin/oncall?month={parsed_day.strftime('%Y-%m')}")
 
     def create_admin_discount(self) -> None:
         user = self.require_owner_admin()
