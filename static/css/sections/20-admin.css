@@ -733,6 +733,105 @@
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
 }
+.workspace-screen {
+  height: 100vh;
+  overflow: hidden;
+}
+.workspace-screen .admin-shell-header {
+  position: relative;
+  z-index: 80;
+}
+.workspace-screen .admin-subnav {
+  display: none;
+}
+.workspace-screen .wiki-agent-widget {
+  display: none;
+}
+.workspace-shell {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 720px) minmax(300px, 360px);
+  height: calc(100vh - var(--admin-oncall-top, 118px));
+  margin: 0;
+  max-width: none;
+  overflow: hidden;
+  padding: 18px 22px 24px;
+}
+.workspace-left,
+.workspace-center,
+.workspace-right {
+  min-height: 0;
+  min-width: 0;
+}
+.workspace-left,
+.workspace-right {
+  max-height: 100%;
+  overflow: hidden;
+  position: static;
+}
+.workspace-left {
+  align-content: start;
+}
+.workspace-center {
+  margin-inline: auto;
+  max-width: 720px;
+  width: 100%;
+}
+.workspace-feed-scroll {
+  display: grid;
+  gap: 16px;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 48px;
+  scroll-padding-top: 4px;
+  scroll-snap-type: y proximity;
+}
+.workspace-feed-scroll > * {
+  scroll-snap-align: start;
+}
+.workspace-feed-scroll::-webkit-scrollbar,
+.workspace-right::-webkit-scrollbar {
+  width: 10px;
+}
+.workspace-feed-scroll::-webkit-scrollbar-thumb,
+.workspace-right::-webkit-scrollbar-thumb {
+  background: rgba(7, 20, 63, 0.26);
+  border-radius: 999px;
+}
+.workspace-screen .admin-feed-composer {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.workspace-screen .admin-feed-actions {
+  grid-column: 1 / -1;
+}
+.admin-feed-social-row {
+  border-top: 1px solid rgba(7, 20, 63, 0.08);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 10px;
+}
+.admin-feed-social-row button {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(126, 198, 232, 0.38);
+  border-radius: 7px;
+  color: var(--navy);
+  font-weight: 900;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+.workspace-right {
+  align-self: start;
+  max-height: 100%;
+  overflow: hidden;
+}
+.workspace-right .admin-chat-thread {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
 .backup-meta {
   display: grid;
   gap: 12px;
@@ -1923,6 +2022,30 @@
 }
 
 @media (max-width: 900px) {
+  .workspace-screen {
+    height: auto;
+    overflow: auto;
+  }
+
+  .workspace-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .workspace-left,
+  .workspace-right {
+    overflow: visible;
+  }
+
+  .workspace-feed-scroll {
+    height: auto;
+    overflow: visible;
+    padding-bottom: 8px;
+    scroll-snap-type: none;
+  }
+
   .admin-shell-header {
     align-items: flex-start;
     gap: 14px;
@@ -2028,6 +2151,15 @@
 }
 
 @media (max-width: 640px) {
+  .workspace-shell {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .admin-feed-social-row {
+    grid-template-columns: 1fr;
+  }
+
   .vehicle-finance-metrics,
   .roi-metrics,
   .employee-metrics,

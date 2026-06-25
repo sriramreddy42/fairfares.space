@@ -7,45 +7,38 @@
   $stylesheet_links
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
-<body class="admin-screen">
+<body class="admin-screen workspace-screen">
   <header class="admin-shell-header">
     <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
     $admin_nav
   </header>
 
-  <main class="admin-layout">
-    <section class="admin-hero">
-      <div>
-        <p class="eyebrow">Admin Workspace</p>
-        <h1>Operations Feed</h1>
-        <span>Profile context, live work feed, and team chat for $admin_name</span>
-      </div>
-    </section>
+  <main class="workspace-shell" aria-label="Admin workspace">
+    <aside class="workspace-left admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
+      <article class="admin-profile-card">
+        <span class="admin-profile-avatar">$admin_initials</span>
+        <b>$admin_name</b>
+        <small>Admin workspace</small>
+        <div class="admin-profile-stats">
+          <span><b>$booked_count</b> bookings</span>
+          <span><b>$available_cars</b> available</span>
+        </div>
+      </article>
+      <a href="/admin"><b>Fleet</b><span>Inventory and ROI</span></a>
+      <a href="/admin/bookings"><b>Booked Cars</b><span>Status, cancel/modify, payment</span></a>
+      <a href="/admin/tickets"><b>Tickets</b><span>Urgent, escalated, follow-up</span></a>
+      <a href="/admin/users"><b>Users</b><span>Profiles and documents</span></a>
+      <a href="/admin/requests"><b>Staff Requests</b><span>Admin and employee approvals</span></a>
+      <a href="/admin/system"><b>System</b><span>Feedback and backups</span></a>
+    </aside>
 
-    <section class="admin-social-dashboard admin-workspace-dashboard" aria-label="Admin workspace">
-      <aside class="admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
-        <article class="admin-profile-card">
-          <span class="admin-profile-avatar">$admin_initials</span>
-          <b>$admin_name</b>
-          <small>Admin workspace</small>
-          <div class="admin-profile-stats">
-            <span><b>$booked_count</b> bookings</span>
-            <span><b>$available_cars</b> available</span>
-          </div>
-        </article>
-        <a href="/admin"><b>Fleet</b><span>Inventory and ROI</span></a>
-        <a href="/admin/bookings"><b>Booked Cars</b><span>Status, cancel/modify, payment</span></a>
-        <a href="/admin/tickets"><b>Tickets</b><span>Urgent, escalated, follow-up</span></a>
-        <a href="/admin/users"><b>Users</b><span>Profiles and documents</span></a>
-        <a href="/admin/requests"><b>Staff Requests</b><span>Admin and employee approvals</span></a>
-        <a href="/admin/system"><b>System</b><span>Feedback and backups</span></a>
-      </aside>
-
-      <section class="admin-social-feed" aria-label="Workspace feed">
+    <section class="workspace-center" aria-label="Workspace feed">
+      <div class="workspace-feed-scroll" tabindex="0">
         <article class="admin-feed-composer">
+          <span class="admin-profile-avatar">FF</span>
           <div>
-            <b>Operations command center</b>
-            <span>Post an internal note, start a handoff, or open the active queue.</span>
+            <b>Operations feed</b>
+            <span>Share an update, open a queue, or start a handoff.</span>
           </div>
           <div class="admin-feed-actions">
             <button type="button" data-dashboard-action="compose-note">Internal Note</button>
@@ -65,7 +58,12 @@
           <div class="admin-feed-button-row">
             <a href="/admin/bookings">Review Bookings</a>
             <a href="/admin/pickup">Pickup Desk</a>
-            <button type="button" data-dashboard-action="share-queue-summary">Share Summary</button>
+            <button type="button" data-dashboard-action="share-queue-summary">Share</button>
+          </div>
+          <div class="admin-feed-social-row" aria-label="Feed actions">
+            <button type="button" data-dashboard-action="acknowledge-queue-post">Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-queue-post">Comment</button>
+            <button type="button" data-dashboard-action="share-queue-post">Share Feed</button>
           </div>
         </article>
 
@@ -81,6 +79,11 @@
             <a href="/admin/tickets">Open Tickets</a>
             <a href="/admin/oncall">On-call Schedule</a>
           </div>
+          <div class="admin-feed-social-row" aria-label="Feed actions">
+            <button type="button" data-dashboard-action="acknowledge-oncall-post">Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-oncall-post">Comment</button>
+            <button type="button" data-dashboard-action="share-oncall-post">Share Feed</button>
+          </div>
         </article>
 
         <article class="admin-feed-card">
@@ -94,35 +97,40 @@
             <a href="/admin/roi">Open ROI</a>
             <a href="/admin">Add Vehicle</a>
           </div>
-        </article>
-      </section>
-
-      <aside class="admin-social-chat" aria-label="Dummy admin chat">
-        <div class="admin-chat-head">
-          <div>
-            <b>Chats</b>
-            <span>Dummy operations log</span>
+          <div class="admin-feed-social-row" aria-label="Feed actions">
+            <button type="button" data-dashboard-action="acknowledge-roi-post">Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-roi-post">Comment</button>
+            <button type="button" data-dashboard-action="share-roi-post">Share Feed</button>
           </div>
-          <button type="button" data-dashboard-action="new-chat">New</button>
-        </div>
-        <label class="admin-chat-search"><span>Search team messages</span><input placeholder="Search chat"></label>
-        <div class="admin-chat-tabs" role="tablist" aria-label="Chat filters">
-          <button type="button" class="active" data-dashboard-action="chat-all">All</button>
-          <button type="button" data-dashboard-action="chat-unread">Unread</button>
-          <button type="button" data-dashboard-action="chat-groups">Groups</button>
-        </div>
-        <div class="admin-chat-thread">
-          <article><b>On-call Admin</b><span>P0 ticket routed to today&apos;s on-call owner.</span><small>2 min ago</small></article>
-          <article><b>Pickup Desk</b><span>Insurance and DL review queue is ready.</span><small>12 min ago</small></article>
-          <article><b>Fleet Ops</b><span>Honda Civic marked available after maintenance check.</span><small>36 min ago</small></article>
-          <article><b>Marketing</b><span>Email campaign draft waiting for final review.</span><small>1 hr ago</small></article>
-        </div>
-        <form class="admin-chat-compose">
-          <input placeholder="Message team">
-          <button type="button" data-dashboard-action="send-dummy-chat">Send</button>
-        </form>
-      </aside>
+        </article>
+      </div>
     </section>
+
+    <aside class="workspace-right admin-social-chat" aria-label="Dummy admin chat">
+      <div class="admin-chat-head">
+        <div>
+          <b>Chats</b>
+          <span>Dummy operations log</span>
+        </div>
+        <button type="button" data-dashboard-action="new-chat">New</button>
+      </div>
+      <label class="admin-chat-search"><span>Search team messages</span><input placeholder="Search chat"></label>
+      <div class="admin-chat-tabs" role="tablist" aria-label="Chat filters">
+        <button type="button" class="active" data-dashboard-action="chat-all">All</button>
+        <button type="button" data-dashboard-action="chat-unread">Unread</button>
+        <button type="button" data-dashboard-action="chat-groups">Groups</button>
+      </div>
+      <div class="admin-chat-thread">
+        <article><b>On-call Admin</b><span>P0 ticket routed to today&apos;s on-call owner.</span><small>2 min ago</small></article>
+        <article><b>Pickup Desk</b><span>Insurance and DL review queue is ready.</span><small>12 min ago</small></article>
+        <article><b>Fleet Ops</b><span>Honda Civic marked available after maintenance check.</span><small>36 min ago</small></article>
+        <article><b>Marketing</b><span>Email campaign draft waiting for final review.</span><small>1 hr ago</small></article>
+      </div>
+      <form class="admin-chat-compose">
+        <input placeholder="Message team">
+        <button type="button" data-dashboard-action="send-dummy-chat">Send</button>
+      </form>
+    </aside>
   </main>
 </body>
 </html>
