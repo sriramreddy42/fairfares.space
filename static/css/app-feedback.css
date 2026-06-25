@@ -181,13 +181,14 @@
 /* Site-wide FairFares ask agent. */
 .wiki-agent-widget {
   align-items: flex-end;
+  bottom: 24px;
   display: flex;
   gap: 12px;
   pointer-events: none;
   position: fixed;
   right: 24px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: auto;
+  transform: none;
   z-index: 130;
 }
 
@@ -252,15 +253,28 @@
   border-radius: 18px;
   box-shadow: 0 24px 70px rgba(7, 24, 69, 0.28);
   color: #071845;
+  bottom: 112px;
   max-height: calc(100vh - 48px);
   overflow: auto;
   padding: 18px;
   position: fixed;
   right: 24px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: auto;
+  transform: none;
   width: min(680px, calc(100vw - 48px));
   z-index: 132;
+}
+
+.admin-screen .wiki-agent-widget {
+  bottom: 24px;
+  right: 86px;
+  z-index: 2147483100;
+}
+
+.admin-screen .wiki-agent-panel {
+  bottom: 112px;
+  right: 86px;
+  z-index: 2147483102;
 }
 
 .wiki-agent-head {
@@ -431,6 +445,15 @@
     top: auto;
     transform: none;
     width: auto;
+  }
+
+  .admin-screen .wiki-agent-widget {
+    right: 68px;
+  }
+
+  .admin-screen .wiki-agent-panel {
+    left: 10px;
+    right: 10px;
   }
 
   .wiki-agent-head {
