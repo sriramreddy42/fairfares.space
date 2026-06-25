@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625f"
+ASSET_VERSION = "20260625g"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -5662,6 +5662,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
+            "/admin/workspace": self.admin_workspace_page,
             "/admin/roi": self.admin_roi_page,
             "/admin/cars/detail": self.admin_car_detail_page,
             "/admin/bookings": self.admin_bookings_page,
@@ -7372,6 +7373,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
         admin_groups = [
             ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
+            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
@@ -7476,6 +7478,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user_count=metrics["users"],
             cars=cars or '<tr><td colspan="9">No inventory yet.</td></tr>',
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
+        )
+        self.send_html(body)
+
+    def admin_workspace_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        metrics = get_admin_metrics()
+        initials = "".join(part[:1] for part in row_value(user, "name").split()[:2]).upper() or "FF"
+        body = render_template(
+            "admin_workspace.html",
+            admin_name=escape(row_value(user, "name")),
+            admin_initials=escape(initials),
+            admin_nav=self.render_admin_nav(user, "workspace"),
+            available_cars=metrics["available"],
+            booked_count=metrics["booked"],
+            user_count=metrics["users"],
         )
         self.send_html(body)
 
