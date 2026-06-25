@@ -7347,7 +7347,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "image": row_value(row, "car_image_url") or "",
         }
         attrs = " ".join(
-            f'data-{escape(key)}="{escape(str(value), quote=True)}"' for key, value in detail_attrs.items()
+            f'data-{escape(key)}="{escape(value)}"' for key, value in detail_attrs.items()
         )
         return f"""
         <button type="button" class="booking-calendar-event" data-booking-calendar-open {attrs}>
