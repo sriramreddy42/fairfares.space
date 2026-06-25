@@ -729,38 +729,81 @@
     rgba(255, 255, 255, 0.62);
   backdrop-filter: blur(20px);
   border-color: rgba(135, 207, 238, 0.42);
+  overflow: visible;
 }
 .oncall-weekdays,
 .oncall-calendar-grid {
   display: grid;
-  gap: 10px;
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 .oncall-weekdays {
+  background: rgba(7, 20, 63, 0.92);
+  border: 1px solid rgba(7, 20, 63, 0.92);
+  border-radius: 14px 14px 0 0;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 900;
-  margin: 8px 0 10px;
+  margin: 12px 0 0;
   text-align: center;
   text-transform: uppercase;
 }
+.oncall-weekdays span {
+  color: rgba(255, 255, 255, 0.86);
+  padding: 10px 8px;
+}
+.oncall-calendar-grid {
+  background: rgba(7, 20, 63, 0.2);
+  border: 1px solid rgba(7, 20, 63, 0.22);
+  border-radius: 0 0 18px 18px;
+  gap: 1px;
+}
 .oncall-day {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(134, 201, 232, 0.34);
-  border-radius: 8px;
-  display: grid;
-  gap: 10px;
-  min-height: 210px;
-  padding: 10px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(231, 248, 255, 0.72)),
+    rgba(255, 255, 255, 0.72);
+  display: block;
+  min-height: 142px;
+  padding: 0;
+  position: relative;
 }
 .oncall-day.is-empty {
+  background: rgba(255, 255, 255, 0.28);
+}
+.oncall-day-button {
   background: transparent;
-  border-color: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  height: 100%;
+  min-height: 142px;
+  padding: 12px;
+  text-align: left;
+  width: 100%;
+}
+.oncall-day-button::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--oncall-color, #2563eb) 78%, #fff 8%), transparent 72%),
+    var(--oncall-color, #2563eb);
+  border-radius: 999px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--oncall-color, #2563eb) 24%, transparent);
+  content: "";
+  height: 6px;
+  left: 12px;
+  position: absolute;
+  right: 12px;
+  top: 8px;
+}
+.oncall-day-button:hover,
+.oncall-day.is-editing .oncall-day-button {
+  background: rgba(255, 255, 255, 0.42);
 }
 .oncall-day header {
   align-items: center;
   display: flex;
   justify-content: space-between;
+  margin-top: 6px;
 }
 .oncall-day header span {
   color: var(--muted);
@@ -769,7 +812,7 @@
   text-transform: uppercase;
 }
 .oncall-day header b {
-  background: var(--navy);
+  background: var(--oncall-color, var(--navy));
   border-radius: 999px;
   color: #fff;
   display: inline-flex;
@@ -784,12 +827,36 @@
 }
 .oncall-assignee b {
   color: var(--navy);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
 }
 .oncall-assignee span,
 .oncall-assignee small {
   color: var(--muted);
   font-weight: 800;
   overflow-wrap: anywhere;
+}
+.oncall-edit-hint {
+  align-self: end;
+  color: var(--oncall-color, var(--red));
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.oncall-day-editor {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(230, 248, 255, 0.82)),
+    rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(135, 207, 238, 0.5);
+  border-radius: 10px;
+  box-shadow: 0 18px 46px rgba(7, 20, 63, 0.22);
+  left: 8px;
+  padding: 10px;
+  position: absolute;
+  right: 8px;
+  top: calc(100% - 10px);
+  z-index: 12;
 }
 .oncall-assign-form {
   display: grid;

@@ -3551,6 +3551,25 @@ def upcoming_oncall_shifts(limit: int = 7) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_oncall_shift_for_day(day: date | None = None) -> sqlite3.Row | None:
+    selected_day = day or datetime.now().date()
+    ensure_oncall_schedule_for_month(selected_day.replace(day=1))
+    with db() as con:
+        return con.execute(
+            """
+            SELECT oncall_shifts.*,
+                   admin.name AS admin_name,
+                   admin.email AS admin_email,
+                   admin.phone AS admin_phone
+            FROM oncall_shifts
+            JOIN users admin ON admin.id = oncall_shifts.admin_user_id
+            WHERE oncall_shifts.shift_date = ?
+            LIMIT 1
+            """,
+            (selected_day.isoformat(),),
+        ).fetchone()
+
+
 def get_staff_account_requests() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -4214,9 +4233,16 @@ def queue_support_alerts(con: sqlite3.Connection, ticket_pk: int, ticket_id: str
 
 def queue_oncall_escalation_alert(con: sqlite3.Connection, ticket: sqlite3.Row, escalator: sqlite3.Row | None, reason: str) -> None:
     escalator_label = f"{row_value(escalator, 'name')} ({row_value(escalator, 'email')})" if escalator else "System auto-escalation"
+    oncall = get_oncall_shift_for_day()
+    oncall_label = (
+        f"{row_value(oncall, 'admin_name')} ({row_value(oncall, 'admin_email')})"
+        if oncall
+        else "No on-call admin assigned today"
+    )
     body = (
         "On-call admin escalation\n"
         f"Ticket: {row_value(ticket, 'ticket_id')}\n"
+        f"Assigned on-call admin: {oncall_label}\n"
         f"Original priority: {normalize_support_priority(row_value(ticket, 'priority'))}\n"
         f"Escalated by: {escalator_label}\n"
         f"Reason: {reason}\n"
@@ -7968,11 +7994,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
-        tickets = "\n".join(self.render_ticket_row(row) for row in get_admin_tickets())
+        today_oncall = get_oncall_shift_for_day()
+        tickets = "\n".join(self.render_ticket_row(row, today_oncall) for row in get_admin_tickets())
+        oncall_owner = (
+            f"{row_value(today_oncall, 'admin_name')} ({row_value(today_oncall, 'admin_email')})"
+            if today_oncall
+            else "No on-call admin assigned today"
+        )
         body = render_template(
             "admin_tickets.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "tickets"),
+            oncall_owner=escape(oncall_owner),
             tickets=tickets or '<tr><td colspan="8">No support tickets yet.</td></tr>',
         )
         self.send_html(body)
@@ -8019,25 +8052,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         admin_email = row_value(shift, "admin_email") or "No admin assigned"
         note = row_value(shift, "note") or ""
         assigned_by = row_value(shift, "assigned_by_name")
+        color_pool = ["#16a34a", "#2563eb", "#0891b2", "#7c3aed", "#dc2626", "#0f766e", "#ca8a04"]
+        color_index = (int(assigned_id) if assigned_id.isdigit() else day.day) % len(color_pool)
+        style = f' style="--oncall-color: {color_pool[color_index]}"'
         return f"""
-        <article class="oncall-day">
-          <header><span>{escape(day.strftime("%a"))}</span><b>{escape(str(day.day))}</b></header>
-          <div class="oncall-assignee">
-            <b>{escape(admin_name)}</b>
-            <span>{escape(admin_email)}</span>
-            {f'<small>{escape(note)}</small>' if note else ''}
-            {f'<small>Updated by {escape(assigned_by)}</small>' if assigned_by else ''}
+        <article class="oncall-day"{style}>
+          <button type="button" class="oncall-day-button" data-oncall-day-toggle aria-expanded="false">
+            <header><span>{escape(day.strftime("%a"))}</span><b>{escape(str(day.day))}</b></header>
+            <div class="oncall-assignee">
+              <b>{escape(admin_name)}</b>
+              <span>{escape(admin_email)}</span>
+              {f'<small>{escape(note)}</small>' if note else ''}
+              {f'<small>Updated by {escape(assigned_by)}</small>' if assigned_by else ''}
+            </div>
+            <span class="oncall-edit-hint">Assign admin</span>
+          </button>
+          <div class="oncall-day-editor" hidden>
+            <form method="post" action="/admin/oncall/assign" class="oncall-assign-form">
+              <input type="hidden" name="shift_date" value="{escape(day.isoformat())}">
+              <select name="admin_user_id" aria-label="Assign admin for {escape(day.isoformat())}">{admin_options}</select>
+              <input name="note" value="{escape(note)}" placeholder="Optional note">
+              <button type="submit">Update on-call</button>
+            </form>
           </div>
-          <form method="post" action="/admin/oncall/assign" class="oncall-assign-form">
-            <input type="hidden" name="shift_date" value="{escape(day.isoformat())}">
-            <select name="admin_user_id">{admin_options}</select>
-            <input name="note" value="{escape(note)}" placeholder="Optional note">
-            <button type="submit">Set</button>
-          </form>
         </article>
         """
 
-    def render_ticket_row(self, row: sqlite3.Row) -> str:
+    def render_ticket_row(self, row: sqlite3.Row, today_oncall: sqlite3.Row | None = None) -> str:
         status_options = "".join(
             f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status.replace("_", " ").title()}</option>'
             for status in ("OPEN", "IN_PROGRESS", "FOLLOWUP", "CLOSED")
@@ -8048,15 +8089,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         sla = support_sla_text(priority)
         escalated = bool(int(row_value(row, "escalated_to_oncall") or 0))
         escalator = row_value(row, "escalated_by_name") or "System auto-escalation"
+        oncall_owner = (
+            f"{row_value(today_oncall, 'admin_name')} ({row_value(today_oncall, 'admin_email')})"
+            if today_oncall
+            else "No on-call admin assigned today"
+        )
         escalation_note = (
             f"""
             <div class="ticket-escalation-note">
               <b>On-call escalated</b>
+              <span>Owner: {escape(oncall_owner)}</span>
               <span>{escape(escalator)}{f' · {escape(row_value(row, "escalated_at"))}' if row_value(row, "escalated_at") else ''}</span>
               <small>{escape(row_value(row, "escalation_reason") or "No reason saved.")}</small>
             </div>
             """
-            if escalated
+            if escalated or priority == "P0"
             else ""
         )
         escalation_action = ""

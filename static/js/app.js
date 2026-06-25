@@ -64,6 +64,35 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOncallDrawer();
 });
 
+const oncallDayButtons = document.querySelectorAll("[data-oncall-day-toggle]");
+
+function closeOncallDayEditors(exceptCard = null) {
+  document.querySelectorAll(".oncall-day.is-editing").forEach((card) => {
+    if (card === exceptCard) return;
+    card.classList.remove("is-editing");
+    card.querySelector("[data-oncall-day-toggle]")?.setAttribute("aria-expanded", "false");
+    const editor = card.querySelector(".oncall-day-editor");
+    if (editor) editor.hidden = true;
+  });
+}
+
+oncallDayButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const card = button.closest(".oncall-day");
+    const editor = card?.querySelector(".oncall-day-editor");
+    if (!card || !editor) return;
+    const isOpen = !editor.hidden;
+    closeOncallDayEditors(card);
+    editor.hidden = isOpen;
+    card.classList.toggle("is-editing", !isOpen);
+    button.setAttribute("aria-expanded", isOpen ? "false" : "true");
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeOncallDayEditors();
+});
+
 const bookingCalendarModal = document.getElementById("bookingCalendarModal");
 
 function closeBookingCalendarModal() {
