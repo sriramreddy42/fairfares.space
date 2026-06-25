@@ -2,10 +2,11 @@
   background: #f4f6fa;
 }
 .admin-shell-header {
-  align-items: center;
+  align-items: flex-start;
   background: #fff;
   border-bottom: 1px solid var(--line);
   display: flex;
+  gap: 18px;
   justify-content: space-between;
   min-height: 86px;
   padding: 16px 28px;
@@ -13,6 +14,13 @@
 .admin-shell-header .logo-lockup img {
   max-height: 58px;
   max-width: 280px;
+}
+.admin-nav-stack {
+  display: grid;
+  flex: 1;
+  gap: 10px;
+  justify-items: end;
+  min-width: 0;
 }
 .admin-shell-header nav,
 .admin-nav {
@@ -34,6 +42,39 @@
   background: var(--navy);
   border-color: var(--navy);
   color: #fff;
+}
+.admin-primary-nav {
+  justify-content: flex-end;
+}
+.admin-subnav {
+  background: var(--navy);
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(7, 20, 63, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: 100%;
+  padding: 10px;
+}
+.admin-subnav a {
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  color: #dbe4f2 !important;
+  font-size: 0.88rem;
+  padding: 8px 10px !important;
+}
+.admin-subnav a.active {
+  background: #fff !important;
+  border-color: #fff !important;
+  color: var(--navy) !important;
+}
+.admin-shell-header .admin-nav a,
+.admin-shell-header .admin-subnav a {
+  align-items: center !important;
+  display: inline-flex !important;
+  height: auto !important;
+  min-height: 40px !important;
+  width: auto !important;
 }
 .admin-layout {
   display: grid;
@@ -69,6 +110,9 @@
 .admin-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.roi-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
 .admin-metrics article,
 .admin-card,
 .admin-modules article,
@@ -92,6 +136,15 @@
 .admin-metrics b {
   color: var(--red);
   font-size: 1.65rem;
+}
+.roi-value.positive {
+  color: #0f7b45;
+}
+.roi-value.negative {
+  color: var(--red);
+}
+.roi-value.pending {
+  color: var(--muted);
 }
 .admin-grid {
   grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.5fr);
@@ -924,6 +977,11 @@
     padding: 14px 16px;
   }
 
+  .admin-nav-stack {
+    justify-items: stretch;
+    width: 100%;
+  }
+
   .admin-shell-header nav,
   .admin-nav {
     justify-content: flex-start;
@@ -964,6 +1022,7 @@
   }
 
   .vehicle-finance-metrics,
+  .roi-metrics,
   .vehicle-cost-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -971,6 +1030,7 @@
 
 @media (max-width: 640px) {
   .vehicle-finance-metrics,
+  .roi-metrics,
   .vehicle-cost-form,
   .admin-form {
     grid-template-columns: 1fr;

@@ -3207,6 +3207,46 @@ def get_admin_car_detail(car_id: int) -> dict[str, object] | None:
     }
 
 
+def get_admin_fleet_roi() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT cars.*,
+                   COUNT(bookings.id) AS booking_count,
+                   COALESCE(SUM(bookings.total_price), 0) AS total_revenue,
+                   COALESCE(service.repair_total, 0) AS repair_total,
+                   COALESCE(service.maintenance_total, 0) AS maintenance_total,
+                   (
+                       COALESCE(cars.purchase_cost, 0) +
+                       COALESCE(service.repair_total, 0) +
+                       COALESCE(service.maintenance_total, 0)
+                   ) AS total_cost,
+                   (
+                       COALESCE(SUM(bookings.total_price), 0) -
+                       (
+                           COALESCE(cars.purchase_cost, 0) +
+                           COALESCE(service.repair_total, 0) +
+                           COALESCE(service.maintenance_total, 0)
+                       )
+                   ) AS roi
+            FROM cars
+            LEFT JOIN bookings
+              ON bookings.car_id = cars.id
+             AND bookings.booking_status NOT IN ('CANCELLED', 'EXPIRED_HOLD')
+            LEFT JOIN (
+                SELECT car_id,
+                       SUM(CASE WHEN cost_type = 'REPAIR' THEN amount ELSE 0 END) AS repair_total,
+                       SUM(CASE WHEN cost_type = 'MAINTENANCE' THEN amount ELSE 0 END) AS maintenance_total
+                FROM car_service_costs
+                GROUP BY car_id
+            ) service ON service.car_id = cars.id
+            WHERE UPPER(TRIM(cars.status)) != 'DELETED'
+            GROUP BY cars.id
+            ORDER BY roi ASC, cars.sort_order, cars.name
+            """
+        ).fetchall()
+
+
 def get_car(car_id: int) -> sqlite3.Row | None:
     expire_stale_booking_holds()
     with db() as con:
@@ -5223,6 +5263,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
+            "/admin/roi": self.admin_roi_page,
             "/admin/cars/detail": self.admin_car_detail_page,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/users": self.admin_users_page,
@@ -6917,32 +6958,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return user
 
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
-        admin_items = [
-            ("portal", "/admin", "Inventory"),
-            ("bookings", "/admin/bookings", "Booked Cars"),
-            ("users", "/admin/users", "Users"),
-            ("requests", "/admin/requests", "Staff Requests"),
-            ("tickets", "/admin/tickets", "Tickets"),
-            ("discounts", "/admin/discounts", "Discounts"),
-            ("wiki", "/admin/wiki", "Wiki"),
-            ("commercials", "/admin/commercials", "Commercials"),
-            ("email", "/admin/email-marketing", "Email Marketing"),
-            ("pickup", "/admin/pickup", "User Pickup"),
-            ("system", "/admin/system", "System"),
+        admin_groups = [
+            ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
+            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
+            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
+            ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
+            ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
+            ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
         ]
-        employee_items = [
-            ("bookings", "/admin/bookings", "Booked Cars"),
-            ("tickets", "/admin/tickets", "Tickets"),
-            ("pickup", "/admin/pickup", "User Pickup"),
-            ("portal", "/", "User Portal"),
+        employee_groups = [
+            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
+            ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
         ]
-        items = admin_items if is_admin_user(user) else employee_items
-        links = []
-        for key, href, label in items:
+        groups = admin_groups if is_admin_user(user) else employee_groups
+        active_group = next((group for group in groups if any(item[0] == active for item in group[3])), groups[0])
+        primary_links = []
+        for key, label, href, _items in groups:
+            active_class = ' class="active"' if key == active_group[0] else ""
+            primary_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+        primary_links.append('<a href="/logout">Log out</a>')
+        sub_links = []
+        for key, href, label in active_group[3]:
             active_class = ' class="active"' if key == active else ""
-            links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
-        links.append('<a href="/logout">Log out</a>')
-        return f'<nav class="admin-nav">{"".join(links)}</nav>'
+            sub_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+        return f"""
+        <div class="admin-nav-stack">
+          <nav class="admin-nav admin-primary-nav" aria-label="Admin sections">{"".join(primary_links)}</nav>
+          <nav class="admin-subnav" aria-label="Admin filters">{"".join(sub_links)}</nav>
+        </div>
+        """
 
     def render_booking_status_filter_options(self, selected: str) -> str:
         options = [
@@ -6983,6 +7027,50 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
         )
         self.send_html(body)
+
+    def admin_roi_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        rows = get_admin_fleet_roi()
+        total_revenue = sum(float(row_value(row, "total_revenue") or 0) for row in rows)
+        total_cost = sum(float(row_value(row, "total_cost") or 0) for row in rows)
+        ready_count = sum(1 for row in rows if float(row_value(row, "purchase_cost") or 0) > 0)
+        roi_rows = "\n".join(self.render_fleet_roi_row(row) for row in rows)
+        body = render_template(
+            "admin_roi.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "roi"),
+            vehicle_count=escape(str(len(rows))),
+            ready_count=escape(str(ready_count)),
+            total_revenue=format_money(total_revenue),
+            total_cost=format_money(total_cost),
+            fleet_roi=format_money(total_revenue - total_cost),
+            roi_rows=roi_rows or '<tr><td colspan="9">No vehicles available for ROI reporting.</td></tr>',
+        )
+        self.send_html(body)
+
+    def render_fleet_roi_row(self, row: sqlite3.Row) -> str:
+        purchase_cost = float(row_value(row, "purchase_cost") or 0)
+        roi_ready = purchase_cost > 0
+        roi_value = float(row_value(row, "roi") or 0)
+        roi_label = format_money(roi_value) if roi_ready else "Pending"
+        roi_class = "positive" if roi_value >= 0 else "negative"
+        if not roi_ready:
+            roi_class = "pending"
+        return f"""
+        <tr>
+          <td><a class="admin-car-name" href="/admin/cars/detail?id={escape(row_value(row, "id"))}"><b>{escape(row_value(row, "name"))}</b><span>{escape(row_value(row, "year") or "-")} {escape(row_value(row, "category") or row_value(row, "type"))}</span></a></td>
+          <td>{escape(row_value(row, "status"))}</td>
+          <td>{escape(row_value(row, "booking_count") or "0")}</td>
+          <td>{format_money(row_value(row, "total_revenue") or 0)}</td>
+          <td>{format_money(purchase_cost)}</td>
+          <td>{format_money(row_value(row, "repair_total") or 0)}</td>
+          <td>{format_money(row_value(row, "maintenance_total") or 0)}</td>
+          <td>{format_money(row_value(row, "total_cost") or 0)}</td>
+          <td><b class="roi-value {roi_class}">{escape(roi_label)}</b></td>
+        </tr>
+        """
 
     def admin_car_detail_page(self) -> None:
         user = self.require_owner_admin()

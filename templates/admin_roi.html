@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet ROI | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Fleet ROI</p>
+        <h1>Vehicle return overview</h1>
+        <span>Signed in as $admin_name</span>
+      </div>
+    </section>
+
+    <section class="admin-metrics roi-metrics" aria-label="Fleet ROI metrics">
+      <article><span>Vehicles</span><b>$vehicle_count</b></article>
+      <article><span>ROI ready</span><b>$ready_count</b></article>
+      <article><span>Total revenue</span><b>$total_revenue</b></article>
+      <article><span>Total cost</span><b>$total_cost</b></article>
+      <article><span>Fleet ROI</span><b>$fleet_roi</b></article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>All Vehicles ROI</h2>
+          <p>ROI is revenue minus purchase cost, repairs, and maintenance. Click a vehicle to review its detail page.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Vehicle</th><th>Status</th><th>Bookings</th><th>Revenue</th><th>Purchase</th><th>Repairs</th><th>Maintenance</th><th>Total Cost</th><th>ROI</th></tr></thead>
+          <tbody>$roi_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

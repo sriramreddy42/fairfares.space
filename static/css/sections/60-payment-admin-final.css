@@ -314,6 +314,7 @@
 
 }
 
+
 @media (max-width: 900px) {
   .booking-confirmation-card {
     grid-template-columns: 1fr !important;
@@ -811,6 +812,42 @@
 
   .manage-screen.manage-checkout-screen .booking-hold-expired-actions {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Final admin grouped-nav repair. Earlier responsive rules make all admin
+   header links flex-stretch; grouped navigation needs compact chips instead. */
+.admin-shell-header .admin-nav-stack {
+  align-items: end !important;
+  display: grid !important;
+}
+
+.admin-shell-header .admin-nav-stack .admin-primary-nav,
+.admin-shell-header .admin-nav-stack .admin-subnav {
+  align-items: center !important;
+  align-content: flex-start !important;
+  display: flex !important;
+}
+
+.admin-shell-header .admin-nav-stack .admin-primary-nav a,
+.admin-shell-header .admin-nav-stack .admin-subnav a {
+  align-items: center !important;
+  display: inline-flex !important;
+  flex: 0 0 auto !important;
+  height: auto !important;
+  min-height: 40px !important;
+  width: auto !important;
+}
+
+@media (max-width: 820px) {
+  .admin-shell-header .admin-nav-stack {
+    align-items: stretch !important;
+    width: 100% !important;
+  }
+
+  .admin-shell-header .admin-nav-stack .admin-primary-nav a,
+  .admin-shell-header .admin-nav-stack .admin-subnav a {
+    min-height: 40px !important;
   }
 }
 
