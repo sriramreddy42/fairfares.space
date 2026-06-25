@@ -126,7 +126,8 @@
   right: 0 !important;
   top: var(--admin-oncall-top, 118px) !important;
   transform: none !important;
-  z-index: 6000 !important;
+  isolation: isolate;
+  z-index: 2147483000 !important;
 }
 .admin-oncall-tab {
   align-items: center;
@@ -151,7 +152,7 @@
   pointer-events: auto;
   position: relative;
   width: 58px;
-  z-index: 2;
+  z-index: 2147483002;
   writing-mode: vertical-rl;
 }
 .admin-oncall-tab span {
@@ -190,7 +191,7 @@
   transition: opacity 180ms ease, transform 220ms ease, visibility 180ms ease;
   visibility: hidden;
   width: min(520px, calc(100vw - 58px));
-  z-index: 1;
+  z-index: 2147483001;
 }
 .admin-oncall-dock.is-open .admin-oncall-drawer {
   opacity: 1;

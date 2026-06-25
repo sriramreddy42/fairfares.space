@@ -864,11 +864,20 @@
 .admin-oncall-dock {
   bottom: 0 !important;
   height: calc(100vh - var(--admin-oncall-top, 118px)) !important;
+  isolation: isolate !important;
   position: fixed !important;
   right: 0 !important;
   top: var(--admin-oncall-top, 118px) !important;
   transform: none !important;
-  z-index: 6000 !important;
+  z-index: 2147483000 !important;
+}
+
+.admin-oncall-dock .admin-oncall-drawer {
+  z-index: 2147483001 !important;
+}
+
+.admin-oncall-dock .admin-oncall-tab {
+  z-index: 2147483002 !important;
 }
 
 @media (max-width: 820px) {

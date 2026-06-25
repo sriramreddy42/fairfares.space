@@ -55,6 +55,10 @@ const oncallDock = document.querySelector("[data-oncall-dock]");
 const oncallToggle = document.querySelector("[data-oncall-toggle]");
 const oncallClose = document.querySelector("[data-oncall-close]");
 
+if (oncallDock && oncallDock.parentElement !== document.body) {
+  document.body.appendChild(oncallDock);
+}
+
 function closeOncallDrawer() {
   if (!oncallDock) return;
   oncallDock.classList.remove("is-open");
