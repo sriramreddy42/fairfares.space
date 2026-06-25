@@ -1053,6 +1053,14 @@ def init_db() -> None:
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
 
+            CREATE TABLE IF NOT EXISTS business_expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                expense_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+                amount REAL NOT NULL DEFAULT 0,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_id TEXT NOT NULL UNIQUE,
@@ -3280,6 +3288,18 @@ def get_admin_fleet_roi() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_business_expenses() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM business_expenses
+            ORDER BY expense_date DESC, id DESC
+            LIMIT 100
+            """
+        ).fetchall()
+
+
 def get_car(car_id: int) -> sqlite3.Row | None:
     expire_stale_booking_holds()
     with db() as con:
@@ -5355,6 +5375,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/cars/status": self.update_admin_car_status,
             "/admin/cars/service-cost": self.create_admin_car_service_cost,
             "/admin/cars/delete": self.delete_admin_car,
+            "/admin/business-expenses": self.create_admin_business_expense,
+            "/admin/business-expenses/delete": self.delete_admin_business_expense,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
@@ -7067,10 +7089,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         rows = get_admin_fleet_roi()
+        business_expenses = get_business_expenses()
         total_revenue = sum(float(row_value(row, "total_revenue") or 0) for row in rows)
-        total_cost = sum(float(row_value(row, "total_cost") or 0) for row in rows)
+        vehicle_cost = sum(float(row_value(row, "total_cost") or 0) for row in rows)
+        miscellaneous_total = sum(float(row_value(row, "amount") or 0) for row in business_expenses)
+        total_cost = vehicle_cost + miscellaneous_total
         ready_count = sum(1 for row in rows if float(row_value(row, "purchase_cost") or 0) > 0)
         roi_rows = "\n".join(self.render_fleet_roi_row(row) for row in rows)
+        business_expense_rows = "\n".join(self.render_business_expense_row(row) for row in business_expenses)
         body = render_template(
             "admin_roi.html",
             admin_name=escape(user["name"]),
@@ -7078,9 +7104,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             vehicle_count=escape(str(len(rows))),
             ready_count=escape(str(ready_count)),
             total_revenue=format_money(total_revenue),
+            vehicle_cost=format_money(vehicle_cost),
+            miscellaneous_total=format_money(miscellaneous_total),
             total_cost=format_money(total_cost),
             fleet_roi=format_money(total_revenue - total_cost),
             roi_rows=roi_rows or '<tr><td colspan="9">No vehicles available for ROI reporting.</td></tr>',
+            today=escape(date.today().isoformat()),
+            business_expense_rows=business_expense_rows or '<tr><td colspan="4">No miscellaneous business expenses added yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -7103,6 +7133,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <td>{format_money(row_value(row, "maintenance_total") or 0)}</td>
           <td>{format_money(row_value(row, "total_cost") or 0)}</td>
           <td><b class="roi-value {roi_class}">{escape(roi_label)}</b></td>
+        </tr>
+        """
+
+    def render_business_expense_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "expense_date"))}</b><span>Business expense</span></td>
+          <td>{format_money(row_value(row, "amount") or 0)}</td>
+          <td>{escape(row_value(row, "description") or "-")}</td>
+          <td>
+            <form method="post" action="/admin/business-expenses/delete" class="inline-form">
+              <input type="hidden" name="expense_id" value="{escape(row_value(row, "id"))}">
+              <button type="submit">Delete</button>
+            </form>
+          </td>
         </tr>
         """
 
@@ -8417,6 +8462,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     ),
                 )
         self.redirect(f"/admin/cars/detail?id={car_id}" if car_id else "/admin")
+
+    def create_admin_business_expense(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            amount = max(0.0, float(form.get("amount") or 0))
+        except ValueError:
+            amount = 0.0
+        expense_date = (form.get("expense_date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+        description = (form.get("description") or "").strip()
+        if amount > 0 and description:
+            with db() as con:
+                con.execute(
+                    """
+                    INSERT INTO business_expenses (expense_date, amount, description)
+                    VALUES (?, ?, ?)
+                    """,
+                    (expense_date, amount, description),
+                )
+        self.redirect("/admin/roi")
+
+    def delete_admin_business_expense(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM business_expenses WHERE id = ?", (form.get("expense_id"),))
+        self.redirect("/admin/roi")
 
     def delete_admin_car(self) -> None:
         user = self.require_owner_admin()
