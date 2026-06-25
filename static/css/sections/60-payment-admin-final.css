@@ -836,7 +836,39 @@
   flex: 0 0 auto !important;
   height: auto !important;
   min-height: 40px !important;
+  overflow: visible !important;
+  position: relative !important;
   width: auto !important;
+}
+
+.admin-shell-header .admin-nav-badge {
+  align-items: center !important;
+  background: var(--red) !important;
+  border: 2px solid #fff !important;
+  border-radius: 999px !important;
+  color: #fff !important;
+  display: inline-flex !important;
+  font-size: 0.72rem !important;
+  font-weight: 900 !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  min-height: 22px !important;
+  min-width: 22px !important;
+  padding: 2px 6px !important;
+  position: absolute !important;
+  right: -8px !important;
+  top: -9px !important;
+  z-index: 3 !important;
+}
+
+.admin-oncall-dock {
+  bottom: 0 !important;
+  height: calc(100vh - var(--admin-oncall-top, 118px)) !important;
+  position: fixed !important;
+  right: 0 !important;
+  top: var(--admin-oncall-top, 118px) !important;
+  transform: none !important;
+  z-index: 6000 !important;
 }
 
 @media (max-width: 820px) {

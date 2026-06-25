@@ -45,7 +45,9 @@
   color: var(--navy);
   display: inline-flex;
   gap: 8px;
+  overflow: visible;
   padding: 10px 12px;
+  position: relative;
 }
 .admin-shell-header nav a.active,
 .admin-nav a.active {
@@ -71,9 +73,13 @@
   font-weight: 900;
   justify-content: center;
   line-height: 1;
-  min-height: 21px;
-  min-width: 21px;
-  padding: 2px 5px;
+  min-height: 22px;
+  min-width: 22px;
+  padding: 2px 6px;
+  position: absolute;
+  right: -8px;
+  top: -9px;
+  z-index: 3;
 }
 .admin-nav a.active .admin-nav-badge,
 .admin-shell-header nav a.active .admin-nav-badge {
@@ -111,16 +117,16 @@
 }
 .admin-oncall-dock {
   align-items: stretch;
-  bottom: 0;
+  bottom: 0 !important;
   display: flex;
-  height: calc(100vh - var(--admin-oncall-top, 118px));
+  height: calc(100vh - var(--admin-oncall-top, 118px)) !important;
   justify-content: flex-end;
   pointer-events: none;
   position: fixed;
-  right: 0;
-  top: var(--admin-oncall-top, 118px);
-  transform: none;
-  z-index: 6000;
+  right: 0 !important;
+  top: var(--admin-oncall-top, 118px) !important;
+  transform: none !important;
+  z-index: 6000 !important;
 }
 .admin-oncall-tab {
   align-items: center;
