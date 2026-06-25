@@ -1058,7 +1058,20 @@
   justify-content: center;
 }
 .admin-chat-primary {
+  backdrop-filter: blur(14px);
+  border-radius: 16px;
+  box-shadow: 0 14px 34px rgba(7, 20, 63, 0.18);
+  height: 54px;
+  overflow: hidden;
+  padding: 0;
   position: relative;
+  width: 78px;
+}
+.admin-chat-primary img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 .admin-chat-primary::after {
   background: var(--red);
@@ -1147,6 +1160,51 @@
   font-size: 0.76rem;
   line-height: 1.25;
   margin-top: 2px;
+}
+.admin-social-chat .admin-chat-tabs {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.admin-social-chat .admin-chat-tabs a {
+  backdrop-filter: blur(16px);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(232, 247, 255, 0.58));
+  border: 1px solid rgba(126, 198, 232, 0.45);
+  border-radius: 13px;
+  box-shadow: 0 12px 30px rgba(7, 20, 63, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 950;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 12px;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.admin-social-chat .admin-chat-tabs a:hover {
+  border-color: rgba(224, 0, 26, 0.28);
+  box-shadow: 0 16px 36px rgba(7, 20, 63, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+}
+.admin-social-chat .admin-chat-tabs a.active {
+  background:
+    linear-gradient(135deg, rgba(7, 20, 63, 0.96), rgba(24, 52, 105, 0.86));
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+.admin-social-chat .workspace-button-icon {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+.admin-social-chat .admin-chat-tabs a.active .workspace-button-icon {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.26);
 }
 .admin-chat-search {
   display: grid;
