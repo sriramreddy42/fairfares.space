@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625z"
+ASSET_VERSION = "20260625aa"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -8424,6 +8424,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name_parts = row_value(user, "name").split()
         initials = "".join(part[:1] for part in name_parts[:2]).upper() or "FF"
         first_name = name_parts[0] if name_parts else "FairFares"
+        profile_photo = profile_photo_url(user)
+        avatar_style = (
+            f' style="background-image:url(&quot;{escape(profile_photo)}&quot;);background-size:cover;background-position:center;"'
+            if profile_photo
+            else ""
+        )
         role_label = "Admin" if is_admin_user(user) else "Employee"
         posts = get_workspace_posts(user, group_id=selected_group_id)
         groups = get_workspace_groups(user)
@@ -8460,6 +8466,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             admin_phone=escape(row_value(user, "phone") or "No phone saved"),
             staff_role=escape(role_label),
             admin_initials=escape(initials),
+            admin_avatar_text="" if profile_photo else escape(initials),
+            admin_avatar_style=avatar_style,
             admin_nav=self.render_admin_nav(user, "workspace"),
             available_cars=metrics["available"],
             booked_count=metrics["booked"],

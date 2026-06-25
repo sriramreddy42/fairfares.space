@@ -672,7 +672,33 @@
   font-weight: 900;
   height: 54px;
   justify-content: center;
+  overflow: hidden;
   width: 54px;
+}
+.admin-profile-avatar-upload {
+  cursor: pointer;
+  position: relative;
+}
+.admin-profile-avatar-upload::after {
+  align-items: center;
+  background: rgba(7, 20, 63, 0.74);
+  border-radius: 999px;
+  bottom: -1px;
+  color: #fff;
+  content: "+";
+  display: inline-flex;
+  font-size: 0.86rem;
+  height: 20px;
+  justify-content: center;
+  position: absolute;
+  right: -1px;
+  width: 20px;
+}
+.admin-profile-avatar-upload input {
+  display: none;
+}
+.admin-profile-avatar span {
+  pointer-events: none;
 }
 .admin-profile-card b {
   color: var(--navy);

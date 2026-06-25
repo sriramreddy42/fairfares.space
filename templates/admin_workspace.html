@@ -17,7 +17,10 @@
     <aside class="workspace-left admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
       <button class="workspace-groups-open" type="button" data-workspace-groups-open aria-expanded="false" aria-controls="workspaceGroupsDrawer">Groups <span>$workspace_group_count</span></button>
       <article class="admin-profile-card">
-        <span class="admin-profile-avatar">$admin_initials</span>
+        <label class="admin-profile-avatar admin-profile-avatar-upload" title="Upload profile photo" $admin_avatar_style data-admin-profile-avatar>
+          <input type="file" accept="image/*" data-admin-profile-photo>
+          <span>$admin_avatar_text</span>
+        </label>
         <b>$admin_name</b>
         <small>$staff_role workspace</small>
         <div class="workspace-profile-meta">
@@ -47,7 +50,7 @@
         </div>
         <article class="workspace-compose-card" aria-label="Create workspace post">
           <button class="workspace-compose-trigger" type="button" data-workspace-post-open aria-haspopup="dialog" aria-controls="workspacePostModal">
-            <span class="admin-profile-avatar">$admin_initials</span>
+            <span class="admin-profile-avatar" $admin_avatar_style data-admin-profile-avatar>$admin_avatar_text</span>
             <span>What&apos;s on your mind, $admin_first_name?</span>
           </button>
           <button class="workspace-compose-photo" type="button" data-workspace-post-open data-workspace-post-photo aria-controls="workspacePostModal">
@@ -63,7 +66,7 @@
               <button type="button" data-workspace-post-close aria-label="Close create post">x</button>
             </div>
             <div class="workspace-post-author">
-              <span class="admin-profile-avatar">$admin_initials</span>
+              <span class="admin-profile-avatar" $admin_avatar_style data-admin-profile-avatar>$admin_avatar_text</span>
               <div>
                 <b>$admin_name</b>
                 <span class="workspace-visibility-chip">&#127760; Workspace</span>

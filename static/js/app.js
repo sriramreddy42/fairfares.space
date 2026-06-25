@@ -357,6 +357,64 @@ document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
   });
 });
 
+function updateWorkspaceProfileAvatars(src) {
+  document.querySelectorAll("[data-admin-profile-avatar]").forEach((avatar) => {
+    avatar.style.backgroundImage = `url("${src}")`;
+    avatar.style.backgroundSize = "cover";
+    avatar.style.backgroundPosition = "center";
+    avatar.querySelectorAll("span").forEach((span) => {
+      span.textContent = "";
+    });
+    if (!avatar.querySelector("span")) {
+      avatar.textContent = "";
+    }
+  });
+}
+
+function imageFileToDataUrl(file, maxSize = 900, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("error", reject);
+    reader.addEventListener("load", () => {
+      const image = new Image();
+      image.addEventListener("error", reject);
+      image.addEventListener("load", () => {
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const context = canvas.getContext("2d");
+        context?.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      });
+      image.src = String(reader.result || "");
+    });
+    reader.readAsDataURL(file);
+  });
+}
+
+document.querySelectorAll("[data-admin-profile-photo]").forEach((input) => {
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    try {
+      const src = await imageFileToDataUrl(file);
+      updateWorkspaceProfileAvatars(src);
+      const response = await fetch("/profile/photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ photo: src }),
+      });
+      const payload = await response.json();
+      if (payload?.ok && payload.photo) {
+        updateWorkspaceProfileAvatars(String(payload.photo));
+      }
+    } catch {
+      // Keep the current avatar if upload fails.
+    }
+  });
+});
+
 const bookingCalendarModal = document.getElementById("bookingCalendarModal");
 
 function closeBookingCalendarModal() {
