@@ -84,10 +84,18 @@
   padding: 22px 24px 48px;
 }
 .admin-hero {
+  align-items: center;
   background: var(--navy);
   border-radius: 8px;
   color: #fff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  justify-content: space-between;
   padding: 22px;
+}
+.admin-hero > div {
+  min-width: 0;
 }
 .admin-hero h1 {
   font-size: 1.35rem;
@@ -99,6 +107,17 @@
 .admin-hero span {
   color: #dbe4f2;
   font-weight: 800;
+}
+.admin-hero .admin-subnav {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.admin-hero .admin-subnav a {
+  min-height: 38px !important;
 }
 .admin-metrics,
 .admin-grid,
@@ -989,6 +1008,16 @@
 
   .admin-card-head {
     display: grid;
+  }
+
+  .admin-hero {
+    align-items: flex-start;
+  }
+
+  .admin-hero .admin-subnav {
+    justify-content: flex-start;
+    margin-left: 0;
+    width: 100%;
   }
 
   .admin-filter-form {

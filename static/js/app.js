@@ -32,6 +32,15 @@ if (siteLoader) {
   });
 }
 
+function placeAdminSubnavInHero() {
+  const adminHero = document.querySelector(".admin-screen .admin-hero");
+  const adminSubnav = document.querySelector(".admin-screen .admin-subnav");
+  if (!adminHero || !adminSubnav || adminHero.contains(adminSubnav)) return;
+  adminHero.appendChild(adminSubnav);
+}
+
+placeAdminSubnavInHero();
+
 const carList = document.getElementById("carList");
 const sortCars = document.getElementById("sortCars");
 const resultCount = document.getElementById("resultCount");
