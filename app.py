@@ -6996,6 +6996,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/admin")
             return
         car = detail["car"]
+        purchase_cost_amount = float(row_value(car, "purchase_cost") or 0)
+        roi_ready = purchase_cost_amount > 0
         service_rows = "\n".join(self.render_car_service_cost_row(row) for row in detail["service_rows"])
         booking_rows = "\n".join(self.render_car_detail_booking_row(row) for row in detail["bookings"])
         body = render_template(
@@ -7006,13 +7008,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_name=escape(row_value(car, "name")),
             car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
             purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
+            purchase_cost_value=f"{purchase_cost_amount:.2f}",
+            car_status=escape(row_value(car, "status") or "AVAILABLE"),
+            daily_price=f"{float(row_value(car, 'daily_price') or 0):.2f}",
             booking_count=escape(str(detail["booking_count"])),
             total_revenue=format_money(detail["total_revenue"]),
             repair_total=format_money(detail["repair_total"]),
             maintenance_total=format_money(detail["maintenance_total"]),
             total_cost=format_money(detail["total_cost"]),
-            roi=format_money(detail["roi"]),
-            roi_class="positive" if float(detail["roi"]) >= 0 else "negative",
+            roi=format_money(detail["roi"]) if roi_ready else "Pending",
+            roi_label="ROI" if roi_ready else "ROI pending",
+            roi_class=("positive" if float(detail["roi"]) >= 0 else "negative") if roi_ready else "pending",
             service_rows=service_rows or '<tr><td colspan="5">No maintenance or repair costs added yet.</td></tr>',
             booking_rows=booking_rows or '<tr><td colspan="5">No bookings for this vehicle yet.</td></tr>',
         )
@@ -8086,7 +8092,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("car_id"),
                 ),
             )
-        self.redirect("/admin")
+        redirect_to = form.get("redirect_to", "/admin")
+        if not redirect_to.startswith("/admin"):
+            redirect_to = "/admin"
+        self.redirect(redirect_to)
 
     def create_admin_car_service_cost(self) -> None:
         user = self.require_owner_admin()
