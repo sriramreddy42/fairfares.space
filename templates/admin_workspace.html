@@ -30,12 +30,12 @@
           <span><b>$staff_role</b> role</span>
         </div>
       </article>
-      <a href="/admin"><b>Fleet</b><span>Inventory and ROI</span></a>
-      <a href="/admin/bookings"><b>Booked Cars</b><span>Status, cancel/modify, payment</span></a>
-      <a href="/admin/tickets"><b>Tickets</b><span>Urgent, escalated, follow-up</span></a>
-      <a href="/admin/users"><b>Users</b><span>Profiles and documents</span></a>
-      <a href="/admin/requests"><b>Staff Requests</b><span>Admin and employee approvals</span></a>
-      <a href="/admin/system"><b>System</b><span>Feedback and backups</span></a>
+      <a href="/admin"><i class="workspace-link-icon" aria-hidden="true">&#128664;</i><b>Fleet</b><span>Inventory and ROI</span></a>
+      <a href="/admin/bookings"><i class="workspace-link-icon" aria-hidden="true">&#128663;</i><b>Booked Cars</b><span>Status, cancel/modify, payment</span></a>
+      <a href="/admin/tickets"><i class="workspace-link-icon" aria-hidden="true">&#127903;</i><b>Tickets</b><span>Urgent, escalated, follow-up</span></a>
+      <a href="/admin/users"><i class="workspace-link-icon" aria-hidden="true">&#128100;</i><b>Users</b><span>Profiles and documents</span></a>
+      <a href="/admin/requests"><i class="workspace-link-icon" aria-hidden="true">&#128101;</i><b>Staff Requests</b><span>Admin and employee approvals</span></a>
+      <a href="/admin/system"><i class="workspace-link-icon" aria-hidden="true">&#9881;</i><b>System</b><span>Feedback and backups</span></a>
     </aside>
 
     <section class="workspace-center" aria-label="Workspace feed">
@@ -55,9 +55,9 @@
           </div>
           <img class="workspace-post-preview" data-workspace-post-preview alt="Selected feed upload preview" hidden>
           <div class="admin-feed-actions">
-            <button type="submit">Share Feed</button>
-            <button type="button" data-dashboard-action="open-live-queue">Live Queue</button>
-            <button type="button" data-dashboard-action="start-oncall-chat">On-call Chat</button>
+            <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+            <button type="button" data-dashboard-action="open-live-queue"><i class="workspace-button-icon" aria-hidden="true">&#128202;</i>Live Queue</button>
+            <button type="button" data-dashboard-action="start-oncall-chat"><i class="workspace-button-icon" aria-hidden="true">&#128222;</i>On-call Chat</button>
           </div>
         </form>
 
@@ -72,14 +72,14 @@
           <h2>Morning queue snapshot</h2>
           <p>$booked_count active bookings, $available_cars available vehicles, and $user_count customer profiles are currently in the system.</p>
           <div class="admin-feed-button-row">
-            <a href="/admin/bookings">Review Bookings</a>
-            <a href="/admin/pickup">Pickup Desk</a>
-            <button type="button" data-dashboard-action="share-queue-summary">Share</button>
+            <a href="/admin/bookings"><i class="workspace-button-icon" aria-hidden="true">&#128663;</i>Review Bookings</a>
+            <a href="/admin/pickup"><i class="workspace-button-icon" aria-hidden="true">&#129706;</i>Pickup Desk</a>
+            <button type="button" data-dashboard-action="share-queue-summary"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share</button>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-queue-post">Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-queue-post">Comment</button>
-            <button type="button" data-dashboard-action="share-queue-post">Share Feed</button>
+            <button type="button" data-dashboard-action="acknowledge-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
+            <button type="button" data-dashboard-action="share-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
           </div>
         </article>
 
@@ -92,13 +92,13 @@
           <h2>Urgent tickets stay at the top</h2>
           <p>The Tickets page prioritizes the current admin&apos;s urgent and escalated on-call tickets before normal requests.</p>
           <div class="admin-feed-button-row">
-            <a href="/admin/tickets">Open Tickets</a>
-            <a href="/admin/oncall">On-call Schedule</a>
+            <a href="/admin/tickets"><i class="workspace-button-icon" aria-hidden="true">&#127903;</i>Open Tickets</a>
+            <a href="/admin/oncall"><i class="workspace-button-icon" aria-hidden="true">&#128222;</i>On-call Schedule</a>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-oncall-post">Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-oncall-post">Comment</button>
-            <button type="button" data-dashboard-action="share-oncall-post">Share Feed</button>
+            <button type="button" data-dashboard-action="acknowledge-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
+            <button type="button" data-dashboard-action="share-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
           </div>
         </article>
 
@@ -110,13 +110,13 @@
           <h2>Track revenue and costs</h2>
           <p>Use ROI to compare rental revenue against purchase, repair, maintenance, and miscellaneous business expenses.</p>
           <div class="admin-feed-button-row">
-            <a href="/admin/roi">Open ROI</a>
-            <a href="/admin">Add Vehicle</a>
+            <a href="/admin/roi"><i class="workspace-button-icon" aria-hidden="true">&#128200;</i>Open ROI</a>
+            <a href="/admin"><i class="workspace-button-icon" aria-hidden="true">&#128664;</i>Add Vehicle</a>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-roi-post">Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-roi-post">Comment</button>
-            <button type="button" data-dashboard-action="share-roi-post">Share Feed</button>
+            <button type="button" data-dashboard-action="acknowledge-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
+            <button type="button" data-dashboard-action="comment-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
+            <button type="button" data-dashboard-action="share-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
           </div>
         </article>
       </div>
@@ -128,13 +128,13 @@
           <b>Chats</b>
           <span>Dummy operations log</span>
         </div>
-        <button type="button" data-dashboard-action="new-chat">New</button>
+        <button type="button" data-dashboard-action="new-chat"><i class="workspace-button-icon" aria-hidden="true">&#9993;</i>New</button>
       </div>
       <label class="admin-chat-search"><span>Search team messages</span><input placeholder="Search chat"></label>
       <div class="admin-chat-tabs" role="tablist" aria-label="Chat filters">
-        <button type="button" class="active" data-dashboard-action="chat-all">All</button>
-        <button type="button" data-dashboard-action="chat-unread">Unread</button>
-        <button type="button" data-dashboard-action="chat-groups">Groups</button>
+          <button type="button" class="active" data-dashboard-action="chat-all"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>All</button>
+          <button type="button" data-dashboard-action="chat-unread"><i class="workspace-button-icon" aria-hidden="true">&#128276;</i>Unread</button>
+          <button type="button" data-dashboard-action="chat-groups"><i class="workspace-button-icon" aria-hidden="true">&#128101;</i>Groups</button>
       </div>
       <div class="admin-chat-thread">
         <article><b>On-call Admin</b><span>P0 ticket routed to today&apos;s on-call owner.</span><small>2 min ago</small></article>
@@ -144,7 +144,7 @@
       </div>
       <form class="admin-chat-compose">
         <input placeholder="Message team">
-        <button type="button" data-dashboard-action="send-dummy-chat">Send</button>
+        <button type="button" data-dashboard-action="send-dummy-chat"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Send</button>
       </form>
     </aside>
   </main>
