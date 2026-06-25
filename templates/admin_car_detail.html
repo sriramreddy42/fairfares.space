@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$car_name | FairFares Inventory</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Inventory Finance</p>
+        <h1>$car_name</h1>
+        <span>$car_meta</span>
+      </div>
+      <a class="admin-back-link" href="/admin">Back to Inventory</a>
+    </section>
+
+    <section class="admin-metrics vehicle-finance-metrics" aria-label="Vehicle finance metrics">
+      <article><span>Bookings</span><b>$booking_count</b></article>
+      <article><span>Total revenue</span><b>$total_revenue</b></article>
+      <article><span>Purchase cost</span><b>$purchase_cost</b></article>
+      <article><span>Repairs</span><b>$repair_total</b></article>
+      <article><span>Maintenance</span><b>$maintenance_total</b></article>
+      <article><span>Total cost</span><b>$total_cost</b></article>
+      <article class="roi-card $roi_class"><span>ROI</span><b>$roi</b></article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Add Maintenance or Repair</h2>
+          <p>Track service costs against this vehicle for ROI reporting.</p>
+        </div>
+      </div>
+      <form class="admin-form vehicle-cost-form" method="post" action="/admin/cars/service-cost">
+        <input type="hidden" name="car_id" value="$car_id">
+        <label><span>Type</span><select name="cost_type"><option value="MAINTENANCE">Maintenance</option><option value="REPAIR">Repair</option></select></label>
+        <label><span>Cost</span><input name="amount" type="number" min="0" step="0.01" required placeholder="0.00"></label>
+        <label><span>Date</span><input name="service_date" type="date"></label>
+        <label><span>Vendor</span><input name="vendor" placeholder="Shop or vendor"></label>
+        <label class="wide"><span>Notes</span><input name="notes" placeholder="Oil change, tires, body repair, inspection"></label>
+        <button type="submit">Add Cost</button>
+      </form>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Service History</h2>
+          <p>Maintenance and repair entries for this vehicle.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Type</th><th>Cost</th><th>Vendor</th><th>Notes</th><th>Added</th></tr></thead>
+          <tbody>$service_rows</tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Bookings</h2>
+          <p>Revenue used in this vehicle's ROI calculation.</p>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Booking</th><th>Customer</th><th>Dates</th><th>Rental Length</th><th>Revenue</th></tr></thead>
+          <tbody>$booking_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

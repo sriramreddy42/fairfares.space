@@ -1003,7 +1003,20 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'AVAILABLE',
                 license_plate TEXT NOT NULL DEFAULT '',
                 vin_number TEXT NOT NULL DEFAULT '',
+                purchase_cost REAL NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS car_service_costs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                car_id INTEGER NOT NULL,
+                cost_type TEXT NOT NULL DEFAULT 'MAINTENANCE',
+                amount REAL NOT NULL DEFAULT 0,
+                service_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+                vendor TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(car_id) REFERENCES cars(id)
             );
 
             CREATE TABLE IF NOT EXISTS bookings (
@@ -1381,6 +1394,7 @@ def init_db() -> None:
         ensure_column(con, "cars", "status", "status TEXT NOT NULL DEFAULT 'AVAILABLE'")
         ensure_column(con, "cars", "license_plate", "license_plate TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "vin_number", "vin_number TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "purchase_cost", "purchase_cost REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "booking_status", "booking_status TEXT NOT NULL DEFAULT 'CONFIRMED'")
         ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
@@ -3127,6 +3141,68 @@ def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int
 def get_admin_cars() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute("SELECT * FROM cars WHERE UPPER(TRIM(status)) != 'DELETED' ORDER BY sort_order, daily_price, id").fetchall()
+
+
+def get_admin_car_detail(car_id: int) -> dict[str, object] | None:
+    with db() as con:
+        car = con.execute("SELECT * FROM cars WHERE id = ? AND UPPER(TRIM(status)) != 'DELETED'", (car_id,)).fetchone()
+        if not car:
+            return None
+        revenue = con.execute(
+            """
+            SELECT COUNT(*) AS booking_count,
+                   COALESCE(SUM(total_price), 0) AS total_revenue
+            FROM bookings
+            WHERE car_id = ?
+              AND booking_status NOT IN ('CANCELLED', 'EXPIRED_HOLD')
+            """,
+            (car_id,),
+        ).fetchone()
+        service_totals = con.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN cost_type = 'REPAIR' THEN amount ELSE 0 END), 0) AS repair_total,
+                COALESCE(SUM(CASE WHEN cost_type = 'MAINTENANCE' THEN amount ELSE 0 END), 0) AS maintenance_total
+            FROM car_service_costs
+            WHERE car_id = ?
+            """,
+            (car_id,),
+        ).fetchone()
+        service_rows = con.execute(
+            """
+            SELECT *
+            FROM car_service_costs
+            WHERE car_id = ?
+            ORDER BY service_date DESC, id DESC
+            """,
+            (car_id,),
+        ).fetchall()
+        bookings = con.execute(
+            """
+            SELECT bookings.*, users.name AS user_name, users.email AS user_email
+            FROM bookings
+            JOIN users ON users.id = bookings.user_id
+            WHERE bookings.car_id = ?
+            ORDER BY bookings.id DESC
+            LIMIT 25
+            """,
+            (car_id,),
+        ).fetchall()
+    purchase_cost = float(row_value(car, "purchase_cost") or 0)
+    repair_total = float(row_value(service_totals, "repair_total") or 0)
+    maintenance_total = float(row_value(service_totals, "maintenance_total") or 0)
+    total_revenue = float(row_value(revenue, "total_revenue") or 0)
+    return {
+        "car": car,
+        "booking_count": int(row_value(revenue, "booking_count") or 0),
+        "total_revenue": total_revenue,
+        "repair_total": repair_total,
+        "maintenance_total": maintenance_total,
+        "total_cost": purchase_cost + repair_total + maintenance_total,
+        "roi": total_revenue - (purchase_cost + repair_total + maintenance_total),
+        "service_rows": service_rows,
+        "bookings": bookings,
+    }
 
 
 def get_car(car_id: int) -> sqlite3.Row | None:
@@ -5145,6 +5221,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/manage-booking": self.manage_booking,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
+            "/admin/cars/detail": self.admin_car_detail_page,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/users": self.admin_users_page,
             "/admin/requests": self.admin_requests_page,
@@ -5199,6 +5276,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/content": self.update_content,
             "/admin/cars": self.create_admin_car,
             "/admin/cars/status": self.update_admin_car_status,
+            "/admin/cars/service-cost": self.create_admin_car_service_cost,
             "/admin/cars/delete": self.delete_admin_car,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/discounts": self.create_admin_discount,
@@ -6899,10 +6977,68 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             available_cars=metrics["available"],
             booked_count=metrics["booked"],
             user_count=metrics["users"],
-            cars=cars or '<tr><td colspan="8">No inventory yet.</td></tr>',
+            cars=cars or '<tr><td colspan="9">No inventory yet.</td></tr>',
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
         )
         self.send_html(body)
+
+    def admin_car_detail_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            car_id = int(urllib.parse.parse_qs(parsed.query).get("id", ["0"])[0])
+        except ValueError:
+            car_id = 0
+        detail = get_admin_car_detail(car_id)
+        if not detail:
+            self.redirect("/admin")
+            return
+        car = detail["car"]
+        service_rows = "\n".join(self.render_car_service_cost_row(row) for row in detail["service_rows"])
+        booking_rows = "\n".join(self.render_car_detail_booking_row(row) for row in detail["bookings"])
+        body = render_template(
+            "admin_car_detail.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "portal"),
+            car_id=escape(row_value(car, "id")),
+            car_name=escape(row_value(car, "name")),
+            car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
+            purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
+            booking_count=escape(str(detail["booking_count"])),
+            total_revenue=format_money(detail["total_revenue"]),
+            repair_total=format_money(detail["repair_total"]),
+            maintenance_total=format_money(detail["maintenance_total"]),
+            total_cost=format_money(detail["total_cost"]),
+            roi=format_money(detail["roi"]),
+            roi_class="positive" if float(detail["roi"]) >= 0 else "negative",
+            service_rows=service_rows or '<tr><td colspan="5">No maintenance or repair costs added yet.</td></tr>',
+            booking_rows=booking_rows or '<tr><td colspan="5">No bookings for this vehicle yet.</td></tr>',
+        )
+        self.send_html(body)
+
+    def render_car_service_cost_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "cost_type").title())}</b><span>{escape(row_value(row, "service_date"))}</span></td>
+          <td>{format_money(row_value(row, "amount") or 0)}</td>
+          <td>{escape(row_value(row, "vendor") or "-")}</td>
+          <td>{escape(row_value(row, "notes") or "-")}</td>
+          <td>{escape(row_value(row, "created_at"))}</td>
+        </tr>
+        """
+
+    def render_car_detail_booking_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "booking_id"))}</b><span>{escape(booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")))}</span></td>
+          <td>{escape(row_value(row, "user_name"))}<span>{escape(row_value(row, "user_email"))}</span></td>
+          <td>{escape(row_value(row, "pickup_date"))}<span>{escape(row_value(row, "dropoff_date"))}</span></td>
+          <td>{escape(str(row_value(row, "days") or 0))} days</td>
+          <td>{format_money(row_value(row, "total_price") or 0)}</td>
+        </tr>
+        """
 
     def render_website_feedback_row(self, row: sqlite3.Row) -> str:
         user_label = row_value(row, "user_name") or "Guest"
@@ -7512,10 +7648,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
         return f"""
         <tr>
-            <td><b>{escape(row["name"])}</b><span>{escape(row["brand"] or "-")} {escape(row["model"] or "")}</span></td>
+            <td><a class="admin-car-name" href="/admin/cars/detail?id={row["id"]}"><b>{escape(row["name"])}</b><span>{escape(row["brand"] or "-")} {escape(row["model"] or "")}</span></a></td>
             <td>{escape(row["year"] or "-")}</td>
             <td>{escape(row["type"] or row["category"])}</td>
             <td>{escape(row["fuel_type"])}</td>
+            <td><input form="car-update-{row["id"]}" name="purchase_cost" type="number" min="0" step="0.01" value="{float(row_value(row, "purchase_cost") or 0):.2f}" aria-label="Purchase cost"></td>
             <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle location"></td>
             <td><input form="car-update-{row["id"]}" name="daily_price" type="number" step="0.01" value="{row["daily_price"]:.2f}" aria-label="Daily price"></td>
             <td>
@@ -7814,16 +7951,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         brand = form.get("brand", "")
         model = form.get("model", "")
         name = f"{brand} {model}".strip() or form.get("name", "New Car")
-        daily_price = float(form.get("daily_price") or 0)
-        days = int(form.get("days") or 7)
+        try:
+            daily_price = max(0.0, float(form.get("daily_price") or 0))
+        except ValueError:
+            daily_price = 0.0
+        try:
+            purchase_cost = max(0.0, float(form.get("purchase_cost") or 0))
+        except ValueError:
+            purchase_cost = 0.0
+        try:
+            days = int(form.get("days") or 7)
+        except ValueError:
+            days = 7
         with db() as con:
             con.execute(
                 """
                 INSERT INTO cars
                 (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
                  daily_price, total_price, badge, color, features, location, image_url, status,
-                 license_plate, vin_number, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 license_plate, vin_number, purchase_cost, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -7847,6 +7994,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("status") or "AVAILABLE",
                     form.get("license_plate") or "",
                     form.get("vin_number") or "",
+                    purchase_cost,
                     int(form.get("sort_order") or 99),
                 ),
             )
@@ -7876,6 +8024,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         location = form.get("location", "").strip()
         with db() as con:
             current = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+            try:
+                purchase_cost = max(0.0, float(form.get("purchase_cost") or row_value(current, "purchase_cost") or 0))
+            except ValueError:
+                purchase_cost = float(row_value(current, "purchase_cost") or 0)
             brand = form.get("brand", row_value(current, "brand")).strip()
             model = form.get("model", row_value(current, "model")).strip()
             name = f"{brand} {model}".strip() or row_value(current, "name") or "Vehicle"
@@ -7903,6 +8055,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     status = ?,
                     license_plate = ?,
                     vin_number = ?,
+                    purchase_cost = ?,
                     sort_order = ?
                 WHERE id = ?
                 """,
@@ -7928,11 +8081,48 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     status,
                     form.get("license_plate", row_value(current, "license_plate")),
                     form.get("vin_number", row_value(current, "vin_number")),
+                    purchase_cost,
                     int_field("sort_order", int(row_value(current, "sort_order") or 99)),
                     form.get("car_id"),
                 ),
             )
         self.redirect("/admin")
+
+    def create_admin_car_service_cost(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            car_id = int(form.get("car_id") or 0)
+        except ValueError:
+            car_id = 0
+        cost_type = (form.get("cost_type") or "MAINTENANCE").strip().upper()
+        if cost_type not in {"MAINTENANCE", "REPAIR"}:
+            cost_type = "MAINTENANCE"
+        try:
+            amount = max(0.0, float(form.get("amount") or 0))
+        except ValueError:
+            amount = 0.0
+        service_date = (form.get("service_date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+        with db() as con:
+            car = con.execute("SELECT id FROM cars WHERE id = ? AND UPPER(TRIM(status)) != 'DELETED'", (car_id,)).fetchone()
+            if car and amount > 0:
+                con.execute(
+                    """
+                    INSERT INTO car_service_costs (car_id, cost_type, amount, service_date, vendor, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        car_id,
+                        cost_type,
+                        amount,
+                        service_date,
+                        form.get("vendor", "").strip(),
+                        form.get("notes", "").strip(),
+                    ),
+                )
+        self.redirect(f"/admin/cars/detail?id={car_id}" if car_id else "/admin")
 
     def delete_admin_car(self) -> None:
         user = self.require_owner_admin()

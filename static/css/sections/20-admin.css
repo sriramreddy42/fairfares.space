@@ -171,6 +171,9 @@
   font-size: 0.875rem;
   text-transform: uppercase;
 }
+.admin-form .wide {
+  grid-column: 1 / -1;
+}
 .admin-form button {
   background: var(--red);
   border: 0;
@@ -239,6 +242,37 @@
   font-size: 0.875rem;
   font-weight: 700;
   margin-top: 3px;
+}
+.admin-car-name {
+  color: var(--navy);
+  display: inline-grid;
+  gap: 2px;
+  text-decoration: none;
+}
+.admin-car-name:hover b {
+  color: var(--red);
+}
+.admin-back-link {
+  align-self: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--navy);
+  font-weight: 900;
+  padding: 12px 16px;
+  text-decoration: none;
+}
+.vehicle-finance-metrics {
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+}
+.vehicle-finance-metrics .roi-card.positive b {
+  color: #0f7b45;
+}
+.vehicle-finance-metrics .roi-card.negative b {
+  color: var(--red);
+}
+.vehicle-cost-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .email-calendar-poster {
   background: linear-gradient(180deg, #fff, #f4f9ff);
@@ -863,9 +897,20 @@
   .staff-request-form button {
     grid-column: 1 / -1;
   }
+
+  .vehicle-finance-metrics,
+  .vehicle-cost-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
+  .vehicle-finance-metrics,
+  .vehicle-cost-form,
+  .admin-form {
+    grid-template-columns: 1fr;
+  }
+
   .staff-request-form {
     grid-template-columns: 1fr;
   }
