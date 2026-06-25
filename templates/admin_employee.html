@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Employee Operations | FairFares</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen employee-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+
+  <main class="admin-layout">
+    <section class="admin-hero">
+      <div>
+        <p class="eyebrow">Employee Portal</p>
+        <h1>Operations Home</h1>
+        <span>Signed in as $admin_name</span>
+      </div>
+    </section>
+
+    <section class="admin-metrics employee-metrics" aria-label="Employee operations metrics">
+      <article><span>Today pickups</span><b>$today_count</b></article>
+      <article><span>Tomorrow pickups</span><b>$tomorrow_count</b></article>
+      <article><span>Active bookings</span><b>$active_count</b></article>
+      <article><span>Open tickets</span><b>$open_ticket_count</b></article>
+    </section>
+
+    <section class="admin-link-grid employee-action-grid">
+      <a href="/admin/bookings"><b>Booked Cars</b><span>Review pickup schedule, booking status, payment status, and customer notes</span></a>
+      <a href="/admin/pickup"><b>User Pickup</b><span>Capture license, insurance, pickup condition, agreement, and signature</span></a>
+      <a href="/admin/tickets"><b>Tickets</b><span>Claim support requests, reply with notes, and close completed issues</span></a>
+      <a href="/"><b>User Portal</b><span>Open the customer-facing site for quick reference</span></a>
+    </section>
+
+    <section class="admin-grid employee-operations-grid">
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Today's Pickups</h2>
+            <p>Only bookings with pickup scheduled today are shown here.</p>
+          </div>
+          <a class="admin-text-link" href="/admin/bookings?calendar=today">Open Calendar</a>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Time</th><th>Customer</th><th>Car</th><th>Status</th></tr></thead>
+            <tbody>$today_pickups</tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Tomorrow's Pickups</h2>
+            <p>Use this to prepare vehicle, documents, and customer follow-up.</p>
+          </div>
+          <a class="admin-text-link" href="/admin/bookings?calendar=tomorrow">Open Calendar</a>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Time</th><th>Customer</th><th>Car</th><th>Status</th></tr></thead>
+            <tbody>$tomorrow_pickups</tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Urgent Tickets</h2>
+          <p>Priority P0/P1 or urgent customer requests that need fast handling.</p>
+        </div>
+        <a class="admin-text-link" href="/admin/tickets">Open Tickets</a>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Ticket</th><th>Customer</th><th>Topic</th><th>Status</th></tr></thead>
+          <tbody>$urgent_tickets</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

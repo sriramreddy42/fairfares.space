@@ -3335,6 +3335,38 @@ def get_admin_bookings() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def employee_operations_metrics() -> dict[str, object]:
+    bookings = get_admin_bookings()
+    today = datetime.now().date()
+    tomorrow = today + timedelta(days=1)
+    today_pickups = [
+        row for row in bookings
+        if row_value(row, "booking_status") not in {"CANCELLED", "EXPIRED_HOLD"}
+        and (booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.min).date() == today
+    ]
+    tomorrow_pickups = [
+        row for row in bookings
+        if row_value(row, "booking_status") not in {"CANCELLED", "EXPIRED_HOLD"}
+        and (booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.min).date() == tomorrow
+    ]
+    active_bookings = [
+        row for row in bookings
+        if row_value(row, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKED_UP"}
+    ]
+    open_tickets = [row for row in get_admin_tickets() if row_value(row, "status") != "CLOSED"]
+    urgent_tickets = [
+        row for row in open_tickets
+        if row_value(row, "urgent") or normalize_support_priority(row_value(row, "priority")) in {"P0", "P1"}
+    ]
+    return {
+        "today_pickups": today_pickups,
+        "tomorrow_pickups": tomorrow_pickups,
+        "active_bookings": active_bookings,
+        "open_tickets": open_tickets,
+        "urgent_tickets": urgent_tickets,
+    }
+
+
 def get_admin_users() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -7066,7 +7098,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         if not is_admin_user(user):
-            self.redirect("/admin/bookings")
+            self.employee_portal(user)
             return
         metrics = get_admin_metrics()
         cars = "\n".join(self.render_admin_car_row(row) for row in get_admin_cars())
@@ -7083,6 +7115,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
         )
         self.send_html(body)
+
+    def employee_portal(self, user: sqlite3.Row) -> None:
+        metrics = employee_operations_metrics()
+        today_rows = "\n".join(self.render_employee_pickup_row(row) for row in metrics["today_pickups"][:8])
+        tomorrow_rows = "\n".join(self.render_employee_pickup_row(row) for row in metrics["tomorrow_pickups"][:8])
+        urgent_rows = "\n".join(self.render_employee_ticket_row(row) for row in metrics["urgent_tickets"][:6])
+        body = render_template(
+            "admin_employee.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "bookings"),
+            today_count=escape(str(len(metrics["today_pickups"]))),
+            tomorrow_count=escape(str(len(metrics["tomorrow_pickups"]))),
+            active_count=escape(str(len(metrics["active_bookings"]))),
+            open_ticket_count=escape(str(len(metrics["open_tickets"]))),
+            today_pickups=today_rows or '<tr><td colspan="4">No pickups scheduled for today.</td></tr>',
+            tomorrow_pickups=tomorrow_rows or '<tr><td colspan="4">No pickups scheduled for tomorrow.</td></tr>',
+            urgent_tickets=urgent_rows or '<tr><td colspan="4">No urgent open tickets.</td></tr>',
+        )
+        self.send_html(body)
+
+    def render_employee_pickup_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "pickup_time") or "-")}</b><span>{escape(row_value(row, "booking_id"))}</span></td>
+          <td>{escape(row_value(row, "user_name"))}<span>{escape(row_value(row, "user_email"))}</span></td>
+          <td>{escape(row_value(row, "car_name"))}<span>{escape(row_value(row, "car_category") or row_value(row, "car_type"))}</span></td>
+          <td>{escape(booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")))}</td>
+        </tr>
+        """
+
+    def render_employee_ticket_row(self, row: sqlite3.Row) -> str:
+        priority = normalize_support_priority(row_value(row, "priority"))
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "ticket_id"))}</b><span>{escape(priority)}</span></td>
+          <td>{escape(row_value(row, "user_name"))}<span>{escape(row_value(row, "user_email"))}</span></td>
+          <td>{escape(row_value(row, "topic"))}</td>
+          <td>{escape(row_value(row, "status"))}</td>
+        </tr>
+        """
 
     def admin_roi_page(self) -> None:
         user = self.require_owner_admin()

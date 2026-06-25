@@ -141,6 +141,12 @@
 .roi-metrics {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
+.employee-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.employee-operations-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .admin-metrics article,
 .admin-card,
 .admin-modules article,
@@ -1280,6 +1286,8 @@
 
   .vehicle-finance-metrics,
   .roi-metrics,
+  .employee-metrics,
+  .employee-operations-grid,
   .vehicle-cost-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1288,6 +1296,8 @@
 @media (max-width: 640px) {
   .vehicle-finance-metrics,
   .roi-metrics,
+  .employee-metrics,
+  .employee-operations-grid,
   .vehicle-cost-form,
   .admin-form {
     grid-template-columns: 1fr;
