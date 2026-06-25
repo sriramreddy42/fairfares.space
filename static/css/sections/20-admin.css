@@ -1065,14 +1065,15 @@
   border: 2px solid #fff;
   border-radius: 999px;
   color: #fff;
-  content: "Slack";
-  font-size: 0.58rem;
+  content: "";
+  font-size: 0;
   font-weight: 950;
-  line-height: 1;
-  padding: 4px 5px;
+  height: 10px;
+  padding: 0;
   position: absolute;
-  right: -9px;
-  top: -10px;
+  right: -5px;
+  top: -5px;
+  width: 10px;
 }
 .admin-chat-note {
   color: var(--muted);
@@ -1126,15 +1127,26 @@
 }
 .admin-social-chat {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   max-height: calc(100vh - var(--admin-oncall-top, 118px) - 32px);
   overflow: auto;
-  padding: 16px;
+  padding: 14px;
 }
 .admin-chat-head {
   align-items: center;
   display: flex;
+  gap: 12px;
   justify-content: space-between;
+}
+.admin-chat-head b {
+  font-size: 1.02rem;
+  line-height: 1.15;
+}
+.admin-chat-head span {
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  margin-top: 2px;
 }
 .admin-chat-search {
   display: grid;
@@ -1150,18 +1162,24 @@
 }
 .admin-chat-thread {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .admin-chat-thread article {
-  background: rgba(255, 255, 255, 0.64);
+  background: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(7, 20, 63, 0.08);
   border-radius: 8px;
   display: grid;
-  gap: 4px;
-  padding: 11px 12px;
+  gap: 3px;
+  padding: 10px 11px;
 }
 .admin-chat-thread b {
   color: var(--navy);
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+.admin-chat-thread span {
+  font-size: 0.78rem;
+  line-height: 1.3;
 }
 .admin-chat-compose {
   display: grid;
