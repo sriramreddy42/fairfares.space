@@ -4375,6 +4375,32 @@ def get_admin_tickets() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def sort_tickets_for_admin(rows: list[sqlite3.Row], user: sqlite3.Row, today_oncall: sqlite3.Row | None) -> list[sqlite3.Row]:
+    viewer_id = int(row_value(user, "id") or 0)
+    oncall_id = int(row_value(today_oncall, "admin_user_id") or 0)
+    viewer_is_oncall = bool(viewer_id and viewer_id == oncall_id)
+    status_rank = {"OPEN": 0, "IN_PROGRESS": 1, "FOLLOWUP": 2, "CLOSED": 3}
+    priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+    def key(row: sqlite3.Row) -> tuple[int, int, int, int, int]:
+        status = row_value(row, "status")
+        priority = normalize_support_priority(row_value(row, "priority"))
+        escalated = bool(int(row_value(row, "escalated_to_oncall") or 0))
+        urgent = bool(int(row_value(row, "urgent") or 0)) or priority in {"P0", "P1"}
+        open_ticket = status != "CLOSED"
+        mine_oncall_urgent = viewer_is_oncall and open_ticket and (escalated or priority == "P0")
+        any_escalated_urgent = open_ticket and (escalated or urgent)
+        return (
+            0 if mine_oncall_urgent else 1,
+            0 if any_escalated_urgent else 1,
+            status_rank.get(status, 4),
+            priority_rank.get(priority, 4),
+            -int(row_value(row, "id") or 0),
+        )
+
+    return sorted(rows, key=key)
+
+
 def get_latest_ticket_for_user(user_id: int) -> sqlite3.Row | None:
     with db() as con:
         return con.execute(
@@ -8087,7 +8113,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         today_oncall = get_oncall_shift_for_day()
-        tickets = "\n".join(self.render_ticket_row(row, today_oncall) for row in get_admin_tickets())
+        sorted_tickets = sort_tickets_for_admin(get_admin_tickets(), user, today_oncall)
+        tickets = "\n".join(self.render_ticket_row(row, today_oncall) for row in sorted_tickets)
         oncall_owner = (
             f"{row_value(today_oncall, 'admin_name')} ({row_value(today_oncall, 'admin_email')})"
             if today_oncall
