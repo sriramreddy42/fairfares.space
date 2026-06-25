@@ -45,9 +45,7 @@
   color: var(--navy);
   display: inline-flex;
   gap: 8px;
-  overflow: visible;
   padding: 10px 12px;
-  position: relative;
 }
 .admin-shell-header nav a.active,
 .admin-nav a.active {
@@ -59,7 +57,9 @@
   justify-content: flex-end;
 }
 .admin-nav-label {
+  display: inline-flex;
   min-width: 0;
+  position: relative;
 }
 .admin-nav-badge {
   align-items: center;
@@ -77,8 +77,8 @@
   min-width: 22px;
   padding: 2px 6px;
   position: absolute;
-  right: -8px;
-  top: -9px;
+  right: -16px;
+  top: -18px;
   z-index: 3;
 }
 .admin-nav a.active .admin-nav-badge,
@@ -907,7 +907,7 @@
     linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(231, 248, 255, 0.72)),
     rgba(255, 255, 255, 0.72);
   display: block;
-  min-height: 142px;
+  min-height: 118px;
   padding: 0;
   position: relative;
 }
@@ -920,9 +920,9 @@
   color: inherit;
   cursor: pointer;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   height: 100%;
-  min-height: 142px;
+  min-height: 118px;
   padding: 12px;
   text-align: left;
   width: 100%;
@@ -972,7 +972,7 @@
 }
 .oncall-assignee b {
   color: var(--navy);
-  font-size: 1rem;
+  font-size: 0.98rem;
   overflow-wrap: anywhere;
 }
 .oncall-assignee span,
@@ -984,7 +984,7 @@
 .oncall-edit-hint {
   align-self: end;
   color: var(--oncall-color, var(--red));
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 900;
   text-transform: uppercase;
 }

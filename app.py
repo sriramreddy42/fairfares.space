@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625b"
+ASSET_VERSION = "20260625c"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -8141,9 +8141,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for admin in admins
         )
         admin_name = row_value(shift, "admin_name") or "Unassigned"
-        admin_email = row_value(shift, "admin_email") or "No admin assigned"
         note = row_value(shift, "note") or ""
-        assigned_by = row_value(shift, "assigned_by_name")
         color_pool = ["#16a34a", "#2563eb", "#0891b2", "#7c3aed", "#dc2626", "#0f766e", "#ca8a04"]
         color_index = (int(assigned_id) if assigned_id.isdigit() else day.day) % len(color_pool)
         style = f' style="--oncall-color: {color_pool[color_index]}"'
@@ -8153,9 +8151,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <header><span>{escape(day.strftime("%a"))}</span><b>{escape(str(day.day))}</b></header>
             <div class="oncall-assignee">
               <b>{escape(admin_name)}</b>
-              <span>{escape(admin_email)}</span>
-              {f'<small>{escape(note)}</small>' if note else ''}
-              {f'<small>Updated by {escape(assigned_by)}</small>' if assigned_by else ''}
             </div>
             <span class="oncall-edit-hint">Assign admin</span>
           </button>
