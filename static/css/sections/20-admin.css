@@ -330,6 +330,31 @@
   font-weight: 700;
   margin-top: 3px;
 }
+.ticket-escalation-note {
+  background: rgba(236, 0, 22, 0.07);
+  border: 1px solid rgba(236, 0, 22, 0.18);
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  margin-top: 10px;
+  padding: 9px;
+}
+.ticket-escalation-note b {
+  color: var(--red);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+.ticket-escalation-note small {
+  color: var(--navy);
+  font-weight: 800;
+}
+.ticket-escalation-form {
+  background: rgba(7, 20, 63, 0.04);
+  border: 1px solid rgba(7, 20, 63, 0.10);
+  border-radius: 7px;
+  margin-top: 10px;
+  padding: 10px;
+}
 .booking-calendar-card {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(226, 247, 255, 0.48)),

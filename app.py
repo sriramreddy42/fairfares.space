@@ -1185,6 +1185,10 @@ def init_db() -> None:
                 message TEXT NOT NULL DEFAULT '',
                 urgent INTEGER NOT NULL DEFAULT 0,
                 priority TEXT NOT NULL DEFAULT 'P3',
+                escalated_to_oncall INTEGER NOT NULL DEFAULT 0,
+                escalated_by INTEGER,
+                escalation_reason TEXT NOT NULL DEFAULT '',
+                escalated_at TEXT,
                 status TEXT NOT NULL DEFAULT 'OPEN',
                 claimed_by TEXT NOT NULL DEFAULT '',
                 admin_comment TEXT NOT NULL DEFAULT '',
@@ -1481,6 +1485,19 @@ def init_db() -> None:
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "support_tickets", "priority", "priority TEXT NOT NULL DEFAULT 'P3'")
+        ensure_column(con, "support_tickets", "escalated_to_oncall", "escalated_to_oncall INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "support_tickets", "escalated_by", "escalated_by INTEGER")
+        ensure_column(con, "support_tickets", "escalation_reason", "escalation_reason TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "support_tickets", "escalated_at", "escalated_at TEXT")
+        con.execute(
+            """
+            UPDATE support_tickets
+            SET escalated_to_oncall = 1,
+                escalation_reason = COALESCE(NULLIF(escalation_reason, ''), 'Auto-escalated because this ticket is P0.'),
+                escalated_at = COALESCE(escalated_at, created_at)
+            WHERE priority = 'P0'
+            """
+        )
         ensure_column(con, "wiki_articles", "tags", "tags TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "wiki_articles", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
         ensure_column(con, "wiki_articles", "status", "status TEXT NOT NULL DEFAULT 'PUBLISHED'")
@@ -4065,12 +4082,35 @@ def queue_support_alerts(con: sqlite3.Connection, ticket_pk: int, ticket_id: str
         )
 
 
+def queue_oncall_escalation_alert(con: sqlite3.Connection, ticket: sqlite3.Row, escalator: sqlite3.Row | None, reason: str) -> None:
+    escalator_label = f"{row_value(escalator, 'name')} ({row_value(escalator, 'email')})" if escalator else "System auto-escalation"
+    body = (
+        "On-call admin escalation\n"
+        f"Ticket: {row_value(ticket, 'ticket_id')}\n"
+        f"Original priority: {normalize_support_priority(row_value(ticket, 'priority'))}\n"
+        f"Escalated by: {escalator_label}\n"
+        f"Reason: {reason}\n"
+        f"Topic: {row_value(ticket, 'topic')}\n"
+        f"Message: {row_value(ticket, 'message') or '-'}"
+    )
+    queue_support_alerts(
+        con,
+        int(row_value(ticket, "id") or 0),
+        row_value(ticket, "ticket_id"),
+        "P0",
+        f"On-call escalation: FairFares ticket {row_value(ticket, 'ticket_id')}",
+        body,
+    )
+
+
 def get_admin_tickets() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
             """
             SELECT support_tickets.*, users.name AS user_name, users.email AS user_email,
                    bookings.booking_id,
+                   escalator.name AS escalated_by_name,
+                   escalator.email AS escalated_by_email,
                    (
                        SELECT GROUP_CONCAT(channel || ': ' || delivery_status, ' | ')
                        FROM support_alerts
@@ -4078,6 +4118,7 @@ def get_admin_tickets() -> list[sqlite3.Row]:
                    ) AS alert_summary
             FROM support_tickets
             JOIN users ON users.id = support_tickets.user_id
+            LEFT JOIN users escalator ON escalator.id = support_tickets.escalated_by
             LEFT JOIN bookings ON bookings.id = support_tickets.booking_id
             ORDER BY CASE support_tickets.status WHEN 'OPEN' THEN 0 WHEN 'IN_PROGRESS' THEN 1 WHEN 'FOLLOWUP' THEN 2 ELSE 3 END,
                      CASE support_tickets.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -5425,6 +5466,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/tickets/update": self.update_admin_ticket,
+            "/admin/tickets/escalate": self.escalate_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
         }
         handler = routes.get(parsed.path)
@@ -6824,8 +6866,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """
                 INSERT INTO support_tickets
-                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority,
+                 escalated_to_oncall, escalation_reason, escalated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END)
                 """,
                 (
                     ticket_id,
@@ -6836,9 +6879,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     message,
                     1 if urgent else 0,
                     priority,
+                    1 if priority == "P0" else 0,
+                    "Auto-escalated because the customer ticket was classified P0." if priority == "P0" else "",
+                    1 if priority == "P0" else 0,
                 ),
             )
             ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            ticket_row = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_pk,)).fetchone()
             alert_body = (
                 f"{priority} support ticket created\n"
                 f"SLA: {support_sla_text(priority)}\n"
@@ -6848,7 +6895,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"Preferred contact: {form.get('preferred_contact') or 'Chat in browser'}\n"
                 f"Message: {message or '-'}"
             )
-            queue_support_alerts(con, ticket_pk, ticket_id, priority, f"{priority} FairFares support ticket {ticket_id}", alert_body)
+            if priority == "P0" and ticket_row:
+                queue_oncall_escalation_alert(con, ticket_row, None, "Auto-escalated because the customer ticket was classified P0.")
+            else:
+                queue_support_alerts(con, ticket_pk, ticket_id, priority, f"{priority} FairFares support ticket {ticket_id}", alert_body)
         self.send_json({
             "ok": True,
             "ticket_id": ticket_id,
@@ -7767,6 +7817,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         urgent = '<span class="ticket-urgent">URGENT</span>' if row["urgent"] or priority in {"P0", "P1"} else ""
         priority_badge = f'<span class="ticket-priority ticket-priority-{priority.lower()}">{escape(priority)}</span>'
         sla = support_sla_text(priority)
+        escalated = bool(int(row_value(row, "escalated_to_oncall") or 0))
+        escalator = row_value(row, "escalated_by_name") or "System auto-escalation"
+        escalation_note = (
+            f"""
+            <div class="ticket-escalation-note">
+              <b>On-call escalated</b>
+              <span>{escape(escalator)}{f' · {escape(row_value(row, "escalated_at"))}' if row_value(row, "escalated_at") else ''}</span>
+              <small>{escape(row_value(row, "escalation_reason") or "No reason saved.")}</small>
+            </div>
+            """
+            if escalated
+            else ""
+        )
+        escalation_action = ""
+        if row_value(row, "status") != "CLOSED" and not escalated:
+            escalation_action = f"""
+                <form method="post" action="/admin/tickets/escalate" class="admin-stack-form ticket-escalation-form">
+                    <input type="hidden" name="ticket_id" value="{row["id"]}">
+                    <textarea name="reason" rows="2" required placeholder="Reason for on-call escalation"></textarea>
+                    <button type="submit">Escalate On-Call</button>
+                </form>
+            """
         return f"""
         <tr class="{'ticket-open ticket-critical' if row["status"] != "CLOSED" and priority in {"P0", "P1"} else 'ticket-open' if row["status"] != "CLOSED" else ''}">
             <td><b>{escape(row["ticket_id"])}</b><span>{escape(row["created_at"])}</span>{urgent}</td>
@@ -7783,8 +7855,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <textarea name="admin_comment" rows="2" placeholder="Comment / follow-up">{escape(row["admin_comment"])}</textarea>
                     <button type="submit">Update Ticket</button>
                 </form>
+                {escalation_action}
             </td>
-            <td>{escape(row["claimed_by"] or "Unclaimed")}</td>
+            <td>{escape(row["claimed_by"] or "Unclaimed")}{escalation_note}</td>
         </tr>
         """
 
@@ -8670,6 +8743,41 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("ticket_id"),
                 ),
             )
+        self.redirect("/admin/tickets")
+
+    def escalate_admin_ticket(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            ticket_id = int(form.get("ticket_id") or 0)
+        except ValueError:
+            ticket_id = 0
+        reason = (form.get("reason") or "").strip()
+        if not reason:
+            reason = "Employee requested on-call admin review."
+        with db() as con:
+            ticket = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_id,)).fetchone()
+            if not ticket or row_value(ticket, "status") == "CLOSED":
+                self.redirect("/admin/tickets")
+                return
+            if not int(row_value(ticket, "escalated_to_oncall") or 0):
+                con.execute(
+                    """
+                    UPDATE support_tickets
+                    SET escalated_to_oncall = 1,
+                        escalated_by = ?,
+                        escalation_reason = ?,
+                        escalated_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (row_value(user, "id"), reason, ticket_id),
+                )
+                updated_ticket = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_id,)).fetchone()
+                if updated_ticket:
+                    queue_oncall_escalation_alert(con, updated_ticket, user, reason)
         self.redirect("/admin/tickets")
 
     def create_admin_discount(self) -> None:
