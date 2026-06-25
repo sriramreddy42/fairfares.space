@@ -2678,28 +2678,26 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
   const form = event.currentTarget;
   const status = document.getElementById("paymentHoldStatus");
   const submitButton = form.querySelector("button[type='submit']");
+  const originalLabel = submitButton ? submitButton.textContent : "";
   if (submitButton) submitButton.disabled = true;
-  fetch("/payment/hold", {
+  if (submitButton) submitButton.textContent = "Opening Stripe...";
+  if (status) status.textContent = "Opening secure Stripe checkout...";
+  fetch("/payment/stripe-session", {
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
-      if (status) status.textContent = payload.message || "Payment recorded.";
-      const badge = document.getElementById("bookingStatusBadge");
-      if (badge && payload.status_label) badge.textContent = payload.status_label;
-      const holdLabel = document.getElementById("holdAmountLabel");
-      if (holdLabel && payload.hold_amount) holdLabel.textContent = payload.hold_amount;
-      const dueLabel = document.getElementById("dueAtPickupLabel");
-      if (dueLabel && payload.due_at_pickup) dueLabel.textContent = payload.due_at_pickup;
-      const paid = document.createElement("p");
-      paid.className = "payment-hold-paid";
-      paid.textContent = `Payment received. Invoice ${payload.invoice_number || ""}`.trim();
-      form.replaceWith(paid);
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+      throw payload;
     })
     .catch((payload) => {
-      if (status) status.textContent = payload?.message || "Payment hold could not be recorded.";
+      if (status) status.textContent = payload?.message || "Stripe checkout could not be opened.";
       if (submitButton) submitButton.disabled = false;
+      if (submitButton && originalLabel) submitButton.textContent = originalLabel;
     });
 });
 

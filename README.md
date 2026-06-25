@@ -75,6 +75,24 @@ If no Slack token or webhook is configured, notifications are not sent but a loc
 
 When `SLACK_BOT_TOKEN` is configured, new workspace groups also create a matching public Slack channel such as `#ff-airport-pickups`. The app stores the Slack channel ID/name and shows an `Open #channel` action in the workspace group drawer. The Slack app needs bot scopes for channel creation and posting, including `channels:manage`, `channels:write`, and `chat:write`.
 
+## Stripe Checkout
+
+FairFares uses Stripe Checkout for the 10% booking hold on Manage Booking. Configure these environment variables in Render:
+
+```bash
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+Create the Stripe webhook endpoint as:
+
+```bash
+https://your-render-url/stripe/webhook
+```
+
+Subscribe it to `checkout.session.completed`, then copy the webhook signing secret into `STRIPE_WEBHOOK_SECRET`. The success redirect also confirms paid sessions, but the webhook is the reliable production path when a customer pays and closes the browser before returning.
+
 ## Admin
 
 - Email: `admin@fairfares.com`
@@ -142,6 +160,9 @@ The project includes `render.yaml` for Render hosting.
    - `RESEND_API_KEY`
    - `RESEND_FROM=FairFares <hello@fairfare.space>`
    - `PUBLIC_BASE_URL=https://your-render-url`
+   - `STRIPE_PUBLISHABLE_KEY`
+   - `STRIPE_SECRET_KEY`
+   - `STRIPE_WEBHOOK_SECRET`
    - Optional Slack webhooks such as `SLACK_WEBHOOK_BOOKINGS`, `SLACK_WEBHOOK_SUPPORT`, `SLACK_WEBHOOK_VEHICLES`, and `SLACK_WEBHOOK_PAYMENTS`
 4. Keep the `fairfares-data` disk from `render.yaml` attached to the service.
 5. Deploy the web service.

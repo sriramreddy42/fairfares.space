@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625aa"
+ASSET_VERSION = "20260625ab"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -470,6 +470,87 @@ def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]
         encoding="utf-8",
     )
     return status
+
+
+def stripe_secret_key() -> str:
+    load_env_file()
+    return os.environ.get("STRIPE_SECRET_KEY", "").strip()
+
+
+def stripe_publishable_key() -> str:
+    load_env_file()
+    return os.environ.get("STRIPE_PUBLISHABLE_KEY", "").strip()
+
+
+def stripe_webhook_secret() -> str:
+    load_env_file()
+    return os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+
+
+def stripe_api_request(path: str, params: dict[str, object]) -> tuple[dict[str, object], str]:
+    secret = stripe_secret_key()
+    if not secret:
+        return {}, "Stripe secret key is not configured."
+    body = urllib.parse.urlencode({key: str(value) for key, value in params.items()}).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.stripe.com/v1/{path.lstrip('/')}",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "fairfares-stripe/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8") or "{}"), "ok"
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace").strip()
+        return {}, f"Stripe rejected the request ({error.code}): {detail}"
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as error:
+        return {}, f"Stripe request failed: {error}"
+
+
+def stripe_api_get(path: str) -> tuple[dict[str, object], str]:
+    secret = stripe_secret_key()
+    if not secret:
+        return {}, "Stripe secret key is not configured."
+    request = urllib.request.Request(
+        f"https://api.stripe.com/v1/{path.lstrip('/')}",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "User-Agent": "fairfares-stripe/1.0",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8") or "{}"), "ok"
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace").strip()
+        return {}, f"Stripe rejected the request ({error.code}): {detail}"
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as error:
+        return {}, f"Stripe request failed: {error}"
+
+
+def verify_stripe_signature(payload: bytes, signature_header: str) -> bool:
+    secret = stripe_webhook_secret()
+    if not secret or not signature_header:
+        return False
+    parts = {}
+    for item in signature_header.split(","):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parts.setdefault(key, []).append(value)
+    timestamp = parts.get("t", [""])[0]
+    signatures = parts.get("v1", [])
+    if not timestamp or not signatures:
+        return False
+    signed_payload = timestamp.encode("utf-8") + b"." + payload
+    expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, signature) for signature in signatures)
 
 
 def slack_link(origin: str, path: str, label: str) -> str:
@@ -2428,6 +2509,50 @@ def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict
             }
         )
     return breakdown
+
+
+def confirm_booking_hold_payment(
+    booking_id: int,
+    amount: float,
+    payment_method: str = "Stripe Checkout",
+    cardholder_name: str = "Stripe customer",
+    invoice_number: str = "",
+) -> tuple[bool, str]:
+    invoice_number = invoice_number or f"HOLD-{secrets.randbelow(900000) + 100000}"
+    with db() as con:
+        booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not booking:
+            return False, "Booking not found."
+        if row_value(booking, "payment_status") == "HOLD_PAID":
+            return True, "Booking hold already paid."
+        breakdown = booking_price_breakdown(booking)
+        hold_amount = round(float(amount or breakdown["booking_hold"]), 2)
+        while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
+            invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
+        con.execute(
+            """
+            INSERT INTO transactions
+            (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+            VALUES (?, ?, ?, ?, 'HOLD_PAID', 'MATCHED', 'Payment confirmed by Stripe checkout.', ?)
+            """,
+            (booking_id, payment_method, cardholder_name, hold_amount, invoice_number),
+        )
+        con.execute(
+            """
+            UPDATE bookings
+            SET payment_status = 'HOLD_PAID',
+                booking_status = 'CONFIRMED',
+                status = 'CONFIRMED',
+                booking_hold_amount = ?,
+                due_at_pickup_amount = ?,
+                hold_expires_at = NULL
+            WHERE id = ?
+            """,
+            (hold_amount, breakdown["due_at_pickup"], booking_id),
+        )
+        con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
+    notify_slack_payment(booking, f"10% hold paid by Stripe: {format_money(hold_amount)}")
+    return True, invoice_number
 
 
 def default_trip_dates() -> tuple[str, str]:
@@ -6315,6 +6440,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/forgot-password": self.forgot_password_page,
             "/reset-password": self.reset_password_page,
             "/manage-booking": self.manage_booking,
+            "/payment/success": self.payment_success_page,
+            "/payment/cancel": self.payment_cancel_page,
             "/dashboard": self.dashboard,
             "/admin": self.admin_portal,
             "/admin/workspace": self.admin_workspace_page,
@@ -6353,6 +6480,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/cancel": self.cancel_user_booking,
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
+            "/payment/stripe-session": self.create_stripe_checkout_session,
+            "/stripe/webhook": self.stripe_webhook,
             "/payment/hold": self.pay_booking_hold,
             "/booking/hold/continue": self.continue_booking_hold,
             "/booking/hold/remove": self.remove_booking_hold,
@@ -7523,6 +7652,131 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "invoice_number": invoice_number,
             }
         )
+
+    def create_stripe_checkout_session(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay and confirm this car."}, 401)
+            return
+        expire_stale_booking_holds()
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "Choose a car before paying."}, 404)
+            return
+        if booking["booking_status"] == "EXPIRED_HOLD":
+            self.send_json({"ok": False, "message": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
+            return
+        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "HOLD_PAID":
+            self.send_json({"ok": False, "message": "This booking does not need a 10% payment right now."}, 400)
+            return
+        breakdown = booking_price_breakdown(booking)
+        hold_amount = round(float(breakdown["booking_hold"]), 2)
+        amount_cents = max(50, int(round(hold_amount * 100)))
+        origin = self.public_origin().rstrip("/")
+        params = {
+            "mode": "payment",
+            "success_url": f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": f"{origin}/payment/cancel",
+            "customer_email": row_value(booking, "contact_email") or row_value(user, "email"),
+            "client_reference_id": row_value(booking, "booking_id"),
+            "line_items[0][quantity]": 1,
+            "line_items[0][price_data][currency]": "usd",
+            "line_items[0][price_data][unit_amount]": amount_cents,
+            "line_items[0][price_data][product_data][name]": "FairFares 10% booking hold",
+            "line_items[0][price_data][product_data][description]": f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}",
+            "metadata[booking_id]": row_value(booking, "id"),
+            "metadata[public_booking_id]": row_value(booking, "booking_id"),
+            "metadata[user_id]": row_value(user, "id"),
+            "payment_intent_data[metadata][booking_id]": row_value(booking, "id"),
+            "payment_intent_data[metadata][public_booking_id]": row_value(booking, "booking_id"),
+            "payment_intent_data[metadata][user_id]": row_value(user, "id"),
+        }
+        session, status = stripe_api_request("checkout/sessions", params)
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "message": status}, 502)
+            return
+        self.send_json({"ok": True, "url": url})
+
+    def payment_success_page(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.redirect("/login")
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        session_id = urllib.parse.parse_qs(parsed.query).get("session_id", [""])[0]
+        if session_id:
+            session, _status = stripe_api_get(f"checkout/sessions/{urllib.parse.quote(session_id)}")
+            metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+            try:
+                booking_id = int(metadata.get("booking_id") or "0")
+            except (TypeError, ValueError):
+                booking_id = 0
+            try:
+                session_user_id = int(metadata.get("user_id") or "0")
+            except (TypeError, ValueError):
+                session_user_id = 0
+            if session_user_id and session_user_id != int(user["id"]) and not is_staff_user(user):
+                self.activation_message_page(
+                    "Payment received",
+                    "Stripe confirmed the payment, but this checkout belongs to a different FairFares account.",
+                    "Open Manage Booking",
+                    "/manage-booking",
+                )
+                return
+            if session.get("payment_status") == "paid" and booking_id:
+                amount_total = float(session.get("amount_total") or 0) / 100
+                confirm_booking_hold_payment(
+                    booking_id,
+                    amount_total,
+                    "Stripe Checkout",
+                    str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
+                    str(session.get("payment_intent") or session.get("id") or ""),
+                )
+        self.activation_message_page(
+            "Payment received",
+            "Your 10% booking hold is being confirmed. Your pickup balance is updated on Manage Booking.",
+            "Open Manage Booking",
+            "/manage-booking",
+        )
+
+    def payment_cancel_page(self) -> None:
+        self.activation_message_page(
+            "Payment not completed",
+            "Stripe checkout was cancelled. Your payment window remains active until the timer expires.",
+            "Return to Checkout",
+            "/manage-booking",
+        )
+
+    def stripe_webhook(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = self.rfile.read(length)
+        if stripe_webhook_secret() and not verify_stripe_signature(payload, self.headers.get("Stripe-Signature", "")):
+            self.send_json({"ok": False, "message": "Invalid Stripe signature."}, 400)
+            return
+        try:
+            event = json.loads(payload.decode("utf-8"))
+        except json.JSONDecodeError:
+            self.send_json({"ok": False, "message": "Invalid webhook payload."}, 400)
+            return
+        event_type = str(event.get("type") or "")
+        data_object = ((event.get("data") or {}).get("object") or {}) if isinstance(event.get("data"), dict) else {}
+        if event_type == "checkout.session.completed" and data_object.get("payment_status") == "paid":
+            metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+            try:
+                booking_id = int(metadata.get("booking_id") or "0")
+            except (TypeError, ValueError):
+                booking_id = 0
+            if booking_id:
+                amount_total = float(data_object.get("amount_total") or 0) / 100
+                confirm_booking_hold_payment(
+                    booking_id,
+                    amount_total,
+                    "Stripe Checkout",
+                    str(data_object.get("customer_email") or "Stripe customer"),
+                    str(data_object.get("payment_intent") or data_object.get("id") or ""),
+                )
+        self.send_json({"received": True})
 
     def continue_booking_hold(self) -> None:
         user = self.current_user()
@@ -10991,11 +11245,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
-                        <label><span>Cardholder name *</span><input name="cardholder_name" autocomplete="cc-name" required></label>
-                        <label><span>Card last 4 *</span><input name="card_last4" inputmode="numeric" maxlength="19" placeholder="1234" required></label>
-                        <input type="hidden" name="payment_method" value="Card">
-                        <button type="submit">Pay 10% Now</button>
-                        <small>Demo payment flow. Full card numbers are not stored.</small>
+                        <button type="submit">Pay securely with Stripe</button>
+                        <small>Card details are handled by Stripe. FairFares stores only the payment status and receipt reference.</small>
                     </form>
                     {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
