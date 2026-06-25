@@ -840,8 +840,13 @@
 }
 
 .admin-shell-header .admin-nav-label {
+  align-items: center !important;
   display: inline-flex !important;
   position: relative !important;
+}
+
+.admin-shell-header .admin-nav-text {
+  display: inline-flex !important;
 }
 
 .admin-shell-header .admin-nav-badge {

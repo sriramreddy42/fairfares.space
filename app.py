@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625c"
+ASSET_VERSION = "20260625d"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3703,7 +3703,7 @@ def render_admin_nav_label(label: str, count: int = 0) -> str:
     if count > 0:
         badge_text = "99+" if count > 99 else str(count)
         badge = f'<span class="admin-nav-badge" aria-label="{escape(str(count))} new items">{escape(badge_text)}</span>'
-    return f'<span class="admin-nav-label">{escape(label)}</span>{badge}'
+    return f'<span class="admin-nav-label"><span class="admin-nav-text">{escape(label)}</span>{badge}</span>'
 
 
 def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:

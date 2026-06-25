@@ -57,9 +57,13 @@
   justify-content: flex-end;
 }
 .admin-nav-label {
+  align-items: center;
   display: inline-flex;
   min-width: 0;
   position: relative;
+}
+.admin-nav-text {
+  display: inline-flex;
 }
 .admin-nav-badge {
   align-items: center;
