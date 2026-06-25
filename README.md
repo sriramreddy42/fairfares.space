@@ -44,6 +44,21 @@ To send real email, provide SMTP settings before starting the app:
 SMTP_HOST=smtp.example.com SMTP_PORT=587 SMTP_USER=user SMTP_PASSWORD=password SMTP_FROM=hello@fairfares.com python3 app.py
 ```
 
+## Slack Operations Alerts
+
+FairFares can send Phase 1 operations alerts to Slack through incoming webhooks. Set a global fallback webhook or specific channel webhooks:
+
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+SLACK_WEBHOOK_BOOKINGS=https://hooks.slack.com/services/...
+SLACK_WEBHOOK_SUPPORT=https://hooks.slack.com/services/...
+SLACK_WEBHOOK_VEHICLES=https://hooks.slack.com/services/...
+SLACK_WEBHOOK_PAYMENTS=https://hooks.slack.com/services/...
+SLACK_WEBHOOK_ADMIN=https://hooks.slack.com/services/...
+```
+
+If no Slack webhook is configured, notifications are not sent but a local audit copy is still written under `data/outbox/slack-*.json`.
+
 ## Admin
 
 - Email: `admin@fairfares.com`
@@ -111,6 +126,7 @@ The project includes `render.yaml` for Render hosting.
    - `RESEND_API_KEY`
    - `RESEND_FROM=FairFares <hello@fairfare.space>`
    - `PUBLIC_BASE_URL=https://your-render-url`
+   - Optional Slack webhooks such as `SLACK_WEBHOOK_BOOKINGS`, `SLACK_WEBHOOK_SUPPORT`, `SLACK_WEBHOOK_VEHICLES`, and `SLACK_WEBHOOK_PAYMENTS`
 4. Keep the `fairfares-data` disk from `render.yaml` attached to the service.
 5. Deploy the web service.
 

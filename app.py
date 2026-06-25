@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625r"
+ASSET_VERSION = "20260625s"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -329,6 +329,109 @@ def send_with_resend(email: str, subject: str, text_body: str, html_body: str) -
         return f"Resend rejected the email ({error.code}): {detail}"
     except (OSError, TimeoutError, urllib.error.URLError) as error:
         return f"Resend request failed: {error}"
+
+
+SLACK_WEBHOOK_ENV = {
+    "bookings": "SLACK_WEBHOOK_BOOKINGS",
+    "pickups": "SLACK_WEBHOOK_PICKUPS",
+    "support": "SLACK_WEBHOOK_SUPPORT",
+    "vehicles": "SLACK_WEBHOOK_VEHICLES",
+    "payments": "SLACK_WEBHOOK_PAYMENTS",
+    "admin": "SLACK_WEBHOOK_ADMIN",
+}
+
+
+def slack_webhook_for(kind: str) -> str:
+    load_env_file()
+    env_name = SLACK_WEBHOOK_ENV.get(kind, "SLACK_WEBHOOK_ADMIN")
+    return os.environ.get(env_name) or os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
+def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]] | None = None) -> str:
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    webhook_url = slack_webhook_for(kind)
+    payload: dict[str, object] = {"text": text}
+    if blocks:
+        payload["blocks"] = blocks
+    status = "not configured"
+    if webhook_url:
+        request = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "fairfares-slack/1.0"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                status = f"sent to Slack ({response.status})" if 200 <= response.status < 300 else f"Slack returned {response.status}"
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace").strip()
+            status = f"Slack rejected notification ({error.code}): {detail}"
+        except (OSError, TimeoutError, urllib.error.URLError) as error:
+            status = f"Slack request failed: {error}"
+    outbox_file = OUTBOX_DIR / f"slack-{kind}-{secrets.token_hex(6)}.json"
+    outbox_file.write_text(
+        json.dumps({"kind": kind, "status": status, "payload": payload}, indent=2),
+        encoding="utf-8",
+    )
+    return status
+
+
+def slack_link(origin: str, path: str, label: str) -> str:
+    origin = (origin or os.environ.get("PUBLIC_BASE_URL", "")).rstrip("/")
+    if not origin:
+        return label
+    return f"<{origin}{path}|{label}>"
+
+
+def notify_slack_booking_hold(booking: sqlite3.Row, origin: str = "") -> None:
+    text = (
+        f"New FairFares booking hold {row_value(booking, 'booking_id')}\n"
+        f"Customer: {row_value(booking, 'contact_name') or 'Guest'}\n"
+        f"Vehicle: {row_value(booking, 'car_name')}\n"
+        f"Pickup: {row_value(booking, 'pickup_location')} - {row_value(booking, 'pickup_date')} {row_value(booking, 'pickup_time')}\n"
+        f"Total: {format_money(row_value(booking, 'total_price'))}\n"
+        f"{slack_link(origin, '/admin/bookings', 'Open bookings')}"
+    )
+    send_slack_notification("bookings", text)
+
+
+def notify_slack_payment(booking: sqlite3.Row, message: str, origin: str = "") -> None:
+    text = (
+        f"FairFares payment update\n"
+        f"Booking: {row_value(booking, 'booking_id')}\n"
+        f"Customer: {row_value(booking, 'contact_name') or row_value(booking, 'user_name') or 'Customer'}\n"
+        f"Vehicle: {row_value(booking, 'car_name')}\n"
+        f"Status: {message}\n"
+        f"{slack_link(origin, '/admin/bookings', 'Open bookings')}"
+    )
+    send_slack_notification("payments", text)
+
+
+def notify_slack_support_ticket(ticket_id: str, priority: str, topic: str, user: sqlite3.Row, origin: str = "", escalated: bool = False) -> None:
+    prefix = "On-call escalation" if escalated else "New support ticket"
+    text = (
+        f"{prefix}: {ticket_id}\n"
+        f"Priority: {normalize_support_priority(priority)}\n"
+        f"Customer: {row_value(user, 'name')} - {row_value(user, 'email')}\n"
+        f"Topic: {topic}\n"
+        f"{slack_link(origin, '/admin/tickets', 'Open tickets')}"
+    )
+    send_slack_notification("support", text)
+
+
+def notify_slack_vehicle(car: sqlite3.Row | None, status: str, origin: str = "", note: str = "") -> None:
+    if not car:
+        return
+    note_line = f"Note: {note}\n" if note else ""
+    text = (
+        f"Vehicle update\n"
+        f"Vehicle: {row_value(car, 'name')}\n"
+        f"Status: {status}\n"
+        f"{note_line}"
+        f"{slack_link(origin, '/admin', 'Open fleet')}"
+    )
+    send_slack_notification("vehicles", text)
 
 
 def shared_email_poster_url(origin: str = "") -> str:
@@ -5006,6 +5109,7 @@ def create_booking_for_user(
     booking = get_booking_for_user(user_id)
     if not booking:
         raise RuntimeError("Booking creation failed")
+    notify_slack_booking_hold(booking)
     return booking
 
 
@@ -7185,6 +7289,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (hold_amount, breakdown["due_at_pickup"], booking["id"], user["id"]),
             )
             con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
+        notify_slack_payment(booking, f"10% hold paid: {format_money(hold_amount)}", self.public_origin())
         self.send_json(
             {
                 "ok": True,
@@ -7229,6 +7334,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (booking["id"], user["id"]),
             )
             con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (booking["car_id"],))
+        notify_slack_payment(booking, "Payment window restarted for 10 minutes.", self.public_origin())
         self.send_json(
             {
                 "ok": True,
@@ -7273,6 +7379,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
             if not active:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
+        notify_slack_payment(booking, "Customer removed unpaid checkout item.", self.public_origin())
         self.send_json({"ok": True, "message": "Removed. The car is available again.", "redirect": "/#results"})
 
     def save_search_car(self) -> None:
@@ -7640,6 +7747,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 queue_oncall_escalation_alert(con, ticket_row, None, "Auto-escalated because the customer ticket was classified P0.")
             else:
                 queue_support_alerts(con, ticket_pk, ticket_id, priority, f"{priority} FairFares support ticket {ticket_id}", alert_body)
+        notify_slack_support_ticket(ticket_id, priority, topic, user, self.public_origin(), escalated=priority == "P0")
         self.send_json({
             "ok": True,
             "ticket_id": ticket_id,
@@ -9494,6 +9602,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("car_id"),
                 ),
             )
+            if current and row_value(current, "status") != status:
+                updated_car = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
+                notify_slack_vehicle(updated_car, status, self.public_origin(), note=f"Changed by {row_value(user, 'name')}")
         redirect_to = form.get("redirect_to", "/admin")
         if not redirect_to.startswith("/admin"):
             redirect_to = "/admin"
@@ -9517,7 +9628,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             amount = 0.0
         service_date = (form.get("service_date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
         with db() as con:
-            car = con.execute("SELECT id FROM cars WHERE id = ? AND UPPER(TRIM(status)) != 'DELETED'", (car_id,)).fetchone()
+            car = con.execute("SELECT * FROM cars WHERE id = ? AND UPPER(TRIM(status)) != 'DELETED'", (car_id,)).fetchone()
             if car and amount > 0:
                 con.execute(
                     """
@@ -9533,6 +9644,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         form.get("receipt_url", "").strip(),
                         form.get("notes", "").strip(),
                     ),
+                )
+                notify_slack_vehicle(
+                    car,
+                    cost_type,
+                    self.public_origin(),
+                    note=f"{format_money(amount)} on {service_date}: {form.get('notes', '').strip() or form.get('vendor', '').strip() or 'No note'}",
                 )
         self.redirect(f"/admin/cars/detail?id={car_id}" if car_id else "/admin")
 
@@ -9597,6 +9714,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking_status == "CANCELLED" and not reason:
             reason = "Cancelled by admin approval."
         with db() as con:
+            previous_booking = con.execute(
+                """
+                SELECT bookings.*, users.name AS user_name, cars.name AS car_name
+                FROM bookings
+                JOIN users ON users.id = bookings.user_id
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (form.get("booking_id"),),
+            ).fetchone()
             con.execute(
                 """
                 UPDATE bookings
@@ -9643,6 +9770,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     WHERE id = (SELECT car_id FROM bookings WHERE id = ?)
                     """,
                     (form.get("booking_id"),),
+                )
+            updated_booking = con.execute(
+                """
+                SELECT bookings.*, users.name AS user_name, cars.name AS car_name
+                FROM bookings
+                JOIN users ON users.id = bookings.user_id
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (form.get("booking_id"),),
+            ).fetchone()
+            if updated_booking and (
+                not previous_booking
+                or row_value(previous_booking, "booking_status") != booking_status
+                or row_value(previous_booking, "payment_status") != payment_status
+            ):
+                notify_slack_payment(
+                    updated_booking,
+                    f"Admin set booking {booking_status} / payment {payment_status}",
+                    self.public_origin(),
                 )
         self.redirect("/admin/bookings")
 
@@ -9706,6 +9853,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 updated_ticket = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_id,)).fetchone()
                 if updated_ticket:
                     queue_oncall_escalation_alert(con, updated_ticket, user, reason)
+                    notify_slack_support_ticket(
+                        row_value(updated_ticket, "ticket_id"),
+                        row_value(updated_ticket, "priority"),
+                        row_value(updated_ticket, "topic"),
+                        user,
+                        self.public_origin(),
+                        escalated=True,
+                    )
         self.redirect("/admin/tickets")
 
     def assign_oncall_shift(self) -> None:
