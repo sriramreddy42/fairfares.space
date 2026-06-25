@@ -331,19 +331,40 @@ def send_with_resend(email: str, subject: str, text_body: str, html_body: str) -
         return f"Resend request failed: {error}"
 
 
+def shared_email_poster_url(origin: str = "") -> str:
+    origin = (origin or os.environ.get("PUBLIC_BASE_URL", "")).rstrip("/")
+    return f"{origin}/static/img/booking-confirmation-promise.png" if origin else ""
+
+
+def shared_email_poster_from_link(link: str) -> str:
+    parsed = urllib.parse.urlparse(link)
+    if parsed.scheme and parsed.netloc:
+        return shared_email_poster_url(f"{parsed.scheme}://{parsed.netloc}")
+    return shared_email_poster_url()
+
+
+def render_email_poster(poster_url: str, alt: str = "FairFares price promise") -> str:
+    if not poster_url:
+        return ""
+    return f'<img src="{html.escape(poster_url)}" alt="{html.escape(alt)}" style="max-width:100%;border-radius:10px;margin:12px 0">'
+
+
 def send_activation_email(email: str, name: str, activation_link: str) -> tuple[Path, str]:
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     subject = "Activate your FairFares account"
+    poster_url = shared_email_poster_from_link(activation_link)
     text_body = (
         f"Hi {name},\n\n"
         "Welcome to FairFares. Activate your account with this link:\n"
         f"{activation_link}\n\n"
+        f"{'FairFares poster: ' + poster_url + chr(10) + chr(10) if poster_url else ''}"
         "After activation, you can sign in and manage your booking.\n"
     )
     html_body = (
         f"<p>Hi {html.escape(name)},</p>"
         "<p>Welcome to FairFares. Activate your account to finish signup.</p>"
+        f"{render_email_poster(poster_url)}"
         f'<p><a href="{html.escape(activation_link)}">Activate your FairFares account</a></p>'
         "<p>After activation, you can sign in and manage your booking.</p>"
     )
@@ -370,7 +391,7 @@ def send_activation_email(email: str, name: str, activation_link: str) -> tuple[
         delivery_status = "sent through SMTP"
 
     outbox_file.write_text(
-        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
         encoding="utf-8",
     )
 
@@ -381,15 +402,18 @@ def send_student_verification_email(email: str, name: str, verification_link: st
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     subject = "Verify your FairFares student email"
+    poster_url = shared_email_poster_from_link(verification_link)
     text_body = (
         f"Hi {name},\n\n"
         "Click the link below to verify your .edu email and unlock your FairFares student discount:\n"
         f"{verification_link}\n\n"
+        f"{'FairFares poster: ' + poster_url + chr(10) + chr(10) if poster_url else ''}"
         "This protects the student discount so it only goes to verified school email owners.\n"
     )
     html_body = (
         f"<p>Hi {html.escape(name)},</p>"
         "<p>Click below to verify your .edu email and unlock your FairFares student discount.</p>"
+        f"{render_email_poster(poster_url)}"
         f'<p><a href="{html.escape(verification_link)}">Verify student email</a></p>'
         "<p>This protects the student discount so it only goes to verified school email owners.</p>"
     )
@@ -414,26 +438,29 @@ def send_student_verification_email(email: str, name: str, verification_link: st
             smtp.send_message(message)
         delivery_status = "sent through SMTP"
     outbox_file.write_text(
-        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
         encoding="utf-8",
     )
     return outbox_file, delivery_status
 
 
-def send_student_verified_email(email: str, name: str, code: str) -> tuple[Path, str]:
+def send_student_verified_email(email: str, name: str, code: str, origin: str = "") -> tuple[Path, str]:
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     subject = "Your FairFares student discount is active"
+    poster_url = shared_email_poster_url(origin)
     text_body = (
         f"Hi {name},\n\n"
         "Your student email is verified. Your FairFares student discount is now active.\n\n"
         f"Student discount code: {code}\n\n"
+        f"{'FairFares poster: ' + poster_url + chr(10) + chr(10) if poster_url else ''}"
         "Use it on eligible future bookings. Terms and conditions apply.\n"
     )
     html_body = f"""
         <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
           <h2>Your student discount is active</h2>
           <p>Hi {html.escape(name)}, your student email is verified.</p>
+          {render_email_poster(poster_url)}
           <p style="font-size:18px"><b>Student discount code:</b> {html.escape(code)}</p>
           <p>Use it on eligible future bookings. Terms and conditions apply.</p>
         </div>
@@ -459,7 +486,7 @@ def send_student_verified_email(email: str, name: str, code: str) -> tuple[Path,
             smtp.send_message(message)
         delivery_status = "sent through SMTP"
     outbox_file.write_text(
-        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
         encoding="utf-8",
     )
     return outbox_file, delivery_status
@@ -630,10 +657,12 @@ def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[P
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     subject = "Reset your FairFares password"
+    poster_url = shared_email_poster_from_link(reset_link)
     text_body = (
         f"Hi {name},\n\n"
         "We received a request to reset your FairFares password. Click the link below to set a new password:\n"
         f"{reset_link}\n\n"
+        f"{'FairFares poster: ' + poster_url + chr(10) + chr(10) if poster_url else ''}"
         "This link expires in 30 minutes for your security.\n\n"
         "If you didn't request a password reset, ignore this email and your password will remain unchanged.\n"
     )
@@ -641,6 +670,7 @@ def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[P
         <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
           <p>Hi {html.escape(name)},</p>
           <p>We received a request to reset your FairFares password.</p>
+          {render_email_poster(poster_url)}
           <p><a href="{html.escape(reset_link)}" style="background:#e60019;color:#fff;padding:12px 24px;border-radius:5px;text-decoration:none;display:inline-block;font-weight:700">Reset Password</a></p>
           <p><small>This link expires in 30 minutes for your security.</small></p>
           <p><small>If you didn't request a password reset, ignore this email and your password will remain unchanged.</small></p>
@@ -670,7 +700,7 @@ def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[P
         delivery_status = "sent through SMTP"
 
     outbox_file.write_text(
-        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
         encoding="utf-8",
     )
 
@@ -723,6 +753,7 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     token = ensure_marketing_token(user["id"])
     unsubscribe_url = f"{origin.rstrip('/')}/unsubscribe?token={urllib.parse.quote(token)}"
+    poster_url = shared_email_poster_url(origin)
     subject = render_campaign_text(campaign["subject_line"], user, origin)
     headline = render_campaign_text(campaign["headline"] or "A FairFares update for you.", user, origin)
     message_body = render_campaign_text(campaign["message_body"] or campaign["notes"] or "Open FairFares to view the latest update.", user, origin)
@@ -732,6 +763,7 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
         f"Hi {user['name']},\n\n"
         f"{headline}\n\n"
         f"{message_body}\n\n"
+        f"{'FairFares poster: ' + poster_url + chr(10) + chr(10) if poster_url else ''}"
         f"{cta_label}: {cta_url}\n\n"
         f"Unsubscribe: {unsubscribe_url}\n"
     )
@@ -745,6 +777,7 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
             <div style="padding:24px">
               <p style="font-size:14px;color:#5d6474;text-transform:uppercase;font-weight:700">{html.escape(campaign['campaign_type'])}</p>
               <h2 style="font-size:28px;margin:0 0 12px">{html.escape(headline)}</h2>
+              {render_email_poster(poster_url)}
               <p style="font-size:16px">{html.escape(message_body)}</p>
               <p style="margin:24px 0"><a href="{html.escape(cta_url)}" style="background:#ec0016;color:#fff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:800">{html.escape(cta_label)}</a></p>
               <p style="font-size:13px;color:#5d6474">You are receiving this because you subscribed to FairFares promotional emails.</p>
@@ -774,7 +807,7 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
             smtp.send_message(message)
         delivery_status = "sent through SMTP"
     outbox_file.write_text(
-        f"To: {user['email']}\nSubject: {subject}\nDelivery: {delivery_status}\nUnsubscribe: {unsubscribe_url}\n\n{text_body}",
+        f"To: {user['email']}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\nUnsubscribe: {unsubscribe_url}\n\n{text_body}",
         encoding="utf-8",
     )
     return outbox_file, delivery_status
@@ -6921,7 +6954,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             con.execute("UPDATE email_verifications SET used_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
         code = create_student_discount(verification["user_id"], verification["name"], verification["email"])
-        send_student_verified_email(verification["email"], verification["name"], code)
+        send_student_verified_email(verification["email"], verification["name"], code, self.public_origin())
         self.activation_message_page(
             "Student email verified",
             f"Your FairFares student discount is active. Use code {code} on eligible bookings.",
