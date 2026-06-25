@@ -8012,7 +8012,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
             <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
             <td>{escape(row["car_name"])}</td>
-            <td>{escape(row["pickup_date"])} - {escape(row["dropoff_date"])}</td>
+            <td>
+                <b>{escape(row["pickup_date"])} at {escape(row["pickup_time"])}</b>
+                <span>{escape(row["dropoff_date"])} at {escape(row["dropoff_time"])}</span>
+            </td>
             <td>${row["total_price"]:.2f}</td>
             <td>
                 {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
