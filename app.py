@@ -3570,6 +3570,45 @@ def get_oncall_shift_for_day(day: date | None = None) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def render_oncall_mini_calendar(month_start: date | None = None) -> str:
+    selected_month = month_start or datetime.now().date().replace(day=1)
+    shifts = get_oncall_shifts_for_month(selected_month)
+    shift_rows = {row_value(row, "shift_date"): row for row in shifts}
+    next_month = next_month_start(selected_month)
+    today = datetime.now().date()
+    color_pool = ["#16a34a", "#2563eb", "#0891b2", "#7c3aed", "#dc2626", "#0f766e", "#ca8a04"]
+    cells = ['<span class="admin-oncall-mini-empty" aria-hidden="true"></span>' for _ in range(selected_month.weekday())]
+    for offset in range((next_month - selected_month).days):
+        day = selected_month + timedelta(days=offset)
+        shift = shift_rows.get(day.isoformat())
+        assigned_id = str(row_value(shift, "admin_user_id") or "")
+        color_index = (int(assigned_id) if assigned_id.isdigit() else day.day) % len(color_pool)
+        admin_name = row_value(shift, "admin_name") or "Unassigned"
+        classes = "admin-oncall-mini-day"
+        if day == today:
+            classes += " is-today"
+        cells.append(
+            f"""
+            <a class="{classes}" href="/admin/oncall?month={escape(selected_month.strftime("%Y-%m"))}" style="--oncall-color: {color_pool[color_index]}">
+              <span>{escape(str(day.day))}</span>
+              <b>{escape(admin_name.split()[0] if admin_name else "Open")}</b>
+            </a>
+            """
+        )
+    return f"""
+    <div class="admin-oncall-mini-board">
+      <div class="admin-oncall-mini-title">
+        <span>Monthly on-call board</span>
+        <b>{escape(selected_month.strftime("%B"))}</b>
+      </div>
+      <div class="admin-oncall-mini-weekdays" aria-hidden="true">
+        <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+      </div>
+      <div class="admin-oncall-mini-grid">{"".join(cells)}</div>
+    </div>
+    """
+
+
 def get_staff_account_requests() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -3614,6 +3653,57 @@ def is_admin_user(user: sqlite3.Row | None) -> bool:
 
 def is_staff_user(user: sqlite3.Row | None) -> bool:
     return bool(user and (is_admin_user(user) or normalized_user_role(row_value(user, "role")) == ROLE_EMPLOYEE))
+
+
+def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
+    if not is_staff_user(user):
+        return {}
+    today = datetime.now().date().isoformat()
+    with db() as con:
+        counts = {
+            "portal": con.execute(
+                "SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) != 'AVAILABLE'"
+            ).fetchone()["total"],
+            "bookings": con.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM bookings
+                WHERE booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                """
+            ).fetchone()["total"],
+            "tickets": con.execute(
+                "SELECT COUNT(*) AS total FROM support_tickets WHERE status != 'CLOSED'"
+            ).fetchone()["total"],
+            "pickup": con.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM bookings
+                WHERE pickup_date = ?
+                  AND booking_status NOT IN ('CANCELLED', 'EXPIRED_HOLD')
+                """,
+                (today,),
+            ).fetchone()["total"],
+        }
+        if is_admin_user(user):
+            counts.update(
+                {
+                    "requests": con.execute(
+                        "SELECT COUNT(*) AS total FROM staff_account_requests WHERE status = 'PENDING'"
+                    ).fetchone()["total"],
+                    "system": con.execute(
+                        "SELECT COUNT(*) AS total FROM app_feedback WHERE created_at >= datetime('now', '-7 days')"
+                    ).fetchone()["total"],
+                }
+            )
+    return {key: int(value or 0) for key, value in counts.items()}
+
+
+def render_admin_nav_label(label: str, count: int = 0) -> str:
+    badge = ""
+    if count > 0:
+        badge_text = "99+" if count > 99 else str(count)
+        badge = f'<span class="admin-nav-badge" aria-label="{escape(str(count))} new items">{escape(badge_text)}</span>'
+    return f'<span class="admin-nav-label">{escape(label)}</span>{badge}'
 
 
 def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:
@@ -7267,30 +7357,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
         ]
         groups = admin_groups if is_admin_user(user) else employee_groups
+        badge_counts = get_admin_nav_badge_counts(user)
         active_group = next((group for group in groups if any(item[0] == active for item in group[3])), groups[0])
         primary_links = []
         for key, label, href, _items in groups:
             active_class = ' class="active"' if key == active_group[0] else ""
-            primary_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+            group_count = sum(badge_counts.get(item_key, 0) for item_key, _href, _label in _items)
+            primary_links.append(f'<a{active_class} href="{href}">{render_admin_nav_label(label, group_count)}</a>')
         primary_links.append('<a href="/logout">Log out</a>')
         sub_links = []
         for key, href, label in active_group[3]:
             active_class = ' class="active"' if key == active else ""
-            sub_links.append(f'<a{active_class} href="{href}">{escape(label)}</a>')
+            sub_links.append(f'<a{active_class} href="{href}">{render_admin_nav_label(label, badge_counts.get(key, 0))}</a>')
         oncall_drawer = ""
         if is_admin_user(user):
             next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))
             next_label = row_value(next_shift, "shift_date") or "Set schedule"
-            upcoming_rows = "".join(
-                f"""
-                <article>
-                  <span>{escape(row_value(shift, "shift_date"))}</span>
-                  <b>{escape(row_value(shift, "admin_name"))}</b>
-                  <small>{escape(row_value(shift, "admin_email"))}</small>
-                </article>
-                """
-                for shift in upcoming_oncall_shifts(7)
+            today_oncall = get_oncall_shift_for_day()
+            today_label = (
+                f"{row_value(today_oncall, 'admin_name')} - {row_value(today_oncall, 'shift_date')}"
+                if today_oncall
+                else "No admin assigned today"
             )
+            mini_calendar = render_oncall_mini_calendar()
             oncall_drawer = f"""
             <aside class="admin-oncall-dock" data-oncall-dock>
               <button class="admin-oncall-tab" type="button" data-oncall-toggle aria-expanded="false">
@@ -7299,15 +7388,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
               <section class="admin-oncall-drawer" aria-label="On-call dashboard">
                 <div class="admin-oncall-drawer-head">
                   <p class="eyebrow">On-call dashboard</p>
-                  <h2>Upcoming coverage</h2>
+                  <h2>Admin coverage</h2>
                   <button type="button" data-oncall-close aria-label="Close on-call dashboard">x</button>
                 </div>
                 <div class="admin-oncall-next">
-                  <span>Your next on-call</span>
-                  <b>{escape(next_label)}</b>
+                  <span>Today&apos;s on-call</span>
+                  <b>{escape(today_label)}</b>
+                  <small>Your next shift: {escape(next_label)}</small>
                 </div>
-                <div class="admin-oncall-list">
-                  {upcoming_rows or '<p>No upcoming shifts yet.</p>'}
+                {mini_calendar}
+                <div class="admin-oncall-next admin-oncall-next-soft">
+                  <span>Ticket routing</span>
+                  <b>P0 and escalated tickets route to today&apos;s on-call admin.</b>
                 </div>
                 <a class="admin-oncall-full-link" href="/admin/oncall">Open monthly schedule</a>
               </section>

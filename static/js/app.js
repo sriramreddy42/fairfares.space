@@ -41,6 +41,16 @@ function placeAdminSubnavInHero() {
 
 placeAdminSubnavInHero();
 
+function setOncallDockOffset() {
+  const header = document.querySelector(".admin-shell-header");
+  if (!header) return;
+  const bottom = Math.max(76, Math.ceil(header.getBoundingClientRect().bottom));
+  document.documentElement.style.setProperty("--admin-oncall-top", `${bottom}px`);
+}
+
+setOncallDockOffset();
+window.addEventListener("resize", setOncallDockOffset);
+
 const oncallDock = document.querySelector("[data-oncall-dock]");
 const oncallToggle = document.querySelector("[data-oncall-toggle]");
 const oncallClose = document.querySelector("[data-oncall-close]");
