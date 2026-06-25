@@ -1014,6 +1014,7 @@ def init_db() -> None:
                 amount REAL NOT NULL DEFAULT 0,
                 service_date TEXT NOT NULL DEFAULT CURRENT_DATE,
                 vendor TEXT NOT NULL DEFAULT '',
+                receipt_url TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(car_id) REFERENCES cars(id)
@@ -1375,6 +1376,7 @@ def init_db() -> None:
         ensure_column(con, "staff_account_requests", "admin_note", "admin_note TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "target_user_id", "target_user_id INTEGER")
         ensure_column(con, "staff_account_requests", "created_user_id", "created_user_id INTEGER")
+        ensure_column(con, "car_service_costs", "receipt_url", "receipt_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
         ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "transactions", "cardholder_name", "cardholder_name TEXT NOT NULL DEFAULT ''")
@@ -6999,6 +7001,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         purchase_cost_amount = float(row_value(car, "purchase_cost") or 0)
         roi_ready = purchase_cost_amount > 0
         service_rows = "\n".join(self.render_car_service_cost_row(row) for row in detail["service_rows"])
+        receipt_rows = "\n".join(self.render_car_receipt_row(row) for row in detail["service_rows"] if row_value(row, "receipt_url"))
         booking_rows = "\n".join(self.render_car_detail_booking_row(row) for row in detail["bookings"])
         body = render_template(
             "admin_car_detail.html",
@@ -7007,6 +7010,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_id=escape(row_value(car, "id")),
             car_name=escape(row_value(car, "name")),
             car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
+            car_image=escape(row_value(car, "image_url") or "/static/img/booking-confirmation-promise.png"),
             purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
             purchase_cost_value=f"{purchase_cost_amount:.2f}",
             car_status=escape(row_value(car, "status") or "AVAILABLE"),
@@ -7019,7 +7023,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             roi=format_money(detail["roi"]) if roi_ready else "Pending",
             roi_label="ROI" if roi_ready else "ROI pending",
             roi_class=("positive" if float(detail["roi"]) >= 0 else "negative") if roi_ready else "pending",
-            service_rows=service_rows or '<tr><td colspan="5">No maintenance or repair costs added yet.</td></tr>',
+            service_rows=service_rows or '<tr><td colspan="6">No maintenance or repair costs added yet.</td></tr>',
+            receipt_rows=receipt_rows or '<tr><td colspan="4">No receipts added yet.</td></tr>',
             booking_rows=booking_rows or '<tr><td colspan="5">No bookings for this vehicle yet.</td></tr>',
         )
         self.send_html(body)
@@ -7031,7 +7036,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <td>{format_money(row_value(row, "amount") or 0)}</td>
           <td>{escape(row_value(row, "vendor") or "-")}</td>
           <td>{escape(row_value(row, "notes") or "-")}</td>
+          <td>{self.render_receipt_link(row)}</td>
           <td>{escape(row_value(row, "created_at"))}</td>
+        </tr>
+        """
+
+    def render_receipt_link(self, row: sqlite3.Row) -> str:
+        receipt_url = row_value(row, "receipt_url")
+        if not receipt_url:
+            return '<span>No receipt</span>'
+        return f'<a class="admin-text-link" href="{escape(receipt_url)}" target="_blank" rel="noopener">Open receipt</a>'
+
+    def render_car_receipt_row(self, row: sqlite3.Row) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(row_value(row, "cost_type").title())}</b><span>{escape(row_value(row, "service_date"))}</span></td>
+          <td>{format_money(row_value(row, "amount") or 0)}</td>
+          <td>{escape(row_value(row, "vendor") or "-")}</td>
+          <td>{self.render_receipt_link(row)}</td>
         </tr>
         """
 
@@ -8119,8 +8141,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if car and amount > 0:
                 con.execute(
                     """
-                    INSERT INTO car_service_costs (car_id, cost_type, amount, service_date, vendor, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO car_service_costs (car_id, cost_type, amount, service_date, vendor, receipt_url, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         car_id,
@@ -8128,6 +8150,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         amount,
                         service_date,
                         form.get("vendor", "").strip(),
+                        form.get("receipt_url", "").strip(),
                         form.get("notes", "").strip(),
                     ),
                 )

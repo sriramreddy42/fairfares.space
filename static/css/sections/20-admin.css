@@ -262,6 +262,54 @@
   padding: 12px 16px;
   text-decoration: none;
 }
+.vehicle-finance-screen {
+  background:
+    linear-gradient(135deg, rgba(0, 42, 92, 0.08), rgba(237, 0, 33, 0.04)),
+    #f4f6fa;
+}
+.vehicle-finance-screen .admin-layout {
+  gap: 18px;
+}
+.vehicle-finance-hero {
+  align-items: center;
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 300px) auto;
+  overflow: hidden;
+  padding: 26px;
+}
+.vehicle-finance-copy {
+  min-width: 0;
+}
+.vehicle-finance-copy h1,
+.vehicle-finance-copy span {
+  position: relative;
+  z-index: 1;
+}
+.vehicle-finance-image {
+  align-items: center;
+  aspect-ratio: 16 / 9;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.vehicle-finance-image img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+.vehicle-finance-screen .glass-card,
+.vehicle-finance-screen .vehicle-finance-metrics article {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  box-shadow: 0 18px 50px rgba(7, 20, 63, 0.10);
+  backdrop-filter: blur(14px);
+}
 .vehicle-finance-metrics {
   grid-template-columns: repeat(7, minmax(130px, 1fr));
 }
@@ -901,6 +949,19 @@
     width: 100%;
   }
 
+  .vehicle-finance-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .vehicle-finance-image {
+    max-width: 340px;
+    width: 100%;
+  }
+
+  .vehicle-finance-hero .admin-back-link {
+    justify-self: start;
+  }
+
   .staff-request-form {
     grid-template-columns: 1fr 1fr;
   }
@@ -922,6 +983,10 @@
   .vehicle-purchase-form,
   .admin-form {
     grid-template-columns: 1fr;
+  }
+
+  .vehicle-finance-hero {
+    padding: 18px;
   }
 
   .staff-request-form {
