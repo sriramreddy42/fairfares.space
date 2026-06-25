@@ -906,12 +906,14 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 requested_by INTEGER NOT NULL,
                 approved_by INTEGER,
+                target_user_id INTEGER,
                 created_user_id INTEGER,
                 admin_note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 reviewed_at TEXT,
                 FOREIGN KEY(requested_by) REFERENCES users(id),
                 FOREIGN KEY(approved_by) REFERENCES users(id),
+                FOREIGN KEY(target_user_id) REFERENCES users(id),
                 FOREIGN KEY(created_user_id) REFERENCES users(id)
             );
 
@@ -1308,6 +1310,7 @@ def init_db() -> None:
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "phone", "phone TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "admin_note", "admin_note TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "staff_account_requests", "target_user_id", "target_user_id INTEGER")
         ensure_column(con, "staff_account_requests", "created_user_id", "created_user_id INTEGER")
         ensure_column(con, "email_verifications", "purpose", "purpose TEXT NOT NULL DEFAULT 'ACCOUNT'")
         ensure_column(con, "driver_licenses", "verification_notes", "verification_notes TEXT NOT NULL DEFAULT ''")
@@ -6945,9 +6948,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <label><span>Email</span><input name="email" type="email" required></label>
           <label><span>Phone</span><input name="phone" autocomplete="tel"></label>
           <label><span>Role</span><select name="role"><option value="EMPLOYEE">Employee</option><option value="ADMIN">Admin</option></select></label>
-          <label><span>Temporary password</span><input name="password" type="password" minlength="8" required></label>
+          <label><span>Temporary password</span><input name="password" type="password" minlength="8" placeholder="Required for new email"></label>
           <button type="submit">Request Staff Account</button>
-          <small>Another active admin must approve before the account is created.</small>
+          <small>Existing users are sent for role approval. New emails need a temporary password.</small>
         </form>
         """
 
@@ -7007,16 +7010,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         phone = (form.get("phone") or "").strip()
         role = normalized_staff_role(form.get("role", "EMPLOYEE"))
         password = form.get("password", "")
-        if not name or "@" not in email or len(password) < 8:
+        if not name or "@" not in email:
             self.redirect("/admin/requests")
             return
         with db() as con:
-            existing_user = con.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+            existing_user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
             existing_request = con.execute(
                 "SELECT id FROM staff_account_requests WHERE email = ? AND status = 'PENDING'",
                 (email,),
             ).fetchone()
-            if not existing_user and not existing_request:
+            if existing_user and not existing_request:
+                if is_staff_user(existing_user):
+                    self.redirect("/admin/requests")
+                    return
+                con.execute(
+                    """
+                    INSERT INTO staff_account_requests
+                    (name, email, phone, role, password_hash, requested_by, target_user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        name or row_value(existing_user, "name"),
+                        email,
+                        phone or row_value(existing_user, "phone") or "",
+                        role,
+                        row_value(existing_user, "password_hash"),
+                        user["id"],
+                        existing_user["id"],
+                    ),
+                )
+            elif not existing_user and not existing_request and len(password) >= 8:
                 con.execute(
                     """
                     INSERT INTO staff_account_requests
@@ -7058,16 +7081,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 is_admin = 1 if request["role"] == "ADMIN" else 0
                 role = "ADMIN" if is_admin else "EMPLOYEE"
-                try:
+                target_user_id = row_value(request, "target_user_id")
+                if target_user_id:
                     con.execute(
                         """
-                        INSERT INTO users
-                        (name, email, phone, password_hash, is_admin, role, is_verified, verified_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        UPDATE users
+                        SET name = COALESCE(NULLIF(?, ''), name),
+                            phone = COALESCE(NULLIF(?, ''), phone),
+                            is_admin = ?,
+                            role = ?,
+                            is_verified = 1,
+                            verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                            guest_account = 0
+                        WHERE id = ?
                         """,
-                        (request["name"], request["email"], request["phone"], request["password_hash"], is_admin, role),
+                        (request["name"], request["phone"], is_admin, role, target_user_id),
                     )
-                    created_user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
                     con.execute(
                         """
                         UPDATE staff_account_requests
@@ -7078,20 +7107,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             reviewed_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                         """,
-                        (user["id"], created_user_id, note, request_id),
+                        (user["id"], target_user_id, note, request_id),
                     )
-                except sqlite3.IntegrityError:
-                    con.execute(
-                        """
-                        UPDATE staff_account_requests
-                        SET status = 'REJECTED',
-                            approved_by = ?,
-                            admin_note = 'Email already exists.',
-                            reviewed_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (user["id"], request_id),
-                    )
+                else:
+                    try:
+                        con.execute(
+                            """
+                            INSERT INTO users
+                            (name, email, phone, password_hash, is_admin, role, is_verified, verified_at)
+                            VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                            """,
+                            (request["name"], request["email"], request["phone"], request["password_hash"], is_admin, role),
+                        )
+                        created_user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+                        con.execute(
+                            """
+                            UPDATE staff_account_requests
+                            SET status = 'APPROVED',
+                                approved_by = ?,
+                                created_user_id = ?,
+                                admin_note = ?,
+                                reviewed_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (user["id"], created_user_id, note, request_id),
+                        )
+                    except sqlite3.IntegrityError:
+                        con.execute(
+                            """
+                            UPDATE staff_account_requests
+                            SET status = 'REJECTED',
+                                approved_by = ?,
+                                admin_note = 'Email already exists.',
+                                reviewed_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (user["id"], request_id),
+                        )
         self.redirect("/admin/requests")
 
     def admin_tickets_page(self) -> None:
