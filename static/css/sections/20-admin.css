@@ -3,7 +3,9 @@
 }
 .admin-shell-header {
   align-items: flex-start;
-  background: linear-gradient(135deg, rgba(232, 248, 255, 0.82), rgba(255, 255, 255, 0.58));
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.86), rgba(232, 248, 255, 0.70)),
+    url("/static/img/admin-nav-road-bg.png") center 43% / cover no-repeat;
   backdrop-filter: blur(18px);
   border-bottom: 1px solid rgba(136, 205, 238, 0.42);
   box-shadow: 0 14px 38px rgba(7, 20, 63, 0.08);
