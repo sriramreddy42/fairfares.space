@@ -122,6 +122,69 @@ class AuthBootstrapTest(unittest.TestCase):
             total_after_second_call = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
         self.assertEqual(total_after_second_call, total)
 
+    def test_existing_customer_staff_request_promotes_same_user(self):
+        app.init_db()
+
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_admin, role, is_verified)
+                VALUES (?, ?, ?, 1, 'ADMIN', 1)
+                """,
+                ("Second Admin", "second-admin@fairfares.com", app.hash_password("Password123!")),
+            )
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_admin, role, is_verified)
+                VALUES (?, ?, ?, 0, 'CUSTOMER', 1)
+                """,
+                ("Existing Customer", "customer@fairfares.com", app.hash_password("Password123!")),
+            )
+            requester = con.execute("SELECT * FROM users WHERE email = ?", (app.DEFAULT_ADMIN_EMAIL,)).fetchone()
+            reviewer = con.execute("SELECT * FROM users WHERE email = ?", ("second-admin@fairfares.com",)).fetchone()
+            customer = con.execute("SELECT * FROM users WHERE email = ?", ("customer@fairfares.com",)).fetchone()
+            con.execute(
+                """
+                INSERT INTO staff_account_requests
+                (name, email, phone, role, password_hash, requested_by, target_user_id)
+                VALUES (?, ?, '', 'ADMIN', ?, ?, ?)
+                """,
+                (customer["name"], customer["email"], customer["password_hash"], requester["id"], customer["id"]),
+            )
+            request = con.execute("SELECT * FROM staff_account_requests WHERE email = ?", (customer["email"],)).fetchone()
+            is_admin, role = app.user_role_flags(app.normalized_staff_role(request["role"]))
+            con.execute(
+                """
+                UPDATE users
+                SET is_admin = ?,
+                    role = ?,
+                    is_verified = 1
+                WHERE id = ?
+                """,
+                (is_admin, role, request["target_user_id"]),
+            )
+            con.execute(
+                """
+                UPDATE staff_account_requests
+                SET status = 'APPROVED',
+                    approved_by = ?,
+                    created_user_id = ?,
+                    reviewed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (reviewer["id"], request["target_user_id"], request["id"]),
+            )
+
+            promoted = con.execute("SELECT * FROM users WHERE email = ?", ("customer@fairfares.com",)).fetchone()
+            approved_request = con.execute("SELECT * FROM staff_account_requests WHERE id = ?", (request["id"],)).fetchone()
+
+        self.assertEqual(promoted["id"], customer["id"])
+        self.assertEqual(promoted["role"], "ADMIN")
+        self.assertEqual(promoted["is_admin"], 1)
+        self.assertEqual(approved_request["status"], "APPROVED")
+        self.assertEqual(approved_request["target_user_id"], customer["id"])
+        self.assertEqual(approved_request["created_user_id"], customer["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

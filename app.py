@@ -35,6 +35,10 @@ DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 DEFAULT_PROMOTED_ADMIN_EMAILS = "sriramreddy42@gmail.com"
 DEFAULT_REVOKED_ADMIN_EMAILS = "loki@gmail.com"
+ROLE_CUSTOMER = "CUSTOMER"
+ROLE_EMPLOYEE = "EMPLOYEE"
+ROLE_ADMIN = "ADMIN"
+VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 ASSET_VERSION = "20260624m"
 BASE_STYLESHEETS = [
@@ -156,6 +160,16 @@ def configured_email_set(env_name: str, default_value: str = "") -> set[str]:
     return {email.strip().lower() for email in raw_value.split(",") if email.strip()}
 
 
+def normalized_user_role(value: object) -> str:
+    role = str(value or "").strip().upper()
+    return role if role in VALID_USER_ROLES else ROLE_CUSTOMER
+
+
+def user_role_flags(role: str) -> tuple[int, str]:
+    normalized = normalized_user_role(role)
+    return (1 if normalized == ROLE_ADMIN else 0, normalized)
+
+
 def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
     email = email.strip().lower()
     if not email or not password:
@@ -207,6 +221,42 @@ def ensure_default_admin(con: sqlite3.Connection) -> None:
     configured_email, configured_password = configured_admin_credentials()
     if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
         ensure_admin_account(con, configured_email, configured_password)
+
+
+def normalize_user_roles(con: sqlite3.Connection) -> None:
+    con.execute(
+        """
+        UPDATE users
+        SET role = 'ADMIN',
+            is_admin = 1
+        WHERE is_admin = 1 OR UPPER(TRIM(role)) = 'ADMIN'
+        """
+    )
+    con.execute(
+        """
+        UPDATE users
+        SET role = 'EMPLOYEE',
+            is_admin = 0
+        WHERE UPPER(TRIM(role)) = 'EMPLOYEE'
+        """
+    )
+    con.execute(
+        """
+        UPDATE users
+        SET role = 'CUSTOMER',
+            is_admin = 0
+        WHERE UPPER(TRIM(role)) NOT IN ('ADMIN', 'EMPLOYEE', 'CUSTOMER')
+           OR role IS NULL
+           OR TRIM(role) = ''
+        """
+    )
+    con.execute(
+        """
+        UPDATE users
+        SET is_admin = 0
+        WHERE role = 'CUSTOMER'
+        """
+    )
 
 
 def apply_staff_role_overrides(con: sqlite3.Connection) -> None:
@@ -658,7 +708,7 @@ def get_marketing_recipients(audience: str = "") -> list[sqlite3.Row]:
             """
             SELECT *
             FROM users
-            WHERE is_admin = 0
+            WHERE role = 'CUSTOMER'
               AND is_verified = 1
               AND promo_email_opt_in = 1
               AND marketing_unsubscribed_at IS NULL
@@ -1416,8 +1466,9 @@ def init_db() -> None:
             )
 
         ensure_default_admin(con)
-        con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
+        normalize_user_roles(con)
         apply_staff_role_overrides(con)
+        normalize_user_roles(con)
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
         default_wiki_articles = [
@@ -3126,8 +3177,8 @@ def get_admin_users() -> list[sqlite3.Row]:
             FROM users
             LEFT JOIN bookings ON bookings.user_id = users.id
             LEFT JOIN transactions ON transactions.booking_id = bookings.id
-            WHERE users.is_admin = 0
-              AND users.role NOT IN ('ADMIN', 'EMPLOYEE')
+            WHERE users.role = 'CUSTOMER'
+              AND users.is_admin = 0
             GROUP BY users.id
             ORDER BY users.name COLLATE NOCASE
             LIMIT 100
@@ -3175,15 +3226,24 @@ def get_staff_account_requests() -> list[sqlite3.Row]:
 
 def normalized_staff_role(value: str) -> str:
     role = (value or "").strip().upper()
-    return role if role in {"ADMIN", "EMPLOYEE"} else "EMPLOYEE"
+    return role if role in {ROLE_ADMIN, ROLE_EMPLOYEE} else ROLE_EMPLOYEE
+
+
+def staff_role_label(row: sqlite3.Row) -> str:
+    role = normalized_user_role(row_value(row, "role"))
+    if role == ROLE_ADMIN or int(row_value(row, "is_admin") or 0) == 1:
+        return "Admin"
+    if role == ROLE_EMPLOYEE:
+        return "Employee"
+    return "Customer"
 
 
 def is_admin_user(user: sqlite3.Row | None) -> bool:
-    return bool(user and (int(row_value(user, "is_admin") or 0) == 1 or row_value(user, "role") == "ADMIN"))
+    return bool(user and (normalized_user_role(row_value(user, "role")) == ROLE_ADMIN or int(row_value(user, "is_admin") or 0) == 1))
 
 
 def is_staff_user(user: sqlite3.Row | None) -> bool:
-    return bool(user and (is_admin_user(user) or row_value(user, "role") == "EMPLOYEE"))
+    return bool(user and (is_admin_user(user) or normalized_user_role(row_value(user, "role")) == ROLE_EMPLOYEE))
 
 
 def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite3.Row | None]:
@@ -3267,7 +3327,7 @@ def get_admin_metrics() -> dict[str, int]:
             "cars": con.execute("SELECT COUNT(*) AS total FROM cars").fetchone()["total"],
             "available": con.execute("SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) = 'AVAILABLE'").fetchone()["total"],
             "booked": con.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"],
-            "users": con.execute("SELECT COUNT(*) AS total FROM users WHERE is_admin = 0").fetchone()["total"],
+            "users": con.execute("SELECT COUNT(*) AS total FROM users WHERE role = 'CUSTOMER' AND is_admin = 0").fetchone()["total"],
         }
 
 
@@ -4515,7 +4575,7 @@ def get_marketing_subscriber_count() -> int:
             """
             SELECT COUNT(*) AS total
             FROM users
-            WHERE is_admin = 0
+            WHERE role = 'CUSTOMER'
               AND is_verified = 1
               AND promo_email_opt_in = 1
               AND marketing_unsubscribed_at IS NULL
@@ -6955,7 +7015,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_staff_account_row(self, row: sqlite3.Row) -> str:
-        role = "Admin" if int(row_value(row, "is_admin") or 0) == 1 or row_value(row, "role") == "ADMIN" else "Employee"
+        role = staff_role_label(row)
         status = "Active" if row_value(row, "is_verified") else "Not verified"
         return f"""
         <tr>
@@ -6969,7 +7029,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_staff_request_row(self, row: sqlite3.Row, current_admin: sqlite3.Row) -> str:
         status = row_value(row, "status")
-        role = "Admin" if row_value(row, "role") == "ADMIN" else "Employee"
+        role = "Admin" if normalized_staff_role(row_value(row, "role")) == ROLE_ADMIN else "Employee"
         requester = f"{row_value(row, 'requester_name')} ({row_value(row, 'requester_email')})"
         reviewer = row_value(row, "approver_name") or "Pending"
         can_review = status == "PENDING" and is_admin_user(current_admin) and int(row_value(row, "requested_by") or 0) != int(row_value(current_admin, "id") or 0)
@@ -7079,8 +7139,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (user["id"], note, request_id),
                 )
             else:
-                is_admin = 1 if request["role"] == "ADMIN" else 0
-                role = "ADMIN" if is_admin else "EMPLOYEE"
+                is_admin, role = user_role_flags(normalized_staff_role(request["role"]))
                 target_user_id = row_value(request, "target_user_id")
                 if target_user_id:
                     con.execute(
