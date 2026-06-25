@@ -18,10 +18,16 @@
       <article class="admin-profile-card">
         <span class="admin-profile-avatar">$admin_initials</span>
         <b>$admin_name</b>
-        <small>Admin workspace</small>
+        <small>$staff_role workspace</small>
+        <div class="workspace-profile-meta">
+          <span>$admin_email</span>
+          <span>$admin_phone</span>
+        </div>
         <div class="admin-profile-stats">
           <span><b>$booked_count</b> bookings</span>
           <span><b>$available_cars</b> available</span>
+          <span><b>$workspace_post_count</b> posts</span>
+          <span><b>$staff_role</b> role</span>
         </div>
       </article>
       <a href="/admin"><b>Fleet</b><span>Inventory and ROI</span></a>
@@ -34,18 +40,28 @@
 
     <section class="workspace-center" aria-label="Workspace feed">
       <div class="workspace-feed-scroll" tabindex="0">
-        <article class="admin-feed-composer">
+        <form method="post" action="/admin/workspace/post" class="admin-feed-composer workspace-post-form">
           <span class="admin-profile-avatar">FF</span>
           <div>
-            <b>Operations feed</b>
-            <span>Share an update, open a queue, or start a handoff.</span>
+            <b>Share to your profile</b>
+            <span>Post an internal update, handoff note, alert, or profile activity.</span>
           </div>
+          <textarea name="body" rows="3" maxlength="1200" placeholder="What should the team know?"></textarea>
+          <div class="workspace-composer-tools">
+            <label><span>Post type</span><select name="post_type"><option value="UPDATE">Update</option><option value="HANDOFF">Handoff</option><option value="ALERT">Alert</option><option value="PROFILE">Profile</option></select></label>
+            <label><span>Image URL</span><input name="media_url" placeholder="Optional image link"></label>
+            <label class="workspace-upload-button"><span>Upload photo</span><input type="file" accept="image/*" data-workspace-post-image></label>
+            <input type="hidden" name="image_data" data-workspace-post-image-data>
+          </div>
+          <img class="workspace-post-preview" data-workspace-post-preview alt="Selected feed upload preview" hidden>
           <div class="admin-feed-actions">
-            <button type="button" data-dashboard-action="compose-note">Internal Note</button>
+            <button type="submit">Share Feed</button>
             <button type="button" data-dashboard-action="open-live-queue">Live Queue</button>
             <button type="button" data-dashboard-action="start-oncall-chat">On-call Chat</button>
           </div>
-        </article>
+        </form>
+
+        $workspace_posts
 
         <article class="admin-feed-card">
           <div class="admin-feed-head">

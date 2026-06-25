@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625h"
+ASSET_VERSION = "20260625i"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -1412,6 +1412,19 @@ def init_db() -> None:
                 FOREIGN KEY(reward_id) REFERENCES referral_rewards(id),
                 FOREIGN KEY(referred_user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS workspace_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                author_id INTEGER NOT NULL,
+                post_type TEXT NOT NULL DEFAULT 'UPDATE',
+                body TEXT NOT NULL,
+                media_url TEXT NOT NULL DEFAULT '',
+                image_data TEXT NOT NULL DEFAULT '',
+                visibility TEXT NOT NULL DEFAULT 'STAFF',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(author_id) REFERENCES users(id)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -1521,6 +1534,11 @@ def init_db() -> None:
         ensure_column(con, "referral_rewards", "referrer_phone", "referrer_phone TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "referral_rewards", "discount_id", "discount_id INTEGER")
         ensure_column(con, "referral_rewards", "claimed_at", "claimed_at TEXT")
+        ensure_column(con, "workspace_posts", "post_type", "post_type TEXT NOT NULL DEFAULT 'UPDATE'")
+        ensure_column(con, "workspace_posts", "media_url", "media_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "workspace_posts", "image_data", "image_data TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "workspace_posts", "visibility", "visibility TEXT NOT NULL DEFAULT 'STAFF'")
+        ensure_column(con, "workspace_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "city_lng", "city_lng REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -3791,6 +3809,83 @@ def get_admin_metrics() -> dict[str, int]:
         }
 
 
+def get_workspace_posts(limit: int = 20) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT workspace_posts.*,
+                   users.name AS author_name,
+                   users.email AS author_email,
+                   users.role AS author_role,
+                   users.is_admin AS author_is_admin,
+                   users.profile_photo_url AS author_photo
+            FROM workspace_posts
+            JOIN users ON users.id = workspace_posts.author_id
+            ORDER BY workspace_posts.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+
+def workspace_role_label(row: sqlite3.Row | dict[str, object] | None) -> str:
+    if row_value(row, "author_is_admin") in {1, "1", True} or row_value(row, "author_role") == ROLE_ADMIN:
+        return "Admin"
+    if row_value(row, "author_role") == ROLE_EMPLOYEE:
+        return "Employee"
+    return "Staff"
+
+
+def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
+    if not posts:
+        return """
+        <article class="admin-feed-card workspace-empty-feed">
+          <div class="admin-feed-head">
+            <span class="admin-feed-avatar">FF</span>
+            <div><b>No profile posts yet</b><span>Workspace feed</span></div>
+          </div>
+          <h2>Share the first team update</h2>
+          <p>Posts created here are saved under your staff profile and visible in the workspace feed.</p>
+        </article>
+        """
+    cards = []
+    for post in posts:
+        author_name = row_value(post, "author_name") or "FairFares Staff"
+        author_initials = "".join(part[:1] for part in author_name.split()[:2]).upper() or "FF"
+        photo = row_value(post, "author_photo")
+        avatar_style = (
+            f' style="background-image:url(&quot;{escape(photo)}&quot;);background-size:cover;background-position:center;"'
+            if photo
+            else ""
+        )
+        image = row_value(post, "image_data") or row_value(post, "media_url")
+        image_html = ""
+        if image:
+            image_html = f'<img class="workspace-post-image" src="{escape(image)}" alt="Workspace post image">'
+        cards.append(
+            f"""
+            <article class="admin-feed-card workspace-post-card">
+              <div class="admin-feed-head">
+                <span class="admin-feed-avatar"{avatar_style}>{"" if photo else escape(author_initials)}</span>
+                <div>
+                  <b>{escape(author_name)}</b>
+                  <span>{escape(workspace_role_label(post))} - {escape(row_value(post, "post_type").title())} - {escape(row_value(post, "created_at"))}</span>
+                </div>
+                <button type="button" data-dashboard-action="open-workspace-post-menu" aria-label="Open post menu">...</button>
+              </div>
+              <p>{escape(row_value(post, "body"))}</p>
+              {image_html}
+              <div class="admin-feed-social-row" aria-label="Feed actions">
+                <button type="button" data-dashboard-action="acknowledge-workspace-post-{escape(row_value(post, "id"))}">Acknowledge</button>
+                <button type="button" data-dashboard-action="comment-workspace-post-{escape(row_value(post, "id"))}">Comment</button>
+                <button type="button" data-dashboard-action="share-workspace-post-{escape(row_value(post, "id"))}">Share Feed</button>
+              </div>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
 def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -5724,6 +5819,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/cars/delete": self.delete_admin_car,
             "/admin/business-expenses": self.create_admin_business_expense,
             "/admin/business-expenses/delete": self.delete_admin_business_expense,
+            "/admin/workspace/post": self.create_workspace_post,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
@@ -7066,6 +7162,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (photo, user["id"]))
         self.send_json({"ok": True, "photo": photo, "message": "Profile photo saved."})
 
+    def create_workspace_post(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        body = (form.get("body") or "").strip()
+        post_type = (form.get("post_type") or "UPDATE").upper().strip()
+        media_url = (form.get("media_url") or "").strip()
+        image_data = (form.get("image_data") or "").strip()
+        if post_type not in {"UPDATE", "HANDOFF", "ALERT", "PROFILE"}:
+            post_type = "UPDATE"
+        if len(body) > 1200:
+            body = body[:1200].strip()
+        if len(media_url) > 1200:
+            media_url = media_url[:1200].strip()
+        if image_data:
+            if image_data.startswith("data:image/svg xml"):
+                image_data = image_data.replace("data:image/svg xml", "data:image/svg+xml", 1)
+            if not image_data.startswith("data:image/") or ";base64," not in image_data or len(image_data) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+                image_data = ""
+        if not body and not image_data and not media_url:
+            self.redirect("/admin/workspace")
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO workspace_posts (author_id, post_type, body, media_url, image_data, visibility)
+                VALUES (?, ?, ?, ?, ?, 'STAFF')
+                """,
+                (row_value(user, "id"), post_type, body or "Shared a workspace update.", media_url, image_data),
+            )
+        self.redirect("/admin/workspace")
+
     def create_guest_booking(self) -> None:
         form = self.read_form()
         first_name = form.get("first_name", "").strip()
@@ -7381,6 +7510,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
         ]
         employee_groups = [
+            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
         ]
@@ -7482,19 +7612,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(body)
 
     def admin_workspace_page(self) -> None:
-        user = self.require_owner_admin()
+        user = self.require_admin()
         if not user:
             return
         metrics = get_admin_metrics()
         initials = "".join(part[:1] for part in row_value(user, "name").split()[:2]).upper() or "FF"
+        role_label = "Admin" if is_admin_user(user) else "Employee"
+        posts = get_workspace_posts()
         body = render_template(
             "admin_workspace.html",
             admin_name=escape(row_value(user, "name")),
+            admin_email=escape(row_value(user, "email")),
+            admin_phone=escape(row_value(user, "phone") or "No phone saved"),
+            staff_role=escape(role_label),
             admin_initials=escape(initials),
             admin_nav=self.render_admin_nav(user, "workspace"),
             available_cars=metrics["available"],
             booked_count=metrics["booked"],
             user_count=metrics["users"],
+            workspace_post_count=escape(str(len(posts))),
+            workspace_posts=render_workspace_posts(posts),
         )
         self.send_html(body)
 

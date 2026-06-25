@@ -113,6 +113,37 @@ document.querySelectorAll("[data-dashboard-action]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    const form = input.closest(".workspace-post-form");
+    const target = form?.querySelector("[data-workspace-post-image-data]");
+    const preview = form?.querySelector("[data-workspace-post-preview]");
+    if (!file || !target || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const image = new Image();
+      image.addEventListener("load", () => {
+        const maxSize = 1200;
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const context = canvas.getContext("2d");
+        context?.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
+        target.value = dataUrl;
+        if (preview instanceof HTMLImageElement) {
+          preview.src = dataUrl;
+          preview.hidden = false;
+        }
+      });
+      image.src = String(reader.result || "");
+    });
+    reader.readAsDataURL(file);
+  });
+});
+
 const bookingCalendarModal = document.getElementById("bookingCalendarModal");
 
 function closeBookingCalendarModal() {
