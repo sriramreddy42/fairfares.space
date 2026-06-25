@@ -33,6 +33,8 @@ SESSION_COOKIE = "fairfares_session"
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
+DEFAULT_PROMOTED_ADMIN_EMAILS = "sriramreddy42@gmail.com"
+DEFAULT_REVOKED_ADMIN_EMAILS = "loki@gmail.com"
 BOOKING_HOLD_MINUTES = 10
 ASSET_VERSION = "20260624m"
 BASE_STYLESHEETS = [
@@ -149,6 +151,11 @@ def configured_admin_credentials() -> tuple[str, str]:
     return email, password
 
 
+def configured_email_set(env_name: str, default_value: str = "") -> set[str]:
+    raw_value = os.environ.get(env_name, default_value)
+    return {email.strip().lower() for email in raw_value.split(",") if email.strip()}
+
+
 def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
     email = email.strip().lower()
     if not email or not password:
@@ -200,6 +207,34 @@ def ensure_default_admin(con: sqlite3.Connection) -> None:
     configured_email, configured_password = configured_admin_credentials()
     if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
         ensure_admin_account(con, configured_email, configured_password)
+
+
+def apply_staff_role_overrides(con: sqlite3.Connection) -> None:
+    promoted_admins = configured_email_set("FAIRFARES_PROMOTED_ADMIN_EMAILS", DEFAULT_PROMOTED_ADMIN_EMAILS)
+    revoked_admins = configured_email_set("FAIRFARES_REVOKED_ADMIN_EMAILS", DEFAULT_REVOKED_ADMIN_EMAILS)
+    for email in revoked_admins:
+        con.execute(
+            """
+            UPDATE users
+            SET is_admin = 0,
+                role = 'CUSTOMER'
+            WHERE lower(email) = ?
+            """,
+            (email,),
+        )
+    for email in promoted_admins - revoked_admins:
+        con.execute(
+            """
+            UPDATE users
+            SET is_admin = 1,
+                role = 'ADMIN',
+                is_verified = 1,
+                verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                guest_account = 0
+            WHERE lower(email) = ?
+            """,
+            (email,),
+        )
 
 
 def create_verification(user_id: int, email: str, purpose: str = "ACCOUNT") -> str:
@@ -1379,6 +1414,7 @@ def init_db() -> None:
 
         ensure_default_admin(con)
         con.execute("UPDATE users SET role = 'ADMIN' WHERE is_admin = 1")
+        apply_staff_role_overrides(con)
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
 
         default_wiki_articles = [
