@@ -49,6 +49,7 @@ SMTP_HOST=smtp.example.com SMTP_PORT=587 SMTP_USER=user SMTP_PASSWORD=password S
 FairFares can send Phase 1 operations alerts to Slack through incoming webhooks. Set a global fallback webhook or specific channel webhooks:
 
 ```bash
+SLACK_BOT_TOKEN=xoxb-...
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_BOOKINGS=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_SUPPORT=https://hooks.slack.com/services/...
@@ -58,6 +59,8 @@ SLACK_WEBHOOK_ADMIN=https://hooks.slack.com/services/...
 ```
 
 If no Slack webhook is configured, notifications are not sent but a local audit copy is still written under `data/outbox/slack-*.json`.
+
+When `SLACK_BOT_TOKEN` is configured, new workspace groups also create a matching public Slack channel such as `#ff-airport-pickups`. The app stores the Slack channel ID/name and shows an `Open #channel` action in the workspace group drawer. The Slack app needs bot scopes for channel creation and posting, including `channels:manage`, `channels:write`, and `chat:write`.
 
 ## Admin
 

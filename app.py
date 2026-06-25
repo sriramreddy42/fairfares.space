@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625t"
+ASSET_VERSION = "20260625u"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -341,10 +341,67 @@ SLACK_WEBHOOK_ENV = {
 }
 
 
+def slack_bot_token() -> str:
+    load_env_file()
+    return os.environ.get("SLACK_BOT_TOKEN", "").strip()
+
+
 def slack_webhook_for(kind: str) -> str:
     load_env_file()
     env_name = SLACK_WEBHOOK_ENV.get(kind, "SLACK_WEBHOOK_ADMIN")
     return os.environ.get(env_name) or os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
+def slack_api_request(method: str, payload: dict[str, object]) -> tuple[dict[str, object], str]:
+    token = slack_bot_token()
+    if not token:
+        return {}, "not configured"
+    request = urllib.request.Request(
+        f"https://slack.com/api/{method}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "fairfares-slack/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8") or "{}")
+            status = "ok" if data.get("ok") else f"Slack API rejected {method}: {data.get('error', 'unknown_error')}"
+            return data, status
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace").strip()
+        return {}, f"Slack API HTTP {error.code}: {detail}"
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as error:
+        return {}, f"Slack API request failed: {error}"
+
+
+def normalize_slack_channel_name(name: str) -> str:
+    clean = re.sub(r"[^a-z0-9_-]+", "-", (name or "").lower()).strip("-_")
+    clean = re.sub(r"[-_]{2,}", "-", clean)
+    return f"ff-{clean or 'workspace'}"[:80].strip("-_")
+
+
+def create_slack_channel_for_workspace_group(name: str) -> tuple[str, str, str, str]:
+    channel_name = normalize_slack_channel_name(name)
+    data, status = slack_api_request("conversations.create", {"name": channel_name, "is_private": False})
+    if not data.get("ok"):
+        return "", channel_name, "", status
+    channel = data.get("channel") if isinstance(data.get("channel"), dict) else {}
+    channel_id = str(channel.get("id") or "")
+    created_name = str(channel.get("name") or channel_name)
+    channel_url = f"https://slack.com/app_redirect?channel={urllib.parse.quote(channel_id)}" if channel_id else ""
+    if channel_id:
+        slack_api_request(
+            "chat.postMessage",
+            {
+                "channel": channel_id,
+                "text": f"FairFares workspace group created: {name}",
+            },
+        )
+    return channel_id, created_name, channel_url, "created"
 
 
 def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]] | None = None) -> str:
@@ -1534,6 +1591,8 @@ def init_db() -> None:
                 name TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
                 slack_url TEXT NOT NULL DEFAULT '',
+                slack_channel_id TEXT NOT NULL DEFAULT '',
+                slack_channel_name TEXT NOT NULL DEFAULT '',
                 created_by INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(created_by) REFERENCES users(id)
@@ -1664,6 +1723,8 @@ def init_db() -> None:
         ensure_column(con, "workspace_posts", "group_id", "group_id INTEGER")
         ensure_column(con, "workspace_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "workspace_groups", "slack_url", "slack_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "workspace_groups", "slack_channel_id", "slack_channel_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "workspace_groups", "slack_channel_name", "slack_channel_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "city_lng", "city_lng REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -4049,18 +4110,19 @@ def render_workspace_groups(groups: list[sqlite3.Row], selected_group_id: int | 
         active = " active" if selected_group_id == group_id else ""
         joined = bool(int(row_value(group, "joined") or 0))
         slack_url = row_value(group, "slack_url") or ""
+        slack_channel_name = row_value(group, "slack_channel_name") or "Slack"
         join_action = (
             '<span class="workspace-group-joined">Joined</span>'
             if joined
             else f'<form method="post" action="/admin/workspace/group/join"><input type="hidden" name="group_id" value="{group_id}"><button type="submit">Join</button></form>'
         )
         slack_action = (
-            f'<a class="workspace-group-slack" href="{escape(slack_url)}" target="_blank" rel="noopener">Open Slack</a>'
+            f'<a class="workspace-group-slack" href="{escape(slack_url)}" target="_blank" rel="noopener">Open #{escape(slack_channel_name)}</a>'
             if slack_url
             else (
                 f'<form method="post" action="/admin/workspace/group/slack" class="workspace-group-slack-form">'
                 f'<input type="hidden" name="group_id" value="{group_id}">'
-                f'<input name="slack_url" maxlength="600" placeholder="Slack channel link">'
+                f'<input name="slack_url" maxlength="600" placeholder="Fallback Slack link">'
                 f'<button type="submit">Save</button></form>'
             )
         )
@@ -7556,19 +7618,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/admin/workspace")
             return
         with db() as con:
+            existing_group = con.execute("SELECT id FROM workspace_groups WHERE name = ?", (name,)).fetchone()
+            slack_channel_id = ""
+            slack_channel_name = ""
+            if not existing_group and not slack_url:
+                slack_channel_id, slack_channel_name, slack_url, _slack_status = create_slack_channel_for_workspace_group(name)
             con.execute(
                 """
-                INSERT OR IGNORE INTO workspace_groups (name, description, slack_url, created_by)
-                VALUES (?, ?, ?, ?)
+                INSERT OR IGNORE INTO workspace_groups (
+                    name, description, slack_url, slack_channel_id, slack_channel_name, created_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (name, description, slack_url, row_value(user, "id")),
+                (name, description, slack_url, slack_channel_id, slack_channel_name, row_value(user, "id")),
             )
             group = con.execute("SELECT id FROM workspace_groups WHERE name = ?", (name,)).fetchone()
             if group:
                 if slack_url:
                     con.execute(
-                        "UPDATE workspace_groups SET slack_url = ? WHERE id = ?",
-                        (slack_url, row_value(group, "id")),
+                        """
+                        UPDATE workspace_groups
+                        SET slack_url = ?,
+                            slack_channel_id = COALESCE(NULLIF(?, ''), slack_channel_id),
+                            slack_channel_name = COALESCE(NULLIF(?, ''), slack_channel_name)
+                        WHERE id = ?
+                        """,
+                        (slack_url, slack_channel_id, slack_channel_name, row_value(group, "id")),
                     )
                 con.execute(
                     """
@@ -7592,7 +7667,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             group = con.execute("SELECT id FROM workspace_groups WHERE id = ?", (group_id,)).fetchone()
             if group:
-                con.execute("UPDATE workspace_groups SET slack_url = ? WHERE id = ?", (slack_url, group_id))
+                con.execute(
+                    """
+                    UPDATE workspace_groups
+                    SET slack_url = ?,
+                        slack_channel_id = '',
+                        slack_channel_name = ''
+                    WHERE id = ?
+                    """,
+                    (slack_url, group_id),
+                )
         self.redirect(f"/admin/workspace?group={group_id}" if group_id else "/admin/workspace")
 
     def join_workspace_group(self) -> None:
