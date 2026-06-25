@@ -326,13 +326,6 @@
 .vehicle-cost-form {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-.vehicle-purchase-form {
-  align-items: end;
-  grid-template-columns: minmax(220px, 320px) minmax(180px, 240px);
-}
-.vehicle-purchase-form button {
-  grid-column: auto;
-}
 .email-calendar-poster {
   background: linear-gradient(180deg, #fff, #f4f9ff);
   border: 1px solid #cdddf3;
@@ -971,8 +964,7 @@
   }
 
   .vehicle-finance-metrics,
-  .vehicle-cost-form,
-  .vehicle-purchase-form {
+  .vehicle-cost-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -980,7 +972,6 @@
 @media (max-width: 640px) {
   .vehicle-finance-metrics,
   .vehicle-cost-form,
-  .vehicle-purchase-form,
   .admin-form {
     grid-template-columns: 1fr;
   }

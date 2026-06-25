@@ -39,23 +39,6 @@
     <section class="admin-card glass-card">
       <div class="admin-card-head">
         <div>
-          <h2>Purchase Cost</h2>
-          <p>Enter the vehicle purchase cost before using ROI as profit/loss.</p>
-        </div>
-      </div>
-      <form class="admin-form vehicle-purchase-form" method="post" action="/admin/cars/status">
-        <input type="hidden" name="car_id" value="$car_id">
-        <input type="hidden" name="redirect_to" value="/admin/cars/detail?id=$car_id">
-        <input type="hidden" name="status" value="$car_status">
-        <input type="hidden" name="daily_price" value="$daily_price">
-        <label><span>Purchase Cost</span><input name="purchase_cost" type="number" min="0" step="0.01" value="$purchase_cost_value" required></label>
-        <button type="submit">Update Purchase Cost</button>
-      </form>
-    </section>
-
-    <section class="admin-card glass-card">
-      <div class="admin-card-head">
-        <div>
           <h2>Add Maintenance or Repair</h2>
           <p>Track service costs against this vehicle for ROI reporting.</p>
         </div>
