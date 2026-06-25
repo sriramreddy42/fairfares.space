@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625l"
+ASSET_VERSION = "20260625m"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3914,9 +3914,9 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
               <p>{escape(row_value(post, "body"))}</p>
               {image_html}
               <div class="admin-feed-social-row" aria-label="Feed actions">
-                <button type="button" data-dashboard-action="acknowledge-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
-                <button type="button" data-dashboard-action="comment-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
-                <button type="button" data-dashboard-action="share-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+                <button type="button" data-dashboard-action="review-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
+                <button type="button" data-dashboard-action="note-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Add note</button>
+                <button type="button" data-dashboard-action="forward-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Forward</button>
               </div>
             </article>
             """

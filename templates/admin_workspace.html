@@ -49,13 +49,12 @@
           <textarea name="body" rows="3" maxlength="1200" placeholder="What should the team know?"></textarea>
           <div class="workspace-composer-tools">
             <label><span>Post type</span><select name="post_type"><option value="UPDATE">Update</option><option value="HANDOFF">Handoff</option><option value="ALERT">Alert</option><option value="PROFILE">Profile</option></select></label>
-            <label><span>Image URL</span><input name="media_url" placeholder="Optional image link"></label>
-            <label class="workspace-upload-button"><span>Upload photo</span><input type="file" accept="image/*" data-workspace-post-image></label>
+            <label class="workspace-upload-button"><span>Attachment</span><input type="file" accept="image/*" data-workspace-post-image><b><i class="workspace-button-icon" aria-hidden="true">&#128247;</i>Attach photo</b><small data-workspace-post-file-label>No photo selected</small></label>
             <input type="hidden" name="image_data" data-workspace-post-image-data>
           </div>
-          <img class="workspace-post-preview" data-workspace-post-preview alt="Selected feed upload preview" hidden>
+          <img class="workspace-post-preview" data-workspace-post-preview alt="" hidden>
           <div class="admin-feed-actions">
-            <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+            <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Post update</button>
             <button type="button" data-dashboard-action="open-live-queue"><i class="workspace-button-icon" aria-hidden="true">&#128202;</i>Live Queue</button>
             <button type="button" data-dashboard-action="start-oncall-chat"><i class="workspace-button-icon" aria-hidden="true">&#128222;</i>On-call Chat</button>
           </div>
@@ -77,9 +76,9 @@
             <button type="button" data-dashboard-action="share-queue-summary"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share</button>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
-            <button type="button" data-dashboard-action="share-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+            <button type="button" data-dashboard-action="review-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
+            <button type="button" data-dashboard-action="note-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Add note</button>
+            <button type="button" data-dashboard-action="forward-queue-post"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Forward</button>
           </div>
         </article>
 
@@ -96,9 +95,9 @@
             <a href="/admin/oncall"><i class="workspace-button-icon" aria-hidden="true">&#128222;</i>On-call Schedule</a>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
-            <button type="button" data-dashboard-action="share-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+            <button type="button" data-dashboard-action="review-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
+            <button type="button" data-dashboard-action="note-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Add note</button>
+            <button type="button" data-dashboard-action="forward-oncall-post"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Forward</button>
           </div>
         </article>
 
@@ -114,9 +113,9 @@
             <a href="/admin"><i class="workspace-button-icon" aria-hidden="true">&#128664;</i>Add Vehicle</a>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
-            <button type="button" data-dashboard-action="acknowledge-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Acknowledge</button>
-            <button type="button" data-dashboard-action="comment-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#128172;</i>Comment</button>
-            <button type="button" data-dashboard-action="share-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Share Feed</button>
+            <button type="button" data-dashboard-action="review-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
+            <button type="button" data-dashboard-action="note-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Add note</button>
+            <button type="button" data-dashboard-action="forward-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Forward</button>
           </div>
         </article>
       </div>

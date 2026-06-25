@@ -926,18 +926,21 @@
   grid-column: 1 / -1;
 }
 .admin-feed-social-row {
-  border-top: 1px solid rgba(7, 20, 63, 0.08);
+  background: rgba(245, 250, 253, 0.62);
+  border: 1px solid rgba(126, 198, 232, 0.24);
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding-top: 10px;
+  padding: 8px;
 }
 .admin-feed-social-row button {
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(126, 198, 232, 0.38);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(126, 198, 232, 0.30);
   border-radius: 7px;
   color: var(--navy);
-  font-weight: 900;
+  font-size: 0.84rem;
+  font-weight: 850;
   min-height: 38px;
   padding: 8px 10px;
 }
@@ -986,7 +989,7 @@
   display: grid;
   gap: 10px;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(130px, 0.6fr) minmax(0, 1fr) minmax(130px, 0.6fr);
+  grid-template-columns: minmax(150px, 0.6fr) minmax(190px, 1fr);
 }
 .workspace-composer-tools label {
   display: grid;
@@ -999,10 +1002,35 @@
   text-transform: uppercase;
 }
 .workspace-upload-button {
+  align-content: start;
   cursor: pointer;
+  min-width: 0;
 }
 .workspace-upload-button input {
-  padding: 8px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+.workspace-upload-button b {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(126, 198, 232, 0.42);
+  border-radius: 8px;
+  color: var(--navy);
+  display: inline-flex;
+  font-weight: 900;
+  min-height: 43px;
+  padding: 8px 12px;
+}
+.workspace-upload-button small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workspace-post-preview,
 .workspace-post-image {
@@ -1014,6 +1042,9 @@
   max-height: 420px;
   object-fit: cover;
   width: 100%;
+}
+.workspace-post-preview[hidden] {
+  display: none;
 }
 .workspace-empty-feed {
   border-style: dashed;

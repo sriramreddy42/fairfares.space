@@ -119,7 +119,9 @@ document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
     const form = input.closest(".workspace-post-form");
     const target = form?.querySelector("[data-workspace-post-image-data]");
     const preview = form?.querySelector("[data-workspace-post-preview]");
+    const label = form?.querySelector("[data-workspace-post-file-label]");
     if (!file || !target || !file.type.startsWith("image/")) return;
+    if (label) label.textContent = file.name || "Photo attached";
     const reader = new FileReader();
     reader.addEventListener("load", () => {
       const image = new Image();
