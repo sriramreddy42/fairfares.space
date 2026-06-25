@@ -283,6 +283,17 @@ document.querySelectorAll("[data-workspace-post-cancel]").forEach((button) => {
 
 document.addEventListener("click", () => closeWorkspacePostMenus());
 
+document.querySelectorAll("[data-workspace-group-search]").forEach((input) => {
+  input.addEventListener("input", () => {
+    const query = String(input.value || "").trim().toLowerCase();
+    const panel = input.closest(".workspace-group-panel");
+    panel?.querySelectorAll("[data-workspace-group-item]").forEach((item) => {
+      const name = String(item.dataset.groupName || item.textContent || "").toLowerCase();
+      item.hidden = Boolean(query && !name.includes(query));
+    });
+  });
+});
+
 document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
   input.addEventListener("change", () => {
     const file = input.files?.[0];

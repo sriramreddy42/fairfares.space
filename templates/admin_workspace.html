@@ -15,6 +15,23 @@
 
   <main class="workspace-shell" aria-label="Admin workspace">
     <aside class="workspace-left admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
+      <section class="workspace-group-panel" aria-label="Workspace groups">
+        <div class="workspace-group-head">
+          <b>Groups</b>
+          <span>$workspace_group_count active</span>
+        </div>
+        <label class="workspace-group-search">
+          <span>Search groups</span>
+          <input type="search" placeholder="Search group" data-workspace-group-search>
+        </label>
+        <div class="workspace-group-list" data-workspace-group-list>
+          $workspace_groups
+        </div>
+        <form method="post" action="/admin/workspace/group" class="workspace-group-form">
+          <input name="name" maxlength="60" placeholder="Create group">
+          <button type="submit">Add</button>
+        </form>
+      </section>
       <article class="admin-profile-card">
         <span class="admin-profile-avatar">$admin_initials</span>
         <b>$admin_name</b>
@@ -61,10 +78,11 @@
               <span class="admin-profile-avatar">$admin_initials</span>
               <div>
                 <b>$admin_name</b>
-                <span class="workspace-visibility-chip">&#127760; Staff</span>
+                <span class="workspace-visibility-chip">&#127760; Workspace</span>
               </div>
             </div>
             <input type="hidden" name="post_type" value="UPDATE">
+            $workspace_visibility_controls
             <div class="workspace-editor-toolbar" aria-label="Writing tools">
               <button type="button" data-editor-command="bold" title="Bold"><b>B</b></button>
               <button type="button" data-editor-command="italic" title="Italic"><i>I</i></button>

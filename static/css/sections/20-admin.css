@@ -681,6 +681,95 @@
   color: var(--muted);
   font-weight: 800;
 }
+.workspace-group-panel {
+  background: rgba(255, 255, 255, 0.70);
+  border: 1px solid rgba(126, 198, 232, 0.32);
+  border-radius: 10px;
+  box-shadow: 0 16px 42px rgba(6, 31, 76, 0.09);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.workspace-group-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.workspace-group-head b {
+  color: var(--navy);
+  font-size: 1rem;
+  font-weight: 950;
+}
+.workspace-group-head span,
+.workspace-group-search span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+.workspace-group-search {
+  display: grid;
+  gap: 5px;
+}
+.workspace-group-search input,
+.workspace-group-form input,
+.workspace-visibility-select select {
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(126, 198, 232, 0.38);
+  border-radius: 8px;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 800;
+  min-width: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+.workspace-group-list {
+  display: grid;
+  gap: 7px;
+  max-height: 178px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.workspace-group-chip {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(126, 198, 232, 0.28);
+  border-radius: 8px;
+  color: var(--navy);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+}
+.workspace-group-chip:hover {
+  background: rgba(229, 239, 248, 0.96);
+}
+.workspace-group-chip span,
+.workspace-group-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.workspace-group-empty {
+  margin: 0;
+}
+.workspace-group-form {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.workspace-group-form button {
+  background: var(--navy);
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  padding: 8px 12px;
+}
 .admin-profile-stats {
   display: grid;
   gap: 6px;
@@ -1260,6 +1349,15 @@
   font-weight: 900;
   justify-self: start;
   padding: 4px 8px;
+}
+.workspace-visibility-select {
+  display: grid;
+  gap: 5px;
+}
+.workspace-visibility-select span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
 }
 .workspace-post-modal textarea {
   background: transparent;
