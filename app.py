@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625o"
+ASSET_VERSION = "20260625p"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3843,6 +3843,15 @@ def get_admin_metrics() -> dict[str, int]:
             "cars": con.execute("SELECT COUNT(*) AS total FROM cars").fetchone()["total"],
             "available": con.execute("SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) = 'AVAILABLE'").fetchone()["total"],
             "booked": con.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"],
+            "tickets": con.execute("SELECT COUNT(*) AS total FROM support_tickets WHERE status != 'CLOSED'").fetchone()["total"],
+            "escalations": con.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM support_tickets
+                WHERE status != 'CLOSED'
+                  AND (escalated_to_oncall = 1 OR priority = 'P0')
+                """
+            ).fetchone()["total"],
             "users": con.execute("SELECT COUNT(*) AS total FROM users WHERE role = 'CUSTOMER' AND is_admin = 0").fetchone()["total"],
         }
 
@@ -7790,6 +7799,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             admin_nav=self.render_admin_nav(user, "workspace"),
             available_cars=metrics["available"],
             booked_count=metrics["booked"],
+            open_ticket_count=metrics["tickets"],
+            escalation_count=metrics["escalations"],
+            ticket_badge_class="has-count" if metrics["tickets"] else "",
+            escalation_badge_class="has-count" if metrics["escalations"] else "",
             user_count=metrics["users"],
             workspace_post_count=escape(str(len(posts))),
             workspace_posts=render_workspace_posts(posts),
