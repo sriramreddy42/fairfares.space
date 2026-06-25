@@ -7259,7 +7259,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <div>
               <p class="eyebrow">Schedule</p>
               <h2>{escape(title)}</h2>
-              <p>{booking_count} booking{'s' if booking_count != 1 else ''} shown. Click a booking block for customer, car, and trip details.</p>
+              <p>{booking_count} pickup{'s' if booking_count != 1 else ''} shown. Click a booking block for customer, car, and trip details.</p>
             </div>
             <nav class="booking-calendar-tabs" aria-label="Booking calendar range">
               {''.join(calendar_links)}
@@ -7300,12 +7300,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def booking_touches_day(self, row: sqlite3.Row, day: date) -> bool:
         pickup = booking_datetime_from_row(row, "pickup_date", "pickup_time")
-        dropoff = booking_datetime_from_row(row, "dropoff_date", "dropoff_time")
-        if not pickup and not dropoff:
-            return False
-        start = (pickup or dropoff).date()
-        end = (dropoff or pickup).date()
-        return start <= day <= end
+        return bool(pickup and pickup.date() == day)
 
     def render_booking_calendar_day(self, day: date, rows: list[sqlite3.Row], selected_calendar: str) -> str:
         sorted_rows = sorted(rows, key=lambda row: booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.max)
@@ -7323,18 +7318,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_booking_calendar_block(self, row: sqlite3.Row, day: date) -> str:
-        pickup = booking_datetime_from_row(row, "pickup_date", "pickup_time")
-        dropoff = booking_datetime_from_row(row, "dropoff_date", "dropoff_time")
-        starts_today = bool(pickup and pickup.date() == day)
-        ends_today = bool(dropoff and dropoff.date() == day)
-        if starts_today and ends_today:
-            time_label = f"{row_value(row, 'pickup_time')} - {row_value(row, 'dropoff_time')}"
-        elif starts_today:
-            time_label = f"Starts {row_value(row, 'pickup_time')}"
-        elif ends_today:
-            time_label = f"Returns {row_value(row, 'dropoff_time')}"
-        else:
-            time_label = f"{row_value(row, 'pickup_time')} - {row_value(row, 'dropoff_time')}"
+        time_label = f"Pickup {row_value(row, 'pickup_time')} - Return {row_value(row, 'dropoff_time')}"
         status = booking_status_label(row["booking_status"], row["payment_status"])
         vehicle = f"{row_value(row, 'car_year')} {row_value(row, 'car_name')}".strip()
         detail_attrs = {
