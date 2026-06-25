@@ -46,10 +46,23 @@ SMTP_HOST=smtp.example.com SMTP_PORT=587 SMTP_USER=user SMTP_PASSWORD=password S
 
 ## Slack Operations Alerts
 
-FairFares can send Phase 1 operations alerts to Slack through incoming webhooks. Set a global fallback webhook or specific channel webhooks:
+FairFares can send operations alerts through the Slack bot token. Add the bot to the destination channels, then configure the token and optional channel overrides:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-...
+SLACK_CHANNEL_BOOKINGS=#bookings
+SLACK_CHANNEL_PAYMENTS=#payments
+SLACK_CHANNEL_PICKUPS=#pickups
+SLACK_CHANNEL_RETURNS=#returns
+SLACK_CHANNEL_SUPPORT=#customer-support
+SLACK_CHANNEL_VEHICLES=#vehicle-maintenance
+SLACK_CHANNEL_ADMIN=#admin
+SLACK_CHANNEL_AI=#ai-agent
+```
+
+Incoming webhooks can remain configured as a fallback, but normal alerts use `chat.postMessage` when `SLACK_BOT_TOKEN` is available:
+
+```bash
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_BOOKINGS=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_SUPPORT=https://hooks.slack.com/services/...
@@ -58,7 +71,7 @@ SLACK_WEBHOOK_PAYMENTS=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_ADMIN=https://hooks.slack.com/services/...
 ```
 
-If no Slack webhook is configured, notifications are not sent but a local audit copy is still written under `data/outbox/slack-*.json`.
+If no Slack token or webhook is configured, notifications are not sent but a local audit copy is still written under `data/outbox/slack-*.json`.
 
 When `SLACK_BOT_TOKEN` is configured, new workspace groups also create a matching public Slack channel such as `#ff-airport-pickups`. The app stores the Slack channel ID/name and shows an `Open #channel` action in the workspace group drawer. The Slack app needs bot scopes for channel creation and posting, including `channels:manage`, `channels:write`, and `chat:write`.
 

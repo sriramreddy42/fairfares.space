@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625u"
+ASSET_VERSION = "20260625v"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -340,6 +340,30 @@ SLACK_WEBHOOK_ENV = {
     "admin": "SLACK_WEBHOOK_ADMIN",
 }
 
+SLACK_CHANNEL_DEFAULTS = {
+    "bookings": "#bookings",
+    "pickups": "#pickups",
+    "returns": "#returns",
+    "support": "#customer-support",
+    "vehicles": "#vehicle-maintenance",
+    "payments": "#payments",
+    "admin": "#admin",
+    "ai": "#ai-agent",
+    "general": "#general",
+}
+
+SLACK_CHANNEL_ENV = {
+    "bookings": "SLACK_CHANNEL_BOOKINGS",
+    "pickups": "SLACK_CHANNEL_PICKUPS",
+    "returns": "SLACK_CHANNEL_RETURNS",
+    "support": "SLACK_CHANNEL_SUPPORT",
+    "vehicles": "SLACK_CHANNEL_VEHICLES",
+    "payments": "SLACK_CHANNEL_PAYMENTS",
+    "admin": "SLACK_CHANNEL_ADMIN",
+    "ai": "SLACK_CHANNEL_AI",
+    "general": "SLACK_CHANNEL_GENERAL",
+}
+
 
 def slack_bot_token() -> str:
     load_env_file()
@@ -350,6 +374,12 @@ def slack_webhook_for(kind: str) -> str:
     load_env_file()
     env_name = SLACK_WEBHOOK_ENV.get(kind, "SLACK_WEBHOOK_ADMIN")
     return os.environ.get(env_name) or os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
+def slack_channel_for(kind: str) -> str:
+    load_env_file()
+    env_name = SLACK_CHANNEL_ENV.get(kind, "SLACK_CHANNEL_ADMIN")
+    return os.environ.get(env_name) or SLACK_CHANNEL_DEFAULTS.get(kind, "#admin")
 
 
 def slack_api_request(method: str, payload: dict[str, object]) -> tuple[dict[str, object], str]:
@@ -406,12 +436,20 @@ def create_slack_channel_for_workspace_group(name: str) -> tuple[str, str, str, 
 
 def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]] | None = None) -> str:
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
-    webhook_url = slack_webhook_for(kind)
     payload: dict[str, object] = {"text": text}
     if blocks:
         payload["blocks"] = blocks
     status = "not configured"
-    if webhook_url:
+    channel = slack_channel_for(kind)
+    bot_payload = dict(payload)
+    bot_payload["channel"] = channel
+    data, bot_status = slack_api_request("chat.postMessage", bot_payload)
+    if data.get("ok"):
+        status = f"sent to Slack channel {channel}"
+    else:
+        webhook_url = slack_webhook_for(kind)
+        status = bot_status
+    if status != f"sent to Slack channel {channel}" and webhook_url:
         request = urllib.request.Request(
             webhook_url,
             data=json.dumps(payload).encode("utf-8"),
