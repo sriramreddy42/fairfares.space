@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625j"
+ASSET_VERSION = "20260625k"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3719,6 +3719,7 @@ def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
 ADMIN_NAV_ICONS = {
     "AI Agent": "&#129302;",
     "Bookings": "&#128663;",
+    "Booked Cars": "&#128663;",
     "Commercials": "&#127916;",
     "Customers": "&#128100;",
     "Dashboard": "&#127968;",
@@ -3727,15 +3728,22 @@ ADMIN_NAV_ICONS = {
     "Email Marketing": "&#9993;",
     "Employees": "&#128101;",
     "Explorer": "&#129517;",
+    "Fleet": "&#128664;",
     "Inventory": "&#128664;",
+    "Knowledge": "&#129302;",
     "Log out": "&#8617;",
     "Marketing": "&#128227;",
     "On-call": "&#128222;",
+    "Operations": "&#128736;",
     "Payments": "&#128179;",
+    "People": "&#128101;",
     "Reports": "&#128200;",
+    "ROI": "&#128200;",
     "Settings": "&#9881;",
     "Staff Requests": "&#128101;",
+    "System": "&#9881;",
     "Tickets": "&#127903;",
+    "Users": "&#128100;",
     "User Pickup": "&#129706;",
     "User Portal": "&#127760;",
     "Vehicles": "&#128664;",
@@ -7531,21 +7539,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
         admin_groups = [
-            ("workspace", "Dashboard", "/admin/workspace", [("workspace", "/admin/workspace", "Dashboard")]),
-            ("bookings", "Bookings", "/admin/bookings", [("bookings", "/admin/bookings", "Bookings"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("payments", "/admin/bookings", "Payments"), ("documents", "/admin/pickup", "Documents")]),
-            ("vehicles", "Vehicles", "/admin", [("portal", "/admin", "Inventory")]),
-            ("customers", "Customers", "/admin/users", [("users", "/admin/users", "Customers")]),
-            ("verification", "Verification", "/admin/pickup", [("pickup", "/admin/pickup", "User Pickup")]),
-            ("employees", "Employees", "/admin/requests", [("requests", "/admin/requests", "Staff Requests")]),
+            ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
+            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
+            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
+            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
-            ("reports", "Reports", "/admin/roi", [("roi", "/admin/roi", "Reports")]),
-            ("ai", "AI Agent", "/admin/wiki", [("wiki", "/admin/wiki", "AI Agent")]),
-            ("settings", "Settings", "/admin/system", [("system", "/admin/system", "Settings")]),
+            ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
+            ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
         ]
         employee_groups = [
-            ("workspace", "Dashboard", "/admin/workspace", [("workspace", "/admin/workspace", "Dashboard")]),
-            ("bookings", "Bookings", "/admin/bookings", [("bookings", "/admin/bookings", "Bookings"), ("tickets", "/admin/tickets", "Tickets")]),
-            ("verification", "Verification", "/admin/pickup", [("pickup", "/admin/pickup", "User Pickup")]),
+            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
+            ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
         ]
         groups = admin_groups if is_admin_user(user) else employee_groups
