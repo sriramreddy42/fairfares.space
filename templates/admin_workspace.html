@@ -40,25 +40,66 @@
 
     <section class="workspace-center" aria-label="Workspace feed">
       <div class="workspace-feed-scroll" tabindex="0">
-        <form method="post" action="/admin/workspace/post" class="admin-feed-composer workspace-post-form">
-          <span class="admin-profile-avatar">FF</span>
-          <div>
-            <b>Share to your profile</b>
-            <span>Post an internal update, handoff note, alert, or profile activity.</span>
-          </div>
-          <textarea name="body" rows="3" maxlength="1200" placeholder="What should the team know?"></textarea>
-          <div class="workspace-composer-tools">
-            <label><span>Post type</span><select name="post_type"><option value="UPDATE">Update</option><option value="HANDOFF">Handoff</option><option value="ALERT">Alert</option><option value="PROFILE">Profile</option></select></label>
-            <label class="workspace-upload-button"><span>Attachment</span><input type="file" accept="image/*" data-workspace-post-image><b><i class="workspace-button-icon" aria-hidden="true">&#128247;</i>Attach photo</b><small data-workspace-post-file-label>No photo selected</small></label>
+        <article class="workspace-compose-card" aria-label="Create workspace post">
+          <button class="workspace-compose-trigger" type="button" data-workspace-post-open aria-haspopup="dialog" aria-controls="workspacePostModal">
+            <span class="admin-profile-avatar">$admin_initials</span>
+            <span>What&apos;s on your mind, $admin_first_name?</span>
+          </button>
+          <button class="workspace-compose-photo" type="button" data-workspace-post-open data-workspace-post-photo aria-controls="workspacePostModal">
+            <i class="workspace-button-icon" aria-hidden="true">&#128247;</i>
+            <span>Photo</span>
+          </button>
+        </article>
+
+        <section class="workspace-post-modal-backdrop" id="workspacePostModal" hidden>
+          <form method="post" action="/admin/workspace/post" class="workspace-post-modal workspace-post-form" role="dialog" aria-modal="true" aria-labelledby="workspacePostTitle">
+            <div class="workspace-post-modal-head">
+              <h2 id="workspacePostTitle">Create post</h2>
+              <button type="button" data-workspace-post-close aria-label="Close create post">x</button>
+            </div>
+            <div class="workspace-post-author">
+              <span class="admin-profile-avatar">$admin_initials</span>
+              <div>
+                <b>$admin_name</b>
+                <span class="workspace-visibility-chip">&#127760; Staff</span>
+              </div>
+            </div>
+            <input type="hidden" name="post_type" value="UPDATE">
+            <textarea name="body" rows="5" maxlength="1200" placeholder="What&apos;s on your mind, $admin_first_name?"></textarea>
+            <img class="workspace-post-preview" data-workspace-post-preview alt="" hidden>
+            <div class="workspace-post-addons">
+              <b>Add to your post</b>
+              <label class="workspace-post-addon" title="Attach photo">
+                <input type="file" accept="image/*" data-workspace-post-image>
+                <i aria-hidden="true">&#128247;</i>
+                <span>Photo</span>
+              </label>
+              <button type="button" data-dashboard-action="tag-workspace-teammate" title="Tag team">
+                <i aria-hidden="true">&#128101;</i>
+                <span>Team</span>
+              </button>
+              <button type="button" data-dashboard-action="mood-workspace-post" title="Set status">
+                <i aria-hidden="true">&#9786;</i>
+                <span>Status</span>
+              </button>
+              <button type="button" data-dashboard-action="location-workspace-post" title="Add location">
+                <i aria-hidden="true">&#128205;</i>
+                <span>Location</span>
+              </button>
+              <button type="button" data-dashboard-action="call-workspace-post" title="Call note">
+                <i aria-hidden="true">&#128222;</i>
+                <span>Call</span>
+              </button>
+              <button type="button" data-dashboard-action="more-workspace-post" title="More options">
+                <i aria-hidden="true">&#8230;</i>
+                <span>More</span>
+              </button>
+            </div>
+            <small class="workspace-post-file-note" data-workspace-post-file-label>No photo selected</small>
             <input type="hidden" name="image_data" data-workspace-post-image-data>
-          </div>
-          <img class="workspace-post-preview" data-workspace-post-preview alt="" hidden>
-          <div class="admin-feed-actions">
-            <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#128227;</i>Post update</button>
-            <button type="button" data-dashboard-action="open-live-queue"><i class="workspace-button-icon" aria-hidden="true">&#128202;</i>Live Queue</button>
-            <button type="button" data-dashboard-action="start-oncall-chat"><i class="workspace-button-icon" aria-hidden="true">&#128222;</i>On-call Chat</button>
-          </div>
-        </form>
+            <button class="workspace-post-submit" type="submit">Post</button>
+          </form>
+        </section>
 
         $workspace_posts
 

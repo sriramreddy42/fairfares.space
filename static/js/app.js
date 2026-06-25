@@ -113,6 +113,49 @@ document.querySelectorAll("[data-dashboard-action]").forEach((button) => {
   });
 });
 
+const workspacePostModal = document.getElementById("workspacePostModal");
+
+function closeWorkspacePostModal() {
+  if (!workspacePostModal) return;
+  workspacePostModal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+function openWorkspacePostModal(openPhoto = false) {
+  if (!workspacePostModal) return;
+  workspacePostModal.hidden = false;
+  document.body.classList.add("modal-open");
+  const textarea = workspacePostModal.querySelector("textarea[name='body']");
+  const fileInput = workspacePostModal.querySelector("[data-workspace-post-image]");
+  window.setTimeout(() => {
+    if (openPhoto && fileInput instanceof HTMLInputElement) {
+      fileInput.click();
+      return;
+    }
+    textarea?.focus();
+  }, 40);
+}
+
+document.querySelectorAll("[data-workspace-post-open]").forEach((button) => {
+  button.addEventListener("click", () => {
+    openWorkspacePostModal(button.hasAttribute("data-workspace-post-photo"));
+  });
+});
+
+document.querySelectorAll("[data-workspace-post-close]").forEach((button) => {
+  button.addEventListener("click", closeWorkspacePostModal);
+});
+
+workspacePostModal?.addEventListener("click", (event) => {
+  if (event.target === workspacePostModal) closeWorkspacePostModal();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && workspacePostModal && !workspacePostModal.hidden) {
+    closeWorkspacePostModal();
+  }
+});
+
 document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
   input.addEventListener("change", () => {
     const file = input.files?.[0];

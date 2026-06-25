@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625m"
+ASSET_VERSION = "20260625n"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -7654,12 +7654,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         metrics = get_admin_metrics()
-        initials = "".join(part[:1] for part in row_value(user, "name").split()[:2]).upper() or "FF"
+        name_parts = row_value(user, "name").split()
+        initials = "".join(part[:1] for part in name_parts[:2]).upper() or "FF"
+        first_name = name_parts[0] if name_parts else "FairFares"
         role_label = "Admin" if is_admin_user(user) else "Employee"
         posts = get_workspace_posts()
         body = render_template(
             "admin_workspace.html",
             admin_name=escape(row_value(user, "name")),
+            admin_first_name=escape(first_name),
             admin_email=escape(row_value(user, "email")),
             admin_phone=escape(row_value(user, "phone") or "No phone saved"),
             staff_role=escape(role_label),

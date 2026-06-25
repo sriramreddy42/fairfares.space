@@ -968,6 +968,212 @@
   overflow-wrap: anywhere;
   padding: 7px 8px;
 }
+.workspace-compose-card {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(126, 198, 232, 0.34);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(6, 31, 76, 0.10);
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+}
+.workspace-compose-trigger {
+  align-items: center;
+  background: rgba(239, 244, 249, 0.92);
+  border: 1px solid rgba(126, 198, 232, 0.20);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  gap: 10px;
+  min-height: 52px;
+  min-width: 0;
+  padding: 7px 16px 7px 7px;
+  text-align: left;
+}
+.workspace-compose-trigger:hover,
+.workspace-compose-photo:hover {
+  background: rgba(229, 239, 248, 0.98);
+}
+.workspace-compose-trigger > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-compose-photo {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(126, 198, 232, 0.34);
+  border-radius: 10px;
+  color: var(--navy);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 900;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 14px;
+}
+.workspace-post-modal-backdrop {
+  align-items: center;
+  background: rgba(10, 31, 63, 0.22);
+  backdrop-filter: blur(10px);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 2147483200;
+}
+.workspace-post-modal-backdrop[hidden] {
+  display: none;
+}
+.workspace-post-modal {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(126, 198, 232, 0.36);
+  border-radius: 14px;
+  box-shadow: 0 28px 80px rgba(6, 31, 76, 0.28);
+  color: var(--navy);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 0 20px 20px;
+  width: min(620px, calc(100vw - 28px));
+}
+.workspace-post-modal-head {
+  align-items: center;
+  border-bottom: 1px solid rgba(6, 31, 76, 0.10);
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  margin: 0 -20px;
+  min-height: 64px;
+  padding: 0 14px;
+}
+.workspace-post-modal-head h2 {
+  font-size: 1.32rem;
+  font-weight: 950;
+  grid-column: 2;
+  letter-spacing: 0;
+  margin: 0;
+  text-align: center;
+}
+.workspace-post-modal-head button {
+  align-items: center;
+  background: rgba(228, 233, 239, 0.94);
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 1.35rem;
+  font-weight: 800;
+  grid-column: 3;
+  height: 40px;
+  justify-content: center;
+  justify-self: end;
+  width: 40px;
+}
+.workspace-post-author {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+.workspace-post-author > div {
+  display: grid;
+  gap: 4px;
+}
+.workspace-visibility-chip {
+  align-items: center;
+  background: rgba(228, 233, 239, 0.96);
+  border-radius: 7px;
+  color: var(--navy);
+  display: inline-flex;
+  font-size: 0.76rem;
+  font-weight: 900;
+  justify-self: start;
+  padding: 4px 8px;
+}
+.workspace-post-modal textarea {
+  background: transparent;
+  border: 0;
+  color: var(--navy);
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.35;
+  min-height: 165px;
+  outline: 0;
+  padding: 8px 0;
+  resize: vertical;
+}
+.workspace-post-modal textarea::placeholder {
+  color: rgba(70, 79, 94, 0.82);
+}
+.workspace-post-addons {
+  align-items: center;
+  border: 1px solid rgba(6, 31, 76, 0.12);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr repeat(6, auto);
+  padding: 10px 12px;
+}
+.workspace-post-addons > b {
+  font-size: 0.98rem;
+  font-weight: 900;
+}
+.workspace-post-addons button,
+.workspace-post-addon {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--navy);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 850;
+  gap: 5px;
+  justify-content: center;
+  min-height: 36px;
+  padding: 4px;
+}
+.workspace-post-addons i {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  font-style: normal;
+  font-size: 1.35rem;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+.workspace-post-addon input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+.workspace-post-file-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.workspace-post-submit {
+  background: var(--red);
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  min-height: 48px;
+}
 .workspace-post-form textarea,
 .workspace-composer-tools input,
 .workspace-composer-tools select {
@@ -984,6 +1190,16 @@
 .workspace-post-form textarea {
   grid-column: 1 / -1;
   resize: vertical;
+}
+.workspace-post-modal.workspace-post-form textarea {
+  background: transparent;
+  border: 0;
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.35;
+  min-height: 165px;
+  outline: 0;
+  padding: 8px 0;
 }
 .workspace-composer-tools {
   display: grid;
@@ -2258,6 +2474,54 @@
 
   .workspace-composer-tools {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-compose-card {
+    padding: 10px;
+  }
+
+  .workspace-compose-trigger {
+    font-size: 0.95rem;
+    min-height: 48px;
+    padding-right: 12px;
+  }
+
+  .workspace-compose-photo {
+    min-height: 48px;
+    padding: 8px 10px;
+  }
+
+  .workspace-compose-photo span {
+    display: none;
+  }
+
+  .workspace-post-modal-backdrop {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .workspace-post-modal {
+    max-height: calc(100vh - 24px);
+    padding: 0 14px 16px;
+    width: min(100%, 620px);
+  }
+
+  .workspace-post-modal-head {
+    margin: 0 -14px;
+  }
+
+  .workspace-post-modal textarea {
+    font-size: 1.12rem;
+    min-height: 130px;
+  }
+
+  .workspace-post-addons {
+    grid-template-columns: 1fr repeat(3, auto);
+  }
+
+  .workspace-post-addons button span,
+  .workspace-post-addon span {
+    display: none;
   }
 
   .workspace-feed-scroll {
