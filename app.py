@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625s"
+ASSET_VERSION = "20260625t"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -1533,6 +1533,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
+                slack_url TEXT NOT NULL DEFAULT '',
                 created_by INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(created_by) REFERENCES users(id)
@@ -1662,6 +1663,7 @@ def init_db() -> None:
         ensure_column(con, "workspace_posts", "visibility", "visibility TEXT NOT NULL DEFAULT 'STAFF'")
         ensure_column(con, "workspace_posts", "group_id", "group_id INTEGER")
         ensure_column(con, "workspace_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        ensure_column(con, "workspace_groups", "slack_url", "slack_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "city_lng", "city_lng REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -4046,16 +4048,32 @@ def render_workspace_groups(groups: list[sqlite3.Row], selected_group_id: int | 
         group_id = int(row_value(group, "id") or 0)
         active = " active" if selected_group_id == group_id else ""
         joined = bool(int(row_value(group, "joined") or 0))
+        slack_url = row_value(group, "slack_url") or ""
         join_action = (
             '<span class="workspace-group-joined">Joined</span>'
             if joined
             else f'<form method="post" action="/admin/workspace/group/join"><input type="hidden" name="group_id" value="{group_id}"><button type="submit">Join</button></form>'
         )
+        slack_action = (
+            f'<a class="workspace-group-slack" href="{escape(slack_url)}" target="_blank" rel="noopener">Open Slack</a>'
+            if slack_url
+            else (
+                f'<form method="post" action="/admin/workspace/group/slack" class="workspace-group-slack-form">'
+                f'<input type="hidden" name="group_id" value="{group_id}">'
+                f'<input name="slack_url" maxlength="600" placeholder="Slack channel link">'
+                f'<button type="submit">Save</button></form>'
+            )
+        )
         rows.append(
             f"""
             <article class="workspace-group-chip{active}" data-workspace-group-item data-group-name="{escape(name).lower()}">
-              <a href="/admin/workspace?group={group_id}"><b>{escape(name)}</b><span>{escape(str(row_value(group, "member_count") or 0))} members</span></a>
-              {join_action}
+              <div class="workspace-group-row">
+                <a class="workspace-group-main" href="/admin/workspace?group={group_id}"><b>{escape(name)}</b><span>{escape(str(row_value(group, "member_count") or 0))} members</span></a>
+                {join_action}
+              </div>
+              <div class="workspace-group-actions">
+                {slack_action}
+              </div>
             </article>
             """
         )
@@ -4069,6 +4087,16 @@ def render_workspace_group_options(groups: list[sqlite3.Row], selected_group_id:
         selected = " selected" if selected_group_id == group_id else ""
         options.append(f'<option value="{group_id}"{selected}>{escape(row_value(group, "name"))}</option>')
     return "".join(options)
+
+
+def normalize_slack_url(value: str) -> str:
+    url = (value or "").strip()
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme in {"http", "https"} and "slack.com" in parsed.netloc.lower():
+        return url[:600]
+    return ""
 
 
 def normalize_workspace_visibility(value: str, user: sqlite3.Row) -> str:
@@ -6164,6 +6192,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/business-expenses/delete": self.delete_admin_business_expense,
             "/admin/workspace/group": self.create_workspace_group,
             "/admin/workspace/group/join": self.join_workspace_group,
+            "/admin/workspace/group/slack": self.update_workspace_group_slack,
             "/admin/workspace/post": self.create_workspace_post,
             "/admin/workspace/post/update": self.update_workspace_post,
             "/admin/bookings/status": self.update_admin_booking_status,
@@ -7518,6 +7547,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         name = re.sub(r"\s+", " ", (form.get("name") or "").strip())
         description = (form.get("description") or "").strip()
+        slack_url = normalize_slack_url(form.get("slack_url") or "")
         if len(name) > 60:
             name = name[:60].strip()
         if len(description) > 240:
@@ -7528,13 +7558,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute(
                 """
-                INSERT OR IGNORE INTO workspace_groups (name, description, created_by)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO workspace_groups (name, description, slack_url, created_by)
+                VALUES (?, ?, ?, ?)
                 """,
-                (name, description, row_value(user, "id")),
+                (name, description, slack_url, row_value(user, "id")),
             )
             group = con.execute("SELECT id FROM workspace_groups WHERE name = ?", (name,)).fetchone()
             if group:
+                if slack_url:
+                    con.execute(
+                        "UPDATE workspace_groups SET slack_url = ? WHERE id = ?",
+                        (slack_url, row_value(group, "id")),
+                    )
                 con.execute(
                     """
                     INSERT OR IGNORE INTO workspace_group_members (group_id, user_id)
@@ -7543,6 +7578,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (row_value(group, "id"), row_value(user, "id")),
                 )
         self.redirect("/admin/workspace")
+
+    def update_workspace_group_slack(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            group_id = int(form.get("group_id") or "0")
+        except ValueError:
+            group_id = 0
+        slack_url = normalize_slack_url(form.get("slack_url") or "")
+        with db() as con:
+            group = con.execute("SELECT id FROM workspace_groups WHERE id = ?", (group_id,)).fetchone()
+            if group:
+                con.execute("UPDATE workspace_groups SET slack_url = ? WHERE id = ?", (slack_url, group_id))
+        self.redirect(f"/admin/workspace?group={group_id}" if group_id else "/admin/workspace")
 
     def join_workspace_group(self) -> None:
         user = self.require_admin()

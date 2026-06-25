@@ -798,6 +798,7 @@
 }
 .workspace-group-search input,
 .workspace-group-form input,
+.workspace-group-slack-form input,
 .workspace-visibility-select select {
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(126, 198, 232, 0.38);
@@ -824,8 +825,7 @@
   cursor: pointer;
   display: grid;
   font: inherit;
-  gap: 3px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   padding: 10px;
   text-align: left;
 }
@@ -836,12 +836,22 @@
   border-color: rgba(224, 0, 26, 0.32);
   box-shadow: inset 3px 0 0 var(--red);
 }
-.workspace-group-chip a {
+.workspace-group-row {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.workspace-group-main {
   color: inherit;
   display: grid;
   gap: 3px;
   min-width: 0;
   text-decoration: none;
+}
+.workspace-group-actions {
+  display: grid;
+  gap: 6px;
 }
 .workspace-group-chip span,
 .workspace-group-empty {
@@ -853,16 +863,31 @@
   align-self: center;
 }
 .workspace-group-chip form button,
+.workspace-group-slack,
 .workspace-group-joined {
   background: rgba(6, 31, 76, 0.08);
   border: 0;
   border-radius: 999px;
   color: var(--navy);
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
   font-size: 0.75rem;
   font-weight: 900;
+  justify-content: center;
   padding: 6px 9px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.workspace-group-slack {
+  background: rgba(21, 145, 91, 0.13);
+  color: #10633f;
+  justify-self: start;
+}
+.workspace-group-slack-form {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .workspace-group-joined {
   cursor: default;
@@ -873,7 +898,7 @@
 .workspace-group-form {
   display: grid;
   gap: 7px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
 }
 .workspace-group-form button {
   background: var(--navy);
