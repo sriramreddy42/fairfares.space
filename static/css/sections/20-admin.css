@@ -944,6 +944,136 @@
   min-height: 38px;
   padding: 8px 10px;
 }
+.workspace-post-card .admin-feed-head {
+  position: relative;
+}
+.workspace-post-menu {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(126, 198, 232, 0.36);
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(6, 31, 76, 0.18);
+  min-width: 150px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: 42px;
+  z-index: 10;
+}
+.workspace-post-menu[hidden],
+.workspace-post-edit-form[hidden] {
+  display: none;
+}
+.workspace-post-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--navy);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 36px;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+.workspace-post-menu button:hover {
+  background: rgba(229, 239, 248, 0.96);
+}
+.workspace-post-body {
+  color: var(--navy);
+  display: grid;
+  font-weight: 800;
+  gap: 8px;
+  line-height: 1.45;
+}
+.workspace-post-body p {
+  margin: 0;
+}
+.workspace-post-body ul,
+.workspace-post-body ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.workspace-post-body blockquote {
+  border-left: 4px solid var(--red);
+  color: var(--muted);
+  margin: 0;
+  padding: 4px 0 4px 12px;
+}
+.workspace-post-body a {
+  color: #075985;
+  font-weight: 900;
+}
+.workspace-editor-toolbar {
+  align-items: center;
+  background: rgba(239, 246, 252, 0.86);
+  border: 1px solid rgba(126, 198, 232, 0.34);
+  border-radius: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px;
+}
+.workspace-editor-toolbar button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(6, 31, 76, 0.10);
+  border-radius: 7px;
+  color: var(--navy);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  justify-content: center;
+  min-height: 34px;
+  min-width: 36px;
+  padding: 6px 9px;
+}
+.workspace-editor-toolbar button:hover {
+  background: rgba(229, 239, 248, 0.98);
+}
+.workspace-post-edit-form {
+  background: rgba(239, 246, 252, 0.74);
+  border: 1px solid rgba(126, 198, 232, 0.30);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.workspace-post-edit-form label {
+  display: grid;
+  gap: 7px;
+}
+.workspace-post-edit-form label > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+.workspace-edit-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.workspace-edit-actions button {
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  min-height: 42px;
+  padding: 8px 12px;
+}
+.workspace-edit-actions button[type="submit"] {
+  background: var(--red);
+  border: 0;
+  color: #fff;
+}
+.workspace-edit-actions button[type="button"] {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(126, 198, 232, 0.36);
+  color: var(--navy);
+}
 .workspace-right {
   align-self: start;
   max-height: 100%;
@@ -2522,6 +2652,18 @@
   .workspace-post-addons button span,
   .workspace-post-addon span {
     display: none;
+  }
+
+  .workspace-editor-toolbar {
+    gap: 5px;
+  }
+
+  .workspace-editor-toolbar button {
+    flex: 1 1 58px;
+  }
+
+  .workspace-edit-actions {
+    grid-template-columns: 1fr;
   }
 
   .workspace-feed-scroll {

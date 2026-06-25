@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625n"
+ASSET_VERSION = "20260625o"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -3874,6 +3874,70 @@ def workspace_role_label(row: sqlite3.Row | dict[str, object] | None) -> str:
     return "Staff"
 
 
+def safe_workspace_link(url: str) -> str:
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme.lower() in {"http", "https", "mailto", "tel"}:
+        return escape(url.strip())
+    return "#"
+
+
+def render_workspace_inline_markup(text: str) -> str:
+    rendered = escape(text)
+
+    def link_replacer(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        url = html.unescape(match.group(2).strip())
+        if not label or not url:
+            return match.group(0)
+        return f'<a href="{safe_workspace_link(url)}" target="_blank" rel="noopener">{label}</a>'
+
+    rendered = re.sub(r"\[([^\]\n]{1,100})\]\(([^)\s]{1,400})\)", link_replacer, rendered)
+    rendered = re.sub(r"\*\*([^*\n][^*\n]*?)\*\*", r"<strong>\1</strong>", rendered)
+    rendered = re.sub(r"__([^_\n][^_\n]*?)__", r"<u>\1</u>", rendered)
+    rendered = re.sub(r"(?<!\*)\*([^*\n][^*\n]*?)\*(?!\*)", r"<em>\1</em>", rendered)
+    return rendered
+
+
+def render_workspace_post_body(body: str) -> str:
+    lines = body.splitlines()
+    blocks: list[str] = []
+    list_items: list[str] = []
+    ordered_items: list[str] = []
+
+    def flush_lists() -> None:
+        nonlocal list_items, ordered_items
+        if list_items:
+            blocks.append("<ul>" + "".join(list_items) + "</ul>")
+            list_items = []
+        if ordered_items:
+            blocks.append("<ol>" + "".join(ordered_items) + "</ol>")
+            ordered_items = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            flush_lists()
+            continue
+        if stripped.startswith("- "):
+            if ordered_items:
+                flush_lists()
+            list_items.append(f"<li>{render_workspace_inline_markup(stripped[2:].strip())}</li>")
+            continue
+        ordered_match = re.match(r"^\d+[.)]\s+(.+)$", stripped)
+        if ordered_match:
+            if list_items:
+                flush_lists()
+            ordered_items.append(f"<li>{render_workspace_inline_markup(ordered_match.group(1).strip())}</li>")
+            continue
+        flush_lists()
+        if stripped.startswith("> "):
+            blocks.append(f"<blockquote>{render_workspace_inline_markup(stripped[2:].strip())}</blockquote>")
+        else:
+            blocks.append(f"<p>{render_workspace_inline_markup(stripped)}</p>")
+    flush_lists()
+    return "".join(blocks) or "<p></p>"
+
+
 def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
     if not posts:
         return """
@@ -3909,9 +3973,30 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
                   <b>{escape(author_name)}</b>
                   <span>{escape(workspace_role_label(post))} - {escape(row_value(post, "post_type").title())} - {escape(row_value(post, "created_at"))}</span>
                 </div>
-                <button type="button" data-dashboard-action="open-workspace-post-menu" aria-label="Open post menu">...</button>
+                <button type="button" data-workspace-post-menu aria-expanded="false" aria-label="Open post menu">...</button>
+                <div class="workspace-post-menu" hidden>
+                  <button type="button" data-workspace-post-edit>Edit post</button>
+                </div>
               </div>
-              <p>{escape(row_value(post, "body"))}</p>
+              <div class="workspace-post-body">{render_workspace_post_body(row_value(post, "body"))}</div>
+              <form method="post" action="/admin/workspace/post/update" class="workspace-post-edit-form workspace-post-form" hidden>
+                <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
+                <label><span>Edit post</span><textarea name="body" rows="5" maxlength="1200">{escape(row_value(post, "body"))}</textarea></label>
+                <div class="workspace-editor-toolbar" aria-label="Editing tools">
+                  <button type="button" data-editor-command="bold"><b>B</b></button>
+                  <button type="button" data-editor-command="italic"><i>I</i></button>
+                  <button type="button" data-editor-command="underline"><u>U</u></button>
+                  <button type="button" data-editor-command="bullet">List</button>
+                  <button type="button" data-editor-command="number">1.</button>
+                  <button type="button" data-editor-command="quote">Quote</button>
+                  <button type="button" data-editor-command="link">Link</button>
+                  <button type="button" data-editor-command="clear">Clear</button>
+                </div>
+                <div class="workspace-edit-actions">
+                  <button type="submit">Save changes</button>
+                  <button type="button" data-workspace-post-cancel>Edit later</button>
+                </div>
+              </form>
               {image_html}
               <div class="admin-feed-social-row" aria-label="Feed actions">
                 <button type="button" data-dashboard-action="review-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
@@ -5858,6 +5943,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/business-expenses": self.create_admin_business_expense,
             "/admin/business-expenses/delete": self.delete_admin_business_expense,
             "/admin/workspace/post": self.create_workspace_post,
+            "/admin/workspace/post/update": self.update_workspace_post,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
@@ -7230,6 +7316,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 VALUES (?, ?, ?, ?, ?, 'STAFF')
                 """,
                 (row_value(user, "id"), post_type, body or "Shared a workspace update.", media_url, image_data),
+            )
+        self.redirect("/admin/workspace")
+
+    def update_workspace_post(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            post_id = int(form.get("post_id") or "0")
+        except ValueError:
+            self.redirect("/admin/workspace")
+            return
+        body = (form.get("body") or "").strip()
+        if len(body) > 1200:
+            body = body[:1200].strip()
+        if not body:
+            self.redirect("/admin/workspace")
+            return
+        with db() as con:
+            post = con.execute("SELECT author_id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
+            if not post:
+                self.redirect("/admin/workspace")
+                return
+            if row_value(post, "author_id") != row_value(user, "id") and not is_admin_user(user):
+                self.redirect("/admin/workspace")
+                return
+            con.execute(
+                """
+                UPDATE workspace_posts
+                SET body = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (body, post_id),
             )
         self.redirect("/admin/workspace")
 

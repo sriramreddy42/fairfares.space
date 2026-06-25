@@ -156,6 +156,133 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+function replaceTextareaSelection(textarea, nextValue, selectStart, selectEnd) {
+  textarea.value = nextValue;
+  textarea.focus();
+  textarea.setSelectionRange(selectStart, selectEnd);
+}
+
+function applyWorkspaceEditorCommand(button) {
+  const form = button.closest(".workspace-post-form");
+  const textarea = form?.querySelector("textarea[name='body']");
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  const command = button.dataset.editorCommand || "";
+  const start = textarea.selectionStart || 0;
+  const end = textarea.selectionEnd || 0;
+  const before = textarea.value.slice(0, start);
+  const selected = textarea.value.slice(start, end);
+  const after = textarea.value.slice(end);
+  const fallback = selected || "text";
+  let insert = selected;
+  let nextStart = start;
+  let nextEnd = end;
+
+  if (command === "bold") {
+    insert = `**${fallback}**`;
+    nextStart = start + 2;
+    nextEnd = nextStart + fallback.length;
+  } else if (command === "italic") {
+    insert = `*${fallback}*`;
+    nextStart = start + 1;
+    nextEnd = nextStart + fallback.length;
+  } else if (command === "underline") {
+    insert = `__${fallback}__`;
+    nextStart = start + 2;
+    nextEnd = nextStart + fallback.length;
+  } else if (command === "bullet") {
+    insert = (selected || "List item")
+      .split("\n")
+      .map((line) => line.trim() ? `- ${line.replace(/^[-\d.)\s]+/, "")}` : "- ")
+      .join("\n");
+    nextStart = start;
+    nextEnd = start + insert.length;
+  } else if (command === "number") {
+    insert = (selected || "List item")
+      .split("\n")
+      .map((line, index) => `${index + 1}. ${line.replace(/^[-\d.)\s]+/, "") || "List item"}`)
+      .join("\n");
+    nextStart = start;
+    nextEnd = start + insert.length;
+  } else if (command === "quote") {
+    insert = (selected || "Quote")
+      .split("\n")
+      .map((line) => `> ${line.replace(/^>\s*/, "") || "Quote"}`)
+      .join("\n");
+    nextStart = start;
+    nextEnd = start + insert.length;
+  } else if (command === "link") {
+    const url = window.prompt("Paste a link");
+    if (!url) return;
+    insert = `[${selected || "Link text"}](${url.trim()})`;
+    nextStart = start + 1;
+    nextEnd = nextStart + (selected || "Link text").length;
+  } else if (command === "clear") {
+    const source = selected || textarea.value;
+    insert = source
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/^\s*[-*>]\s+/gm, "")
+      .replace(/^\s*\d+[.)]\s+/gm, "");
+    if (!selected) {
+      replaceTextareaSelection(textarea, insert, 0, insert.length);
+      return;
+    }
+    nextStart = start;
+    nextEnd = start + insert.length;
+  } else {
+    return;
+  }
+
+  replaceTextareaSelection(textarea, `${before}${insert}${after}`, nextStart, nextEnd);
+}
+
+document.querySelectorAll("[data-editor-command]").forEach((button) => {
+  button.addEventListener("click", () => applyWorkspaceEditorCommand(button));
+});
+
+function closeWorkspacePostMenus(except = null) {
+  document.querySelectorAll(".workspace-post-menu").forEach((menu) => {
+    if (menu === except) return;
+    menu.hidden = true;
+    menu.closest(".admin-feed-head")?.querySelector("[data-workspace-post-menu]")?.setAttribute("aria-expanded", "false");
+  });
+}
+
+document.querySelectorAll("[data-workspace-post-menu]").forEach((button) => {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = button.closest(".admin-feed-head")?.querySelector(".workspace-post-menu");
+    if (!menu) return;
+    const willOpen = menu.hidden;
+    closeWorkspacePostMenus(menu);
+    menu.hidden = !willOpen;
+    button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
+});
+
+document.querySelectorAll("[data-workspace-post-edit]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const card = button.closest(".workspace-post-card");
+    const menu = button.closest(".workspace-post-menu");
+    const form = card?.querySelector(".workspace-post-edit-form");
+    if (!form) return;
+    menu.hidden = true;
+    form.hidden = false;
+    form.querySelector("textarea[name='body']")?.focus();
+  });
+});
+
+document.querySelectorAll("[data-workspace-post-cancel]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const form = button.closest(".workspace-post-edit-form");
+    if (form) form.hidden = true;
+  });
+});
+
+document.addEventListener("click", () => closeWorkspacePostMenus());
+
 document.querySelectorAll("[data-workspace-post-image]").forEach((input) => {
   input.addEventListener("change", () => {
     const file = input.files?.[0];
