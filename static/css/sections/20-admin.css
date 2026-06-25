@@ -681,6 +681,91 @@
   color: var(--muted);
   font-weight: 800;
 }
+.workspace-groups-open {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--navy);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 950;
+  justify-content: space-between;
+  padding: 6px 2px;
+  text-align: left;
+}
+.workspace-groups-open:hover {
+  color: var(--red);
+}
+.workspace-groups-open span {
+  align-items: center;
+  background: var(--red);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.75rem;
+  height: 22px;
+  justify-content: center;
+  min-width: 22px;
+  padding: 0 6px;
+}
+.workspace-groups-drawer {
+  background: rgba(255, 255, 255, 0.94);
+  border-right: 1px solid rgba(126, 198, 232, 0.38);
+  box-shadow: 24px 0 70px rgba(6, 31, 76, 0.22);
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto auto auto auto 1fr;
+  height: 100vh;
+  left: 0;
+  max-width: min(380px, calc(100vw - 28px));
+  overflow: auto;
+  padding: 18px;
+  position: fixed;
+  top: 0;
+  width: 360px;
+  z-index: 2147483100;
+}
+.workspace-groups-drawer[hidden] {
+  display: none;
+}
+.workspace-groups-drawer-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.workspace-groups-drawer-head div {
+  display: grid;
+  gap: 3px;
+}
+.workspace-groups-drawer-head b {
+  color: var(--navy);
+  font-size: 1.25rem;
+  font-weight: 950;
+}
+.workspace-groups-drawer-head span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+.workspace-groups-drawer-head button {
+  align-items: center;
+  background: rgba(228, 233, 239, 0.92);
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 900;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
 .workspace-group-panel {
   background: rgba(255, 255, 255, 0.70);
   border: 1px solid rgba(126, 198, 232, 0.32);
@@ -727,7 +812,7 @@
 .workspace-group-list {
   display: grid;
   gap: 7px;
-  max-height: 178px;
+  max-height: none;
   overflow: auto;
   padding-right: 2px;
 }
@@ -740,17 +825,47 @@
   display: grid;
   font: inherit;
   gap: 3px;
-  padding: 9px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
   text-align: left;
 }
 .workspace-group-chip:hover {
   background: rgba(229, 239, 248, 0.96);
+}
+.workspace-group-chip.active {
+  border-color: rgba(224, 0, 26, 0.32);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+.workspace-group-chip a {
+  color: inherit;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  text-decoration: none;
 }
 .workspace-group-chip span,
 .workspace-group-empty {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
+}
+.workspace-group-chip form {
+  align-self: center;
+}
+.workspace-group-chip form button,
+.workspace-group-joined {
+  background: rgba(6, 31, 76, 0.08);
+  border: 0;
+  border-radius: 999px;
+  color: var(--navy);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 900;
+  padding: 6px 9px;
+}
+.workspace-group-joined {
+  cursor: default;
 }
 .workspace-group-empty {
   margin: 0;
@@ -769,6 +884,32 @@
   font: inherit;
   font-weight: 950;
   padding: 8px 12px;
+}
+.workspace-create-chat {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px dashed rgba(6, 31, 76, 0.22);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 40px;
+}
+.workspace-feed-scope {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.85rem;
+  font-weight: 900;
+  gap: 10px;
+  justify-content: space-between;
+}
+.workspace-feed-scope span {
+  color: var(--navy);
+}
+.workspace-feed-scope a {
+  color: #075985;
+  text-decoration: none;
 }
 .admin-profile-stats {
   display: grid;

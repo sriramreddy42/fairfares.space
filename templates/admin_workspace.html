@@ -15,23 +15,7 @@
 
   <main class="workspace-shell" aria-label="Admin workspace">
     <aside class="workspace-left admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
-      <section class="workspace-group-panel" aria-label="Workspace groups">
-        <div class="workspace-group-head">
-          <b>Groups</b>
-          <span>$workspace_group_count active</span>
-        </div>
-        <label class="workspace-group-search">
-          <span>Search groups</span>
-          <input type="search" placeholder="Search group" data-workspace-group-search>
-        </label>
-        <div class="workspace-group-list" data-workspace-group-list>
-          $workspace_groups
-        </div>
-        <form method="post" action="/admin/workspace/group" class="workspace-group-form">
-          <input name="name" maxlength="60" placeholder="Create group">
-          <button type="submit">Add</button>
-        </form>
-      </section>
+      <button class="workspace-groups-open" type="button" data-workspace-groups-open aria-expanded="false" aria-controls="workspaceGroupsDrawer">Groups <span>$workspace_group_count</span></button>
       <article class="admin-profile-card">
         <span class="admin-profile-avatar">$admin_initials</span>
         <b>$admin_name</b>
@@ -57,6 +41,10 @@
 
     <section class="workspace-center" aria-label="Workspace feed">
       <div class="workspace-feed-scroll" tabindex="0">
+        <div class="workspace-feed-scope">
+          <span>$workspace_feed_scope</span>
+          <a href="/admin/workspace">Company wide</a>
+        </div>
         <article class="workspace-compose-card" aria-label="Create workspace post">
           <button class="workspace-compose-trigger" type="button" data-workspace-post-open aria-haspopup="dialog" aria-controls="workspacePostModal">
             <span class="admin-profile-avatar">$admin_initials</span>
@@ -83,6 +71,7 @@
             </div>
             <input type="hidden" name="post_type" value="UPDATE">
             $workspace_visibility_controls
+            $workspace_group_target_controls
             <div class="workspace-editor-toolbar" aria-label="Writing tools">
               <button type="button" data-editor-command="bold" title="Bold"><b>B</b></button>
               <button type="button" data-editor-command="italic" title="Italic"><i>I</i></button>
@@ -216,5 +205,27 @@
       </form>
     </aside>
   </main>
+
+  <aside class="workspace-groups-drawer" id="workspaceGroupsDrawer" hidden aria-label="Workspace groups drawer">
+    <div class="workspace-groups-drawer-head">
+      <div>
+        <b>Groups</b>
+        <span>Search, create, join, or open group feeds</span>
+      </div>
+      <button type="button" data-workspace-groups-close aria-label="Close groups">x</button>
+    </div>
+    <label class="workspace-group-search">
+      <span>Search</span>
+      <input type="search" placeholder="Search groups" data-workspace-group-search>
+    </label>
+    <form method="post" action="/admin/workspace/group" class="workspace-group-form">
+      <input name="name" maxlength="60" placeholder="Create group">
+      <button type="submit">Create</button>
+    </form>
+    <button class="workspace-create-chat" type="button" data-dashboard-action="workspace-create-chat-disabled">Create chat</button>
+    <div class="workspace-group-list" data-workspace-group-list>
+      $workspace_groups
+    </div>
+  </aside>
 </body>
 </html>

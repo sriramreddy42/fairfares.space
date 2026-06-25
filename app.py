@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625q"
+ASSET_VERSION = "20260625r"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -1557,6 +1557,7 @@ def init_db() -> None:
         ensure_column(con, "workspace_posts", "media_url", "media_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_posts", "image_data", "image_data TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_posts", "visibility", "visibility TEXT NOT NULL DEFAULT 'STAFF'")
+        ensure_column(con, "workspace_posts", "group_id", "group_id INTEGER")
         ensure_column(con, "workspace_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "explorer_quests", "city_lng", "city_lng REAL NOT NULL DEFAULT 0")
@@ -3875,11 +3876,15 @@ def get_admin_metrics() -> dict[str, int]:
         }
 
 
-def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20) -> list[sqlite3.Row]:
-    visibility_filter = ""
+def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_id: int | None = None) -> list[sqlite3.Row]:
+    filters = []
     params: list[object] = []
     if user and not is_admin_user(user):
-        visibility_filter = "WHERE UPPER(TRIM(workspace_posts.visibility)) IN ('STAFF', 'COMPANY')"
+        filters.append("UPPER(TRIM(workspace_posts.visibility)) IN ('STAFF', 'COMPANY')")
+    if group_id:
+        filters.append("workspace_posts.group_id = ?")
+        params.append(group_id)
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     params.append(limit)
     with db() as con:
         return con.execute(
@@ -3889,10 +3894,12 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20) -> lis
                    users.email AS author_email,
                    users.role AS author_role,
                    users.is_admin AS author_is_admin,
-                   users.profile_photo_url AS author_photo
+                   users.profile_photo_url AS author_photo,
+                   workspace_groups.name AS group_name
             FROM workspace_posts
             JOIN users ON users.id = workspace_posts.author_id
-            {visibility_filter}
+            LEFT JOIN workspace_groups ON workspace_groups.id = workspace_posts.group_id
+            {where_clause}
             ORDER BY workspace_posts.id DESC
             LIMIT ?
             """,
@@ -3900,13 +3907,22 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20) -> lis
         ).fetchall()
 
 
-def get_workspace_groups(limit: int = 30) -> list[sqlite3.Row]:
+def get_workspace_group(group_id: int | None) -> sqlite3.Row | None:
+    if not group_id:
+        return None
+    with db() as con:
+        return con.execute("SELECT * FROM workspace_groups WHERE id = ?", (group_id,)).fetchone()
+
+
+def get_workspace_groups(user: sqlite3.Row | None = None, limit: int = 30) -> list[sqlite3.Row]:
+    current_user_id = int(row_value(user, "id") or 0) if user else 0
     with db() as con:
         return con.execute(
             """
             SELECT workspace_groups.*,
                    users.name AS creator_name,
-                   COUNT(workspace_group_members.id) AS member_count
+                   COUNT(workspace_group_members.id) AS member_count,
+                   MAX(CASE WHEN workspace_group_members.user_id = ? THEN 1 ELSE 0 END) AS joined
             FROM workspace_groups
             LEFT JOIN users ON users.id = workspace_groups.created_by
             LEFT JOIN workspace_group_members ON workspace_group_members.group_id = workspace_groups.id
@@ -3914,25 +3930,42 @@ def get_workspace_groups(limit: int = 30) -> list[sqlite3.Row]:
             ORDER BY workspace_groups.name COLLATE NOCASE
             LIMIT ?
             """,
-            (limit,),
+            (current_user_id, limit),
         ).fetchall()
 
 
-def render_workspace_groups(groups: list[sqlite3.Row]) -> str:
+def render_workspace_groups(groups: list[sqlite3.Row], selected_group_id: int | None = None) -> str:
     if not groups:
         return '<p class="workspace-group-empty">No groups yet.</p>'
     rows = []
     for group in groups:
         name = row_value(group, "name")
+        group_id = int(row_value(group, "id") or 0)
+        active = " active" if selected_group_id == group_id else ""
+        joined = bool(int(row_value(group, "joined") or 0))
+        join_action = (
+            '<span class="workspace-group-joined">Joined</span>'
+            if joined
+            else f'<form method="post" action="/admin/workspace/group/join"><input type="hidden" name="group_id" value="{group_id}"><button type="submit">Join</button></form>'
+        )
         rows.append(
             f"""
-            <button type="button" class="workspace-group-chip" data-workspace-group-item data-group-name="{escape(name).lower()}">
-              <b>{escape(name)}</b>
-              <span>{escape(str(row_value(group, "member_count") or 0))} members</span>
-            </button>
+            <article class="workspace-group-chip{active}" data-workspace-group-item data-group-name="{escape(name).lower()}">
+              <a href="/admin/workspace?group={group_id}"><b>{escape(name)}</b><span>{escape(str(row_value(group, "member_count") or 0))} members</span></a>
+              {join_action}
+            </article>
             """
         )
     return "\n".join(rows)
+
+
+def render_workspace_group_options(groups: list[sqlite3.Row], selected_group_id: int | None = None) -> str:
+    options = ['<option value="">Company feed</option>']
+    for group in groups:
+        group_id = int(row_value(group, "id") or 0)
+        selected = " selected" if selected_group_id == group_id else ""
+        options.append(f'<option value="{group_id}"{selected}>{escape(row_value(group, "name"))}</option>')
+    return "".join(options)
 
 
 def normalize_workspace_visibility(value: str, user: sqlite3.Row) -> str:
@@ -6026,6 +6059,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/business-expenses": self.create_admin_business_expense,
             "/admin/business-expenses/delete": self.delete_admin_business_expense,
             "/admin/workspace/group": self.create_workspace_group,
+            "/admin/workspace/group/join": self.join_workspace_group,
             "/admin/workspace/post": self.create_workspace_post,
             "/admin/workspace/post/update": self.update_workspace_post,
             "/admin/bookings/status": self.update_admin_booking_status,
@@ -7403,6 +7437,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
         self.redirect("/admin/workspace")
 
+    def join_workspace_group(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            group_id = int(form.get("group_id") or "0")
+        except ValueError:
+            group_id = 0
+        with db() as con:
+            group = con.execute("SELECT id FROM workspace_groups WHERE id = ?", (group_id,)).fetchone()
+            if group:
+                con.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_group_members (group_id, user_id)
+                    VALUES (?, ?)
+                    """,
+                    (group_id, row_value(user, "id")),
+                )
+        self.redirect(f"/admin/workspace?group={group_id}" if group_id else "/admin/workspace")
+
     def create_workspace_post(self) -> None:
         user = self.require_admin()
         if not user:
@@ -7411,8 +7466,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = (form.get("body") or "").strip()
         post_type = (form.get("post_type") or "UPDATE").upper().strip()
         visibility = normalize_workspace_visibility(form.get("visibility") or "COMPANY", user)
+        try:
+            group_id = int(form.get("group_id") or "0") or None
+        except ValueError:
+            group_id = None
         media_url = (form.get("media_url") or "").strip()
         image_data = (form.get("image_data") or "").strip()
+        if group_id and not get_workspace_group(group_id):
+            group_id = None
         if post_type not in {"UPDATE", "HANDOFF", "ALERT", "PROFILE"}:
             post_type = "UPDATE"
         if len(body) > 1200:
@@ -7430,12 +7491,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute(
                 """
-                INSERT INTO workspace_posts (author_id, post_type, body, media_url, image_data, visibility)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO workspace_posts (author_id, post_type, body, media_url, image_data, visibility, group_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row_value(user, "id"), post_type, body or "Shared a workspace update.", media_url, image_data, visibility),
+                (row_value(user, "id"), post_type, body or "Shared a workspace update.", media_url, image_data, visibility, group_id),
             )
-        self.redirect("/admin/workspace")
+        self.redirect(f"/admin/workspace?group={group_id}" if group_id else "/admin/workspace")
 
     def update_workspace_post(self) -> None:
         user = self.require_admin()
@@ -7892,12 +7953,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         metrics = get_admin_metrics()
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            selected_group_id = int(urllib.parse.parse_qs(parsed.query).get("group", ["0"])[0]) or None
+        except ValueError:
+            selected_group_id = None
+        selected_group = get_workspace_group(selected_group_id)
+        if selected_group_id and not selected_group:
+            selected_group_id = None
         name_parts = row_value(user, "name").split()
         initials = "".join(part[:1] for part in name_parts[:2]).upper() or "FF"
         first_name = name_parts[0] if name_parts else "FairFares"
         role_label = "Admin" if is_admin_user(user) else "Employee"
-        posts = get_workspace_posts(user)
-        groups = get_workspace_groups()
+        posts = get_workspace_posts(user, group_id=selected_group_id)
+        groups = get_workspace_groups(user)
+        feed_scope = escape(row_value(selected_group, "name") if selected_group else "Company feed")
         visibility_controls = (
             """
             <label class="workspace-visibility-select">
@@ -7911,6 +7981,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if is_admin_user(user)
             else '<input type="hidden" name="visibility" value="COMPANY">'
         )
+        group_target_controls = f"""
+            <label class="workspace-visibility-select">
+              <span>Post location</span>
+              <select name="group_id">
+                {render_workspace_group_options(groups, selected_group_id)}
+              </select>
+            </label>
+        """
         body = render_template(
             "admin_workspace.html",
             admin_name=escape(row_value(user, "name")),
@@ -7928,9 +8006,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             escalation_badge_class="has-count" if metrics["escalations"] else "",
             user_count=metrics["users"],
             workspace_post_count=escape(str(len(posts))),
-            workspace_groups=render_workspace_groups(groups),
+            workspace_groups=render_workspace_groups(groups, selected_group_id),
             workspace_group_count=escape(str(len(groups))),
+            workspace_feed_scope=feed_scope,
             workspace_visibility_controls=visibility_controls,
+            workspace_group_target_controls=group_target_controls,
             workspace_posts=render_workspace_posts(posts),
         )
         self.send_html(body)

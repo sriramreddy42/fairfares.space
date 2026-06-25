@@ -283,10 +283,30 @@ document.querySelectorAll("[data-workspace-post-cancel]").forEach((button) => {
 
 document.addEventListener("click", () => closeWorkspacePostMenus());
 
+const workspaceGroupsDrawer = document.getElementById("workspaceGroupsDrawer");
+const workspaceGroupsOpen = document.querySelector("[data-workspace-groups-open]");
+const workspaceGroupsClose = document.querySelector("[data-workspace-groups-close]");
+
+function setWorkspaceGroupsOpen(open) {
+  if (!workspaceGroupsDrawer) return;
+  workspaceGroupsDrawer.hidden = !open;
+  workspaceGroupsOpen?.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) workspaceGroupsDrawer.querySelector("[data-workspace-group-search]")?.focus();
+}
+
+workspaceGroupsOpen?.addEventListener("click", () => setWorkspaceGroupsOpen(workspaceGroupsDrawer?.hidden));
+workspaceGroupsClose?.addEventListener("click", () => setWorkspaceGroupsOpen(false));
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && workspaceGroupsDrawer && !workspaceGroupsDrawer.hidden) {
+    setWorkspaceGroupsOpen(false);
+  }
+});
+
 document.querySelectorAll("[data-workspace-group-search]").forEach((input) => {
   input.addEventListener("input", () => {
     const query = String(input.value || "").trim().toLowerCase();
-    const panel = input.closest(".workspace-group-panel");
+    const panel = input.closest(".workspace-group-panel") || input.closest(".workspace-groups-drawer");
     panel?.querySelectorAll("[data-workspace-group-item]").forEach((item) => {
       const name = String(item.dataset.groupName || item.textContent || "").toLowerCase();
       item.hidden = Boolean(query && !name.includes(query));
