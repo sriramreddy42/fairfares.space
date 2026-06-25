@@ -7238,7 +7238,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             active = " active" if selected_calendar == view else ""
             calendar_links.append(f'<a class="{active.strip()}" href="{href}">{escape(label)}</a>')
 
-        visible_rows = [row for row in rows if self.booking_overlaps_calendar_days(row, days)]
+        visible_rows = [
+            row
+            for row in rows
+            if row_value(row, "booking_status") != "CANCELLED" and self.booking_overlaps_calendar_days(row, days)
+        ]
         booking_count = len(visible_rows)
         day_cards = []
         if selected_calendar == "monthly":
@@ -7330,7 +7334,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         elif ends_today:
             time_label = f"Returns {row_value(row, 'dropoff_time')}"
         else:
-            time_label = "Booked all day"
+            time_label = f"{row_value(row, 'pickup_time')} - {row_value(row, 'dropoff_time')}"
         status = booking_status_label(row["booking_status"], row["payment_status"])
         vehicle = f"{row_value(row, 'car_year')} {row_value(row, 'car_name')}".strip()
         detail_attrs = {
