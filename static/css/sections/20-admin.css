@@ -324,6 +324,212 @@
   font-weight: 700;
   margin-top: 3px;
 }
+.booking-calendar-card {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(226, 247, 255, 0.48)),
+    rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(20px);
+  border-color: rgba(135, 207, 238, 0.42);
+  box-shadow: 0 20px 50px rgba(7, 20, 63, 0.10);
+}
+.booking-calendar-head {
+  align-items: center;
+}
+.booking-calendar-tabs {
+  background: rgba(7, 20, 63, 0.08);
+  border: 1px solid rgba(134, 201, 232, 0.38);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+.booking-calendar-tabs a {
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(126, 198, 232, 0.42);
+  border-radius: 6px;
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 900;
+  min-height: 38px;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+.booking-calendar-tabs a.active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.booking-calendar-grid {
+  display: grid;
+  gap: 12px;
+}
+.booking-calendar-today,
+.booking-calendar-tomorrow {
+  grid-template-columns: minmax(0, 1fr);
+}
+.booking-calendar-weekly {
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+}
+.booking-calendar-monthly {
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+}
+.booking-calendar-day {
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(134, 201, 232, 0.34);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  min-height: 170px;
+  overflow: hidden;
+}
+.booking-calendar-day.is-empty {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.booking-calendar-day.is-dense {
+  min-height: 132px;
+}
+.booking-calendar-day header {
+  align-items: center;
+  background: rgba(7, 20, 63, 0.92);
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+.booking-calendar-day header span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.booking-calendar-day header b {
+  font-size: 0.95rem;
+}
+.booking-calendar-blocks {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+.booking-calendar-event {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(232, 248, 255, 0.80));
+  border: 1px solid rgba(0, 72, 116, 0.16);
+  border-left: 4px solid var(--red);
+  border-radius: 7px;
+  box-shadow: 0 12px 24px rgba(7, 20, 63, 0.08);
+  color: var(--navy);
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+.booking-calendar-event span {
+  color: #0f7b45;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.booking-calendar-event b {
+  font-size: 0.94rem;
+}
+.booking-calendar-event small,
+.booking-calendar-free,
+.booking-calendar-empty {
+  color: var(--muted);
+  font-weight: 800;
+}
+.booking-calendar-free {
+  align-items: center;
+  border: 1px dashed rgba(7, 20, 63, 0.18);
+  border-radius: 7px;
+  display: flex;
+  justify-content: center;
+  min-height: 70px;
+}
+.booking-calendar-empty {
+  margin: 12px 0 0;
+}
+.booking-calendar-modal {
+  align-items: center;
+  background: rgba(7, 20, 63, 0.42);
+  backdrop-filter: blur(10px);
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  position: fixed;
+  z-index: 80;
+}
+.booking-calendar-modal:not([hidden]) {
+  display: flex;
+}
+.booking-calendar-dialog {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(231, 248, 255, 0.82)),
+    rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(156, 219, 246, 0.48);
+  border-radius: 10px;
+  box-shadow: 0 26px 80px rgba(7, 20, 63, 0.28);
+  max-width: 640px;
+  padding: 20px;
+  position: relative;
+  width: min(640px, 100%);
+}
+.booking-calendar-close {
+  background: var(--navy);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  min-height: 34px;
+  min-width: 34px;
+  position: absolute;
+  right: 14px;
+  top: 14px;
+}
+.booking-calendar-dialog-head {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  padding-right: 42px;
+}
+.booking-calendar-dialog-head img {
+  background: #fff;
+  border-radius: 8px;
+  height: 86px;
+  object-fit: contain;
+  width: 128px;
+}
+.booking-calendar-dialog-head h2 {
+  color: var(--navy);
+  margin: 0 0 4px;
+}
+.booking-calendar-details {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 18px 0;
+}
+.booking-calendar-details div {
+  background: rgba(255, 255, 255, 0.60);
+  border: 1px solid rgba(7, 20, 63, 0.08);
+  border-radius: 7px;
+  padding: 10px;
+}
+.booking-calendar-details dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.booking-calendar-details dd {
+  color: var(--navy);
+  font-weight: 800;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
 .admin-car-name {
   color: var(--navy);
   display: inline-grid;
@@ -1038,6 +1244,19 @@
     width: 100%;
   }
 
+  .booking-calendar-head {
+    align-items: stretch;
+  }
+
+  .booking-calendar-tabs {
+    justify-content: flex-start;
+  }
+
+  .booking-calendar-weekly,
+  .booking-calendar-monthly {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .vehicle-finance-hero {
     grid-template-columns: 1fr;
   }
@@ -1080,6 +1299,42 @@
 
   .staff-request-form {
     grid-template-columns: 1fr;
+  }
+
+  .booking-calendar-card {
+    padding: 14px;
+  }
+
+  .booking-calendar-tabs a {
+    flex: 1 1 calc(50% - 8px);
+    text-align: center;
+  }
+
+  .booking-calendar-weekly,
+  .booking-calendar-monthly,
+  .booking-calendar-details {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-calendar-day {
+    min-height: 120px;
+  }
+
+  .booking-calendar-dialog {
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .booking-calendar-dialog-head {
+    align-items: flex-start;
+    display: grid;
+    padding-right: 38px;
+  }
+
+  .booking-calendar-dialog-head img {
+    height: 72px;
+    width: 112px;
   }
 }
 

@@ -41,6 +41,65 @@ function placeAdminSubnavInHero() {
 
 placeAdminSubnavInHero();
 
+const bookingCalendarModal = document.getElementById("bookingCalendarModal");
+
+function closeBookingCalendarModal() {
+  if (!bookingCalendarModal) return;
+  bookingCalendarModal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+function openBookingCalendarModal(button) {
+  if (!bookingCalendarModal || !button) return;
+  const fieldMap = {
+    booking: button.dataset.booking,
+    status: button.dataset.status,
+    vehicle: button.dataset.vehicle,
+    customer: button.dataset.customer,
+    email: button.dataset.email,
+    phone: button.dataset.phone,
+    pickup: button.dataset.pickup,
+    return: button.dataset.return,
+    total: button.dataset.total,
+    location: button.dataset.location,
+  };
+  Object.entries(fieldMap).forEach(([key, value]) => {
+    const target = bookingCalendarModal.querySelector(`[data-booking-modal-field="${key}"]`);
+    if (target) target.textContent = value || "";
+  });
+  const image = bookingCalendarModal.querySelector("[data-booking-modal-image]");
+  if (image) {
+    if (button.dataset.image) {
+      image.src = button.dataset.image;
+      image.alt = button.dataset.vehicle || "Booked vehicle";
+      image.hidden = false;
+    } else {
+      image.removeAttribute("src");
+      image.hidden = true;
+    }
+  }
+  bookingCalendarModal.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+document.querySelectorAll("[data-booking-calendar-open]").forEach((button) => {
+  button.addEventListener("click", () => openBookingCalendarModal(button));
+});
+
+bookingCalendarModal?.querySelectorAll("[data-booking-calendar-close]").forEach((button) => {
+  button.addEventListener("click", closeBookingCalendarModal);
+});
+
+bookingCalendarModal?.addEventListener("click", (event) => {
+  if (event.target === bookingCalendarModal) closeBookingCalendarModal();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && bookingCalendarModal && !bookingCalendarModal.hidden) {
+    closeBookingCalendarModal();
+  }
+});
+
 const carList = document.getElementById("carList");
 const sortCars = document.getElementById("sortCars");
 const resultCount = document.getElementById("resultCount");

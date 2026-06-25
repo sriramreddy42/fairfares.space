@@ -3271,7 +3271,8 @@ def get_admin_bookings() -> list[sqlite3.Row]:
                    users.address, users.date_of_birth,
                    cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
                    cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
-                   cars.color AS car_color, cars.daily_price, cars.license_plate, cars.vin_number, cars.status AS car_status
+                   cars.color AS car_color, cars.image_url AS car_image_url,
+                   cars.daily_price, cars.license_plate, cars.vin_number, cars.status AS car_status
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
@@ -7187,22 +7188,174 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         parsed = urllib.parse.urlparse(self.path)
-        selected_status = urllib.parse.parse_qs(parsed.query).get("status", ["ALL"])[0].upper()
+        query = urllib.parse.parse_qs(parsed.query)
+        selected_status = query.get("status", ["ALL"])[0].upper()
+        selected_calendar = query.get("calendar", ["today"])[0].lower()
         allowed_statuses = {"ALL", "PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}
         if selected_status not in allowed_statuses:
             selected_status = "ALL"
+        if selected_calendar not in {"today", "tomorrow", "weekly", "monthly"}:
+            selected_calendar = "today"
         booking_rows = get_admin_bookings()
         if selected_status != "ALL":
             booking_rows = [row for row in booking_rows if row["booking_status"] == selected_status]
         bookings = "\n".join(self.render_admin_booking_row(row) for row in booking_rows)
+        calendar_html = self.render_admin_booking_calendar(booking_rows, selected_calendar, selected_status)
         body = render_template(
             "admin_bookings.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "bookings"),
+            booking_calendar=calendar_html,
             booking_status_options=self.render_booking_status_filter_options(selected_status),
             bookings=bookings or '<tr><td colspan="7">No bookings match this filter.</td></tr>',
         )
         self.send_html(body)
+
+    def render_admin_booking_calendar(self, rows: list[sqlite3.Row], selected_calendar: str, selected_status: str) -> str:
+        today = datetime.now().date()
+        if selected_calendar == "tomorrow":
+            start = today + timedelta(days=1)
+            days = [start]
+            title = "Tomorrow's bookings"
+        elif selected_calendar == "weekly":
+            start = today
+            days = [start + timedelta(days=offset) for offset in range(7)]
+            title = "7-day booking calendar"
+        elif selected_calendar == "monthly":
+            start = today.replace(day=1)
+            next_month = date(start.year + (1 if start.month == 12 else 0), 1 if start.month == 12 else start.month + 1, 1)
+            month_days = (next_month - start).days
+            days = [start + timedelta(days=offset) for offset in range(month_days)]
+            title = start.strftime("%B booking calendar")
+        else:
+            start = today
+            days = [start]
+            title = "Today's bookings"
+
+        calendar_links = []
+        for view, label in (("today", "Today"), ("tomorrow", "Tomorrow"), ("weekly", "Weekly"), ("monthly", "Monthly")):
+            href = f"/admin/bookings?calendar={view}&status={urllib.parse.quote(selected_status)}"
+            active = " active" if selected_calendar == view else ""
+            calendar_links.append(f'<a class="{active.strip()}" href="{href}">{escape(label)}</a>')
+
+        visible_rows = [row for row in rows if self.booking_overlaps_calendar_days(row, days)]
+        booking_count = len(visible_rows)
+        day_cards = []
+        if selected_calendar == "monthly":
+            for _ in range(days[0].weekday()):
+                day_cards.append('<article class="booking-calendar-day is-empty" aria-hidden="true"></article>')
+        for day in days:
+            day_rows = [row for row in visible_rows if self.booking_touches_day(row, day)]
+            day_cards.append(self.render_booking_calendar_day(day, day_rows, selected_calendar))
+
+        empty_state = "" if booking_count else '<p class="booking-calendar-empty">No bookings in this calendar window.</p>'
+        return f"""
+        <section class="admin-card booking-calendar-card">
+          <div class="admin-card-head booking-calendar-head">
+            <div>
+              <p class="eyebrow">Schedule</p>
+              <h2>{escape(title)}</h2>
+              <p>{booking_count} booking{'s' if booking_count != 1 else ''} shown. Click a booking block for customer, car, and trip details.</p>
+            </div>
+            <nav class="booking-calendar-tabs" aria-label="Booking calendar range">
+              {''.join(calendar_links)}
+            </nav>
+          </div>
+          <div class="booking-calendar-grid booking-calendar-{escape(selected_calendar)}">
+            {''.join(day_cards)}
+          </div>
+          {empty_state}
+        </section>
+        <div class="booking-calendar-modal" id="bookingCalendarModal" hidden>
+          <div class="booking-calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="bookingCalendarModalTitle">
+            <button class="booking-calendar-close" type="button" data-booking-calendar-close aria-label="Close booking details">x</button>
+            <div class="booking-calendar-dialog-head">
+              <img data-booking-modal-image alt="" hidden>
+              <div>
+                <p class="eyebrow" data-booking-modal-field="status"></p>
+                <h2 id="bookingCalendarModalTitle" data-booking-modal-field="booking"></h2>
+                <span data-booking-modal-field="vehicle"></span>
+              </div>
+            </div>
+            <dl class="booking-calendar-details">
+              <div><dt>Customer</dt><dd data-booking-modal-field="customer"></dd></div>
+              <div><dt>Email</dt><dd data-booking-modal-field="email"></dd></div>
+              <div><dt>Phone</dt><dd data-booking-modal-field="phone"></dd></div>
+              <div><dt>Pickup</dt><dd data-booking-modal-field="pickup"></dd></div>
+              <div><dt>Return</dt><dd data-booking-modal-field="return"></dd></div>
+              <div><dt>Total</dt><dd data-booking-modal-field="total"></dd></div>
+              <div><dt>Location</dt><dd data-booking-modal-field="location"></dd></div>
+            </dl>
+            <a class="admin-text-link" href="/admin/pickup">Open pickup workflow</a>
+          </div>
+        </div>
+        """
+
+    def booking_overlaps_calendar_days(self, row: sqlite3.Row, days: list[date]) -> bool:
+        return any(self.booking_touches_day(row, day) for day in days)
+
+    def booking_touches_day(self, row: sqlite3.Row, day: date) -> bool:
+        pickup = booking_datetime_from_row(row, "pickup_date", "pickup_time")
+        dropoff = booking_datetime_from_row(row, "dropoff_date", "dropoff_time")
+        if not pickup and not dropoff:
+            return False
+        start = (pickup or dropoff).date()
+        end = (dropoff or pickup).date()
+        return start <= day <= end
+
+    def render_booking_calendar_day(self, day: date, rows: list[sqlite3.Row], selected_calendar: str) -> str:
+        sorted_rows = sorted(rows, key=lambda row: booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.max)
+        blocks = "".join(self.render_booking_calendar_block(row, day) for row in sorted_rows)
+        day_label = day.strftime("%a")
+        date_label = day.strftime("%b %d")
+        density_class = " is-dense" if selected_calendar == "monthly" else ""
+        return f"""
+        <article class="booking-calendar-day{density_class}">
+          <header><span>{escape(day_label)}</span><b>{escape(date_label)}</b></header>
+          <div class="booking-calendar-blocks">
+            {blocks or '<span class="booking-calendar-free">Available</span>'}
+          </div>
+        </article>
+        """
+
+    def render_booking_calendar_block(self, row: sqlite3.Row, day: date) -> str:
+        pickup = booking_datetime_from_row(row, "pickup_date", "pickup_time")
+        dropoff = booking_datetime_from_row(row, "dropoff_date", "dropoff_time")
+        starts_today = bool(pickup and pickup.date() == day)
+        ends_today = bool(dropoff and dropoff.date() == day)
+        if starts_today and ends_today:
+            time_label = f"{row_value(row, 'pickup_time')} - {row_value(row, 'dropoff_time')}"
+        elif starts_today:
+            time_label = f"Starts {row_value(row, 'pickup_time')}"
+        elif ends_today:
+            time_label = f"Returns {row_value(row, 'dropoff_time')}"
+        else:
+            time_label = "Booked all day"
+        status = booking_status_label(row["booking_status"], row["payment_status"])
+        vehicle = f"{row_value(row, 'car_year')} {row_value(row, 'car_name')}".strip()
+        detail_attrs = {
+            "booking": row_value(row, "booking_id"),
+            "status": status,
+            "vehicle": vehicle,
+            "customer": row_value(row, "user_name"),
+            "email": row_value(row, "user_email"),
+            "phone": row_value(row, "phone") or "No phone",
+            "pickup": f"{row_value(row, 'pickup_date')} at {row_value(row, 'pickup_time')}",
+            "return": f"{row_value(row, 'dropoff_date')} at {row_value(row, 'dropoff_time')}",
+            "total": format_money(row_value(row, "total_price")),
+            "location": row_value(row, "pickup_location") or row_value(row, "return_location") or "No location saved",
+            "image": row_value(row, "car_image_url") or "",
+        }
+        attrs = " ".join(
+            f'data-{escape(key)}="{escape(str(value), quote=True)}"' for key, value in detail_attrs.items()
+        )
+        return f"""
+        <button type="button" class="booking-calendar-event" data-booking-calendar-open {attrs}>
+          <span>{escape(time_label)}</span>
+          <b>{escape(row_value(row, "car_name"))}</b>
+          <small>{escape(row_value(row, "user_name"))}</small>
+        </button>
+        """
 
     def admin_users_page(self) -> None:
         user = self.require_owner_admin()
