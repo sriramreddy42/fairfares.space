@@ -1327,6 +1327,9 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 8px;
 }
+.admin-feed-social-row form {
+  display: contents;
+}
 .admin-feed-social-row button {
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(126, 198, 232, 0.30);
@@ -1336,6 +1339,67 @@
   font-weight: 850;
   min-height: 38px;
   padding: 8px 10px;
+}
+.workspace-post-stats {
+  border-top: 1px solid rgba(126, 198, 232, 0.22);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  font-weight: 850;
+  gap: 12px;
+  padding-top: 8px;
+}
+.workspace-comments {
+  display: grid;
+  gap: 7px;
+}
+.workspace-comments article {
+  background: rgba(245, 250, 255, 0.82);
+  border: 1px solid rgba(126, 198, 232, 0.22);
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+}
+.workspace-comments b {
+  color: var(--navy);
+  font-size: 0.82rem;
+}
+.workspace-comments span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.workspace-comment-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.workspace-comment-form[hidden] {
+  display: none;
+}
+.workspace-comment-form input {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(126, 198, 232, 0.35);
+  border-radius: 999px;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 800;
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+.workspace-comment-form button {
+  background: var(--navy);
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  padding: 8px 14px;
 }
 .workspace-post-card .admin-feed-head {
   position: relative;

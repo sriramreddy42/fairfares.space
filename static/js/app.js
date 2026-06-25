@@ -281,6 +281,16 @@ document.querySelectorAll("[data-workspace-post-cancel]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-workspace-comment-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const card = button.closest(".workspace-post-card");
+    const form = card?.querySelector(".workspace-comment-form");
+    if (!form) return;
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector("input[name='body']")?.focus();
+  });
+});
+
 document.addEventListener("click", () => closeWorkspacePostMenus());
 
 const workspaceGroupsDrawer = document.getElementById("workspaceGroupsDrawer");

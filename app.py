@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625y"
+ASSET_VERSION = "20260625z"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -1622,6 +1622,27 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(author_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_post_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(post_id) REFERENCES workspace_posts(id),
+                FOREIGN KEY(author_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_post_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                reaction TEXT NOT NULL DEFAULT 'LIKE',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(post_id, user_id, reaction),
+                FOREIGN KEY(post_id) REFERENCES workspace_posts(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS workspace_groups (
@@ -4099,7 +4120,17 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_
                    users.role AS author_role,
                    users.is_admin AS author_is_admin,
                    users.profile_photo_url AS author_photo,
-                   workspace_groups.name AS group_name
+                   workspace_groups.name AS group_name,
+                   (
+                     SELECT COUNT(*)
+                     FROM workspace_post_comments
+                     WHERE workspace_post_comments.post_id = workspace_posts.id
+                   ) AS comment_count,
+                   (
+                     SELECT COUNT(*)
+                     FROM workspace_post_reactions
+                     WHERE workspace_post_reactions.post_id = workspace_posts.id
+                   ) AS reaction_count
             FROM workspace_posts
             JOIN users ON users.id = workspace_posts.author_id
             LEFT JOIN workspace_groups ON workspace_groups.id = workspace_posts.group_id
@@ -4109,6 +4140,30 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_
             """,
             params,
         ).fetchall()
+
+
+def get_workspace_post_comments(post_id: int, limit: int = 3) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT workspace_post_comments.*,
+                   users.name AS author_name,
+                   users.profile_photo_url AS author_photo
+            FROM workspace_post_comments
+            JOIN users ON users.id = workspace_post_comments.author_id
+            WHERE workspace_post_comments.post_id = ?
+            ORDER BY workspace_post_comments.id DESC
+            LIMIT ?
+            """,
+            (post_id, limit),
+        ).fetchall()
+
+
+def workspace_post_redirect(post_id: int) -> str:
+    with db() as con:
+        row = con.execute("SELECT group_id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
+    group_id = row_value(row, "group_id")
+    return f"/admin/workspace?group={int(group_id)}" if group_id else "/admin/workspace"
 
 
 def get_workspace_group(group_id: int | None) -> sqlite3.Row | None:
@@ -4299,6 +4354,7 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
         """
     cards = []
     for post in posts:
+        post_id = int(row_value(post, "id") or 0)
         author_name = row_value(post, "author_name") or "FairFares Staff"
         author_initials = "".join(part[:1] for part in author_name.split()[:2]).upper() or "FF"
         photo = row_value(post, "author_photo")
@@ -4311,6 +4367,23 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
         image_html = ""
         if image:
             image_html = f'<img class="workspace-post-image" src="{escape(image)}" alt="Workspace post image">'
+        comments = get_workspace_post_comments(post_id)
+        comment_items = []
+        for comment in comments:
+            comment_author = row_value(comment, "author_name") or "FairFares Staff"
+            comment_items.append(
+                f"""
+                <article>
+                  <b>{escape(comment_author)}</b>
+                  <span>{escape(row_value(comment, "body"))}</span>
+                </article>
+                """
+            )
+        comments_html = (
+            f'<div class="workspace-comments">{"".join(comment_items)}</div>'
+            if comment_items
+            else ""
+        )
         cards.append(
             f"""
             <article class="admin-feed-card workspace-post-card">
@@ -4345,11 +4418,27 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
                 </div>
               </form>
               {image_html}
-              <div class="admin-feed-social-row" aria-label="Feed actions">
-                <button type="button" data-dashboard-action="review-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10003;</i>Mark reviewed</button>
-                <button type="button" data-dashboard-action="note-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Add note</button>
-                <button type="button" data-dashboard-action="forward-workspace-post-{escape(row_value(post, "id"))}"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Forward</button>
+              <div class="workspace-post-stats">
+                <span>{escape(str(row_value(post, "reaction_count") or 0))} reactions</span>
+                <span>{escape(str(row_value(post, "comment_count") or 0))} comments</span>
               </div>
+              <div class="admin-feed-social-row" aria-label="Feed actions">
+                <form method="post" action="/admin/workspace/post/react">
+                  <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
+                  <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#9829;</i>React</button>
+                </form>
+                <button type="button" data-workspace-comment-toggle><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Comment</button>
+                <form method="post" action="/admin/workspace/post/share-slack">
+                  <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
+                  <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Share to Slack</button>
+                </form>
+              </div>
+              {comments_html}
+              <form method="post" action="/admin/workspace/post/comment" class="workspace-comment-form" hidden>
+                <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
+                <input name="body" maxlength="360" placeholder="Write a comment">
+                <button type="submit">Post</button>
+              </form>
             </article>
             """
         )
@@ -6295,6 +6384,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/group/slack": self.update_workspace_group_slack,
             "/admin/workspace/post": self.create_workspace_post,
             "/admin/workspace/post/update": self.update_workspace_post,
+            "/admin/workspace/post/react": self.react_workspace_post,
+            "/admin/workspace/post/comment": self.comment_workspace_post,
+            "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
@@ -7811,6 +7903,91 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (body, post_id),
             )
         self.redirect("/admin/workspace")
+
+    def react_workspace_post(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            post_id = int(form.get("post_id") or "0")
+        except ValueError:
+            post_id = 0
+        if not post_id:
+            self.redirect("/admin/workspace")
+            return
+        with db() as con:
+            post = con.execute("SELECT id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
+            if post:
+                con.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_post_reactions (post_id, user_id, reaction)
+                    VALUES (?, ?, 'LIKE')
+                    """,
+                    (post_id, row_value(user, "id")),
+                )
+        self.redirect(workspace_post_redirect(post_id))
+
+    def comment_workspace_post(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            post_id = int(form.get("post_id") or "0")
+        except ValueError:
+            post_id = 0
+        body = re.sub(r"\s+", " ", (form.get("body") or "").strip())
+        if len(body) > 360:
+            body = body[:360].strip()
+        if not post_id or not body:
+            self.redirect(workspace_post_redirect(post_id) if post_id else "/admin/workspace")
+            return
+        with db() as con:
+            post = con.execute("SELECT id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
+            if post:
+                con.execute(
+                    """
+                    INSERT INTO workspace_post_comments (post_id, author_id, body)
+                    VALUES (?, ?, ?)
+                    """,
+                    (post_id, row_value(user, "id"), body),
+                )
+        self.redirect(workspace_post_redirect(post_id))
+
+    def share_workspace_post_to_slack(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            post_id = int(form.get("post_id") or "0")
+        except ValueError:
+            post_id = 0
+        if not post_id:
+            self.redirect("/admin/workspace")
+            return
+        with db() as con:
+            post = con.execute(
+                """
+                SELECT workspace_posts.*, users.name AS author_name, workspace_groups.name AS group_name
+                FROM workspace_posts
+                JOIN users ON users.id = workspace_posts.author_id
+                LEFT JOIN workspace_groups ON workspace_groups.id = workspace_posts.group_id
+                WHERE workspace_posts.id = ?
+                """,
+                (post_id,),
+            ).fetchone()
+        if post:
+            group_name = row_value(post, "group_name") or "Company feed"
+            text = (
+                f"Workspace post shared by {row_value(user, 'name')}\n"
+                f"Author: {row_value(post, 'author_name')}\n"
+                f"Feed: {group_name}\n"
+                f"{row_value(post, 'body')}"
+            )
+            send_slack_notification("general", text[:3000])
+        self.redirect(workspace_post_redirect(post_id))
 
     def create_guest_booking(self) -> None:
         form = self.read_form()
