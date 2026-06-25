@@ -107,6 +107,12 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOncallDayEditors();
 });
 
+document.querySelectorAll("[data-dashboard-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    console.info("[FairFares admin dashboard]", button.dataset.dashboardAction);
+  });
+});
+
 const bookingCalendarModal = document.getElementById("bookingCalendarModal");
 
 function closeBookingCalendarModal() {

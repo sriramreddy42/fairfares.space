@@ -511,6 +511,189 @@
   font-size: 0.86rem;
   line-height: 1.35;
 }
+.admin-social-dashboard {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1.35fr) minmax(270px, 0.75fr);
+}
+.admin-social-rail,
+.admin-social-chat {
+  position: sticky;
+  top: calc(var(--admin-oncall-top, 118px) + 14px);
+}
+.admin-social-rail,
+.admin-social-feed,
+.admin-social-chat {
+  min-width: 0;
+}
+.admin-social-rail {
+  display: grid;
+  gap: 10px;
+}
+.admin-social-rail a,
+.admin-feed-composer,
+.admin-feed-card,
+.admin-social-chat {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(230, 248, 255, 0.58)),
+    rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(126, 198, 232, 0.34);
+  border-radius: 8px;
+  box-shadow: 0 14px 38px rgba(7, 20, 63, 0.08);
+}
+.admin-social-rail a {
+  color: var(--navy);
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  text-decoration: none;
+}
+.admin-social-rail b,
+.admin-feed-head b,
+.admin-chat-head b {
+  color: var(--navy);
+}
+.admin-social-rail span,
+.admin-feed-head span,
+.admin-feed-card p,
+.admin-feed-composer span,
+.admin-chat-head span,
+.admin-chat-thread span,
+.admin-chat-thread small,
+.admin-chat-search span {
+  color: var(--muted);
+  font-weight: 800;
+}
+.admin-social-feed {
+  display: grid;
+  gap: 16px;
+}
+.admin-feed-composer {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px;
+}
+.admin-feed-actions,
+.admin-feed-button-row,
+.admin-chat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.admin-feed-actions button,
+.admin-feed-button-row a,
+.admin-feed-button-row button,
+.admin-chat-head button,
+.admin-chat-tabs button,
+.admin-chat-compose button {
+  background: rgba(7, 20, 63, 0.92);
+  border: 1px solid rgba(7, 20, 63, 0.92);
+  border-radius: 7px;
+  color: #fff;
+  font-weight: 900;
+  min-height: 38px;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+.admin-feed-button-row button,
+.admin-chat-head button,
+.admin-chat-tabs button:not(.active),
+.admin-chat-compose button {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(126, 198, 232, 0.46);
+  color: var(--navy);
+}
+.admin-feed-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.admin-feed-head {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.admin-feed-head button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-weight: 900;
+}
+.admin-feed-avatar {
+  align-items: center;
+  background: var(--navy);
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 900;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+.admin-feed-avatar.is-red {
+  background: var(--red);
+}
+.admin-feed-avatar.is-green {
+  background: #0f7b45;
+}
+.admin-feed-card h2 {
+  color: var(--navy);
+  font-size: 1.15rem;
+  margin: 0;
+}
+.admin-feed-card p,
+.admin-feed-composer p {
+  margin: 0;
+}
+.admin-social-chat {
+  display: grid;
+  gap: 14px;
+  max-height: calc(100vh - var(--admin-oncall-top, 118px) - 32px);
+  overflow: auto;
+  padding: 16px;
+}
+.admin-chat-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+.admin-chat-search {
+  display: grid;
+  gap: 6px;
+}
+.admin-chat-search input,
+.admin-chat-compose input {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(126, 198, 232, 0.42);
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 8px 13px;
+}
+.admin-chat-thread {
+  display: grid;
+  gap: 10px;
+}
+.admin-chat-thread article {
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(7, 20, 63, 0.08);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+}
+.admin-chat-thread b {
+  color: var(--navy);
+}
+.admin-chat-compose {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .backup-meta {
   display: grid;
   gap: 12px;
@@ -1721,6 +1904,19 @@
     display: grid;
   }
 
+  .admin-social-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-social-rail,
+  .admin-social-chat {
+    position: static;
+  }
+
+  .admin-social-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-hero {
     align-items: flex-start;
   }
@@ -1804,6 +2000,16 @@
   }
 
   .oncall-calendar-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-social-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-feed-composer,
+  .admin-feed-head,
+  .admin-chat-compose {
     grid-template-columns: 1fr;
   }
 
