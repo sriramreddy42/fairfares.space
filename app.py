@@ -5273,6 +5273,45 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def active_booking_conflict_for_car(
+    car_id: int,
+    requested_start: datetime | None,
+    requested_end: datetime | None,
+    exclude_booking_id: int = 0,
+) -> sqlite3.Row | None:
+    if not requested_start or not requested_end:
+        return active_booking_for_car(car_id)
+    expire_stale_booking_holds()
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT bookings.*
+            FROM bookings
+            WHERE bookings.car_id = ?
+              AND bookings.id != ?
+              AND (
+                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                OR (
+                    bookings.booking_status = 'PENDING_HOLD'
+                    AND bookings.payment_status = 'HOLD_PENDING'
+                    AND bookings.hold_expires_at IS NOT NULL
+                    AND datetime(bookings.hold_expires_at) > datetime('now')
+                )
+              )
+            ORDER BY bookings.pickup_date, bookings.pickup_time
+            """,
+            (car_id, exclude_booking_id or 0),
+        ).fetchall()
+    for row in rows:
+        active_start = parse_booking_datetime(row_value(row, "pickup_date"), row_value(row, "pickup_time"))
+        active_end = parse_booking_datetime(row_value(row, "dropoff_date"), row_value(row, "dropoff_time"))
+        if not active_start or not active_end:
+            continue
+        if requested_start < active_end and requested_end > active_start:
+            return row
+    return None
+
+
 def booking_datetime_from_row(row: sqlite3.Row, date_key: str, time_key: str) -> datetime | None:
     return parse_booking_datetime(row_value(row, date_key), row_value(row, time_key))
 
@@ -5381,7 +5420,7 @@ def create_booking_for_user(
             continue
         if candidate["status"].strip().upper() == "MAINTENANCE":
             continue
-        active_booking = active_booking_for_car(candidate["id"])
+        active_booking = active_booking_conflict_for_car(candidate["id"], requested_start, requested_end)
         active_return = parse_booking_datetime(
             active_booking["dropoff_date"],
             active_booking["dropoff_time"],
@@ -7397,7 +7436,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Return date and time must be after pickup date and time."}, 400)
             return
         if requested_car and requested_car["id"] != booking["car_id"]:
-            active_booking = active_booking_for_car(requested_car["id"])
+            active_booking = active_booking_conflict_for_car(
+                requested_car["id"],
+                requested_start,
+                requested_end,
+                exclude_booking_id=booking["id"],
+            )
             active_return = parse_booking_datetime(active_booking["dropoff_date"], active_booking["dropoff_time"]) if active_booking else None
             if requested_start and active_return and requested_start < active_return:
                 self.send_json(

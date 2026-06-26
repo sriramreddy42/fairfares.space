@@ -72,6 +72,55 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(refreshed["payment_status"], "HOLD_EXPIRED")
         self.assertEqual(released_car["status"], "AVAILABLE")
 
+    def test_future_booking_does_not_block_earlier_available_window(self):
+        car = app.get_cars()[0]
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, phone, password_hash, is_verified)
+                VALUES ('Earlier Tester', 'earlier@example.com', '5552223333', ?, 1)
+                """,
+                (app.hash_password("Password123!"),),
+            )
+            earlier_user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """
+                INSERT INTO users (name, email, phone, password_hash, is_verified)
+                VALUES ('Overlap Tester', 'overlap@example.com', '5553334444', ?, 1)
+                """,
+                (app.hash_password("Password123!"),),
+            )
+            overlap_user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+        future_booking = app.create_booking_for_user(
+            self.user_id,
+            car["id"],
+            pickup_date="2026-08-10",
+            return_date="2026-08-20",
+            pickup_time="10:00 AM",
+            return_time="10:00 AM",
+        )
+        earlier_booking = app.create_booking_for_user(
+            earlier_user_id,
+            car["id"],
+            pickup_date="2026-08-01",
+            return_date="2026-08-05",
+            pickup_time="10:00 AM",
+            return_time="10:00 AM",
+        )
+
+        self.assertEqual(future_booking["car_id"], car["id"])
+        self.assertEqual(earlier_booking["car_id"], car["id"])
+        with self.assertRaises(RuntimeError):
+            app.create_booking_for_user(
+                overlap_user_id,
+                car["id"],
+                pickup_date="2026-08-12",
+                return_date="2026-08-14",
+                pickup_time="10:00 AM",
+                return_time="10:00 AM",
+            )
+
     def test_customer_checkout_labels_are_clean(self):
         self.assertEqual(app.booking_status_label("PENDING_HOLD", "HOLD_PENDING"), "Payment window")
         self.assertEqual(app.booking_status_label("EXPIRED_HOLD", "HOLD_EXPIRED"), "Expired")
