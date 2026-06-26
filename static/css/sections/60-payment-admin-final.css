@@ -957,31 +957,36 @@
 }
 
 .manage-screen.manage-checkout-screen .checkout-finalize-heading {
-  align-items: start !important;
-  background: #fff !important;
-  border: 1px solid #e3e8f1 !important;
-  border-radius: 10px !important;
-  box-shadow: 0 10px 24px rgba(7, 20, 63, 0.06) !important;
-  color: #07143f !important;
+  align-items: center !important;
+  background:
+    linear-gradient(90deg, rgba(3, 15, 42, 0.58), rgba(3, 15, 42, 0.28)),
+    url("/static/img/checkout-denver-bg.png") center 48% / cover no-repeat !important;
+  border: 1px solid rgba(255, 255, 255, 0.44) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 16px 32px rgba(7, 20, 63, 0.16) !important;
+  color: #fff !important;
   display: grid !important;
-  justify-content: start !important;
+  justify-content: center !important;
   margin: 12px auto 0 !important;
   max-width: 1120px !important;
-  min-height: 0 !important;
-  padding: 14px 18px !important;
-  text-align: left !important;
+  min-height: 112px !important;
+  overflow: hidden !important;
+  padding: 18px !important;
+  position: relative !important;
+  text-align: center !important;
   width: 100% !important;
 }
 
 .manage-screen.manage-checkout-screen .checkout-finalize-heading .eyebrow {
-  color: #9a001b !important;
+  color: rgba(255, 255, 255, 0.86) !important;
   margin: 0 0 3px !important;
 }
 
 .manage-screen.manage-checkout-screen .checkout-finalize-heading h2 {
-  color: #07143f !important;
-  font-size: clamp(1.25rem, 2vw, 1.65rem) !important;
+  color: #fff !important;
+  font-size: clamp(1.45rem, 2.4vw, 2rem) !important;
   letter-spacing: 0 !important;
+  text-shadow: 0 8px 24px rgba(0, 0, 0, 0.38) !important;
   text-transform: none !important;
 }
 
@@ -1123,7 +1128,8 @@
 @media (max-width: 640px) {
   .manage-screen.manage-checkout-screen .checkout-finalize-heading {
     margin-top: 8px !important;
-    padding: 12px 14px !important;
+    min-height: 92px !important;
+    padding: 14px !important;
   }
 
   .manage-screen.manage-checkout-screen .trip-card {
