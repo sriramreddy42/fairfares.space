@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625ah"
+ASSET_VERSION = "20260625ai"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -49,6 +49,7 @@ BASE_STYLESHEETS = [
     f"/static/css/sections/40-explorer.css?v={ASSET_VERSION}",
     f"/static/css/sections/50-home-results-late-explorer.css?v={ASSET_VERSION}",
     f"/static/css/sections/60-payment-admin-final.css?v={ASSET_VERSION}",
+    f"/static/css/sections/70-mobile-polish.css?v={ASSET_VERSION}",
 ]
 PAGE_STYLESHEETS = {
     "admin_wiki.html": [f"/static/css/wiki.css?v={ASSET_VERSION}"],

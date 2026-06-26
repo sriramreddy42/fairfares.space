@@ -1,0 +1,921 @@
+/* Final mobile system pass. Keep this file last so small-screen surfaces stay compact. */
+@media (max-width: 860px) {
+  :root {
+    --mobile-page-pad: 12px;
+    --mobile-card-pad: 12px;
+    --mobile-gap: 10px;
+  }
+
+  html {
+    font-size: 15px;
+    overflow-x: hidden;
+  }
+
+  body {
+    overflow-x: hidden;
+    text-size-adjust: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  h1,
+  h2,
+  h3,
+  p {
+    overflow-wrap: anywhere;
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  .select-button,
+  .light-button,
+  .nav-button,
+  a[class*="button"] {
+    font-size: 0.95rem !important;
+  }
+
+  button,
+  .select-button,
+  .light-button,
+  .nav-button,
+  .admin-feed-button-row a,
+  .admin-feed-social-row button {
+    border-radius: 8px !important;
+    min-height: 42px !important;
+    padding: 10px 12px !important;
+  }
+
+  input,
+  select,
+  textarea {
+    border-radius: 8px !important;
+    min-height: 42px !important;
+    padding: 9px 10px !important;
+  }
+
+  .top-brand,
+  .manage-top {
+    min-height: 64px !important;
+    padding: 8px 12px !important;
+  }
+
+  .top-brand .logo-lockup,
+  .manage-top .logo-lockup {
+    padding: 0 !important;
+  }
+
+  .top-brand .logo-lockup img,
+  .manage-top .logo-lockup img,
+  .logo-lockup img {
+    max-height: 48px !important;
+    max-width: 210px !important;
+  }
+
+  .top-benefits,
+  .manage-top .top-benefits {
+    display: none !important;
+  }
+
+  .main-nav,
+  .manage-nav {
+    min-height: 54px !important;
+  }
+
+  .mobile-menu {
+    border-radius: 10px !important;
+    box-shadow: 0 18px 42px rgba(7, 20, 63, 0.14);
+  }
+}
+
+@media (max-width: 760px) {
+  /* Public booking/search */
+  .booking-hero {
+    display: grid !important;
+    gap: var(--mobile-gap) !important;
+    grid-template-columns: 1fr !important;
+    padding: var(--mobile-page-pad) !important;
+  }
+
+  .search-panel {
+    border-radius: 10px !important;
+    gap: 10px !important;
+    padding: 14px !important;
+  }
+
+  .search-panel h1 {
+    font-size: 1.55rem !important;
+    line-height: 1.08 !important;
+    margin-bottom: 2px !important;
+  }
+
+  .search-panel label {
+    gap: 5px !important;
+  }
+
+  .search-panel label > span,
+  .search-panel legend,
+  .search-panel .rental-estimate span {
+    font-size: 0.78rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .input-shell {
+    min-height: 42px !important;
+  }
+
+  .input-shell > span {
+    display: none !important;
+  }
+
+  .split-input {
+    grid-template-columns: minmax(0, 1fr) minmax(108px, 36%) !important;
+  }
+
+  .rental-estimate {
+    border-radius: 8px !important;
+    gap: 4px !important;
+    padding: 10px 12px !important;
+  }
+
+  .rental-estimate b {
+    font-size: 1.05rem !important;
+  }
+
+  .rental-estimate small {
+    font-size: 0.82rem !important;
+    line-height: 1.3 !important;
+  }
+
+  .hero-poster {
+    display: none !important;
+  }
+
+  .results-toolbar {
+    align-items: stretch !important;
+    display: grid !important;
+    gap: 8px !important;
+    min-height: 0 !important;
+  }
+
+  .results-toolbar h2 {
+    font-size: 1rem !important;
+  }
+
+  .results-toolbar label {
+    align-items: stretch !important;
+    display: grid !important;
+    gap: 5px !important;
+  }
+
+  .results-toolbar select {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .filters {
+    border-radius: 10px !important;
+    padding: 10px 12px !important;
+  }
+
+  fieldset {
+    gap: 8px !important;
+    margin-top: 10px !important;
+    padding-top: 10px !important;
+  }
+
+  .car-card {
+    border-radius: 10px !important;
+    gap: 10px !important;
+    grid-template-columns: 112px minmax(0, 1fr) !important;
+    min-height: 0 !important;
+    padding: 12px !important;
+  }
+
+  .car-art {
+    height: 92px !important;
+  }
+
+  .car-card-image {
+    height: 84px !important;
+    width: 112px !important;
+  }
+
+  .deal-badge {
+    font-size: 0.72rem !important;
+    padding: 5px 7px !important;
+  }
+
+  .car-info h3 {
+    font-size: 1rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .car-info p,
+  .car-info li,
+  .specs span {
+    font-size: 0.84rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .car-info ul {
+    gap: 3px !important;
+  }
+
+  .specs {
+    gap: 7px !important;
+    margin-bottom: 7px !important;
+  }
+
+  .price-box {
+    align-items: stretch !important;
+    grid-column: 1 / -1 !important;
+    grid-template-columns: minmax(0, 1fr) minmax(120px, auto) !important;
+    justify-items: stretch !important;
+    text-align: left !important;
+  }
+
+  .price-box strong {
+    font-size: 1.45rem !important;
+  }
+
+  .price-box em,
+  .price-box small {
+    font-size: 0.78rem !important;
+    max-width: none !important;
+  }
+
+  .price-box .select-button,
+  .price-box button,
+  .price-box .light-button {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Manage booking / checkout */
+  .manage-layout {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-columns: 1fr !important;
+    padding: 12px !important;
+  }
+
+  .manage-sidebar {
+    border-radius: 10px !important;
+    display: flex !important;
+    gap: 8px !important;
+    overflow-x: auto !important;
+    padding: 10px !important;
+    scroll-snap-type: x proximity;
+  }
+
+  .manage-sidebar h2,
+  .manage-sidebar .student-promo {
+    display: none !important;
+  }
+
+  .manage-sidebar a {
+    flex: 0 0 156px !important;
+    gap: 3px !important;
+    padding: 10px !important;
+    scroll-snap-align: start;
+  }
+
+  .manage-sidebar a b {
+    font-size: 0.86rem !important;
+  }
+
+  .manage-sidebar a span {
+    font-size: 0.74rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .page-heading {
+    align-items: stretch !important;
+    display: grid !important;
+    gap: 8px !important;
+  }
+
+  .page-heading h1 {
+    font-size: 1.25rem !important;
+    line-height: 1.12 !important;
+  }
+
+  .page-heading p {
+    font-size: 0.86rem !important;
+    line-height: 1.35 !important;
+  }
+
+  .trip-card,
+  .manage-card,
+  .panel,
+  .auth-card {
+    border-radius: 10px !important;
+    padding: var(--mobile-card-pad) !important;
+  }
+
+  .manage-screen:not(.manage-checkout-screen) .trip-card {
+    grid-template-columns: 96px minmax(0, 1fr) !important;
+    gap: 10px !important;
+  }
+
+  .trip-car-image {
+    max-height: 70px !important;
+    width: 96px !important;
+  }
+
+  .trip-details h2 {
+    font-size: 1.05rem !important;
+  }
+
+  .trip-details,
+  .trip-route {
+    font-size: 0.86rem !important;
+    line-height: 1.3 !important;
+  }
+
+  .trip-route {
+    grid-column: 1 / -1;
+  }
+
+  .manage-grid,
+  .modify-form,
+  .workflow-form,
+  .document-tools,
+  .booking-confirmation-actions,
+  .modify-grid,
+  .modify-grid.two {
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .manage-card h2,
+  .customer-info-form h3,
+  .booking-hold-panel h3 {
+    font-size: 1.05rem !important;
+    line-height: 1.15 !important;
+  }
+
+  .manage-card p,
+  .manage-card li,
+  .checkout-policy-card li {
+    font-size: 0.86rem !important;
+    line-height: 1.35 !important;
+  }
+
+  .manage-screen.manage-checkout-screen .checkout-finalize-heading {
+    border-radius: 10px !important;
+    min-height: 76px !important;
+    padding: 12px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .checkout-finalize-heading h2 {
+    font-size: 1.25rem !important;
+  }
+
+  .manage-screen.manage-checkout-screen .checkout-finalize-heading .eyebrow {
+    font-size: 0.72rem !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-confirmation-card {
+    gap: 10px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-panel {
+    position: static !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+    align-items: start !important;
+    display: grid !important;
+    gap: 3px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown b {
+    font-size: 0.98rem !important;
+  }
+
+  .stripe-pay-button img {
+    max-height: 24px !important;
+  }
+
+  /* Admin / employee pages */
+  .admin-screen {
+    --admin-oncall-top: 78px;
+  }
+
+  .admin-shell-header {
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 78px !important;
+    overflow: hidden !important;
+    padding: 10px 12px !important;
+  }
+
+  .admin-shell-header .logo-lockup {
+    flex: 0 0 auto;
+  }
+
+  .admin-shell-header .logo-lockup img {
+    max-height: 46px !important;
+    max-width: 150px !important;
+  }
+
+  .admin-shell-header .admin-nav-stack {
+    align-items: stretch !important;
+    display: flex !important;
+    gap: 8px !important;
+    justify-items: stretch !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    padding: 4px 2px 8px !important;
+    scrollbar-width: none;
+  }
+
+  .admin-shell-header .admin-nav-stack::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-shell-header .admin-primary-nav,
+  .admin-shell-header .admin-subnav {
+    flex: 0 0 auto !important;
+    flex-wrap: nowrap !important;
+    gap: 7px !important;
+  }
+
+  .admin-shell-header .admin-subnav {
+    background: rgba(255, 255, 255, 0.24) !important;
+    border-radius: 12px !important;
+    padding: 6px !important;
+  }
+
+  .admin-shell-header .admin-nav-stack .admin-primary-nav a,
+  .admin-shell-header .admin-nav-stack .admin-subnav a,
+  .admin-shell-header .admin-nav a {
+    border-radius: 14px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    min-width: 44px !important;
+    padding: 0 !important;
+    width: 44px !important;
+  }
+
+  .admin-nav-icon {
+    font-size: 1.04rem !important;
+    height: 30px !important;
+    width: 30px !important;
+  }
+
+  .admin-nav-text {
+    display: none !important;
+  }
+
+  .admin-nav-badge {
+    font-size: 0.66rem !important;
+    min-height: 19px !important;
+    min-width: 19px !important;
+    right: -7px !important;
+    top: -8px !important;
+  }
+
+  .admin-layout {
+    gap: 12px !important;
+    padding: 12px !important;
+  }
+
+  .admin-hero {
+    border-radius: 10px !important;
+    gap: 8px !important;
+    padding: 14px !important;
+  }
+
+  .admin-hero h1 {
+    font-size: 1.18rem !important;
+  }
+
+  .admin-hero span,
+  .admin-card p,
+  .admin-link-grid a span {
+    font-size: 0.84rem !important;
+    line-height: 1.3 !important;
+  }
+
+  .admin-metrics,
+  .admin-link-grid,
+  .admin-grid,
+  .admin-modules {
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .admin-metrics article,
+  .admin-link-grid a,
+  .admin-card {
+    border-radius: 10px !important;
+    padding: 12px !important;
+  }
+
+  .admin-metrics article b {
+    font-size: 1.35rem !important;
+  }
+
+  .admin-card h2,
+  .admin-link-grid a b {
+    font-size: 1rem !important;
+    line-height: 1.15 !important;
+  }
+
+  .admin-form,
+  .staff-request-form,
+  .employee-form,
+  .vehicle-cost-form,
+  .admin-filter-form {
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .admin-table-wrap {
+    border-radius: 10px !important;
+    margin-inline: -2px !important;
+    overflow-x: auto !important;
+  }
+
+  .admin-table {
+    min-width: 680px;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    font-size: 0.82rem !important;
+    padding: 10px 9px !important;
+    white-space: normal !important;
+  }
+
+  .booking-calendar-card,
+  .booking-calendar-day,
+  .booking-calendar-dialog,
+  .oncall-calendar-card,
+  .oncall-day {
+    border-radius: 10px !important;
+    padding: 12px !important;
+  }
+
+  .booking-calendar-tabs,
+  .booking-calendar-filters {
+    gap: 7px !important;
+    overflow-x: auto !important;
+  }
+
+  .booking-calendar-tabs a {
+    flex: 0 0 auto !important;
+    min-width: 112px !important;
+  }
+
+  .booking-calendar-weekly,
+  .booking-calendar-monthly,
+  .oncall-calendar-grid {
+    gap: 8px !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .booking-calendar-event {
+    border-radius: 8px !important;
+    min-height: 0 !important;
+    padding: 10px !important;
+  }
+
+  .booking-calendar-event b,
+  .booking-calendar-event span,
+  .booking-calendar-event small {
+    font-size: 0.84rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .admin-oncall-dock {
+    height: calc(100vh - var(--admin-oncall-top, 78px)) !important;
+    top: var(--admin-oncall-top, 78px) !important;
+  }
+
+  .admin-oncall-tab {
+    border-radius: 12px 0 0 12px !important;
+    padding: 12px 6px !important;
+    width: 46px !important;
+  }
+
+  .admin-oncall-tab span {
+    font-size: 0.68rem !important;
+  }
+
+  .admin-oncall-drawer {
+    border-radius: 14px 0 0 14px !important;
+    padding: 14px 12px !important;
+    width: min(390px, calc(100vw - 46px)) !important;
+  }
+
+  /* Workspace: fixed side rails become compact sections; only feed scrolls naturally. */
+  .workspace-shell {
+    display: grid !important;
+    gap: 10px !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 10px !important;
+  }
+
+  .workspace-left,
+  .workspace-center,
+  .workspace-right,
+  .admin-social-rail,
+  .admin-social-chat {
+    position: static !important;
+    width: 100% !important;
+  }
+
+  .workspace-left {
+    display: grid !important;
+    gap: 9px !important;
+  }
+
+  .admin-profile-card {
+    border-radius: 12px !important;
+    padding: 12px !important;
+  }
+
+  .admin-profile-avatar {
+    height: 54px !important;
+    width: 54px !important;
+  }
+
+  .admin-profile-card b {
+    font-size: 1.02rem !important;
+  }
+
+  .workspace-profile-meta span {
+    font-size: 0.82rem !important;
+    min-height: 36px !important;
+  }
+
+  .admin-profile-stats {
+    gap: 8px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .admin-profile-stats span,
+  .admin-profile-stats a {
+    min-height: 58px !important;
+    padding: 9px !important;
+  }
+
+  .workspace-left > a {
+    border-radius: 10px !important;
+    gap: 4px !important;
+    grid-template-columns: 30px minmax(0, 1fr) !important;
+    min-height: 58px !important;
+    padding: 10px !important;
+  }
+
+  .workspace-left > a span {
+    font-size: 0.78rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .workspace-feed-scroll {
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .workspace-compose-card,
+  .admin-feed-card,
+  .workspace-post-card,
+  .workspace-post-modal,
+  .workspace-groups-drawer,
+  .admin-chat-thread article {
+    border-radius: 12px !important;
+    padding: 12px !important;
+  }
+
+  .workspace-compose-card {
+    grid-template-columns: minmax(0, 1fr) 48px !important;
+  }
+
+  .workspace-compose-trigger {
+    min-width: 0 !important;
+  }
+
+  .workspace-compose-trigger span:last-child {
+    font-size: 0.9rem !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-compose-photo span {
+    display: none !important;
+  }
+
+  .workspace-post-modal-backdrop {
+    align-items: end !important;
+    padding: 8px !important;
+  }
+
+  .workspace-post-modal {
+    max-height: calc(100vh - 24px) !important;
+    overflow-y: auto !important;
+    width: 100% !important;
+  }
+
+  .workspace-editor-toolbar {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    padding-bottom: 2px !important;
+  }
+
+  .workspace-editor-toolbar button {
+    flex: 0 0 auto !important;
+    min-width: 44px !important;
+  }
+
+  .workspace-post-addons {
+    align-items: center !important;
+    display: flex !important;
+    gap: 7px !important;
+    overflow-x: auto !important;
+  }
+
+  .workspace-post-addons b {
+    flex: 0 0 auto;
+    font-size: 0.84rem !important;
+  }
+
+  .admin-feed-head,
+  .admin-chat-head {
+    gap: 9px !important;
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+  }
+
+  .admin-feed-card h2,
+  .workspace-post-card h2 {
+    font-size: 1.02rem !important;
+    line-height: 1.18 !important;
+  }
+
+  .admin-feed-card p,
+  .workspace-post-card p,
+  .admin-chat-thread span {
+    font-size: 0.86rem !important;
+    line-height: 1.35 !important;
+  }
+
+  .admin-feed-button-row,
+  .admin-feed-social-row,
+  .admin-chat-tabs {
+    display: flex !important;
+    gap: 7px !important;
+    overflow-x: auto !important;
+  }
+
+  .admin-feed-button-row a,
+  .admin-feed-button-row button,
+  .admin-feed-social-row button,
+  .admin-chat-tabs a {
+    flex: 0 0 auto !important;
+    min-width: 118px !important;
+  }
+
+  .admin-chat-primary img {
+    max-height: 38px !important;
+    max-width: 96px !important;
+  }
+
+  .workspace-groups-open {
+    min-height: 42px !important;
+  }
+
+  .workspace-groups-drawer {
+    bottom: 0 !important;
+    left: 0 !important;
+    max-height: min(78vh, 620px) !important;
+    overflow-y: auto !important;
+    right: auto !important;
+    top: auto !important;
+    width: min(360px, calc(100vw - 22px)) !important;
+  }
+
+  /* Floating widgets */
+  .app-feedback-widget {
+    z-index: 180 !important;
+  }
+
+  .app-feedback-tab {
+    min-height: 112px !important;
+    width: 34px !important;
+  }
+
+  .app-feedback-tab span {
+    font-size: 0.82rem !important;
+  }
+
+  .app-feedback-panel {
+    left: 40px !important;
+    padding: 14px !important;
+    width: calc(100vw - 50px) !important;
+  }
+
+  .wiki-agent-widget {
+    bottom: 14px !important;
+    right: 14px !important;
+    z-index: 2147482000 !important;
+  }
+
+  .admin-screen .wiki-agent-widget {
+    bottom: 14px !important;
+    right: 58px !important;
+  }
+
+  .wiki-agent-orb {
+    height: 56px !important;
+    width: 56px !important;
+  }
+
+  .wiki-agent-orb b {
+    font-size: 0.86rem !important;
+    height: 34px !important;
+    width: 34px !important;
+  }
+
+  .wiki-agent-panel {
+    bottom: 82px !important;
+    max-height: calc(100vh - 108px) !important;
+    padding: 14px !important;
+    right: 10px !important;
+    width: calc(100vw - 20px) !important;
+  }
+}
+
+@media (max-width: 430px) {
+  html {
+    font-size: 14px;
+  }
+
+  .top-brand .logo-lockup img,
+  .manage-top .logo-lockup img {
+    max-width: 178px !important;
+  }
+
+  .search-panel {
+    padding: 12px !important;
+  }
+
+  .search-panel h1 {
+    font-size: 1.38rem !important;
+  }
+
+  .split-input {
+    grid-template-columns: 1fr !important;
+  }
+
+  .car-card {
+    grid-template-columns: 96px minmax(0, 1fr) !important;
+  }
+
+  .car-card-image {
+    height: 72px !important;
+    width: 96px !important;
+  }
+
+  .price-box {
+    grid-template-columns: 1fr !important;
+  }
+
+  .admin-shell-header .logo-lockup img {
+    max-width: 122px !important;
+  }
+
+  .admin-shell-header .admin-nav-stack .admin-primary-nav a,
+  .admin-shell-header .admin-nav-stack .admin-subnav a,
+  .admin-shell-header .admin-nav a {
+    height: 40px !important;
+    min-height: 40px !important;
+    min-width: 40px !important;
+    width: 40px !important;
+  }
+
+  .admin-nav-icon {
+    height: 28px !important;
+    width: 28px !important;
+  }
+
+  .admin-profile-stats {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .workspace-left > a {
+    min-height: 52px !important;
+  }
+
+  .admin-table {
+    min-width: 620px;
+  }
+}
