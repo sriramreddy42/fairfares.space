@@ -11356,6 +11356,59 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
               </div>
             """
+        trip_policy_cards = ""
+        policy_info_cards = ""
+        if booking:
+            with db() as con:
+                active_insurance = con.execute(
+                    "SELECT * FROM insurances WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
+                    (booking["id"],),
+                ).fetchone()
+            insurance_summary = (
+                f"{row_value(active_insurance, 'insurance_provider')} - {row_value(active_insurance, 'insurance_type')} - coverage {format_money(row_value(active_insurance, 'coverage_amount'))}"
+                if active_insurance
+                else "Insurance is reviewed at pickup. Bring proof of personal coverage or choose provider-approved rental coverage when offered."
+            )
+            policy_info_cards = f"""
+                <section class="checkout-policy-stack trip-policy-stack" aria-label="Rental protection and policies">
+                    <article class="checkout-policy-card protection">
+                        <div class="policy-card-heading">
+                            <span aria-hidden="true">OK</span>
+                            <div>
+                                <p class="eyebrow">Rental car protection</p>
+                                <h3>Feel more secure before pickup.</h3>
+                            </div>
+                        </div>
+                        <ul>
+                            <li>If an accident happens, make sure everyone is safe, call emergency services if needed, document photos, collect other driver information, then <a href="#support" data-manage-tab="support" data-support-escalate="accident">create an urgent support ticket</a>.</li>
+                            <li><b>Coverage on file:</b> {escape(insurance_summary)}</li>
+                            <li>Insurance selected or verified at pickup is the coverage used for the rental record.</li>
+                            <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
+                        </ul>
+                    </article>
+                    <article class="checkout-policy-card">
+                        <p class="eyebrow">Cancellation policy</p>
+                        <h3>Cancel before pickup when plans change.</h3>
+                        <div class="policy-timeline" aria-hidden="true"><span>Today</span><i></i><span>Pickup</span></div>
+                        <ul>
+                            <li>Use Manage Booking > Cancel Reservation to submit the request.</li>
+                            <li>Refund eligibility depends on pickup timing, payment status, provider terms, no-show rules, and discount conditions.</li>
+                            <li>Some cancellations are automatic before the cutoff; others require admin review before final refund details are confirmed.</li>
+                        </ul>
+                    </article>
+                    <article class="checkout-policy-card">
+                        <p class="eyebrow">Rental policies</p>
+                        <h3>Driver rules and required documents.</h3>
+                        <ul>
+                            <li><b>Age restriction:</b> drivers under 25 may need extra review, fees, or provider approval.</li>
+                            <li>Bring a valid driver license, payment method, insurance information when required, student verification when using student benefits, and booking confirmation.</li>
+                            <li>Only approved drivers listed on the booking or rental agreement may drive the vehicle.</li>
+                            <li><a href="/wiki">View FairFares wiki rules and restrictions</a>.</li>
+                        </ul>
+                    </article>
+                </section>
+            """
+            trip_policy_cards = policy_info_cards
         first_time_manage_content = ""
         if show_start_experience or show_signed_out_empty:
             first_time_manage_content = """
@@ -11432,55 +11485,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 student_button = '<button class="light-button" type="button" data-manage-tab="details" data-detail-jump="student">Student Verification</button>'
             referral_share_url = f"{self.public_origin()}/deals"
-            with db() as con:
-                active_insurance = con.execute(
-                    "SELECT * FROM insurances WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
-                    (booking["id"],),
-                ).fetchone()
-            insurance_summary = (
-                f"{row_value(active_insurance, 'insurance_provider')} - {row_value(active_insurance, 'insurance_type')} - coverage {format_money(row_value(active_insurance, 'coverage_amount'))}"
-                if active_insurance
-                else "Insurance is reviewed at pickup. Bring proof of personal coverage or choose provider-approved rental coverage when offered."
-            )
-            policy_info_cards = f"""
-                <section class="checkout-policy-stack" aria-label="Rental protection and policies">
-                    <article class="checkout-policy-card protection">
-                        <div class="policy-card-heading">
-                            <span aria-hidden="true">OK</span>
-                            <div>
-                                <p class="eyebrow">Rental car protection</p>
-                                <h3>Feel more secure before pickup.</h3>
-                            </div>
-                        </div>
-                        <ul>
-                            <li>If an accident happens, make sure everyone is safe, call emergency services if needed, document photos, collect other driver information, then <a href="#support" data-manage-tab="support" data-support-escalate="accident">create an urgent support ticket</a>.</li>
-                            <li><b>Coverage on file:</b> {escape(insurance_summary)}</li>
-                            <li>Insurance selected or verified at pickup is the coverage used for the rental record.</li>
-                            <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
-                        </ul>
-                    </article>
-                    <article class="checkout-policy-card">
-                        <p class="eyebrow">Cancellation policy</p>
-                        <h3>Cancel before pickup when plans change.</h3>
-                        <div class="policy-timeline" aria-hidden="true"><span>Today</span><i></i><span>Pickup</span></div>
-                        <ul>
-                            <li>Use Manage Booking > Cancel Reservation to submit the request.</li>
-                            <li>Refund eligibility depends on pickup timing, payment status, provider terms, no-show rules, and discount conditions.</li>
-                            <li>Some cancellations are automatic before the cutoff; others require admin review before final refund details are confirmed.</li>
-                        </ul>
-                    </article>
-                    <article class="checkout-policy-card">
-                        <p class="eyebrow">Rental policies</p>
-                        <h3>Driver rules and required documents.</h3>
-                        <ul>
-                            <li><b>Age restriction:</b> drivers under 25 may need extra review, fees, or provider approval.</li>
-                            <li>Bring a valid driver license, payment method, insurance information when required, student verification when using student benefits, and booking confirmation.</li>
-                            <li>Only approved drivers listed on the booking or rental agreement may drive the vehicle.</li>
-                            <li><a href="/wiki">View FairFares wiki rules and restrictions</a>.</li>
-                        </ul>
-                    </article>
-                </section>
-            """
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
             full_paid = bool(row_value(booking, "payment_status") == "PAID")
             hold_remaining = booking_hold_remaining_label(booking)
@@ -11616,6 +11620,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
+            trip_policy_cards = ""
         request_notice = ""
         if booking and booking["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}:
             label = "Modification request" if booking["booking_status"] == "MODIFIED" else "Cancellation request"
@@ -11658,6 +11663,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
+            trip_policy_cards=trip_policy_cards,
             request_notice=request_notice,
             trip_payment_summary=trip_payment_summary,
             trip_card_class="trip-card" if booking else "trip-card is-hidden",
