@@ -1200,8 +1200,7 @@ def save_booking_contact_and_send_confirmation(
                 UPDATE bookings
                 SET contact_name = ?,
                     contact_email = ?,
-                    contact_phone = ?,
-                    confirmation_email_sent_at = CURRENT_TIMESTAMP
+                    contact_phone = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (full_name, clean_email, clean_phone, booking["id"], user_id),
@@ -1209,14 +1208,14 @@ def save_booking_contact_and_send_confirmation(
     delivery_status = "not sent"
     outbox_file: Path | None = None
     if booking and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
-        refreshed_booking = get_booking_for_user(user_id)
-        if refreshed_booking:
-            outbox_file, delivery_status = send_booking_confirmation_email(clean_email, full_name, refreshed_booking, origin)
+        outbox_file, delivery_status = send_confirmed_booking_email_once(booking["id"], origin)
     if booking and booking["booking_status"] == "PENDING_HOLD":
         message = "Details saved. Pay the 10% hold within the reservation window to confirm this car."
+    elif delivery_status == "already sent":
+        message = "Details saved. Booking confirmation email was already sent."
     else:
         message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
-    if delivery_status != "not sent" and not delivery_status.startswith("sent"):
+    if delivery_status not in {"not sent", "already sent"} and not delivery_status.startswith("sent"):
         message = "Details saved. A local confirmation email copy was created for this booking."
     return {
         "ok": True,
@@ -1224,6 +1223,43 @@ def save_booking_contact_and_send_confirmation(
         "delivery_status": delivery_status,
         "outbox_file": str(outbox_file) if outbox_file else "",
     }
+
+
+def get_booking_by_id(booking_id: int) -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.id = ?
+            """,
+            (booking_id,),
+        ).fetchone()
+
+
+def send_confirmed_booking_email_once(booking_id: int, origin: str) -> tuple[Path | None, str]:
+    booking = get_booking_by_id(booking_id)
+    if not booking:
+        return None, "booking not found"
+    if row_value(booking, "confirmation_email_sent_at"):
+        return None, "already sent"
+    email = row_value(booking, "contact_email")
+    if not email or "@" not in email:
+        return None, "missing customer email"
+    name = row_value(booking, "contact_name") or "FairFares customer"
+    outbox_file, delivery_status = send_booking_confirmation_email(email, name, booking, origin)
+    with db() as con:
+        con.execute(
+            """
+            UPDATE bookings
+            SET confirmation_email_sent_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND confirmation_email_sent_at IS NULL
+            """,
+            (booking_id,),
+        )
+    return outbox_file, delivery_status
 
 
 def init_db() -> None:
@@ -2531,6 +2567,7 @@ def confirm_booking_hold_payment(
     payment_method: str = "Stripe Checkout",
     cardholder_name: str = "Stripe customer",
     invoice_number: str = "",
+    origin: str = "",
 ) -> tuple[bool, str]:
     invoice_number = invoice_number or f"HOLD-{secrets.randbelow(900000) + 100000}"
     with db() as con:
@@ -2566,6 +2603,7 @@ def confirm_booking_hold_payment(
         )
         con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
     notify_slack_payment(booking, f"10% hold paid by Stripe: {format_money(hold_amount)}")
+    send_confirmed_booking_email_once(booking_id, origin)
     return True, invoice_number
 
 
@@ -7698,6 +7736,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
         notify_slack_payment(booking, f"10% hold paid: {format_money(hold_amount)}", self.public_origin())
+        send_confirmed_booking_email_once(booking["id"], self.public_origin())
         self.send_json(
             {
                 "ok": True,
@@ -7790,6 +7829,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "Stripe Checkout",
                     str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
                     str(session.get("payment_intent") or session.get("id") or ""),
+                    self.public_origin(),
                 )
         self.activation_message_page(
             "Payment received",
@@ -7833,6 +7873,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "Stripe Checkout",
                     str(data_object.get("customer_email") or "Stripe customer"),
                     str(data_object.get("payment_intent") or data_object.get("id") or ""),
+                    self.public_origin(),
                 )
         self.send_json({"received": True})
 
