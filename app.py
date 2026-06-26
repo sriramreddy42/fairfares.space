@@ -41,7 +41,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626policy"
+ASSET_VERSION = "20260626policy2"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -5782,10 +5782,13 @@ def cancellation_policy_timeline(booking: sqlite3.Row | dict[str, object] | None
     now = datetime.now()
     hours_until_pickup = max(0.0, (pickup_at - now).total_seconds() / 3600) if pickup_at else 0.0
     days_until_pickup = math.ceil(hours_until_pickup / 24) if hours_until_pickup > 0 else 0
-    tick_count = max(1, min(days_until_pickup or 1, 10))
-    marker_percent = 92
-    if pickup_at and hours_until_pickup > 0:
-        marker_percent = round(max(8, min(92, ((hours_until_pickup - 24) / max(hours_until_pickup, 24)) * 100)), 1)
+    if days_until_pickup <= 1:
+        day_ticks: list[str] = []
+    elif days_until_pickup <= 8:
+        day_ticks = [f"{day}d" for day in range(1, days_until_pickup)]
+    else:
+        step = max(1, math.ceil((days_until_pickup - 1) / 7))
+        day_ticks = [f"{day}d" for day in range(step, days_until_pickup, step)]
     if not pickup_at:
         day_label = "Pickup date pending"
         cutoff_copy = "The 24-hour cutoff is calculated after pickup is scheduled."
@@ -5798,8 +5801,7 @@ def cancellation_policy_timeline(booking: sqlite3.Row | dict[str, object] | None
     return {
         "day_label": day_label,
         "cutoff_copy": cutoff_copy,
-        "marker_percent": marker_percent,
-        "tick_count": tick_count,
+        "day_ticks": day_ticks,
     }
 
 
@@ -11880,8 +11882,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             cancellation_timeline = cancellation_policy_timeline(booking)
             policy_day_ticks = "".join(
-                f"<span>{escape(str(index + 1))}d</span>"
-                for index in range(int(cancellation_timeline["tick_count"]))
+                f"<span>{escape(str(label))}</span>"
+                for label in cancellation_timeline["day_ticks"]
             )
             policy_info_cards = f"""
                 <section class="checkout-policy-stack trip-policy-stack" aria-label="Rental protection and policies">
@@ -11906,7 +11908,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <div class="policy-timeline" aria-label="Cancellation timeline">
                             <div class="policy-timeline-labels"><span>Today</span><strong>{escape(str(cancellation_timeline["day_label"]))}</strong><span>Pickup</span></div>
                             <div class="policy-timeline-track">
-                                <i class="policy-car-marker" style="left: {escape(str(cancellation_timeline["marker_percent"]))}%;" aria-hidden="true"></i>
+                                <i class="policy-car-marker" aria-hidden="true"></i>
                                 <b class="policy-cutoff-marker" aria-hidden="true"></b>
                             </div>
                             <div class="policy-day-ticks" aria-hidden="true">{policy_day_ticks}<strong>24h</strong></div>

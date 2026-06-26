@@ -288,7 +288,7 @@
   background: linear-gradient(90deg, #07143f, #d9dee8);
   display: block;
   height: 3px;
-  margin: 12px 10px 8px;
+  margin: 14px 10px 10px;
   position: relative;
 }
 
@@ -317,24 +317,25 @@
 
 .policy-cutoff-marker {
   background: #e60019;
-  left: calc(100% - 46px);
+  left: calc(100% - 68px);
   width: 4px;
 }
 
 .policy-car-marker {
   display: block;
-  height: 24px;
-  width: 42px;
+  height: 16px;
+  left: 34px;
+  width: 28px;
   position: absolute;
   top: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   z-index: 2;
 }
 
 .policy-car-marker::before {
   background:
-    linear-gradient(#07143f, #07143f) 5px 11px / 32px 9px no-repeat,
-    linear-gradient(#0b61a4, #0b61a4) 13px 4px / 17px 10px no-repeat;
+    linear-gradient(#07143f, #07143f) 4px 8px / 21px 6px no-repeat,
+    linear-gradient(#0b61a4, #0b61a4) 10px 3px / 11px 7px no-repeat;
   border-radius: 12px 14px 8px 8px;
   box-shadow: 0 4px 10px rgba(7, 20, 63, 0.15);
   content: "";
@@ -344,15 +345,15 @@
 
 .policy-car-marker::after {
   background: #fff;
-  border: 3px solid #07143f;
+  border: 2px solid #07143f;
   border-radius: 999px;
-  bottom: 1px;
-  box-shadow: 24px 0 0 -3px #fff, 24px 0 0 0 #07143f;
+  bottom: 0;
+  box-shadow: 15px 0 0 -2px #fff, 15px 0 0 0 #07143f;
   content: "";
-  height: 7px;
-  left: 8px;
+  height: 5px;
+  left: 6px;
   position: absolute;
-  width: 7px;
+  width: 5px;
 }
 
 .policy-day-ticks {
@@ -363,7 +364,7 @@
   font-weight: 850;
   gap: 0;
   justify-content: space-between;
-  margin: 0 10px;
+  margin: 0 62px 0 10px;
 }
 
 .policy-day-ticks span {
