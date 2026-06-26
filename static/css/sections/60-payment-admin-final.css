@@ -149,6 +149,117 @@
   padding: 10px 12px;
 }
 
+.checkout-policy-stack {
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.checkout-policy-card {
+  background: #fff;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(7, 20, 63, 0.07);
+  color: #07143f;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.checkout-policy-card.protection {
+  border-color: #c8e5f4;
+  background: linear-gradient(135deg, rgba(240, 250, 255, 0.96), #fff);
+}
+
+.policy-card-heading {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+}
+
+.policy-card-heading > span {
+  align-items: center;
+  background: #d8edf7;
+  border-radius: 12px;
+  color: #07143f;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 950;
+  height: 42px;
+  justify-content: center;
+  letter-spacing: 0;
+  min-width: 42px;
+}
+
+.checkout-policy-card h3 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.checkout-policy-card ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.checkout-policy-card li {
+  color: #4f5664;
+  line-height: 1.45;
+}
+
+.checkout-policy-card a {
+  color: #0b61a4;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.policy-timeline {
+  align-items: center;
+  background: #f3f6fb;
+  border: 1px solid #e3e8f1;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto 1fr auto;
+  padding: 12px;
+}
+
+.policy-timeline span {
+  color: #07143f;
+  font-weight: 850;
+}
+
+.policy-timeline i {
+  background: linear-gradient(90deg, #07143f, #d9dee8);
+  display: block;
+  height: 2px;
+  position: relative;
+}
+
+.policy-timeline i::before,
+.policy-timeline i::after {
+  background: #07143f;
+  border-radius: 999px;
+  content: "";
+  height: 10px;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+}
+
+.policy-timeline i::before {
+  left: 0;
+}
+
+.policy-timeline i::after {
+  background: #fff;
+  border: 2px solid #07143f;
+  right: 0;
+}
+
 .quest-place-reviews {
   display: grid !important;
   gap: 8px !important;

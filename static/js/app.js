@@ -1160,6 +1160,20 @@ document.addEventListener("click", (event) => {
   }
 });
 
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-support-escalate]");
+  if (!link) return;
+  if (link.dataset.manageTab !== "support") return;
+  if (supportTopic) supportTopic.value = "Emergency roadside help";
+  if (urgentSupport) urgentSupport.checked = true;
+  const message = document.getElementById("supportMessage");
+  if (message && !message.value.trim()) {
+    message.value = "Accident or roadside issue. Please include location, photos, police report number if available, other driver information, and what happened.";
+  }
+  syncSupportTopic();
+  if (supportStatus) supportStatus.textContent = "Urgent roadside support selected. Add details, then create the ticket.";
+});
+
 if (manageTabs.length) {
   showManagePanel(manageTabs.find((tab) => tab.classList.contains("active"))?.dataset.manageTab || "modify");
 }
