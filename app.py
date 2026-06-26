@@ -2745,6 +2745,64 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
     return "REFUND_REVIEW", f"Automatic refund could not be completed. Admin review needed: {' '.join(details)}"
 
 
+def refund_passcode_configured() -> bool:
+    return bool(os.environ.get("FAIRFARES_REFUND_PASSCODE", "").strip())
+
+
+def verify_refund_passcode(value: str) -> bool:
+    expected = os.environ.get("FAIRFARES_REFUND_PASSCODE", "").strip()
+    provided = (value or "").strip()
+    return bool(expected and provided and hmac.compare_digest(provided, expected))
+
+
+def booking_refund_allowed(booking: sqlite3.Row | dict[str, object] | None) -> tuple[bool, str]:
+    if not booking:
+        return False, "Booking not found."
+    if row_value(booking, "payment_status") == "REFUNDED":
+        return False, "This booking is already refunded."
+    if row_value(booking, "booking_status") not in {"CANCELLED", "CANCELLATION_REQUESTED", "EXPIRED_HOLD"}:
+        return False, "Refunds are limited to cancelled, expired, or cancellation-review bookings."
+    if row_value(booking, "payment_status") not in {"PAID", "HOLD_PAID", "REFUND_REVIEW"}:
+        return False, "This booking has no refundable online payment status."
+    return True, ""
+
+
+def create_manual_refund_task(
+    con: sqlite3.Connection,
+    booking: sqlite3.Row,
+    requester: sqlite3.Row,
+    reason: str,
+) -> str:
+    ticket_id = make_ticket_id()
+    while con.execute("SELECT 1 FROM support_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone():
+        ticket_id = make_ticket_id()
+    message = (
+        "P0 manual refund review requested\n"
+        f"Booking: {row_value(booking, 'booking_id')}\n"
+        f"Customer: {row_value(booking, 'user_name')} - {row_value(booking, 'user_email')}\n"
+        f"Payment status: {row_value(booking, 'payment_status')}\n"
+        f"Booking status: {row_value(booking, 'booking_status')}\n"
+        f"Requested by: {row_value(requester, 'name')} - {row_value(requester, 'email')}\n"
+        f"Reason: {reason or 'Manual refund requested by staff.'}"
+    )
+    con.execute(
+        """
+        INSERT INTO support_tickets
+        (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority,
+         escalated_to_oncall, escalated_by, escalation_reason, escalated_at)
+        VALUES (?, ?, ?, 'Manual refund review', 'Admin dashboard', ?, 1, 'P0', 1, ?, 'Staff requested manual refund approval.', CURRENT_TIMESTAMP)
+        """,
+        (ticket_id, row_value(booking, "id"), row_value(booking, "user_id"), message, row_value(requester, "id")),
+    )
+    ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    ticket = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_pk,)).fetchone()
+    if ticket:
+        queue_oncall_escalation_alert(con, ticket, requester, "Staff requested manual refund approval.")
+    else:
+        queue_support_alerts(con, ticket_pk, ticket_id, "P0", f"P0 FairFares manual refund task {ticket_id}", message)
+    return ticket_id
+
+
 def default_trip_dates() -> tuple[str, str]:
     pickup = datetime.now().date() + timedelta(days=6)
     dropoff = pickup + timedelta(days=10)
@@ -6766,6 +6824,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/post/comment": self.comment_workspace_post,
             "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
             "/admin/bookings/status": self.update_admin_booking_status,
+            "/admin/bookings/refund": self.refund_admin_booking_payment,
             "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
@@ -9280,7 +9339,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_rows = get_admin_bookings()
         if selected_status != "ALL":
             booking_rows = [row for row in booking_rows if row["booking_status"] == selected_status]
-        bookings = "\n".join(self.render_admin_booking_row(row) for row in booking_rows)
+        bookings = "\n".join(self.render_admin_booking_row(row, user) for row in booking_rows)
         calendar_html = self.render_admin_booking_calendar(booking_rows, selected_calendar, selected_status)
         body = render_template(
             "admin_bookings.html",
@@ -10165,9 +10224,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         </tr>
         """
 
-    def render_admin_booking_row(self, row: sqlite3.Row) -> str:
+    def render_admin_booking_row(self, row: sqlite3.Row, user: sqlite3.Row) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
         payment_label, pickup_balance_label = admin_payment_summary(row)
+        refund_allowed, refund_block_reason = booking_refund_allowed(row)
+        refund_action = ""
+        if refund_allowed and not refund_passcode_configured():
+            refund_action = '<small class="approval-note"><b>Refund locked</b>Set FAIRFARES_REFUND_PASSCODE before manual refunds can be requested.</small>'
+        elif refund_allowed:
+            refund_button = "Refund Stripe payments" if is_admin_user(user) else "Request P0 refund review"
+            refund_action = f"""
+                <form method="post" action="/admin/bookings/refund" class="admin-stack-form">
+                    <input type="hidden" name="booking_id" value="{row["id"]}">
+                    <input name="reason" value="{escape(row["cancellation_reason"] or "")}" placeholder="Refund reason" required>
+                    <input name="refund_passcode" type="password" placeholder="Refund passcode" autocomplete="off" required>
+                    <small class="approval-note"><b>Strict refund control</b>{'Executes Stripe refund only for saved Stripe Checkout payments.' if is_admin_user(user) else 'Creates an urgent P0 task for admins to review and refund.'}</small>
+                    <button type="submit">{escape(refund_button)}</button>
+                </form>
+            """
+        elif row["payment_status"] in {"PAID", "HOLD_PAID", "REFUND_REVIEW"}:
+            refund_action = f'<small class="approval-note"><b>Refund locked</b>{escape(refund_block_reason)}</small>'
         booking_status_options = (
             ("PENDING_HOLD", "Pending 10-min hold"),
             ("EXPIRED_HOLD", "Expired hold"),
@@ -10224,6 +10300,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {request_note}
                     <button type="submit">Save</button>
                 </form>
+                {refund_action}
             </td>
             <td><a class="admin-text-link" href="/admin/pickup">Open Pickup</a></td>
         </tr>
@@ -10654,6 +10731,75 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
         self.redirect("/admin")
+
+    def refund_admin_booking_payment(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        reason = (form.get("reason") or "").strip() or "Manual refund requested by staff."
+        if not refund_passcode_configured() or not verify_refund_passcode(form.get("refund_passcode", "")):
+            self.redirect("/admin/bookings")
+            return
+        with db() as con:
+            booking = con.execute(
+                """
+                SELECT bookings.*, users.name AS user_name, users.email AS user_email,
+                       cars.name AS car_name
+                FROM bookings
+                JOIN users ON users.id = bookings.user_id
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (form.get("booking_id"),),
+            ).fetchone()
+            allowed, _message = booking_refund_allowed(booking)
+            if not allowed or not booking:
+                self.redirect("/admin/bookings")
+                return
+            if not is_admin_user(user):
+                create_manual_refund_task(con, booking, user, reason)
+                self.redirect("/admin/bookings")
+                return
+
+        next_payment_status, refund_message = auto_refund_booking_payments(int(row_value(booking, "id")))
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET payment_status = ?,
+                    cancellation_reason = CASE
+                        WHEN cancellation_reason = '' THEN ?
+                        ELSE cancellation_reason || ' | ' || ?
+                    END
+                WHERE id = ?
+                """,
+                (
+                    next_payment_status,
+                    f"Manual refund: {refund_message}",
+                    f"Manual refund: {refund_message}",
+                    row_value(booking, "id"),
+                ),
+            )
+            updated_booking = con.execute(
+                """
+                SELECT bookings.*, users.name AS user_name, users.email AS user_email,
+                       cars.name AS car_name
+                FROM bookings
+                JOIN users ON users.id = bookings.user_id
+                JOIN cars ON cars.id = bookings.car_id
+                WHERE bookings.id = ?
+                """,
+                (row_value(booking, "id"),),
+            ).fetchone()
+            if next_payment_status != "REFUNDED" and updated_booking:
+                create_manual_refund_task(con, updated_booking, user, f"{reason} | Automatic refund result: {refund_message}")
+        notify_slack_payment(
+            booking,
+            f"Manual refund action by {row_value(user, 'name')}: {next_payment_status} - {refund_message}",
+            self.public_origin(),
+        )
+        self.redirect("/admin/bookings")
 
     def update_admin_booking_status(self) -> None:
         user = self.require_admin()
