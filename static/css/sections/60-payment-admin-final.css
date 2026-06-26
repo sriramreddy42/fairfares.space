@@ -40,6 +40,26 @@
   line-height: 1;
 }
 
+.booking-hold-breakdown .is-discount b,
+.checkout-savings-note {
+  color: #167a3a;
+}
+
+.booking-hold-breakdown .is-muted {
+  color: #5f6675;
+}
+
+.checkout-savings-note {
+  background: #f0faf4;
+  border: 1px solid #c8ebd3;
+  border-radius: 8px;
+  font-weight: 850;
+  grid-column: 1 / -1;
+  line-height: 1.35;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 .booking-hold-panel {
   background: linear-gradient(180deg, #f9fbff, #fff);
   border: 1px solid #d9deea;

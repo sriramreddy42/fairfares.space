@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625ac"
+ASSET_VERSION = "20260625ad"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -11259,6 +11259,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             referral_share_url = f"{self.public_origin()}/deals"
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
             hold_remaining = booking_hold_remaining_label(booking)
+            active_discount_amount = float(active_breakdown["discount_amount"] or 0)
+            active_discount_code = row_value(booking, "discount_code") if booking else ""
+            discount_summary = (
+                f'<span class="is-discount"><b>-{escape(format_money(active_discount_amount))}</b>{escape(active_discount_code or "Discount")} applied</span>'
+                if active_discount_amount > 0
+                else '<span class="is-muted"><b>$0.00</b>No promo discount applied</span>'
+            )
+            savings_summary = booking_savings_label(booking) if booking else "FairFares pricing is typically around 10% lower than comparable major rental totals."
             hold_decision = ""
             if hold_expired:
                 hold_decision = """
@@ -11283,10 +11291,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
+                        <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
+                        <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees estimate</span>
+                        {discount_summary}
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
                         <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
                     </div>
+                    <p class="checkout-savings-note">{escape(savings_summary)}</p>
                     {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
                         <button type="submit">Pay securely with Stripe</button>
