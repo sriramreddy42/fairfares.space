@@ -2007,7 +2007,7 @@
   justify-content: center;
   padding: 24px;
   position: fixed;
-  z-index: 2000;
+  z-index: 10020;
 }
 
 .booking-referral-backdrop {
@@ -2018,7 +2018,7 @@
   justify-content: center;
   padding: 24px;
   position: fixed;
-  z-index: 2000;
+  z-index: 10020;
 }
 
 .guest-offer-backdrop[hidden],

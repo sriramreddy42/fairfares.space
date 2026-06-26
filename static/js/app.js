@@ -1,15 +1,22 @@
 const siteLoader = document.getElementById("siteLoader");
 
 function hideSiteLoader() {
-  if (siteLoader) siteLoader.classList.add("is-hidden");
+  if (!siteLoader) return;
+  siteLoader.classList.add("is-hidden");
+  siteLoader.setAttribute("aria-hidden", "true");
 }
 
 function showSiteLoader() {
-  if (siteLoader) siteLoader.classList.remove("is-hidden");
+  if (!siteLoader) return;
+  siteLoader.classList.remove("is-hidden");
+  siteLoader.setAttribute("aria-hidden", "false");
 }
 
 if (siteLoader) {
+  document.addEventListener("DOMContentLoaded", hideSiteLoader, { once: true });
+  window.addEventListener("pageshow", hideSiteLoader);
   window.addEventListener("load", () => window.setTimeout(hideSiteLoader, 220));
+  window.setTimeout(hideSiteLoader, 450);
   window.setTimeout(hideSiteLoader, 1400);
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
@@ -684,6 +691,7 @@ document.addEventListener("keydown", (event) => {
 
 function showGuestOfferModal(nextHref = "") {
   if (!guestOfferModal) return false;
+  hideSiteLoader();
   guestOfferModal.dataset.nextHref = nextHref;
   guestOfferModal.hidden = false;
   document.body.classList.add("modal-open");
@@ -2772,6 +2780,7 @@ function referralNameSlug(form) {
 
 function showBookingReferralModal(form, payload = {}) {
   if (!bookingReferralModal) return;
+  hideSiteLoader();
   const code = payload.referral_code || `${referralNameSlug(form)}_REFER_COUPON`;
   const signupUrl = new URL("/signup", window.location.origin);
   signupUrl.searchParams.set("referral_code", code);
@@ -2809,6 +2818,7 @@ bookingReferralModal?.addEventListener("click", (event) => {
 
 function showReferralClaimModal() {
   if (!referralClaimModal) return;
+  hideSiteLoader();
   referralClaimModal.hidden = false;
   document.body.classList.add("modal-open");
   document.getElementById("claimReferralReward")?.focus();
