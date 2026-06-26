@@ -2590,7 +2590,8 @@ def confirm_booking_hold_payment(
         booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
         if not booking:
             return False, "Booking not found."
-        if row_value(booking, "payment_status") in {"HOLD_PAID", "PAID"}:
+        current_payment_status = row_value(booking, "payment_status")
+        if current_payment_status == "PAID" or (current_payment_status == "HOLD_PAID" and payment_option != "full"):
             return True, "Booking payment already recorded."
         breakdown = booking_price_breakdown(booking)
         paid_amount = round(float(amount or (full_payment_total(breakdown["total"]) if payment_option == "full" else breakdown["booking_hold"])), 2)
@@ -2602,11 +2603,16 @@ def confirm_booking_hold_payment(
         next_hold_amount = paid_amount
         next_due_at_pickup = float(breakdown["due_at_pickup"])
         if payment_option == "full":
-            next_discount = round(next_discount + FULL_PAYMENT_DISCOUNT_AMOUNT, 2)
-            next_total = full_payment_total(next_total)
+            if current_payment_status != "HOLD_PAID":
+                next_discount = round(next_discount + FULL_PAYMENT_DISCOUNT_AMOUNT, 2)
+                next_total = full_payment_total(next_total)
             next_hold_amount = 0.0
             next_due_at_pickup = 0.0
-            next_billing_note = "Full payment confirmed by Stripe checkout with $10 pickup discount."
+            next_billing_note = (
+                "Remaining pickup balance paid by Stripe checkout."
+                if current_payment_status == "HOLD_PAID"
+                else "Full payment confirmed by Stripe checkout with $10 pickup discount."
+            )
         while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
             invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
         con.execute(
@@ -7799,17 +7805,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking["booking_status"] == "EXPIRED_HOLD":
             self.send_json({"ok": False, "message": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
             return
-        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] in {"HOLD_PAID", "PAID"}:
+        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "PAID":
             self.send_json({"ok": False, "message": "This booking does not need a payment right now."}, 400)
             return
         form = self.read_form()
         payment_option = "full" if form.get("payment_option") == "full" else "hold"
+        if booking["payment_status"] == "HOLD_PAID" and payment_option != "full":
+            self.send_json({"ok": False, "message": "The 10% hold is already paid. Pay the remaining balance for hassle-free pickup."}, 400)
+            return
         breakdown = booking_price_breakdown(booking)
-        checkout_amount = full_payment_total(breakdown["total"]) if payment_option == "full" else round(float(breakdown["booking_hold"]), 2)
+        checkout_amount = (
+            round(float(breakdown["due_at_pickup"]), 2)
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else full_payment_total(breakdown["total"])
+            if payment_option == "full"
+            else round(float(breakdown["booking_hold"]), 2)
+        )
         amount_cents = max(50, int(round(checkout_amount * 100)))
         origin = self.public_origin().rstrip("/")
-        product_name = "FairFares full booking payment" if payment_option == "full" else "FairFares 10% booking hold"
+        product_name = (
+            "FairFares remaining pickup balance"
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else "FairFares full booking payment"
+            if payment_option == "full"
+            else "FairFares 10% booking hold"
+        )
         product_description = (
+            f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - remaining balance for hassle-free pickup"
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else
             f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - full payment includes $10 pickup discount"
             if payment_option == "full"
             else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}"
@@ -11444,6 +11468,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             savings_summary = booking_savings_label(booking) if booking else "FairFares pricing is typically around 10% lower than comparable major rental totals."
             hold_decision = ""
+            post_hold_full_payment_form = ""
             if hold_expired:
                 hold_decision = """
                     <div class="booking-hold-expired-actions">
@@ -11457,6 +11482,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <span>Complete payment in</span>
                         <b id="holdCountdown">{escape(hold_remaining)}</b>
                     </div>
+                """
+            elif hold_paid:
+                post_hold_full_payment_form = f"""
+                    <form class="payment-hold-form payment-balance-form" id="paymentHoldForm">
+                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
+                            <span>Pay remaining {escape(format_money(active_breakdown["due_at_pickup"]))} for hassle-free pickup.</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
+                        <small>Your 10% hold is already paid. Paying the balance now makes pickup faster.</small>
+                    </form>
                 """
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
@@ -11477,9 +11512,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <span><b>{escape(format_money(full_payment_due_now))}</b>Pay in full today</span>
                     </div>
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
-                    {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
-                    {'<p class="payment-hold-paid">Paid in full. Your pickup balance is $0.00.</p>' if full_paid else ''}
-                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or full_paid or hold_expired) else ''}>
+                    {'<p class="payment-hold-paid">10% hold received. Your pickup balance is updated.</p>' if hold_paid else ''}
+                    {'<p class="payment-hold-paid">Full payment received. Your pickup balance is $0.00.</p>' if full_paid else ''}
+                    {post_hold_full_payment_form}
+                    <form class="payment-hold-form" id="{'paymentHoldFormInactive' if hold_paid else 'paymentHoldForm'}"{' hidden' if (is_guest_checkout or hold_paid or full_paid or hold_expired) else ''}>
                         <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
                             <span>Pay in full and save $10. Enjoy faster, hassle-free pickup.</span>
                             <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
