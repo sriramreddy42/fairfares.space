@@ -13,12 +13,14 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from string import Template
+
+UTC = timezone.utc
 
 
 BASE_DIR = Path(__file__).resolve().parent
