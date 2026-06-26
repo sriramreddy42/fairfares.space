@@ -2647,6 +2647,83 @@ def confirm_booking_hold_payment(
     return True, invoice_number
 
 
+def stripe_refund_payment_reference(payment_reference: str, booking_id: int) -> tuple[bool, str, str]:
+    payment_reference = (payment_reference or "").strip()
+    if not payment_reference:
+        return False, "No Stripe payment reference saved.", ""
+    refund_params: dict[str, object] = {
+        "metadata[booking_id]": booking_id,
+        "metadata[source]": "fairfares_auto_cancellation",
+    }
+    if payment_reference.startswith("pi_"):
+        refund_params["payment_intent"] = payment_reference
+    elif payment_reference.startswith("ch_"):
+        refund_params["charge"] = payment_reference
+    elif payment_reference.startswith("cs_"):
+        session, status = stripe_api_get(f"checkout/sessions/{urllib.parse.quote(payment_reference)}")
+        if not session:
+            return False, status, ""
+        payment_intent = str(session.get("payment_intent") or "")
+        if not payment_intent:
+            return False, "Stripe checkout session has no payment intent.", ""
+        refund_params["payment_intent"] = payment_intent
+    else:
+        return False, "Payment was not created by Stripe Checkout.", ""
+    refund, status = stripe_api_request("refunds", refund_params)
+    refund_id = str(refund.get("id") or "")
+    refund_status = str(refund.get("status") or "")
+    if refund_id:
+        return True, f"Stripe refund {refund_id} created{(' (' + refund_status + ')') if refund_status else ''}.", refund_id
+    return False, status, ""
+
+
+def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
+    with db() as con:
+        transactions = con.execute(
+            """
+            SELECT *
+            FROM transactions
+            WHERE booking_id = ?
+              AND transaction_status IN ('PAID', 'HOLD_PAID')
+              AND invoice_number != ''
+            ORDER BY id ASC
+            """,
+            (booking_id,),
+        ).fetchall()
+    if not transactions:
+        return "REFUND_REVIEW", "No paid Stripe transaction was found for automatic refund."
+
+    refunded_count = 0
+    details: list[str] = []
+    for transaction in transactions:
+        ok, message, refund_id = stripe_refund_payment_reference(row_value(transaction, "invoice_number"), booking_id)
+        details.append(message)
+        with db() as con:
+            con.execute(
+                """
+                UPDATE transactions
+                SET transaction_status = ?,
+                    billing_verification_status = ?,
+                    billing_verification_notes = ?
+                WHERE id = ?
+                """,
+                (
+                    "REFUNDED" if ok else "REFUND_REVIEW",
+                    "REFUNDED" if ok else "REVIEW_REQUIRED",
+                    f"{message}{(' Original payment: ' + row_value(transaction, 'invoice_number')) if ok else ''}",
+                    row_value(transaction, "id"),
+                ),
+            )
+        if ok:
+            refunded_count += 1
+
+    if refunded_count == len(transactions):
+        return "REFUNDED", f"Refunded {refunded_count} Stripe payment{'s' if refunded_count != 1 else ''} automatically."
+    if refunded_count:
+        return "REFUND_REVIEW", f"Refunded {refunded_count} of {len(transactions)} Stripe payments. Admin review needed: {' '.join(details)}"
+    return "REFUND_REVIEW", f"Automatic refund could not be completed. Admin review needed: {' '.join(details)}"
+
+
 def default_trip_dates() -> tuple[str, str]:
     pickup = datetime.now().date() + timedelta(days=6)
     dropoff = pickup + timedelta(days=10)
@@ -5055,6 +5132,10 @@ def admin_payment_summary(row: sqlite3.Row | dict[str, object]) -> tuple[str, st
         return "Hold payment pending", f"10% due now {format_money(breakdown['booking_hold'])}"
     if payment_status == "HOLD_EXPIRED":
         return "Payment window expired", "Restart checkout before pickup"
+    if payment_status == "REFUNDED":
+        return "Refunded", "Pickup balance $0.00"
+    if payment_status == "REFUND_REVIEW":
+        return "Refund review", "Admin follow-up needed"
     return payment_status_label(payment_status), f"Pickup balance {format_money(breakdown['due_at_pickup'])}"
 
 
@@ -7681,7 +7762,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         pickup_at = booking_datetime_from_row(booking, "pickup_date", "pickup_time")
         auto_cancel = bool(pickup_at and pickup_at - datetime.now() >= timedelta(hours=24))
         next_status = "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED"
-        next_payment_status = "REFUND_REVIEW" if booking["payment_status"] == "PAID" else booking["payment_status"]
+        refund_message = ""
+        if auto_cancel and booking["payment_status"] in {"PAID", "HOLD_PAID"}:
+            next_payment_status, refund_message = auto_refund_booking_payments(int(booking["id"]))
+        elif booking["payment_status"] in {"PAID", "HOLD_PAID"}:
+            next_payment_status = "REFUND_REVIEW"
+        else:
+            next_payment_status = booking["payment_status"]
         with db() as con:
             con.execute(
                 """
@@ -7700,7 +7787,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({
             "ok": True,
             "message": (
-                f"Booking cancelled automatically. Task {ticket_id} was created for admin refund follow-up."
+                f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created for admin recordkeeping."
                 if auto_cancel
                 else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
             ),
@@ -10074,6 +10161,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("HOLD_PAID", "10% hold paid"),
             ("PAID", "Paid in full"),
             ("PAY_AT_PICKUP", "Pay at pickup"),
+            ("REFUND_REVIEW", "Refund review"),
+            ("REFUNDED", "Refunded"),
         )
         payment_options = "".join(
             f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{escape(label)}</option>'
@@ -10548,7 +10637,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
         if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAID", "PAY_AT_PICKUP"}:
+        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAID", "PAY_AT_PICKUP", "REFUND_REVIEW", "REFUNDED"}:
             payment_status = "PAY_AT_PICKUP"
         reason = form.get("reason", "")
         if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}:
