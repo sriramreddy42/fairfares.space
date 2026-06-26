@@ -488,6 +488,19 @@ def stripe_webhook_secret() -> str:
     return os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 
 
+def masked_env_status(env_name: str) -> dict[str, str]:
+    load_env_file()
+    value = os.environ.get(env_name, "").strip()
+    if not value:
+        return {"name": env_name, "status": "Missing", "detail": "Runtime process does not see this variable."}
+    prefix = value.split("_", 1)[0] if "_" in value else value[:4]
+    return {
+        "name": env_name,
+        "status": "Configured",
+        "detail": f"Starts with {prefix}..., length {len(value)}",
+    }
+
+
 def stripe_api_request(path: str, params: dict[str, object]) -> tuple[dict[str, object], str]:
     secret = stripe_secret_key()
     if not secret:
@@ -9200,16 +9213,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
+        runtime_config_rows = "\n".join(
+            self.render_runtime_config_row(masked_env_status(env_name))
+            for env_name in (
+                "PUBLIC_BASE_URL",
+                "STRIPE_PUBLISHABLE_KEY",
+                "STRIPE_SECRET_KEY",
+                "STRIPE_WEBHOOK_SECRET",
+            )
+        )
         body = render_template(
             "admin_system.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "system"),
             db_path=escape(DB_PATH),
             backup_dir=escape(BACKUP_DIR),
+            runtime_config_rows=runtime_config_rows,
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
             feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )
         self.send_html(body)
+
+    def render_runtime_config_row(self, item: dict[str, str]) -> str:
+        return f"""
+        <tr>
+          <td><b>{escape(item["name"])}</b></td>
+          <td>{escape(item["status"])}</td>
+          <td>{escape(item["detail"])}</td>
+        </tr>
+        """
 
     def render_staff_create_card(self) -> str:
         return """
