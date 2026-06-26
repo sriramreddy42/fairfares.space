@@ -5044,6 +5044,20 @@ def payment_status_label(status: str) -> str:
     return labels.get(status, status.replace("_", " ").title())
 
 
+def admin_payment_summary(row: sqlite3.Row | dict[str, object]) -> tuple[str, str]:
+    payment_status = row_value(row, "payment_status")
+    breakdown = booking_price_breakdown(row)
+    if payment_status == "PAID":
+        return "Paid in full", "Pickup balance $0.00"
+    if payment_status == "HOLD_PAID":
+        return "10% hold paid", f"Pickup balance due {format_money(breakdown['due_at_pickup'])}"
+    if payment_status == "HOLD_PENDING":
+        return "Hold payment pending", f"10% due now {format_money(breakdown['booking_hold'])}"
+    if payment_status == "HOLD_EXPIRED":
+        return "Payment window expired", "Restart checkout before pickup"
+    return payment_status_label(payment_status), f"Pickup balance {format_money(breakdown['due_at_pickup'])}"
+
+
 def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
     if not booking:
         return {
@@ -9273,6 +9287,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_booking_calendar_block(self, row: sqlite3.Row, day: date) -> str:
         time_label = f"Pickup {row_value(row, 'pickup_time')} - Return {row_value(row, 'dropoff_time')}"
         status = booking_status_label(row["booking_status"], row["payment_status"])
+        payment_label, pickup_balance_label = admin_payment_summary(row)
         vehicle = f"{row_value(row, 'car_year')} {row_value(row, 'car_name')}".strip()
         detail_attrs = {
             "booking": row_value(row, "booking_id"),
@@ -9283,7 +9298,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "phone": row_value(row, "phone") or "No phone",
             "pickup": f"{row_value(row, 'pickup_date')} at {row_value(row, 'pickup_time')}",
             "return": f"{row_value(row, 'dropoff_date')} at {row_value(row, 'dropoff_time')}",
-            "total": format_money(row_value(row, "total_price")),
+            "total": f"{format_money(row_value(row, 'total_price'))} - {payment_label} - {pickup_balance_label}",
             "location": row_value(row, "pickup_location") or row_value(row, "return_location") or "No location saved",
             "image": row_value(row, "car_image_url") or "",
         }
@@ -10038,6 +10053,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_admin_booking_row(self, row: sqlite3.Row) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
+        payment_label, pickup_balance_label = admin_payment_summary(row)
         booking_status_options = (
             ("PENDING_HOLD", "Pending 10-min hold"),
             ("EXPIRED_HOLD", "Expired hold"),
@@ -10077,7 +10093,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <b>{escape(row["pickup_date"])} at {escape(row["pickup_time"])}</b>
                 <span>{escape(row["dropoff_date"])} at {escape(row["dropoff_time"])}</span>
             </td>
-            <td>${row["total_price"]:.2f}</td>
+            <td>
+                <b>{escape(format_money(row["total_price"]))}</b>
+                <span>{escape(payment_label)}</span>
+                <span>{escape(pickup_balance_label)}</span>
+            </td>
             <td>
                 {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
                 <form method="post" action="/admin/bookings/status" class="admin-stack-form">
@@ -10126,6 +10146,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
         billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
         billing_note = transaction["billing_verification_notes"] if transaction and "billing_verification_notes" in transaction.keys() else ""
+        payment_label, pickup_balance_label = admin_payment_summary(row)
+        latest_transaction_label = transaction["transaction_status"] if transaction else ""
+        billing_parts = []
+        if latest_transaction_label:
+            billing_parts.append(f"Latest transaction: {latest_transaction_label}")
+        if billing_status:
+            billing_parts.append(f"{billing_status}{(' - ' + billing_note) if billing_note else ''}")
+        billing_summary = " · ".join(billing_parts)
 
         def capture_field(name: str, label: str, value: str, saved_copy: str = "Photo saved") -> str:
             legacy_dl_attr = ""
@@ -10152,7 +10180,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <div class="pickup-status-grid">
                 <span><b>DL</b>{escape(dl_status)}{f'<small>{escape(dl_note)}</small>' if dl_note else ''}</span>
                 <span><b>Insurance</b>{escape(insurance["insurance_provider"] if insurance else "Not captured")}</span>
-                <span><b>Payment</b>{escape(transaction["transaction_status"] if transaction else row["payment_status"])}{f'<small>{escape(billing_status)} · {escape(billing_note)}</small>' if billing_status else ''}</span>
+                <span><b>Payment</b>{escape(payment_label)}<small>{escape(pickup_balance_label)}</small>{f'<small>{escape(billing_summary)}</small>' if billing_summary else ''}</span>
                 <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
                 <span><b>Total</b>{escape(format_money(row["total_price"]))}</span>
                 <span><b>Late fee</b>{escape(format_money(row["late_fee_amount"])) if row["late_fee_amount"] else "None"}</span>
