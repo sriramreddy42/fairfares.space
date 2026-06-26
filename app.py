@@ -11185,7 +11185,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         dl_status = license_row["verification_status"] if license_row else "Not captured"
         dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
         identity_row = latest_identity_verification(int(row["user_id"]), int(row["id"]))
-        identity_title, identity_body = identity_status_copy(row_value(identity_row, "status") if identity_row else "PENDING")
+        identity_status = row_value(identity_row, "status") if identity_row else "PENDING"
+        identity_verified = identity_status == "VERIFIED"
+        identity_title, identity_body = identity_status_copy(identity_status)
         external_identity_row = latest_external_identity_check(int(row["user_id"]), int(row["id"]))
         external_identity_title, external_identity_body = external_identity_status_copy(external_identity_row)
         billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
@@ -11264,7 +11266,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <b>{escape(identity_title)}</b>
                             <span>{escape(identity_body)}</span>
                         </div>
-                        <button type="button" data-admin-stripe-identity-button {"disabled" if row_value(identity_row, "status") == "VERIFIED" else ""}>{"Verified" if row_value(identity_row, "status") == "VERIFIED" else "Start Stripe Identity"}</button>
+                        <button type="button" data-admin-stripe-identity-button {"disabled" if identity_verified else ""}>{"Verified" if identity_verified else "Start Stripe Identity"}</button>
                         <small data-admin-stripe-identity-status>Customer completes the secure Stripe flow before staff releases the vehicle.</small>
                     </div>
                 </section>

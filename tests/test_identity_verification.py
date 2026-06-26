@@ -128,6 +128,14 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertEqual(row["provider"], "IDSCAN")
         self.assertEqual(row["status"], "NOT_CONFIGURED")
 
+    def test_pickup_record_renders_without_existing_identity_row(self):
+        booking = next(row for row in app.get_admin_bookings() if int(row["id"]) == int(self.booking["id"]))
+        html = app.FairFaresHandler.render_pickup_record(None, booking)
+
+        self.assertIn("Stripe Identity at pickup", html)
+        self.assertIn("Start Stripe Identity", html)
+        self.assertIn("Identity not verified", html)
+
     def test_frontend_and_routes_include_identity_providers(self):
         js = Path("static/js/app.js").read_text()
         py = Path("app.py").read_text()
