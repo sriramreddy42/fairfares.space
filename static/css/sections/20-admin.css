@@ -3069,6 +3069,15 @@
   margin: 0;
   padding: 20px;
 }
+.admin-status-notice {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 31, 84, 0.16);
+  border-radius: 8px;
+  background: #f3f7ff;
+  color: var(--navy);
+  font-weight: 850;
+}
 .admin-users-list {
   display: grid;
   gap: 12px;

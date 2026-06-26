@@ -185,6 +185,18 @@ class AuthBootstrapTest(unittest.TestCase):
         self.assertEqual(approved_request["target_user_id"], customer["id"])
         self.assertEqual(approved_request["created_user_id"], customer["id"])
 
+    def test_staff_request_page_explains_common_login_blockers(self):
+        py = Path("app.py").read_text()
+        template = Path("templates/admin_requests.html").read_text()
+        css = Path("static/css/sections/20-admin.css").read_text()
+
+        self.assertIn("New staff emails need a temporary password", py)
+        self.assertIn("A different admin must approve", py)
+        self.assertIn("staff_status=missing_password", py)
+        self.assertIn("staff_status=pending", py)
+        self.assertIn("$staff_notice", template)
+        self.assertIn(".admin-status-notice", css)
+
 
 if __name__ == "__main__":
     unittest.main()

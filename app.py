@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626identityrefresh"
+ASSET_VERSION = "20260626staffnotice"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -8209,7 +8209,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def login(self) -> None:
         form = self.read_form()
         with db() as con:
-            user = con.execute("SELECT * FROM users WHERE email = ?", (form.get("email", "").lower(),)).fetchone()
+            user = con.execute("SELECT * FROM users WHERE email = ?", (form.get("email", "").lower().strip(),)).fetchone()
         if not user or not verify_password(form.get("password", ""), user["password_hash"]):
             self.login_page("That email and password did not match.")
             return
@@ -10392,12 +10392,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        notice_key = query.get("staff_status", [""])[0]
+        notice_messages = {
+            "created": "Staff request created. A different admin must approve it before the user can log in.",
+            "approved": "Staff account approved and activated. They can log in with the temporary password.",
+            "rejected": "Staff request rejected.",
+            "missing_password": "New staff emails need a temporary password with at least 8 characters.",
+            "pending": "That email already has a pending staff request. A different admin must approve it.",
+            "active": "That email already belongs to an active staff account.",
+            "invalid": "Enter a valid name, email, and role.",
+            "self_review": "Admins cannot approve their own staff request. Ask another admin to approve it.",
+            "not_found": "Staff request was not found or is no longer pending.",
+        }
+        staff_notice = (
+            f'<p class="admin-status-notice">{escape(notice_messages[notice_key])}</p>'
+            if notice_key in notice_messages
+            else ""
+        )
         staff_rows = "\n".join(self.render_staff_account_row(row) for row in get_staff_accounts())
         request_rows = "\n".join(self.render_staff_request_row(row, user) for row in get_staff_account_requests())
         body = render_template(
             "admin_requests.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "requests"),
+            staff_notice=staff_notice,
             staff_create_card=self.render_staff_create_card(),
             staff_rows=staff_rows or '<tr><td colspan="5">No staff accounts yet.</td></tr>',
             staff_request_rows=request_rows or '<tr><td colspan="6">No pending staff requests.</td></tr>',
@@ -10512,7 +10531,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         role = normalized_staff_role(form.get("role", "EMPLOYEE"))
         password = form.get("password", "")
         if not name or "@" not in email:
-            self.redirect("/admin/requests")
+            self.redirect("/admin/requests?staff_status=invalid")
             return
         with db() as con:
             existing_user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
@@ -10522,7 +10541,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
             if existing_user and not existing_request:
                 if is_staff_user(existing_user):
-                    self.redirect("/admin/requests")
+                    self.redirect("/admin/requests?staff_status=active")
                     return
                 con.execute(
                     """
@@ -10540,6 +10559,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         existing_user["id"],
                     ),
                 )
+                self.redirect("/admin/requests?staff_status=created")
+                return
             elif not existing_user and not existing_request and len(password) >= 8:
                 con.execute(
                     """
@@ -10549,7 +10570,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (name, email, phone, role, hash_password(password), user["id"]),
                 )
-        self.redirect("/admin/requests")
+                self.redirect("/admin/requests?staff_status=created")
+                return
+            elif existing_request:
+                self.redirect("/admin/requests?staff_status=pending")
+                return
+        self.redirect("/admin/requests?staff_status=missing_password")
 
     def review_staff_account_request(self) -> None:
         user = self.require_owner_admin()
@@ -10563,12 +10589,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         decision = (form.get("decision") or "").upper()
         note = (form.get("admin_note") or "").strip()
         if decision not in {"APPROVE", "REJECT"}:
-            self.redirect("/admin/requests")
+            self.redirect("/admin/requests?staff_status=invalid")
             return
         with db() as con:
             request = con.execute("SELECT * FROM staff_account_requests WHERE id = ?", (request_id,)).fetchone()
-            if not request or request["status"] != "PENDING" or int(request["requested_by"]) == int(user["id"]):
-                self.redirect("/admin/requests")
+            if not request or request["status"] != "PENDING":
+                self.redirect("/admin/requests?staff_status=not_found")
+                return
+            if int(request["requested_by"]) == int(user["id"]):
+                self.redirect("/admin/requests?staff_status=self_review")
                 return
             if decision == "REJECT":
                 con.execute(
@@ -10579,6 +10608,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (user["id"], note, request_id),
                 )
+                self.redirect("/admin/requests?staff_status=rejected")
+                return
             else:
                 is_admin, role = user_role_flags(normalized_staff_role(request["role"]))
                 target_user_id = row_value(request, "target_user_id")
@@ -10609,6 +10640,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """,
                         (user["id"], target_user_id, note, request_id),
                     )
+                    self.redirect("/admin/requests?staff_status=approved")
+                    return
                 else:
                     try:
                         con.execute(
@@ -10632,6 +10665,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """,
                             (user["id"], created_user_id, note, request_id),
                         )
+                        self.redirect("/admin/requests?staff_status=approved")
+                        return
                     except sqlite3.IntegrityError:
                         con.execute(
                             """
@@ -10644,6 +10679,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """,
                             (user["id"], request_id),
                         )
+                        self.redirect("/admin/requests?staff_status=not_found")
+                        return
         self.redirect("/admin/requests")
 
     def admin_tickets_page(self) -> None:
