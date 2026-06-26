@@ -253,6 +253,44 @@
   background: #eefaf0;
   border-color: #a5e8b1;
 }
+.trip-identity-summary {
+  align-items: center;
+  background: #f8fbff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px 16px;
+}
+.trip-identity-summary b,
+.trip-identity-summary span,
+.trip-identity-summary small {
+  display: block;
+}
+.trip-identity-summary b {
+  color: var(--ink);
+  font-size: 1rem;
+}
+.trip-identity-summary span,
+.trip-identity-summary small {
+  color: var(--muted);
+  margin-top: 3px;
+}
+.trip-identity-summary small {
+  grid-column: 1 / -1;
+  min-height: 1em;
+}
+.trip-identity-summary.verified {
+  background: #eefaf0;
+  border-color: #a5e8b1;
+}
+.trip-identity-summary.action-required,
+.trip-identity-summary.review-required {
+  background: #fff8eb;
+  border-color: #f4d48b;
+}
 .trip-payment-form {
   display: flex;
   flex: 0 0 auto;

@@ -2825,6 +2825,34 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
     });
 });
 
+document.getElementById("stripeIdentityButton")?.addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById("stripeIdentityStatus");
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Opening Stripe Identity...";
+  if (status) status.textContent = "Opening secure identity verification...";
+  fetch("/identity/stripe-session", { method: "POST" })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (payload.verified) {
+        if (status) status.textContent = payload.message || "Identity is already verified.";
+        button.hidden = true;
+        return;
+      }
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+      throw payload;
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Stripe Identity could not be opened.";
+      button.disabled = false;
+      button.textContent = originalLabel || "Verify with Stripe Identity";
+    });
+});
+
 document.getElementById("continueHoldButton")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
   const status = document.getElementById("paymentHoldStatus");

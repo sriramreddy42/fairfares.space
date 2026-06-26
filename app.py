@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626pickup-form"
+ASSET_VERSION = "20260626identity"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -501,6 +501,10 @@ def stripe_webhook_secret() -> str:
     return os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 
 
+def stripe_identity_enabled() -> bool:
+    return bool(stripe_secret_key())
+
+
 def masked_env_status(env_name: str) -> dict[str, str]:
     load_env_file()
     value = os.environ.get(env_name, "").strip()
@@ -562,6 +566,149 @@ def stripe_api_get(path: str) -> tuple[dict[str, object], str]:
         return {}, f"Stripe rejected the request ({error.code}): {detail}"
     except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as error:
         return {}, f"Stripe request failed: {error}"
+
+
+def normalize_identity_status(provider_status: str, last_error: str = "") -> str:
+    status = (provider_status or "").upper().strip()
+    if status == "VERIFIED":
+        return "VERIFIED"
+    if status in {"REQUIRES_INPUT", "CANCELED"}:
+        return "REVIEW_REQUIRED" if last_error else "ACTION_REQUIRED"
+    if status == "PROCESSING":
+        return "PROCESSING"
+    return "PENDING"
+
+
+def identity_status_copy(status: str) -> tuple[str, str]:
+    normalized = (status or "PENDING").upper().strip()
+    if normalized == "VERIFIED":
+        return "Identity verified", "Stripe Identity verified the license/selfie session."
+    if normalized == "PROCESSING":
+        return "Identity processing", "Stripe is still reviewing the document/selfie result."
+    if normalized in {"ACTION_REQUIRED", "REVIEW_REQUIRED"}:
+        return "Identity needs review", "Customer may need to retry or admin must review before release."
+    return "Identity not verified", "Start Stripe Identity before pickup for stronger document/selfie verification."
+
+
+def latest_identity_verification(user_id: int | None = None, booking_id: int | None = None) -> sqlite3.Row | None:
+    filters = []
+    params: list[object] = []
+    if booking_id:
+        filters.append("booking_id = ?")
+        params.append(booking_id)
+    if user_id:
+        filters.append("user_id = ?")
+        params.append(user_id)
+    if not filters:
+        return None
+    where_clause = " AND ".join(filters)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT *
+            FROM identity_verifications
+            WHERE {where_clause}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+
+
+def latest_external_identity_check(user_id: int | None = None, booking_id: int | None = None) -> sqlite3.Row | None:
+    filters = []
+    params: list[object] = []
+    if booking_id:
+        filters.append("booking_id = ?")
+        params.append(booking_id)
+    if user_id:
+        filters.append("user_id = ?")
+        params.append(user_id)
+    if not filters:
+        return None
+    where_clause = " AND ".join(filters)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT *
+            FROM external_identity_checks
+            WHERE {where_clause}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+
+
+def external_identity_status_copy(row: sqlite3.Row | None) -> tuple[str, str]:
+    provider = row_value(row, "provider") if row else "AAMVA/DLDV"
+    status = str(row_value(row, "status") if row else "NOT_CONFIGURED").upper().strip()
+    if status == "VERIFIED":
+        return f"{provider} verified", row_value(row, "result_summary") or "Provider check passed."
+    if status in {"PENDING", "PROCESSING"}:
+        return f"{provider} pending", "External provider check is in progress."
+    if status in {"FAILED", "REVIEW_REQUIRED"}:
+        return f"{provider} review", row_value(row, "result_summary") or "Provider returned a review result."
+    return "AAMVA/DLDV not configured", "Use Stripe Identity now; add Entrust or IDScan.net credentials before DMV-record checks."
+
+
+def verified_outputs_summary(session: dict[str, object]) -> tuple[str, str, str]:
+    outputs = session.get("verified_outputs") if isinstance(session.get("verified_outputs"), dict) else {}
+    first_name = str(outputs.get("first_name") or "").strip()
+    last_name = str(outputs.get("last_name") or "").strip()
+    name = " ".join(part for part in (first_name, last_name) if part).strip()
+    dob = str(outputs.get("dob") or "").strip()
+    address = outputs.get("address") if isinstance(outputs.get("address"), dict) else {}
+    address_parts = [
+        str(address.get("line1") or "").strip(),
+        str(address.get("line2") or "").strip(),
+        str(address.get("city") or "").strip(),
+        str(address.get("state") or "").strip(),
+        str(address.get("postal_code") or "").strip(),
+        str(address.get("country") or "").strip(),
+    ]
+    return name, dob, ", ".join(part for part in address_parts if part)
+
+
+def save_identity_verification_from_session(session: dict[str, object], fallback_user_id: int = 0, fallback_booking_id: int = 0) -> None:
+    session_id = str(session.get("id") or "").strip()
+    if not session_id:
+        return
+    metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+    try:
+        user_id = int(metadata.get("user_id") or fallback_user_id or 0)
+    except (TypeError, ValueError):
+        user_id = fallback_user_id
+    try:
+        booking_id = int(metadata.get("booking_id") or fallback_booking_id or 0) or None
+    except (TypeError, ValueError):
+        booking_id = fallback_booking_id or None
+    if not user_id:
+        return
+    raw_status = str(session.get("status") or "").strip()
+    last_error_obj = session.get("last_error") if isinstance(session.get("last_error"), dict) else {}
+    last_error = str(last_error_obj.get("reason") or last_error_obj.get("code") or "").strip()
+    status = normalize_identity_status(raw_status, last_error)
+    verified_name, verified_dob, verified_address = verified_outputs_summary(session)
+    with db() as con:
+        con.execute(
+            """
+            INSERT INTO identity_verifications
+            (user_id, booking_id, provider, provider_session_id, status, verification_type,
+             verified_name, verified_dob, verified_address, last_error, raw_status)
+            VALUES (?, ?, 'STRIPE_IDENTITY', ?, ?, 'DOCUMENT_SELFIE', ?, ?, ?, ?, ?)
+            ON CONFLICT(provider_session_id) DO UPDATE SET
+                booking_id = COALESCE(excluded.booking_id, identity_verifications.booking_id),
+                status = excluded.status,
+                verified_name = excluded.verified_name,
+                verified_dob = excluded.verified_dob,
+                verified_address = excluded.verified_address,
+                last_error = excluded.last_error,
+                raw_status = excluded.raw_status,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, booking_id, session_id, status, verified_name, verified_dob, verified_address, last_error, raw_status),
+        )
 
 
 def verify_stripe_signature(payload: bytes, signature_header: str) -> bool:
@@ -1461,6 +1608,42 @@ def init_db() -> None:
                 verification_notes TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS identity_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                booking_id INTEGER,
+                provider TEXT NOT NULL,
+                provider_session_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                verification_type TEXT NOT NULL DEFAULT 'DOCUMENT_SELFIE',
+                verified_name TEXT NOT NULL DEFAULT '',
+                verified_dob TEXT NOT NULL DEFAULT '',
+                verified_address TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                raw_status TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(booking_id) REFERENCES bookings(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS external_identity_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                booking_id INTEGER,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'NOT_CONFIGURED',
+                request_reason TEXT NOT NULL DEFAULT '',
+                provider_reference TEXT NOT NULL DEFAULT '',
+                result_summary TEXT NOT NULL DEFAULT '',
+                requested_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(booking_id) REFERENCES bookings(id),
+                FOREIGN KEY(requested_by) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS insurances (
@@ -7166,6 +7349,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/save": self.save_current_booking,
             "/payment/stripe-session": self.create_stripe_checkout_session,
             "/stripe/webhook": self.stripe_webhook,
+            "/identity/stripe-session": self.create_stripe_identity_session,
             "/payment/hold": self.pay_booking_hold,
             "/booking/hold/continue": self.continue_booking_hold,
             "/booking/hold/remove": self.remove_booking_hold,
@@ -8447,6 +8631,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.send_json({"ok": True, "url": url})
 
+    def create_stripe_identity_session(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to verify your identity."}, 401)
+            return
+        booking = get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "Book a vehicle before starting identity verification."}, 404)
+            return
+        if not stripe_identity_enabled():
+            self.send_json({"ok": False, "message": "Stripe Identity is not configured on this server."}, 503)
+            return
+        existing = latest_identity_verification(int(user["id"]), int(booking["id"]))
+        if existing and row_value(existing, "status") == "VERIFIED":
+            self.send_json({"ok": True, "verified": True, "message": "Identity is already verified."})
+            return
+        origin = self.public_origin().rstrip("/")
+        params = {
+            "type": "document",
+            "return_url": f"{origin}/manage-booking?identity=return",
+            "metadata[user_id]": row_value(user, "id"),
+            "metadata[booking_id]": row_value(booking, "id"),
+            "metadata[public_booking_id]": row_value(booking, "booking_id"),
+            "provided_details[email]": row_value(user, "email"),
+            "provided_details[phone]": row_value(user, "phone") or "",
+            "options[document][allowed_types][]": "driving_license",
+            "options[document][require_matching_selfie]": "true",
+            "options[document][require_live_capture]": "true",
+        }
+        session, status = stripe_api_request(
+            "identity/verification_sessions",
+            params,
+            idempotency_key=f"identity-{row_value(user, 'id')}-{row_value(booking, 'id')}-{date.today().isoformat()}",
+        )
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "message": status}, 502)
+            return
+        save_identity_verification_from_session(session, int(user["id"]), int(booking["id"]))
+        self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity."})
+
     def payment_success_page(self) -> None:
         user = self.current_user()
         if not user:
@@ -8536,6 +8761,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.public_origin(),
                     payment_option,
                 )
+        if event_type.startswith("identity.verification_session."):
+            save_identity_verification_from_session(data_object)
         self.send_json({"received": True})
 
     def continue_booking_hold(self) -> None:
@@ -10776,6 +11003,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         status_summary = booking_status_label(row["booking_status"], row["payment_status"])
         dl_status = license_row["verification_status"] if license_row else "Not captured"
         dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
+        identity_row = latest_identity_verification(int(row["user_id"]), int(row["id"]))
+        identity_title, identity_body = identity_status_copy(row_value(identity_row, "status") if identity_row else "PENDING")
+        external_identity_row = latest_external_identity_check(int(row["user_id"]), int(row["id"]))
+        external_identity_title, external_identity_body = external_identity_status_copy(external_identity_row)
         billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
         billing_note = transaction["billing_verification_notes"] if transaction and "billing_verification_notes" in transaction.keys() else ""
         payment_label, pickup_balance_label = admin_payment_summary(row)
@@ -10831,6 +11062,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </summary>
             <div class="pickup-status-grid">
                 <span><b>DL</b>{escape(dl_status)}{f'<small>{escape(dl_note)}</small>' if dl_note else ''}</span>
+                <span><b>Identity</b>{escape(identity_title)}<small>{escape(identity_body)}</small></span>
+                <span><b>DMV/AAMVA</b>{escape(external_identity_title)}<small>{escape(external_identity_body)}</small></span>
                 <span><b>Insurance</b>{escape(insurance["insurance_provider"] if insurance else "Not captured")}</span>
                 <span><b>Payment</b>{escape(payment_label)}<small>{escape(pickup_balance_label)}</small>{f'<small>{escape(billing_summary)}</small>' if billing_summary else ''}</span>
                 <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
@@ -12123,6 +12356,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
         cancel_refund_amount, cancel_refund_note = booking_refund_estimate(booking)
         trip_payment_summary = ""
+        trip_identity_summary = ""
         if booking:
             payment_status = row_value(booking, "payment_status")
             if payment_status == "PAID":
@@ -12148,6 +12382,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <div><b>Payment pending</b><span>{escape(format_money(active_breakdown["booking_hold"]))} due now to hold this booking.</span></div>
                     </div>
                 """
+            identity_row = latest_identity_verification(int(row_value(user, "id") or 0), int(row_value(booking, "id") or 0)) if user else None
+            identity_status = row_value(identity_row, "status") if identity_row else "PENDING"
+            identity_title, identity_body = identity_status_copy(identity_status)
+            identity_button = (
+                ""
+                if identity_status == "VERIFIED"
+                else '<button type="button" class="light-button" id="stripeIdentityButton">Verify with Stripe Identity</button>'
+            )
+            trip_identity_summary = f"""
+                <section class="trip-identity-summary {escape(str(identity_status).lower().replace("_", "-"))}" aria-label="Identity verification">
+                    <div>
+                        <b>{escape(identity_title)}</b>
+                        <span>{escape(identity_body)}</span>
+                    </div>
+                    {identity_button}
+                    <small id="stripeIdentityStatus" aria-live="polite"></small>
+                </section>
+            """
         price_breakdown_summary = ""
         if booking:
             price_breakdown_summary = f"""
@@ -12397,6 +12649,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {guest_account_note}
                 </div>
                 {payment_hold_card}
+                {trip_identity_summary}
                 {policy_info_cards}
                 <form class="customer-info-form" id="customerInfoForm"{submit_endpoint_hint}>
                     <h3>Your information</h3>
