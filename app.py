@@ -41,7 +41,16 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626policy3"
+ASSET_VERSION = "20260626workspace"
+WORKSPACE_REACTIONS = (
+    ("LIKE", "👍", "Like"),
+    ("LOVE", "❤️", "Love"),
+    ("CARE", "🥰", "Care"),
+    ("HAHA", "😄", "Haha"),
+    ("WOW", "😮", "Wow"),
+    ("SAD", "😢", "Sad"),
+    ("ANGRY", "😡", "Angry"),
+)
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -4493,16 +4502,25 @@ def get_admin_metrics() -> dict[str, int]:
         }
 
 
-def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_id: int | None = None) -> list[sqlite3.Row]:
+def get_workspace_posts(
+    user: sqlite3.Row | None = None,
+    limit: int = 20,
+    group_id: int | None = None,
+    author_id: int | None = None,
+) -> list[sqlite3.Row]:
     filters = []
     params: list[object] = []
+    current_user_id = int(row_value(user, "id") or 0) if user else 0
     if user and not is_admin_user(user):
         filters.append("UPPER(TRIM(workspace_posts.visibility)) IN ('STAFF', 'COMPANY')")
     if group_id:
         filters.append("workspace_posts.group_id = ?")
         params.append(group_id)
+    if author_id:
+        filters.append("workspace_posts.author_id = ?")
+        params.append(author_id)
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-    params.append(limit)
+    query_params: list[object] = [current_user_id, *params, limit]
     with db() as con:
         return con.execute(
             f"""
@@ -4523,6 +4541,14 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_
                      FROM workspace_post_reactions
                      WHERE workspace_post_reactions.post_id = workspace_posts.id
                    ) AS reaction_count
+                   , (
+                     SELECT reaction
+                     FROM workspace_post_reactions
+                     WHERE workspace_post_reactions.post_id = workspace_posts.id
+                       AND workspace_post_reactions.user_id = ?
+                     ORDER BY workspace_post_reactions.id DESC
+                     LIMIT 1
+                   ) AS viewer_reaction
             FROM workspace_posts
             JOIN users ON users.id = workspace_posts.author_id
             LEFT JOIN workspace_groups ON workspace_groups.id = workspace_posts.group_id
@@ -4530,7 +4556,7 @@ def get_workspace_posts(user: sqlite3.Row | None = None, limit: int = 20, group_
             ORDER BY workspace_posts.id DESC
             LIMIT ?
             """,
-            params,
+            query_params,
         ).fetchall()
 
 
@@ -4549,6 +4575,30 @@ def get_workspace_post_comments(post_id: int, limit: int = 3) -> list[sqlite3.Ro
             """,
             (post_id, limit),
         ).fetchall()
+
+
+def get_workspace_post_stats(post_id: int) -> dict[str, int]:
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM workspace_post_reactions WHERE post_id = ?) AS reaction_count,
+              (SELECT COUNT(*) FROM workspace_post_comments WHERE post_id = ?) AS comment_count
+            """,
+            (post_id, post_id),
+        ).fetchone()
+    return {
+        "reaction_count": int(row_value(row, "reaction_count") or 0),
+        "comment_count": int(row_value(row, "comment_count") or 0),
+    }
+
+
+def workspace_reaction_button_label(reaction: str | None) -> tuple[str, str]:
+    normalized = (reaction or "").upper().strip()
+    for key, emoji, label in WORKSPACE_REACTIONS:
+        if key == normalized:
+            return emoji, label
+    return "👍", "Like"
 
 
 def workspace_post_redirect(post_id: int) -> str:
@@ -4732,6 +4782,24 @@ def render_workspace_post_body(body: str) -> str:
     return "".join(blocks) or "<p></p>"
 
 
+def render_workspace_comments(post_id: int) -> str:
+    comments = get_workspace_post_comments(post_id)
+    if not comments:
+        return ""
+    comment_items = []
+    for comment in comments:
+        comment_author = row_value(comment, "author_name") or "FairFares Staff"
+        comment_items.append(
+            f"""
+            <article>
+              <b>{escape(comment_author)}</b>
+              <span>{escape(row_value(comment, "body"))}</span>
+            </article>
+            """
+        )
+    return f'<div class="workspace-comments">{"".join(comment_items)}</div>'
+
+
 def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
     if not posts:
         return """
@@ -4759,26 +4827,20 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
         image_html = ""
         if image:
             image_html = f'<img class="workspace-post-image" src="{escape(image)}" alt="Workspace post image">'
-        comments = get_workspace_post_comments(post_id)
-        comment_items = []
-        for comment in comments:
-            comment_author = row_value(comment, "author_name") or "FairFares Staff"
-            comment_items.append(
-                f"""
-                <article>
-                  <b>{escape(comment_author)}</b>
-                  <span>{escape(row_value(comment, "body"))}</span>
-                </article>
-                """
-            )
-        comments_html = (
-            f'<div class="workspace-comments">{"".join(comment_items)}</div>'
-            if comment_items
-            else ""
+        comments_html = render_workspace_comments(post_id)
+        viewer_reaction = row_value(post, "viewer_reaction")
+        reaction_emoji, reaction_label = workspace_reaction_button_label(viewer_reaction)
+        reaction_options = "".join(
+            f"""
+            <button type="submit" name="reaction" value="{escape(key)}" title="{escape(label)}" aria-label="{escape(label)}">
+              <span>{escape(emoji)}</span>
+            </button>
+            """
+            for key, emoji, label in WORKSPACE_REACTIONS
         )
         cards.append(
             f"""
-            <article class="admin-feed-card workspace-post-card">
+            <article class="admin-feed-card workspace-post-card" data-workspace-post-id="{post_id}">
               <div class="admin-feed-head">
                 <span class="admin-feed-avatar"{avatar_style}>{"" if photo else escape(author_initials)}</span>
                 <div>
@@ -4811,13 +4873,20 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
               </form>
               {image_html}
               <div class="workspace-post-stats">
-                <span>{escape(str(row_value(post, "reaction_count") or 0))} reactions</span>
-                <span>{escape(str(row_value(post, "comment_count") or 0))} comments</span>
+                <span data-workspace-reaction-count>{escape(str(row_value(post, "reaction_count") or 0))} reactions</span>
+                <span data-workspace-comment-count>{escape(str(row_value(post, "comment_count") or 0))} comments</span>
               </div>
               <div class="admin-feed-social-row" aria-label="Feed actions">
-                <form method="post" action="/admin/workspace/post/react">
+                <form method="post" action="/admin/workspace/post/react" class="workspace-reaction-form" data-workspace-reaction-form>
                   <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
-                  <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#9829;</i>React</button>
+                  <input type="hidden" name="reaction" value="{escape(viewer_reaction or "LIKE")}" data-workspace-reaction-value>
+                  <button type="submit" class="workspace-reaction-main" data-workspace-reaction-main>
+                    <span data-workspace-reaction-emoji>{escape(reaction_emoji)}</span>
+                    <b data-workspace-reaction-label>{escape(reaction_label)}</b>
+                  </button>
+                  <div class="workspace-reaction-tray" role="menu" aria-label="Choose reaction">
+                    {reaction_options}
+                  </div>
                 </form>
                 <button type="button" data-workspace-comment-toggle><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Comment</button>
                 <form method="post" action="/admin/workspace/post/share-slack">
@@ -4825,7 +4894,7 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
                   <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Share to Slack</button>
                 </form>
               </div>
-              {comments_html}
+              <div data-workspace-comments>{comments_html}</div>
               <form method="post" action="/admin/workspace/post/comment" class="workspace-comment-form" hidden>
                 <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
                 <input name="body" maxlength="360" placeholder="Write a comment">
@@ -6951,7 +7020,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/payment/success": self.payment_success_page,
             "/payment/cancel": self.payment_cancel_page,
             "/dashboard": self.dashboard,
-            "/admin": self.admin_portal,
+            "/admin": self.admin_workspace_page,
+            "/admin/inventory": self.admin_portal,
             "/admin/workspace": self.admin_workspace_page,
             "/admin/roi": self.admin_roi_page,
             "/admin/cars/detail": self.admin_car_detail_page,
@@ -7106,6 +7176,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def wants_json(self) -> bool:
+        accept = self.headers.get("Accept", "")
+        requested_with = self.headers.get("X-Requested-With", "")
+        return "application/json" in accept.lower() or requested_with == "fetch"
 
     def redirect(self, path: str) -> None:
         self.send_response(303)
@@ -8746,18 +8821,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             post_id = 0
         if not post_id:
+            if self.wants_json():
+                self.send_json({"ok": False, "error": "Missing post."}, 400)
+                return
             self.redirect("/admin/workspace")
             return
+        reaction = (form.get("reaction") or "LIKE").upper().strip()
+        allowed_reactions = {key for key, _emoji, _label in WORKSPACE_REACTIONS}
+        if reaction not in allowed_reactions:
+            reaction = "LIKE"
         with db() as con:
             post = con.execute("SELECT id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
             if post:
                 con.execute(
-                    """
-                    INSERT OR IGNORE INTO workspace_post_reactions (post_id, user_id, reaction)
-                    VALUES (?, ?, 'LIKE')
-                    """,
+                    "DELETE FROM workspace_post_reactions WHERE post_id = ? AND user_id = ?",
                     (post_id, row_value(user, "id")),
                 )
+                con.execute(
+                    """
+                    INSERT INTO workspace_post_reactions (post_id, user_id, reaction)
+                    VALUES (?, ?, ?)
+                    """,
+                    (post_id, row_value(user, "id"), reaction),
+                )
+        if self.wants_json():
+            stats = get_workspace_post_stats(post_id)
+            emoji, label = workspace_reaction_button_label(reaction)
+            self.send_json({"ok": True, "reaction_count": stats["reaction_count"], "reaction": reaction, "emoji": emoji, "label": label})
+            return
         self.redirect(workspace_post_redirect(post_id))
 
     def comment_workspace_post(self) -> None:
@@ -8773,6 +8864,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if len(body) > 360:
             body = body[:360].strip()
         if not post_id or not body:
+            if self.wants_json():
+                self.send_json({"ok": False, "error": "Comment is required."}, 400)
+                return
             self.redirect(workspace_post_redirect(post_id) if post_id else "/admin/workspace")
             return
         with db() as con:
@@ -8785,6 +8879,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (post_id, row_value(user, "id"), body),
                 )
+        if self.wants_json():
+            stats = get_workspace_post_stats(post_id)
+            self.send_json({"ok": True, "comment_count": stats["comment_count"], "comments_html": render_workspace_comments(post_id)})
+            return
         self.redirect(workspace_post_redirect(post_id))
 
     def share_workspace_post_to_slack(self) -> None:
@@ -9128,18 +9226,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_admin_nav(self, user: sqlite3.Row, active: str) -> str:
         admin_groups = [
-            ("fleet", "Fleet", "/admin", [("portal", "/admin", "Inventory"), ("roi", "/admin/roi", "ROI")]),
+            ("workspace", "Workspace", "/admin", [("workspace", "/admin", "Workspace")]),
+            ("fleet", "Fleet", "/admin/inventory", [("portal", "/admin/inventory", "Inventory"), ("roi", "/admin/roi", "ROI")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
             ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
             ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
-            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
         ]
         employee_groups = [
+            ("workspace", "Workspace", "/admin", [("workspace", "/admin", "Workspace")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("portal", "User Portal", "/", [("portal", "/", "User Portal")]),
-            ("workspace", "Workspace", "/admin/workspace", [("workspace", "/admin/workspace", "Workspace")]),
         ]
         groups = admin_groups if is_admin_user(user) else employee_groups
         badge_counts = get_admin_nav_badge_counts(user)
@@ -9250,6 +9348,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             selected_group_id = int(urllib.parse.parse_qs(parsed.query).get("group", ["0"])[0]) or None
         except ValueError:
             selected_group_id = None
+        try:
+            selected_author_id = int(urllib.parse.parse_qs(parsed.query).get("author", ["0"])[0]) or None
+        except ValueError:
+            selected_author_id = None
         selected_group = get_workspace_group(selected_group_id)
         if selected_group_id and not selected_group:
             selected_group_id = None
@@ -9263,9 +9365,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else ""
         )
         role_label = "Admin" if is_admin_user(user) else "Employee"
-        posts = get_workspace_posts(user, group_id=selected_group_id)
+        current_user_id = int(row_value(user, "id") or 0)
+        if selected_author_id and selected_author_id != current_user_id and not is_admin_user(user):
+            selected_author_id = None
+        posts = get_workspace_posts(user, group_id=selected_group_id, author_id=selected_author_id)
+        own_post_count = len(get_workspace_posts(user, limit=200, author_id=current_user_id))
         groups = get_workspace_groups(user)
-        feed_scope = escape(row_value(selected_group, "name") if selected_group else "Company feed")
+        if selected_author_id == current_user_id:
+            feed_scope = "My posts"
+        elif selected_author_id:
+            with db() as con:
+                author_row = con.execute("SELECT name FROM users WHERE id = ?", (selected_author_id,)).fetchone()
+            feed_scope = f"{row_value(author_row, 'name') or 'Staff'} posts"
+        else:
+            feed_scope = row_value(selected_group, "name") if selected_group else "Company feed"
+        today_oncall = get_oncall_shift_for_day()
+        oncall_copy = ""
+        if today_oncall and int(row_value(today_oncall, "admin_id") or 0) == current_user_id:
+            oncall_copy = "On-call today"
         workspace_slack_url = row_value(selected_group, "slack_url") if selected_group else ""
         if not workspace_slack_url:
             workspace_slack_url = "https://slack.com/app_redirect?channel=general"
@@ -9293,6 +9410,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "admin_workspace.html",
             admin_name=escape(row_value(user, "name")),
+            admin_user_id=escape(str(current_user_id)),
             admin_first_name=escape(first_name),
             admin_email=escape(row_value(user, "email")),
             admin_phone=escape(row_value(user, "phone") or "No phone saved"),
@@ -9308,10 +9426,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ticket_badge_class="has-count" if metrics["tickets"] else "",
             escalation_badge_class="has-count" if metrics["escalations"] else "",
             user_count=metrics["users"],
-            workspace_post_count=escape(str(len(posts))),
+            workspace_post_count=escape(str(own_post_count)),
+            workspace_oncall_copy=escape(oncall_copy),
             workspace_groups=render_workspace_groups(groups, selected_group_id),
             workspace_group_count=escape(str(len(groups))),
-            workspace_feed_scope=feed_scope,
+            workspace_feed_scope=escape(feed_scope),
             workspace_slack_url=escape(workspace_slack_url),
             workspace_visibility_controls=visibility_controls,
             workspace_group_target_controls=group_target_controls,
@@ -9437,7 +9556,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_id = 0
         detail = get_admin_car_detail(car_id)
         if not detail:
-            self.redirect("/admin")
+            self.redirect("/admin/inventory")
             return
         car = detail["car"]
         purchase_cost_amount = float(row_value(car, "purchase_cost") or 0)
@@ -10762,7 +10881,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     int(form.get("sort_order") or 99),
                 ),
             )
-        self.redirect("/admin")
+        self.redirect("/admin/inventory")
 
     def update_admin_car_status(self) -> None:
         user = self.require_owner_admin()
@@ -10853,9 +10972,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if current and row_value(current, "status") != status:
                 updated_car = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
                 notify_slack_vehicle(updated_car, status, self.public_origin(), note=f"Changed by {row_value(user, 'name')}")
-        redirect_to = form.get("redirect_to", "/admin")
+        redirect_to = form.get("redirect_to", "/admin/inventory")
         if not redirect_to.startswith("/admin"):
-            redirect_to = "/admin"
+            redirect_to = "/admin/inventory"
         self.redirect(redirect_to)
 
     def create_admin_car_service_cost(self) -> None:
@@ -10899,7 +11018,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.public_origin(),
                     note=f"{format_money(amount)} on {service_date}: {form.get('notes', '').strip() or form.get('vendor', '').strip() or 'No note'}",
                 )
-        self.redirect(f"/admin/cars/detail?id={car_id}" if car_id else "/admin")
+        self.redirect(f"/admin/cars/detail?id={car_id}" if car_id else "/admin/inventory")
 
     def create_admin_business_expense(self) -> None:
         user = self.require_owner_admin()
@@ -10943,7 +11062,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE cars SET status = 'DELETED' WHERE id = ?", (form.get("car_id"),))
             else:
                 con.execute("DELETE FROM cars WHERE id = ?", (form.get("car_id"),))
-        self.redirect("/admin")
+        self.redirect("/admin/inventory")
 
     def refund_admin_booking_payment(self) -> None:
         user = self.require_admin()

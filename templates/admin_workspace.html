@@ -30,11 +30,12 @@
         <div class="admin-profile-stats">
           <a href="/admin/tickets" class="workspace-stat-notice $ticket_badge_class" data-count="$open_ticket_count"><b>$open_ticket_count</b> tickets</a>
           <a href="/admin/tickets" class="workspace-stat-notice is-escalation $escalation_badge_class" data-count="$escalation_count"><b>$escalation_count</b> escalations</a>
-          <span><b>$workspace_post_count</b> posts</span>
+          <a href="/admin/workspace?author=$admin_user_id"><b>$workspace_post_count</b> posts</a>
+          <span class="workspace-oncall-state">$workspace_oncall_copy</span>
           <span><b>$staff_role</b> role</span>
         </div>
       </article>
-      <a href="/admin"><i class="workspace-link-icon" aria-hidden="true">&#128664;</i><b>Fleet</b><span>Inventory and ROI</span></a>
+      <a href="/admin/inventory"><i class="workspace-link-icon" aria-hidden="true">&#128664;</i><b>Fleet</b><span>Inventory and ROI</span></a>
       <a href="/admin/bookings"><i class="workspace-link-icon" aria-hidden="true">&#128663;</i><b>Booked Cars</b><span>Status, cancel/modify, payment</span></a>
       <a href="/admin/tickets"><i class="workspace-link-icon" aria-hidden="true">&#127903;</i><b>Tickets</b><span>Urgent, escalated, follow-up</span></a>
       <a href="/admin/users"><i class="workspace-link-icon" aria-hidden="true">&#128100;</i><b>Users</b><span>Profiles and documents</span></a>
@@ -46,7 +47,7 @@
       <div class="workspace-feed-scroll" tabindex="0">
         <div class="workspace-feed-scope">
           <span>$workspace_feed_scope</span>
-          <a href="/admin/workspace">Company wide</a>
+          <a href="/admin">Company wide</a>
         </div>
         <article class="workspace-compose-card" aria-label="Create workspace post">
           <button class="workspace-compose-trigger" type="button" data-workspace-post-open aria-haspopup="dialog" aria-controls="workspacePostModal">
@@ -171,7 +172,7 @@
           <p>Use ROI to compare rental revenue against purchase, repair, maintenance, and miscellaneous business expenses.</p>
           <div class="admin-feed-button-row">
             <a href="/admin/roi"><i class="workspace-button-icon" aria-hidden="true">&#128200;</i>Open ROI</a>
-            <a href="/admin"><i class="workspace-button-icon" aria-hidden="true">&#128664;</i>Add Vehicle</a>
+            <a href="/admin/inventory"><i class="workspace-button-icon" aria-hidden="true">&#128664;</i>Add Vehicle</a>
           </div>
           <div class="admin-feed-social-row" aria-label="Feed actions">
             <button type="button" data-dashboard-action="react-roi-post"><i class="workspace-button-icon" aria-hidden="true">&#9829;</i>React</button>

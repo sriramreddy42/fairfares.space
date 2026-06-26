@@ -298,6 +298,80 @@ document.querySelectorAll("[data-workspace-comment-toggle]").forEach((button) =>
   });
 });
 
+async function submitWorkspaceForm(form, extra = {}) {
+  const data = new FormData(form);
+  Object.entries(extra).forEach(([key, value]) => data.set(key, value));
+  const response = await fetch(form.action, {
+    method: "POST",
+    body: data,
+    headers: {
+      Accept: "application/json",
+      "X-Requested-With": "fetch",
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || "Workspace update failed.");
+  }
+  return payload;
+}
+
+document.addEventListener("click", async (event) => {
+  const reactionButton = event.target.closest(".workspace-reaction-tray button");
+  if (!reactionButton) return;
+  const form = reactionButton.closest("[data-workspace-reaction-form]");
+  const card = reactionButton.closest(".workspace-post-card");
+  if (!form || !card) return;
+  event.preventDefault();
+  const reaction = reactionButton.value || "LIKE";
+  const reactionValue = form.querySelector("[data-workspace-reaction-value]");
+  if (reactionValue instanceof HTMLInputElement) reactionValue.value = reaction;
+  try {
+    const payload = await submitWorkspaceForm(form, { reaction });
+    card.querySelector("[data-workspace-reaction-count]").textContent = `${payload.reaction_count || 0} reactions`;
+    card.querySelector("[data-workspace-reaction-emoji]").textContent = payload.emoji || "👍";
+    card.querySelector("[data-workspace-reaction-label]").textContent = payload.label || "Like";
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  const reactionForm = event.target.closest("[data-workspace-reaction-form]");
+  if (!reactionForm) return;
+  event.preventDefault();
+  const card = reactionForm.closest(".workspace-post-card");
+  try {
+    const payload = await submitWorkspaceForm(reactionForm);
+    const count = card?.querySelector("[data-workspace-reaction-count]");
+    const emoji = card?.querySelector("[data-workspace-reaction-emoji]");
+    const label = card?.querySelector("[data-workspace-reaction-label]");
+    count?.replaceChildren(document.createTextNode(`${payload.reaction_count || 0} reactions`));
+    emoji?.replaceChildren(document.createTextNode(payload.emoji || "👍"));
+    label?.replaceChildren(document.createTextNode(payload.label || "Like"));
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  const commentForm = event.target.closest(".workspace-comment-form");
+  if (!commentForm) return;
+  event.preventDefault();
+  const card = commentForm.closest(".workspace-post-card");
+  try {
+    const payload = await submitWorkspaceForm(commentForm);
+    const comments = card?.querySelector("[data-workspace-comments]");
+    const count = card?.querySelector("[data-workspace-comment-count]");
+    if (comments) comments.innerHTML = payload.comments_html || "";
+    count?.replaceChildren(document.createTextNode(`${payload.comment_count || 0} comments`));
+    commentForm.reset();
+    commentForm.hidden = true;
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
 document.addEventListener("click", () => closeWorkspacePostMenus());
 
 const workspaceGroupsDrawer = document.getElementById("workspaceGroupsDrawer");
