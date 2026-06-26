@@ -136,6 +136,35 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertIn("Start Stripe Identity", html)
         self.assertIn("Identity not verified", html)
 
+    def test_identity_refresh_updates_pickup_status_from_stripe(self):
+        app.save_identity_verification_from_session(
+            {
+                "id": "vs_refresh_123",
+                "status": "requires_input",
+                "metadata": {"user_id": str(self.user_id), "booking_id": str(self.booking["id"])},
+            }
+        )
+
+        with mock.patch.object(
+            app,
+            "stripe_api_get",
+            return_value=(
+                {
+                    "id": "vs_refresh_123",
+                    "status": "verified",
+                    "metadata": {"user_id": str(self.user_id), "booking_id": str(self.booking["id"])},
+                    "verified_outputs": {"first_name": "Identity", "last_name": "Tester"},
+                },
+                "ok",
+            ),
+        ):
+            booking = next(row for row in app.get_admin_bookings() if int(row["id"]) == int(self.booking["id"]))
+            html = app.FairFaresHandler.render_pickup_record(None, booking)
+
+        self.assertIn("Identity verified", html)
+        self.assertIn("Stripe status: verified", html)
+        self.assertIn(">Verified</button>", html)
+
     def test_frontend_and_routes_include_identity_providers(self):
         js = Path("static/js/app.js").read_text()
         py = Path("app.py").read_text()

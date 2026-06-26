@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626pickupidentity"
+ASSET_VERSION = "20260626identityrefresh"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -600,6 +600,22 @@ def identity_status_copy(status: str) -> tuple[str, str]:
     return "Identity not verified", "Start Stripe Identity during pickup before releasing the vehicle."
 
 
+def identity_status_detail(row: sqlite3.Row | None) -> str:
+    if not row:
+        return "No Stripe Identity session has been started for this booking."
+    details = []
+    raw_status = row_value(row, "raw_status")
+    last_error = row_value(row, "last_error")
+    updated_at = row_value(row, "updated_at")
+    if raw_status:
+        details.append(f"Stripe status: {raw_status}")
+    if last_error:
+        details.append(f"Reason: {last_error}")
+    if updated_at:
+        details.append(f"Updated: {updated_at}")
+    return " · ".join(details) or "Stripe session saved. Refresh after the customer completes verification."
+
+
 def latest_identity_verification(user_id: int | None = None, booking_id: int | None = None) -> sqlite3.Row | None:
     filters = []
     params: list[object] = []
@@ -623,6 +639,34 @@ def latest_identity_verification(user_id: int | None = None, booking_id: int | N
             """,
             params,
         ).fetchone()
+
+
+def refresh_identity_verification_from_stripe(row: sqlite3.Row | None) -> sqlite3.Row | None:
+    if not row:
+        return None
+    session_id = row_value(row, "provider_session_id")
+    if not session_id or row_value(row, "status") == "VERIFIED":
+        return row
+    session, status = stripe_api_get(f"identity/verification_sessions/{urllib.parse.quote(session_id)}")
+    if session.get("id"):
+        save_identity_verification_from_session(
+            session,
+            int(row_value(row, "user_id") or 0),
+            int(row_value(row, "booking_id") or 0),
+        )
+        return latest_identity_verification(int(row_value(row, "user_id") or 0), int(row_value(row, "booking_id") or 0))
+    if status and status != "ok":
+        with db() as con:
+            con.execute(
+                """
+                UPDATE identity_verifications
+                SET last_error = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status[:500], row["id"]),
+            )
+        return latest_identity_verification(int(row_value(row, "user_id") or 0), int(row_value(row, "booking_id") or 0))
+    return row
 
 
 def create_stripe_identity_session_for(
@@ -11184,10 +11228,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         status_summary = booking_status_label(row["booking_status"], row["payment_status"])
         dl_status = license_row["verification_status"] if license_row else "Not captured"
         dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
-        identity_row = latest_identity_verification(int(row["user_id"]), int(row["id"]))
+        identity_row = refresh_identity_verification_from_stripe(latest_identity_verification(int(row["user_id"]), int(row["id"])))
         identity_status = row_value(identity_row, "status") if identity_row else "PENDING"
         identity_verified = identity_status == "VERIFIED"
         identity_title, identity_body = identity_status_copy(identity_status)
+        identity_detail = identity_status_detail(identity_row)
         external_identity_row = latest_external_identity_check(int(row["user_id"]), int(row["id"]))
         external_identity_title, external_identity_body = external_identity_status_copy(external_identity_row)
         billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
@@ -11267,7 +11312,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <span>{escape(identity_body)}</span>
                         </div>
                         <button type="button" data-admin-stripe-identity-button {"disabled" if identity_verified else ""}>{"Verified" if identity_verified else "Start Stripe Identity"}</button>
-                        <small data-admin-stripe-identity-status>Customer completes the secure Stripe flow before staff releases the vehicle.</small>
+                        <small data-admin-stripe-identity-status>{escape(identity_detail)}</small>
                     </div>
                 </section>
                 <section class="pickup-form-section wide-field">
