@@ -41,7 +41,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626support"
+ASSET_VERSION = "20260626policy"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -5775,6 +5775,32 @@ def booking_hold_remaining_label(booking: sqlite3.Row | dict[str, object] | None
     minutes = seconds // 60
     remainder = seconds % 60
     return f"{minutes}:{remainder:02d}"
+
+
+def cancellation_policy_timeline(booking: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
+    pickup_at = booking_datetime_from_row(booking, "pickup_date", "pickup_time") if booking else None
+    now = datetime.now()
+    hours_until_pickup = max(0.0, (pickup_at - now).total_seconds() / 3600) if pickup_at else 0.0
+    days_until_pickup = math.ceil(hours_until_pickup / 24) if hours_until_pickup > 0 else 0
+    tick_count = max(1, min(days_until_pickup or 1, 10))
+    marker_percent = 92
+    if pickup_at and hours_until_pickup > 0:
+        marker_percent = round(max(8, min(92, ((hours_until_pickup - 24) / max(hours_until_pickup, 24)) * 100)), 1)
+    if not pickup_at:
+        day_label = "Pickup date pending"
+        cutoff_copy = "The 24-hour cutoff is calculated after pickup is scheduled."
+    elif hours_until_pickup >= 24:
+        day_label = f"{days_until_pickup} day{'s' if days_until_pickup != 1 else ''} until pickup"
+        cutoff_copy = "Cancel before the 24-hour cutoff for automatic review. Hold payments are not accepted after the cutoff."
+    else:
+        day_label = "Inside 24-hour cutoff"
+        cutoff_copy = "Inside 24 hours, cancellations and refunds require admin review. No hold-payment cancellation is automatically accepted."
+    return {
+        "day_label": day_label,
+        "cutoff_copy": cutoff_copy,
+        "marker_percent": marker_percent,
+        "tick_count": tick_count,
+    }
 
 
 def calculate_late_fee(row: sqlite3.Row, actual_return_date: str, actual_return_time: str) -> tuple[float, str]:
@@ -11852,6 +11878,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if active_insurance
                 else "Insurance is reviewed at pickup. Bring proof of personal coverage or choose provider-approved rental coverage when offered."
             )
+            cancellation_timeline = cancellation_policy_timeline(booking)
+            policy_day_ticks = "".join(
+                f"<span>{escape(str(index + 1))}d</span>"
+                for index in range(int(cancellation_timeline["tick_count"]))
+            )
             policy_info_cards = f"""
                 <section class="checkout-policy-stack trip-policy-stack" aria-label="Rental protection and policies">
                     <article class="checkout-policy-card protection">
@@ -11872,11 +11903,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <article class="checkout-policy-card">
                         <p class="eyebrow">Cancellation policy</p>
                         <h3>Cancel before pickup when plans change.</h3>
-                        <div class="policy-timeline" aria-hidden="true"><span>Today</span><i></i><span>Pickup</span></div>
+                        <div class="policy-timeline" aria-label="Cancellation timeline">
+                            <div class="policy-timeline-labels"><span>Today</span><strong>{escape(str(cancellation_timeline["day_label"]))}</strong><span>Pickup</span></div>
+                            <div class="policy-timeline-track">
+                                <i class="policy-car-marker" style="left: {escape(str(cancellation_timeline["marker_percent"]))}%;" aria-hidden="true"></i>
+                                <b class="policy-cutoff-marker" aria-hidden="true"></b>
+                            </div>
+                            <div class="policy-day-ticks" aria-hidden="true">{policy_day_ticks}<strong>24h</strong></div>
+                            <p><b>24-hour cutoff:</b> {escape(str(cancellation_timeline["cutoff_copy"]))}</p>
+                        </div>
                         <ul>
                             <li>Use Manage Booking > Cancel Reservation to submit the request.</li>
                             <li>Refund eligibility depends on pickup timing, payment status, provider terms, no-show rules, and discount conditions.</li>
-                            <li>Some cancellations are automatic before the cutoff; others require admin review before final refund details are confirmed.</li>
+                            <li>Cancellations 24+ hours before pickup can be automatically reviewed; inside 24 hours, admin approval is required.</li>
+                            <li>Hold-payment cancellations are not automatically accepted after the 24-hour cutoff.</li>
                         </ul>
                     </article>
                     <article class="checkout-policy-card">
