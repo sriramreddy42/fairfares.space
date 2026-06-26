@@ -2390,6 +2390,13 @@ def init_db() -> None:
                 "PUBLIC",
             ),
             (
+                "Insurance Requirement",
+                "Proof of valid auto insurance coverage is required before vehicle release.",
+                "To rent a vehicle through FairFares, you must provide proof of a valid auto insurance policy that extends coverage to rental vehicles. We recommend that your policy includes collision coverage, comprehensive coverage, liability coverage, rental vehicle coverage if required by your insurer, and roadside assistance. If your current policy does not provide adequate coverage for rental vehicles, contact your insurance provider to discuss available coverage options before completing your booking. FairFares reserves the right to verify insurance coverage before releasing a vehicle.",
+                "insurance requirement, proof of insurance, rental vehicle coverage, collision coverage, comprehensive coverage, liability coverage, roadside assistance, pickup documents",
+                "PUBLIC",
+            ),
+            (
                 "OpenAI + RAG knowledge flow",
                 "Future admin-only plan for files, vector search, and GPT answers.",
                 "Your files flow into a vector database. Search retrieves the closest safe passages, then GPT-4o or GPT-5 writes an answer. Internal files and private operational notes must stay admin-only and must never be returned to public Wiki search.",
@@ -12757,8 +12764,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         </div>
                         <ul>
                             <li>If an accident happens, make sure everyone is safe, call emergency services if needed, document photos, collect other driver information, then <a href="#support" data-manage-tab="support" data-support-escalate="accident">create an urgent support ticket</a>.</li>
+                            <li><b>Insurance requirement:</b> bring proof of a valid auto policy that extends coverage to rental vehicles. Recommended coverage includes collision, comprehensive, liability, rental vehicle coverage when required, and roadside assistance.</li>
                             <li><b>Coverage on file:</b> {escape(insurance_summary)}</li>
-                            <li>Insurance selected or verified at pickup is the coverage used for the rental record.</li>
+                            <li>FairFares may verify insurance coverage before releasing the vehicle. If your policy does not cover rentals, contact your insurer before completing pickup.</li>
+                            <li><a href="/wiki?q=insurance%20requirement">View the full insurance requirement</a>.</li>
                             <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
                         </ul>
                     </article>

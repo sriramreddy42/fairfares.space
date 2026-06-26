@@ -33,12 +33,23 @@ class AssistantKnowledgeTest(unittest.TestCase):
         self.assertTrue(articles, f"No article found for {query!r}")
         self.assertEqual(articles[0]["title"], expected_title)
 
+    def assertArticlePresent(self, query, expected_title):
+        articles = app.search_wiki_articles(query, include_internal=False)
+        self.assertIn(expected_title, [article["title"] for article in articles])
+
     def test_seeded_assistant_faq_answers_common_questions(self):
         self.assertTopArticle("How do I book a car?", "Booking help FAQ")
         self.assertTopArticle("Why is there a hold on my card?", "Payment FAQ")
+        self.assertArticlePresent("insurance requirement", "Insurance Requirement")
         self.assertTopArticle("What do I do if I get a flat tire?", "Fees, tolls, tickets, and roadside FAQ")
         self.assertTopArticle("Can I upload reels?", "Explorer FAQ")
         self.assertTopArticle("Can I list my car on FairFares?", "Marketplace and future host program FAQ")
+
+    def test_booking_policy_surfaces_insurance_requirement(self):
+        py = Path("app.py").read_text()
+        self.assertIn("Insurance requirement:", py)
+        self.assertIn("valid auto policy that extends coverage to rental vehicles", py)
+        self.assertIn("/wiki?q=insurance%20requirement", py)
 
     def test_assistant_actions_are_guided_not_silent_writes(self):
         context = app.assistant_database_context("cancel my booking", None, include_internal=False)
