@@ -2452,6 +2452,13 @@ def format_money(value: object) -> str:
     return f"${float(value or 0):.2f}"
 
 
+def rental_day_count(start: datetime | None, end: datetime | None, fallback: object = 1) -> int:
+    if start and end and end > start:
+        seconds = (end - start).total_seconds()
+        return max(1, min(math.ceil(seconds / 86400), 366))
+    return max(1, min(int(float(fallback or 1)), 366))
+
+
 def daily_price_range(price: object) -> tuple[int, int]:
     daily = float(price or 0)
     low = max(25, round(daily * 0.9))
@@ -2825,6 +2832,18 @@ def time_select_options(selected: str = "10:00 AM") -> str:
             label = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").strftime("%I:%M %p").lstrip("0")
             options.append(f'<option {"selected" if label == selected else ""}>{escape(label)}</option>')
     return "".join(options)
+
+
+def select_options(values: list[str], selected: str = "") -> str:
+    normalized_values = []
+    for value in [selected, *values]:
+        clean = (value or "").strip()
+        if clean and clean not in normalized_values:
+            normalized_values.append(clean)
+    return "".join(
+        f'<option value="{escape(value)}" {"selected" if value == selected else ""}>{escape(value)}</option>'
+        for value in normalized_values
+    )
 
 
 def evaluate_driver_license(
@@ -5108,17 +5127,22 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
         if row_value(booking, "saved_by_user"):
             trip_type = f"{trip_type} favorites"
         status_text = booking_status_label(status, row_value(booking, "payment_status"))
+        breakdown = booking_price_breakdown(booking)
+        paid_amount = booking_paid_amount(booking)
         details = {
             "bookingId": booking["booking_id"],
             "car": booking["car_name"],
             "status": status,
             "statusText": status_text,
+            "payment": payment_status_label(row_value(booking, "payment_status")),
+            "paid": format_money(paid_amount),
+            "pickupBalance": format_money(breakdown["due_at_pickup"]),
             "pickup": f"{booking['pickup_location']} | {booking['pickup_date']} {booking['pickup_time']}",
             "dropoff": f"{booking['dropoff_location']} | {booking['dropoff_date']} {booking['dropoff_time']}",
             "provider": booking["provider"],
             "reason": row_value(booking, "cancellation_reason") or "No request notes saved.",
             "image": row_value(booking, "image_url") or "",
-            "price": format_money(booking["total_price"]),
+            "price": f"{format_money(breakdown['total'])} total",
         }
         details_json = escape(json.dumps(details))
         rows.append(
@@ -5216,6 +5240,87 @@ def admin_payment_summary(row: sqlite3.Row | dict[str, object]) -> tuple[str, st
     if payment_status == "REFUND_REVIEW":
         return "Refund review", "Admin follow-up needed"
     return payment_status_label(payment_status), f"Pickup balance {format_money(breakdown['due_at_pickup'])}"
+
+
+def booking_payment_records(booking_id: int | None) -> list[sqlite3.Row]:
+    if not booking_id:
+        return []
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM transactions
+            WHERE booking_id = ?
+            ORDER BY id ASC
+            """,
+            (booking_id,),
+        ).fetchall()
+
+
+def booking_paid_amount(row: sqlite3.Row | dict[str, object] | None) -> float:
+    if not row:
+        return 0.0
+    transactions = booking_payment_records(int(row_value(row, "id") or 0))
+    paid_total = round(
+        sum(
+            float(row_value(transaction, "amount") or 0)
+            for transaction in transactions
+            if row_value(transaction, "transaction_status") in {"PAID", "HOLD_PAID"}
+        ),
+        2,
+    )
+    if paid_total > 0:
+        return paid_total
+    breakdown = booking_price_breakdown(row)
+    payment_status = row_value(row, "payment_status")
+    if payment_status == "PAID":
+        return round(float(row_value(row, "total_price") or breakdown["total"] or 0), 2)
+    if payment_status == "HOLD_PAID":
+        return round(float(row_value(row, "booking_hold_amount") or breakdown["booking_hold"] or 0), 2)
+    return 0.0
+
+
+def booking_refund_estimate(row: sqlite3.Row | dict[str, object] | None) -> tuple[float, str]:
+    if not row:
+        return 0.0, "No booking selected."
+    if row_value(row, "payment_status") == "REFUNDED":
+        return 0.0, "This booking has already been refunded."
+    paid_amount = booking_paid_amount(row)
+    payment_status = row_value(row, "payment_status")
+    if payment_status in {"PAID", "HOLD_PAID", "REFUND_REVIEW"} and paid_amount > 0:
+        return paid_amount, f"Based on {payment_status_label(payment_status).lower()} currently recorded."
+    return 0.0, "No online payment has been recorded for this booking yet."
+
+
+def booking_payment_record_summary(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    transactions = booking_payment_records(int(row_value(row, "id") or 0))
+    paid_transactions = [
+        transaction for transaction in transactions
+        if row_value(transaction, "transaction_status") in {"PAID", "HOLD_PAID"}
+    ]
+    refunded_transactions = [
+        transaction for transaction in transactions
+        if row_value(transaction, "transaction_status") == "REFUNDED"
+    ]
+    paid_amount = round(sum(float(row_value(transaction, "amount") or 0) for transaction in paid_transactions), 2)
+    refunded_amount = round(sum(float(row_value(transaction, "amount") or 0) for transaction in refunded_transactions), 2)
+    references = [
+        row_value(transaction, "invoice_number")
+        for transaction in transactions
+        if row_value(transaction, "invoice_number")
+    ]
+    methods = [
+        row_value(transaction, "payment_method")
+        for transaction in transactions
+        if row_value(transaction, "payment_method")
+    ]
+    return {
+        "paid_amount": paid_amount or booking_paid_amount(row),
+        "refunded_amount": refunded_amount,
+        "references": references,
+        "methods": methods,
+        "count": len(transactions),
+    }
 
 
 def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
@@ -6556,9 +6661,18 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
             (booking["user_id"],),
         ).fetchone()
 
-    invoice_number = transaction["invoice_number"] if transaction else f"INV-{booking['booking_id']}"
-    payment_method = transaction["payment_method"] if transaction else payment_status_label(booking["payment_status"])
-    transaction_status = transaction["transaction_status"] if transaction else booking["payment_status"]
+    payment_summary = booking_payment_record_summary(booking)
+    invoice_number = (
+        ", ".join(str(reference) for reference in payment_summary["references"])
+        if payment_summary["references"]
+        else f"INV-{booking['booking_id']}"
+    )
+    payment_method = (
+        ", ".join(dict.fromkeys(str(method) for method in payment_summary["methods"]))
+        if payment_summary["methods"]
+        else payment_status_label(booking["payment_status"])
+    )
+    transaction_status = payment_status_label(booking["payment_status"])
     agreement_text = agreement["agreement_text"] if agreement else default_agreement_text(booking)
     insurance_line = (
         f"{insurance['insurance_provider']} · {insurance['insurance_type']} · Coverage ${float(insurance['coverage_amount']):.2f}"
@@ -6589,6 +6703,8 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"Vehicle: {booking['car_name']}\n"
                 f"Dates: {booking['pickup_date']} {booking['pickup_time']} to {booking['dropoff_date']} {booking['dropoff_time']}\n"
                 f"Payment: {payment_method} · {transaction_status}\n"
+                f"Amount paid: {format_money(payment_summary['paid_amount'])}\n"
+                f"Amount refunded: {format_money(payment_summary['refunded_amount'])}\n"
                 f"Rental subtotal: {format_money(breakdown['base'])}\n"
                 f"Discount: {booking['discount_code'] or 'None'} · -{format_money(booking['discount_amount'])}\n"
                 f"Taxes and fees: {format_money(breakdown['tax_fee_amount'])}\n"
@@ -6606,6 +6722,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"{agreement_text}\n\n"
                 f"Estimated total: {format_money(breakdown['total'])}\n"
                 f"10% booking hold: {format_money(breakdown['booking_hold'])}. This hold is deducted from the pickup balance. Holds become non-refundable inside 24 hours before pickup unless FairFares approves an exception.\n"
+                f"Amount paid: {format_money(payment_summary['paid_amount'])}\n"
                 f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
                 f"DL: {license_line}\n"
                 f"Insurance: {insurance_line}\n"
@@ -6625,6 +6742,7 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
                 f"{tax_fee_lines}\n"
                 f"FairFares savings: {savings_line}\n"
                 f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+                f"Amount paid: {format_money(payment_summary['paid_amount'])}\n"
                 f"Due at pickup: {format_money(breakdown['due_at_pickup'])}\n"
                 f"Insurance: {insurance_line}\n"
                 f"Final total: {format_money(breakdown['total'])}"
@@ -7738,13 +7856,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             changes.append(f"Additional driver added: {form.get('driver_name')}")
         change_note = "; ".join(changes) or "Timing/location review requested"
         car_id = requested_car["id"] if requested_car and requested_car["id"] != booking["car_id"] else booking["car_id"]
-        subtotal = float(booking["subtotal_price"] or booking["total_price"])
-        discount_amount = float(booking["discount_amount"] or 0)
-        total_price = float(booking["total_price"])
-        if requested_car and requested_car["id"] != booking["car_id"]:
-            subtotal = round(float(requested_car["daily_price"]) * int(booking["days"] or 1), 2)
-            discount_amount = calculate_discount_amount(subtotal, get_valid_discount(booking["discount_code"]))
-            total_price = round(subtotal - discount_amount, 2)
+        next_days = rental_day_count(requested_start, requested_end, booking["days"])
+        next_daily_price = float(row_value(requested_car, "daily_price") if requested_car else row_value(booking, "daily_price") or 0)
+        preliminary_breakdown = rental_price_breakdown(next_daily_price, next_days, 0)
+        discount_amount = calculate_discount_amount(float(preliminary_breakdown["base"]), get_valid_discount(booking["discount_code"]))
+        next_breakdown = rental_price_breakdown(next_daily_price, next_days, discount_amount)
+        subtotal = float(next_breakdown["base"])
+        total_price = float(next_breakdown["total"])
         with db() as con:
             con.execute(
                 """
@@ -7757,9 +7875,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     pickup_location = ?,
                     dropoff_location = ?,
                     return_location = ?,
+                    days = ?,
                     subtotal_price = ?,
                     discount_amount = ?,
                     total_price = ?,
+                    tax_fee_amount = ?,
+                    booking_hold_amount = ?,
+                    due_at_pickup_amount = ?,
+                    estimated_market_total = ?,
+                    fairfares_savings_amount = ?,
                     additional_driver_name = ?,
                     additional_driver_age = ?,
                     booking_status = 'MODIFIED',
@@ -7776,9 +7900,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     new_pickup_location,
                     new_dropoff_location,
                     new_dropoff_location,
+                    next_days,
                     subtotal,
                     discount_amount,
                     total_price,
+                    next_breakdown["tax_fee_amount"],
+                    next_breakdown["booking_hold"],
+                    next_breakdown["due_at_pickup"],
+                    next_breakdown["market_total"],
+                    next_breakdown["savings"],
                     form.get("driver_name", ""),
                     form.get("driver_age", "") if form.get("driver_name") else "",
                     change_note,
@@ -11507,6 +11637,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         content = get_content()
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
+        inventory_locations = get_inventory_locations()
         user_bookings = get_bookings_for_user(user["id"]) if user else []
         saved_cars = get_saved_cars_for_user(user["id"]) if user else []
         latest_ticket = get_latest_ticket_for_user(user["id"]) if user else None
@@ -11521,11 +11652,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         default_pickup, default_return = default_trip_dates()
         modify_pickup_date = display_date_to_input(booking["pickup_date"] if booking else "", default_pickup)
         modify_return_date = display_date_to_input(booking["dropoff_date"] if booking else "", default_return)
+        current_total_label = format_money(row_value(booking, "total_price")) if booking else "Current booking total"
         no_upgrade_option = f"""
             <label class="upgrade-current">
                 <input type="radio" name="vehicle" value="" data-price="0" checked>
                 <span><b>No upgrade</b><small>Keep current vehicle and change timing/location only</small></span>
-                <strong>Current total</strong>
+                <strong>{escape(current_total_label)}</strong>
             </label>
         """
         upgrade_options = no_upgrade_option + "\n" + "\n".join(
@@ -11615,6 +11747,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
+        cancel_refund_amount, cancel_refund_note = booking_refund_estimate(booking)
         trip_payment_summary = ""
         if booking:
             payment_status = row_value(booking, "payment_status")
@@ -11934,6 +12067,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<div class=\"support-summary support-ticket-state\"><b>{escape(owner)} is working on ticket {escape(latest_ticket['ticket_id'])}</b>"
                 f"<span>Status: {escape(status)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
             )
+        support_provider_summary = (
+            f"{row_value(booking, 'provider') or 'Provider'} pickup support for {row_value(booking, 'pickup_location') or 'your pickup location'}."
+            if booking
+            else "Provider contact details appear after a booking is selected."
+        )
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         booking_id_label = "No booking yet"
         if booking:
@@ -11965,6 +12103,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,
             support_ticket_message=support_ticket_message,
+            support_provider_summary=escape(support_provider_summary),
             manage_panels_class="manage-panels" if (user and booking and not show_start_experience) else "manage-panels is-hidden",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
@@ -11980,6 +12119,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             dropoff_time=escape(booking["dropoff_time"] if booking else "Not scheduled"),
             days=escape(booking["days"] if booking else 0),
             price_text=escape(format_money(active_breakdown["total"]) if booking else "$0.00"),
+            cancel_refund_amount=escape(format_money(cancel_refund_amount)),
+            cancel_refund_note=escape(cancel_refund_note),
             price_breakdown_summary=price_breakdown_summary,
             savings_label=escape(booking_savings_label(booking) if booking else ""),
             price_match_note=escape(booking_savings_explainer(booking) if booking else ""),
@@ -11990,6 +12131,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             current_vehicle=escape(current_car_name),
             modify_pickup_date=escape(modify_pickup_date),
             modify_return_date=escape(modify_return_date),
+            modify_pickup_location_options=select_options(inventory_locations, booking["pickup_location"] if booking else ""),
+            modify_dropoff_location_options=select_options(inventory_locations, booking["dropoff_location"] if booking else ""),
             booking_documents_json=booking_documents_json,
             documents_locked="1" if documents_locked else "0",
             documents_locked_class="documents-locked" if documents_locked else "",

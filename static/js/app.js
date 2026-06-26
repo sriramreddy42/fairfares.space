@@ -1208,7 +1208,9 @@ function updateModifySummary() {
   const returnTime = document.getElementById("modifyReturnTime")?.value || "";
   const selectedVehicle = vehicleSelect?.value || vehicle?.value || "";
   summaryVehicle.textContent = selectedVehicle || "No vehicle change";
-  summaryPrice.textContent = selectedVehicle ? (vehicle?.closest("label")?.querySelector("strong")?.textContent || "Estimated range") : "Current total";
+  summaryPrice.textContent = selectedVehicle
+    ? (vehicle?.closest("label")?.querySelector("strong")?.textContent || "Estimated range")
+    : (summaryPrice.dataset.currentPrice || "Current booking total");
   summaryPickup.textContent = pickup;
   summaryReturn.textContent = `${formatDate(returnDate)} | ${returnTime}`;
 }
@@ -1289,7 +1291,7 @@ const bookingStatusBadge = document.getElementById("bookingStatusBadge");
 refundMethod?.addEventListener("change", () => {
   refundTimeline.textContent = refundMethod.value.includes("credit")
     ? "Travel credit can be issued after admin approval."
-    : "Refund timeline starts after admin approval.";
+    : (refundTimeline.dataset.defaultNote || "Refund timeline starts after admin approval.");
   cancelStatus.textContent = "";
 });
 
@@ -1299,7 +1301,7 @@ cancelReason?.addEventListener("change", () => {
 
 cancelForm?.addEventListener("reset", () => {
   window.setTimeout(() => {
-    refundTimeline.textContent = "Refund timeline starts after admin approval.";
+    refundTimeline.textContent = refundTimeline.dataset.defaultNote || "Refund timeline starts after admin approval.";
     cancelStatus.textContent = "";
   }, 0);
 });
@@ -1318,7 +1320,7 @@ cancelForm?.addEventListener("submit", (event) => {
     method: "POST",
     body: payload,
   })
-    .then((response) => response.ok ? response.json() : Promise.reject())
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((data) => {
       cancelStatus.textContent = data.message || `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
       if (bookingStatusBadge && data.status_label) {
@@ -1326,8 +1328,8 @@ cancelForm?.addEventListener("submit", (event) => {
         bookingStatusBadge.className = `status-badge ${data.status_class || "status-pending"}`;
       }
     })
-    .catch(() => {
-      cancelStatus.textContent = `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
+    .catch((payload) => {
+      cancelStatus.textContent = payload?.message || "Unable to submit this cancellation request.";
     });
 });
 
@@ -2521,6 +2523,9 @@ tripRows.forEach((row) => {
         <div><dt>Pickup</dt><dd>${escapeHtml(details.pickup || "-")}</dd></div>
         <div><dt>Drop-off</dt><dd>${escapeHtml(details.dropoff || "-")}</dd></div>
         <div><dt>Status / Request</dt><dd>${escapeHtml(details.reason || details.status || "-")}</dd></div>
+        <div><dt>Payment</dt><dd>${escapeHtml(details.payment || "-")}</dd></div>
+        <div><dt>Paid</dt><dd>${escapeHtml(details.paid || "$0.00")}</dd></div>
+        <div><dt>Pickup Balance</dt><dd>${escapeHtml(details.pickupBalance || "-")}</dd></div>
         <div><dt>Price</dt><dd>${escapeHtml(details.price || "-")}</dd></div>
       </dl>
     `;
@@ -2611,9 +2616,9 @@ const supportTopic = document.getElementById("supportTopic");
 const supportContact = document.getElementById("supportContact");
 const supportTopicCopy = {
   "Pickup help": ["Pickup help selected", "We can help with counter location, pickup timing, and rental readiness.", "Chat in browser"],
-  "Chat support help": ["Chat support selected", "Average response time: under 2 minutes.", "Chat in browser"],
-  "Emergency roadside help": ["Emergency roadside selected", "24/7 roadside assistance can call or text you immediately.", "Phone call"],
-  "Provider contact help": ["Provider contact selected", "Avis counter details and direct contact options are ready.", "Phone call"],
+  "Chat support help": ["Chat support selected", "Create a ticket and FairFares support will route it by priority.", "Chat in browser"],
+  "Emergency roadside help": ["Emergency roadside selected", "Urgent roadside tickets are escalated to the fastest available support path.", "Phone call"],
+  "Provider contact help": ["Provider contact selected", supportSummary?.dataset.providerSummary || "Provider contact details are based on your current booking.", "Phone call"],
   "Billing question": ["Billing help selected", "Support can review receipts, charges, taxes, and fees.", "Email"],
   "Vehicle issue": ["Vehicle issue selected", "We can help with vehicle problems, swaps, and provider escalation.", "Phone call"],
   "Modify/cancel help": ["Modify or cancel help selected", "Support can help review trip changes, cancellation, and refund options.", "Chat in browser"],
@@ -2645,7 +2650,7 @@ urgentSupport?.addEventListener("change", () => {
 document.getElementById("providerContact")?.addEventListener("click", () => {
   if (supportTopic) supportTopic.value = "Provider contact help";
   syncSupportTopic();
-  supportStatus.textContent = "Avis provider contact: Door A, Level 5, Island 3.";
+  supportStatus.textContent = supportSummary?.dataset.providerSummary || "Provider contact details are based on your current booking.";
 });
 
 document.getElementById("supportForm")?.addEventListener("submit", (event) => {

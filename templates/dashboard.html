@@ -107,8 +107,8 @@
             <section class="modify-section">
               <div class="section-heading"><b>Change Pickup Location</b><span>Choose a different pickup or return location</span></div>
               <div class="modify-grid two">
-                <label><span>Pickup Location</span><select id="modifyPickupLocation" name="pickup_location"><option selected>Denver International Airport (DEN)</option><option>Denver Union Station</option><option>Boulder Campus Center</option><option>Colorado Springs Airport</option></select></label>
-                <label><span>Drop-off Location</span><select id="modifyDropoffLocation" name="dropoff_location"><option selected>Denver International Airport (DEN)</option><option>Denver Union Station</option><option>Boulder Campus Center</option><option>Colorado Springs Airport</option></select></label>
+                <label><span>Pickup Location</span><select id="modifyPickupLocation" name="pickup_location">$modify_pickup_location_options</select></label>
+                <label><span>Drop-off Location</span><select id="modifyDropoffLocation" name="dropoff_location">$modify_dropoff_location_options</select></label>
               </div>
             </section>
 
@@ -129,7 +129,7 @@
 
             <aside class="modify-summary">
               <div><span>Selected Vehicle</span><b id="summaryVehicle">$current_vehicle</b></div>
-              <div><span>Estimated Price</span><b id="summaryPrice">$price_text</b></div>
+              <div><span>Estimated Price</span><b id="summaryPrice" data-current-price="$price_text">$price_text</b></div>
               <div><span>Pickup</span><b id="summaryPickup">$pickup_location</b></div>
               <div><span>Return</span><b id="summaryReturn">$dropoff_date | $dropoff_time</b></div>
             </aside>
@@ -152,7 +152,7 @@
               <label><span>Refund Method</span><select id="refundMethod"><option>Original payment method</option><option>FairFares travel credit</option></select></label>
             </div>
             <label><span>Optional Note</span><textarea id="cancelNote" rows="3" placeholder="Add details for support"></textarea></label>
-            <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$price_text</strong><small id="refundTimeline">Refund timeline starts after admin approval.</small></div>
+            <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$cancel_refund_amount</strong><small id="refundTimeline" data-default-note="$cancel_refund_note">$cancel_refund_note</small></div>
             <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this sends booking $booking_id to admin for cancellation approval.</label>
             <div class="modify-actions">
               <button type="reset" class="light-button">Keep Booking</button>
@@ -243,7 +243,7 @@
             </div>
             <label><span>Message</span><textarea id="supportMessage" rows="4" placeholder="Describe what is happening"></textarea></label>
             <label class="toggle-row"><input id="urgentSupport" type="checkbox"> This is urgent and I need immediate help</label>
-            <div class="support-summary" id="supportSummary">
+            <div class="support-summary" id="supportSummary" data-provider-summary="$support_provider_summary">
               <b>Pickup help selected</b>
               <span>We can help with counter location, pickup timing, and rental readiness.</span>
             </div>
