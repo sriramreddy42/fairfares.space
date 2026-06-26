@@ -41,7 +41,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626policy2"
+ASSET_VERSION = "20260626policy3"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -11908,7 +11908,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <div class="policy-timeline" aria-label="Cancellation timeline">
                             <div class="policy-timeline-labels"><span>Today</span><strong>{escape(str(cancellation_timeline["day_label"]))}</strong><span>Pickup</span></div>
                             <div class="policy-timeline-track">
-                                <i class="policy-car-marker" aria-hidden="true"></i>
+                                <img class="policy-car-marker" src="/static/img/policy-family-car.png?v={ASSET_VERSION}" alt="" aria-hidden="true">
                                 <b class="policy-cutoff-marker" aria-hidden="true"></b>
                             </div>
                             <div class="policy-day-ticks" aria-hidden="true">{policy_day_ticks}<strong>24h</strong></div>
