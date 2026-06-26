@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626staffnotice"
+ASSET_VERSION = "20260626staffreset"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -7602,6 +7602,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/discounts/delete": self.delete_admin_discount,
             "/admin/staff/request": self.create_staff_account_request,
             "/admin/staff/review": self.review_staff_account_request,
+            "/admin/staff/password": self.reset_staff_account_password,
             "/admin/wiki": self.create_admin_wiki_article,
             "/admin/wiki/delete": self.delete_admin_wiki_article,
             "/admin/commercials": self.create_admin_commercial,
@@ -10404,8 +10405,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         notice_messages = {
             "created": "Staff request created. A different admin must approve it before the user can log in.",
             "approved": "Staff account approved and activated. They can log in with the temporary password.",
+            "password_reset": "Temporary password updated. The staff member can log in with the new password.",
             "rejected": "Staff request rejected.",
             "missing_password": "New staff emails need a temporary password with at least 8 characters.",
+            "short_password": "Temporary password must be at least 8 characters.",
             "pending": "That email already has a pending staff request. A different admin must approve it.",
             "active": "That email already belongs to an active staff account.",
             "invalid": "Enter a valid name, email, and role.",
@@ -10484,6 +10487,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def render_staff_account_row(self, row: sqlite3.Row) -> str:
         role = staff_role_label(row)
         status = "Active" if row_value(row, "is_verified") else "Not verified"
+        reset_form = f"""
+          <form method="post" action="/admin/staff/password" class="inline-form staff-password-reset-form">
+            <input type="hidden" name="user_id" value="{escape(row_value(row, "id"))}">
+            <input name="password" type="password" minlength="8" placeholder="New temp password" required>
+            <button type="submit">Set</button>
+          </form>
+        """
         return f"""
         <tr>
           <td><b>{escape(row_value(row, "name"))}</b><span>#{escape(row_value(row, "id"))}</span></td>
@@ -10491,6 +10501,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <td>{escape(role)}</td>
           <td>{escape(status)}</td>
           <td>{escape(row_value(row, "created_at"))}</td>
+          <td>{reset_form}</td>
         </tr>
         """
 
@@ -10689,6 +10700,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         self.redirect("/admin/requests?staff_status=not_found")
                         return
         self.redirect("/admin/requests")
+
+    def reset_staff_account_password(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        if not is_admin_user(user):
+            self.redirect("/admin/requests")
+            return
+        form = self.read_form()
+        try:
+            target_user_id = int(form.get("user_id") or 0)
+        except ValueError:
+            target_user_id = 0
+        password = form.get("password", "")
+        if len(password) < 8:
+            self.redirect("/admin/requests?staff_status=short_password")
+            return
+        with db() as con:
+            target = con.execute(
+                """
+                SELECT * FROM users
+                WHERE id = ?
+                  AND (is_admin = 1 OR role IN ('ADMIN', 'EMPLOYEE'))
+                """,
+                (target_user_id,),
+            ).fetchone()
+            if not target:
+                self.redirect("/admin/requests?staff_status=not_found")
+                return
+            con.execute(
+                """
+                UPDATE users
+                SET password_hash = ?,
+                    is_verified = 1,
+                    verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                    guest_account = 0
+                WHERE id = ?
+                """,
+                (hash_password(password), target_user_id),
+            )
+        self.redirect("/admin/requests?staff_status=password_reset")
 
     def admin_tickets_page(self) -> None:
         user = self.require_admin()

@@ -194,8 +194,12 @@ class AuthBootstrapTest(unittest.TestCase):
         self.assertIn("A different admin must approve", py)
         self.assertIn("staff_status=missing_password", py)
         self.assertIn("staff_status=pending", py)
+        self.assertIn("/admin/staff/password", py)
+        self.assertIn("password_reset", py)
         self.assertIn("$staff_notice", template)
+        self.assertIn("Password</th>", template)
         self.assertIn(".admin-status-notice", css)
+        self.assertIn(".staff-password-reset-form", css)
 
 
 if __name__ == "__main__":

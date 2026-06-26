@@ -3164,6 +3164,14 @@
 .staff-review-actions input {
   min-width: 160px;
 }
+.staff-password-reset-form {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+.staff-password-reset-form input {
+  min-width: 150px;
+}
 .admin-user-card {
   background: #fff;
   border: 1px solid var(--line);
