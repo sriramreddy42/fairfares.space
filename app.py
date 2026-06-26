@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626pickup-prefill"
+ASSET_VERSION = "20260626pickup-form"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -10800,6 +10800,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f'<small>{escape(saved_copy if value else "Take picture or choose photo")}</small></label>'
             )
 
+        document_photo_fields = "".join(
+            (
+                capture_field("front_image_url", "DL Front", front_scan, "Front DL saved"),
+                capture_field("back_image_url", "DL Back", back_scan, "Back DL saved"),
+                capture_field("insurance_document_url", "Insurance", insurance_scan, "Insurance image saved"),
+            )
+        )
+        vehicle_photo_fields = "".join(
+            (
+                capture_field("pickup_front_image", "Pickup Front", row["pickup_front_image"]),
+                capture_field("pickup_back_image", "Pickup Back", row["pickup_back_image"]),
+                capture_field("pickup_left_image", "Pickup Left", row["pickup_left_image"]),
+                capture_field("pickup_right_image", "Pickup Right", row["pickup_right_image"]),
+                capture_field("return_front_image", "Return Front", row["return_front_image"]),
+                capture_field("return_back_image", "Return Back", row["return_back_image"]),
+                capture_field("return_left_image", "Return Left", row["return_left_image"]),
+                capture_field("return_right_image", "Return Right", row["return_right_image"]),
+            )
+        )
+
         return f"""
         <details class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
             <summary class="pickup-record-head">
@@ -10821,44 +10841,66 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
                 <input type="hidden" name="booking_id" value="{row["id"]}">
                 <input type="hidden" name="user_id" value="{row["user_id"]}">
-                <div class="pickup-prefill-panel wide-field" data-pickup-prefill>
-                    <div>
-                        <b>Photo prefill</b>
-                        <span>Take DL and insurance pictures, then prefill empty pickup fields. Review before saving.</span>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Customer and driver license</b><span>Capture required renter identity details at pickup.</span></div>
                     </div>
-                    <button type="button" data-pickup-prefill-button>Prefill from photos</button>
-                    <small data-pickup-prefill-status>Photos are used only to suggest form values; this is not DMV verification.</small>
-                </div>
-                <label><span>Customer Full Name</span><input name="customer_name" value="{escape(row["user_name"])}"></label>
-                <label><span>Phone</span><input name="phone" value="{escape(row["phone"] or "")}" placeholder="Customer phone"></label>
-                <label><span>Address</span><input name="address" value="{escape(row["address"] or "")}" placeholder="Customer address"></label>
-                <label><span>Date of Birth</span><input name="date_of_birth" type="date" value="{escape(row["date_of_birth"] or "")}"></label>
-                <label><span>DL Number</span><input name="license_number" value="{escape(license_row["license_number"] if license_row else "")}" placeholder="Scan or enter DL"></label>
-                <label><span>DL State</span><input name="license_state" value="{escape(license_row["state"] if license_row else "CO")}"></label>
-                <label><span>DL Expiry</span><input name="license_expiry" type="date" value="{escape(license_row["expiry_date"] if license_row else "2028-12-31")}"></label>
-                {capture_field("front_image_url", "DL Front Picture", front_scan, "Front image saved")}
-                {capture_field("back_image_url", "DL Back Picture", back_scan, "Back image saved")}
-                <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
-                <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
-                <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
-                {capture_field("insurance_document_url", "Insurance Scan", insurance_scan, "Insurance image saved")}
-                <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
-                <label><span>Cardholder Name</span><input name="cardholder_name" value="{escape(transaction["cardholder_name"] if transaction and "cardholder_name" in transaction.keys() else "")}" placeholder="Required for card payments"></label>
-                <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
-                <label><span>Actual Pickup Date</span><input name="actual_pickup_date" type="date" value="{escape(actual_pickup_date)}"></label>
-                <label><span>Actual Pickup Time</span><select name="actual_pickup_time">{time_select_options(actual_pickup_time)}</select></label>
-                <label><span>Actual Return Date</span><input name="actual_return_date" type="date" value="{escape(actual_return_date)}"></label>
-                <label><span>Actual Return Time</span><select name="actual_return_time">{time_select_options(actual_return_time)}</select></label>
-                <label><span>Price Match Agency</span><input name="price_match_agency" value="{escape(row["price_match_agency"])}" placeholder="Avis, Enterprise, Hertz"></label>
-                <label><span>Matched Quote Total</span><input name="price_match_amount" type="number" step="0.01" value="{escape(row["price_match_amount"] or "")}" placeholder="Lower quote total"></label>
-                {capture_field("pickup_front_image", "Pickup Front Picture", row["pickup_front_image"])}
-                {capture_field("pickup_back_image", "Pickup Back Picture", row["pickup_back_image"])}
-                {capture_field("pickup_left_image", "Pickup Left Side", row["pickup_left_image"])}
-                {capture_field("pickup_right_image", "Pickup Right Side", row["pickup_right_image"])}
-                {capture_field("return_front_image", "Return Front Picture", row["return_front_image"])}
-                {capture_field("return_back_image", "Return Back Picture", row["return_back_image"])}
-                {capture_field("return_left_image", "Return Left Side", row["return_left_image"])}
-                {capture_field("return_right_image", "Return Right Side", row["return_right_image"])}
+                    <div class="pickup-form-grid">
+                        <label><span>Customer Full Name</span><input name="customer_name" value="{escape(row["user_name"])}"></label>
+                        <label><span>Phone</span><input name="phone" value="{escape(row["phone"] or "")}" placeholder="Customer phone"></label>
+                        <label><span>Address</span><input name="address" value="{escape(row["address"] or "")}" placeholder="Customer address"></label>
+                        <label><span>Date of Birth</span><input name="date_of_birth" type="date" value="{escape(row["date_of_birth"] or "")}"></label>
+                        <label><span>DL Number</span><input name="license_number" value="{escape(license_row["license_number"] if license_row else "")}" placeholder="Scan or enter DL"></label>
+                        <label><span>DL State</span><input name="license_state" value="{escape(license_row["state"] if license_row else "CO")}"></label>
+                        <label><span>DL Expiry</span><input name="license_expiry" type="date" value="{escape(license_row["expiry_date"] if license_row else "2028-12-31")}"></label>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>DL and insurance photos</b><span>Upload DL front/back and insurance proof, then prefill only blank fields.</span></div>
+                    </div>
+                    <div class="pickup-photo-row pickup-document-row">{document_photo_fields}</div>
+                    <div class="pickup-prefill-panel" data-pickup-prefill>
+                        <div>
+                            <b>Prefill from captured documents</b>
+                            <span>Uses OCR to suggest values only. Staff must review before saving.</span>
+                        </div>
+                        <button type="button" data-pickup-prefill-button>Prefill empty fields</button>
+                        <small data-pickup-prefill-status>Confirm customer consent before sending document photos for OCR. This is not DMV verification.</small>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Insurance and payment</b><span>Verify proof, coverage, payment method, and pickup balance.</span></div>
+                    </div>
+                    <div class="pickup-form-grid">
+                        <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
+                        <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
+                        <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
+                        <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
+                        <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
+                        <label><span>Cardholder Name</span><input name="cardholder_name" value="{escape(transaction["cardholder_name"] if transaction and "cardholder_name" in transaction.keys() else "")}" placeholder="Required for card payments"></label>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Trip timing and price match</b><span>Record actual pickup/return timing and any eligible matched quote.</span></div>
+                    </div>
+                    <div class="pickup-form-grid">
+                        <label><span>Actual Pickup Date</span><input name="actual_pickup_date" type="date" value="{escape(actual_pickup_date)}"></label>
+                        <label><span>Actual Pickup Time</span><select name="actual_pickup_time">{time_select_options(actual_pickup_time)}</select></label>
+                        <label><span>Actual Return Date</span><input name="actual_return_date" type="date" value="{escape(actual_return_date)}"></label>
+                        <label><span>Actual Return Time</span><select name="actual_return_time">{time_select_options(actual_return_time)}</select></label>
+                        <label><span>Price Match Agency</span><input name="price_match_agency" value="{escape(row["price_match_agency"])}" placeholder="Avis, Enterprise, Hertz"></label>
+                        <label><span>Matched Quote Total</span><input name="price_match_amount" type="number" step="0.01" value="{escape(row["price_match_amount"] or "")}" placeholder="Lower quote total"></label>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Vehicle photos</b><span>Upload all car photos in one line: pickup front/back/left/right and return front/back/left/right.</span></div>
+                    </div>
+                    <div class="pickup-photo-row pickup-vehicle-row">{vehicle_photo_fields}</div>
+                </section>
                 <div class="agreement-builder wide-field">
                     <div class="agreement-builder-head">
                         <div>

@@ -2840,6 +2840,36 @@
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.pickup-form-section {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+.pickup-section-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+.pickup-section-head b {
+  color: var(--navy);
+  display: block;
+  font-size: 1rem;
+}
+.pickup-section-head span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.pickup-form-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .pickup-form label {
   display: grid;
   gap: 6px;
@@ -2884,11 +2914,40 @@
   cursor: wait;
   opacity: 0.68;
 }
+.pickup-photo-row {
+  display: grid;
+  gap: 8px;
+}
+.pickup-document-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pickup-vehicle-row {
+  grid-template-columns: repeat(8, minmax(104px, 1fr));
+}
 .dl-capture-field {
   background: #f7f9fc;
   border: 1px dashed var(--line);
   border-radius: 6px;
-  padding: 12px;
+  min-width: 0;
+  padding: 10px;
+}
+.pickup-photo-row .dl-capture-field {
+  gap: 7px;
+}
+.pickup-photo-row .dl-capture-field span {
+  font-size: 0.74rem;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pickup-photo-row .dl-capture-field input[type="file"] {
+  font-size: 0.76rem;
+  max-width: 100%;
+}
+.pickup-photo-row .dl-capture-field small {
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
 .dl-capture-field small {
   color: var(--muted);
@@ -3255,6 +3314,24 @@
 
   .workspace-edit-actions {
     grid-template-columns: 1fr;
+  }
+
+  .pickup-form,
+  .pickup-form-grid,
+  .pickup-document-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pickup-vehicle-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pickup-prefill-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .pickup-form .pickup-prefill-panel button {
+    width: 100%;
   }
 
   .workspace-feed-scroll {

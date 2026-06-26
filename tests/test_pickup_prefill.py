@@ -99,8 +99,8 @@ class PickupPrefillTest(unittest.TestCase):
 
         page = Path("app.py").read_text()
         self.assertIn("/admin/pickup/prefill", page)
-        self.assertIn("Prefill from photos", page)
-        self.assertIn("this is not DMV verification", page)
+        self.assertIn("Prefill empty fields", page)
+        self.assertIn("This is not DMV verification", page)
 
 
 if __name__ == "__main__":
