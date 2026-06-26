@@ -43,7 +43,8 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626workspace"
+ASSET_VERSION = "20260626pickup-prefill"
+OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
     ("LOVE", "❤️", "Love"),
@@ -2886,6 +2887,109 @@ def evaluate_driver_license(
     if notes:
         return "REVIEW_REQUIRED", "; ".join(notes)
     return "BASIC_CHECK_PASSED", "Number, state, expiry, and front/back DL images captured. Use a licensed ID verification provider for real/fake document authentication."
+
+
+PICKUP_PREFILL_FIELDS = {
+    "customer_name": "customer full name",
+    "address": "address",
+    "date_of_birth": "date of birth",
+    "license_number": "driver license number",
+    "license_state": "driver license state",
+    "license_expiry": "driver license expiration",
+    "insurance_provider": "insurance provider",
+    "insurance_type": "insurance coverage/type",
+    "coverage_amount": "insurance coverage amount",
+}
+
+
+def clean_pickup_prefill_value(field: str, value: object) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    if field in {"date_of_birth", "license_expiry"}:
+        match = re.search(r"\d{4}-\d{2}-\d{2}", text)
+        return match.group(0) if match else ""
+    if field == "license_state":
+        match = re.search(r"\b[A-Za-z]{2}\b", text)
+        return match.group(0).upper() if match else ""
+    if field == "coverage_amount":
+        match = re.search(r"\d+(?:,\d{3})*(?:\.\d{1,2})?", text)
+        return match.group(0).replace(",", "") if match else ""
+    return text[:240]
+
+
+def parse_json_object(text: str) -> dict[str, object]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+    parsed = json.loads(cleaned)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def extract_pickup_prefill_from_images(form: dict[str, str]) -> tuple[dict[str, str], list[str], str]:
+    images = []
+    for field, label in (
+        ("front_image_url", "driver license front"),
+        ("back_image_url", "driver license back"),
+        ("insurance_document_url", "insurance document"),
+    ):
+        image = (form.get(field) or "").strip()
+        if image.startswith("data:image/") and ";base64," in image and len(image) <= MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+            images.append((label, image))
+    if not images:
+        return {}, list(PICKUP_PREFILL_FIELDS.values()), "Take or upload DL/insurance photos first."
+    if not os.environ.get("OPENAI_API_KEY"):
+        return {}, list(PICKUP_PREFILL_FIELDS.values()), "Photo prefill needs OPENAI_API_KEY configured. Enter missing fields manually for now."
+    try:
+        from openai import OpenAI
+
+        content: list[dict[str, object]] = [
+            {
+                "type": "text",
+                "text": (
+                    "Extract pickup form fields from these rental pickup images. "
+                    "Return only JSON with keys: fields, missing_fields, notes. "
+                    "fields may include customer_name, address, date_of_birth, license_number, "
+                    "license_state, license_expiry, insurance_provider, insurance_type, coverage_amount. "
+                    "Use YYYY-MM-DD for dates, two-letter US state for license_state, numeric coverage_amount only. "
+                    "If a value is unclear, omit it and put the human label in missing_fields. "
+                    "Do not guess. This is OCR/prefill only, not authenticity verification."
+                ),
+            }
+        ]
+        for label, image in images:
+            content.append({"type": "text", "text": f"Image: {label}"})
+            content.append({"type": "image_url", "image_url": {"url": image}})
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        response = client.chat.completions.create(
+            model=OPENAI_VISION_MODEL,
+            messages=[
+                {"role": "system", "content": "You extract text from driver license and insurance images for form prefill. Return strict JSON only."},
+                {"role": "user", "content": content},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        payload = parse_json_object(response.choices[0].message.content or "{}")
+        raw_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        fields = {
+            key: clean_pickup_prefill_value(key, raw_fields.get(key))
+            for key in PICKUP_PREFILL_FIELDS
+            if clean_pickup_prefill_value(key, raw_fields.get(key))
+        }
+        missing = payload.get("missing_fields") if isinstance(payload.get("missing_fields"), list) else []
+        missing_labels = [str(item).strip() for item in missing if str(item).strip()]
+        if not missing_labels:
+            missing_labels = [label for key, label in PICKUP_PREFILL_FIELDS.items() if not fields.get(key)]
+        notes = str(payload.get("notes") or "").strip()
+        return fields, missing_labels, notes or "Review extracted values before saving pickup."
+    except Exception as exc:
+        return {}, list(PICKUP_PREFILL_FIELDS.values()), f"Could not prefill from photos. Enter missing fields manually. ({exc.__class__.__name__})"
 
 
 def normalize_person_name(value: str) -> str:
@@ -7113,6 +7217,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/send": self.send_email_campaign_now,
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
+            "/admin/pickup/prefill": self.prefill_pickup_documents,
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/tickets/escalate": self.escalate_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
@@ -10716,6 +10821,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
                 <input type="hidden" name="booking_id" value="{row["id"]}">
                 <input type="hidden" name="user_id" value="{row["user_id"]}">
+                <div class="pickup-prefill-panel wide-field" data-pickup-prefill>
+                    <div>
+                        <b>Photo prefill</b>
+                        <span>Take DL and insurance pictures, then prefill empty pickup fields. Review before saving.</span>
+                    </div>
+                    <button type="button" data-pickup-prefill-button>Prefill from photos</button>
+                    <small data-pickup-prefill-status>Photos are used only to suggest form values; this is not DMV verification.</small>
+                </div>
                 <label><span>Customer Full Name</span><input name="customer_name" value="{escape(row["user_name"])}"></label>
                 <label><span>Phone</span><input name="phone" value="{escape(row["phone"] or "")}" placeholder="Customer phone"></label>
                 <label><span>Address</span><input name="address" value="{escape(row["address"] or "")}" placeholder="Customer address"></label>
@@ -11790,6 +11903,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     ),
                 )
         self.redirect("/admin/pickup")
+
+    def prefill_pickup_documents(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        fields, missing_fields, message = extract_pickup_prefill_from_images(form)
+        self.send_json(
+            {
+                "ok": True,
+                "fields": fields,
+                "missing_fields": missing_fields,
+                "message": message,
+            }
+        )
 
     def manage_booking(self) -> None:
         parsed = urllib.parse.urlparse(self.path)

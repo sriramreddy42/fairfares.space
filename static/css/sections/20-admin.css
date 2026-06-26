@@ -2849,6 +2849,41 @@
   font-size: 0.875rem;
   text-transform: uppercase;
 }
+.pickup-prefill-panel {
+  align-items: center;
+  background: #f8fbff;
+  border: 1px solid rgba(11, 97, 164, 0.18);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+.pickup-prefill-panel b {
+  color: var(--navy);
+  display: block;
+  font-size: 0.95rem;
+}
+.pickup-prefill-panel span,
+.pickup-prefill-panel small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.pickup-prefill-panel small {
+  grid-column: 1 / -1;
+}
+.pickup-form .pickup-prefill-panel button {
+  background: var(--navy);
+  grid-column: auto;
+  min-height: 40px;
+  padding: 8px 14px;
+}
+.pickup-form .pickup-prefill-panel button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
 .dl-capture-field {
   background: #f7f9fc;
   border: 1px dashed var(--line);

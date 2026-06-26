@@ -3071,6 +3071,70 @@ document.querySelectorAll("[data-dl-camera], [data-photo-capture]").forEach((inp
   });
 });
 
+function pickupFieldLabel(name) {
+  const labels = {
+    customer_name: "customer name",
+    address: "address",
+    date_of_birth: "date of birth",
+    license_number: "DL number",
+    license_state: "DL state",
+    license_expiry: "DL expiry",
+    insurance_provider: "insurance provider",
+    insurance_type: "insurance type",
+    coverage_amount: "coverage amount",
+  };
+  return labels[name] || name.replace(/_/g, " ");
+}
+
+document.querySelectorAll("[data-pickup-prefill-button]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const form = button.closest(".pickup-form");
+    const panel = button.closest("[data-pickup-prefill]");
+    const status = panel?.querySelector("[data-pickup-prefill-status]");
+    if (!form) return;
+    const payload = new URLSearchParams();
+    ["front_image_url", "back_image_url", "insurance_document_url"].forEach((name) => {
+      const input = form.querySelector(`input[name="${name}"]`);
+      if (input instanceof HTMLInputElement && input.value) payload.set(name, input.value);
+    });
+    if (!payload.toString()) {
+      if (status) status.textContent = "Take or upload DL/insurance photos first.";
+      return;
+    }
+    button.disabled = true;
+    if (status) status.textContent = "Reading photos...";
+    try {
+      const response = await fetch("/admin/pickup/prefill", {
+        method: "POST",
+        body: payload,
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "fetch",
+        },
+      });
+      const result = await response.json();
+      if (!response.ok || result.ok === false) throw new Error(result.message || "Photo prefill failed.");
+      const fields = result.fields || {};
+      const filled = [];
+      Object.entries(fields).forEach(([name, value]) => {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (!(input instanceof HTMLInputElement || input instanceof HTMLSelectElement || input instanceof HTMLTextAreaElement)) return;
+        if (input.value.trim()) return;
+        input.value = String(value || "");
+        if (input.value) filled.push(pickupFieldLabel(name));
+      });
+      const missing = Array.isArray(result.missing_fields) ? result.missing_fields.filter(Boolean) : [];
+      const filledCopy = filled.length ? `Filled: ${filled.join(", ")}.` : "No blank fields were filled.";
+      const missingCopy = missing.length ? ` Ask user/admin for: ${missing.join(", ")}.` : "";
+      if (status) status.textContent = `${filledCopy}${missingCopy} ${result.message || "Review before saving."}`;
+    } catch (error) {
+      if (status) status.textContent = error.message || "Photo prefill failed. Enter fields manually.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
+
 function initAppFeedbackWidget() {
   if (document.getElementById("appFeedbackWidget")) return;
   const widget = document.createElement("section");
