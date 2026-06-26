@@ -2653,6 +2653,26 @@ document.getElementById("providerContact")?.addEventListener("click", () => {
   supportStatus.textContent = supportSummary?.dataset.providerSummary || "Provider contact details are based on your current booking.";
 });
 
+document.querySelectorAll("[data-support-continue]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const ticketId = button.dataset.ticketId || "previous ticket";
+    const bookingId = button.dataset.bookingId || "old booking";
+    const topic = button.dataset.topic || "Support";
+    if (supportTopic && [...supportTopic.options].some((option) => option.value === topic)) {
+      supportTopic.value = topic;
+      syncSupportTopic();
+    }
+    const message = document.getElementById("supportMessage");
+    if (message) {
+      message.value = `Continuing ${ticketId} for booking ${bookingId}: `;
+      message.focus();
+    }
+    if (supportStatus) {
+      supportStatus.textContent = `Continuing old conversation ${ticketId} related to booking ${bookingId}.`;
+    }
+  });
+});
+
 document.getElementById("supportForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
   const payload = new URLSearchParams();

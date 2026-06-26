@@ -41,7 +41,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626trip"
+ASSET_VERSION = "20260626support"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -5565,6 +5565,61 @@ def get_latest_ticket_for_user(user_id: int) -> sqlite3.Row | None:
             """,
             (user_id,),
         ).fetchone()
+
+
+def get_support_tickets_for_user(user_id: int) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT support_tickets.*, bookings.booking_id AS public_booking_id,
+                   cars.name AS booked_car_name
+            FROM support_tickets
+            LEFT JOIN bookings ON bookings.id = support_tickets.booking_id
+            LEFT JOIN cars ON cars.id = bookings.car_id
+            WHERE support_tickets.user_id = ?
+            ORDER BY support_tickets.id DESC
+            LIMIT 12
+            """,
+            (user_id,),
+        ).fetchall()
+
+
+def render_support_history(tickets: list[sqlite3.Row], current_booking_id: int | None) -> tuple[str, str]:
+    current_ticket = ""
+    old_rows = []
+    for ticket in tickets:
+        ticket_booking_id = int(row_value(ticket, "booking_id") or 0)
+        ticket_booking_label = row_value(ticket, "public_booking_id") or "No booking"
+        status = row_value(ticket, "status").replace("_", " ").title()
+        topic = row_value(ticket, "topic") or "Support"
+        if current_booking_id and ticket_booking_id == current_booking_id and not current_ticket:
+            owner = row_value(ticket, "claimed_by") or "FairFares support"
+            comment = row_value(ticket, "admin_comment")
+            current_ticket = (
+                f"<div class=\"support-summary support-ticket-state\"><b>{escape(owner)} is working on ticket {escape(row_value(ticket, 'ticket_id'))}</b>"
+                f"<span>Booking {escape(ticket_booking_label)} · {escape(status)} · {escape(topic)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
+            )
+            continue
+        old_rows.append(
+            f"""
+            <li>
+              <span><b>{escape(row_value(ticket, "ticket_id"))}</b> Booking {escape(ticket_booking_label)} · {escape(status)} · {escape(topic)}</span>
+              <button type="button" class="light-button" data-support-continue
+                data-ticket-id="{escape(row_value(ticket, "ticket_id"))}"
+                data-booking-id="{escape(ticket_booking_label)}"
+                data-topic="{escape(topic)}">Continue</button>
+            </li>
+            """
+        )
+    if not old_rows:
+        return current_ticket, ""
+    history = f"""
+        <details class="support-history">
+          <summary>See old conversations ({len(old_rows)})</summary>
+          <ul>{"".join(old_rows)}</ul>
+        </details>
+    """
+    return current_ticket, history
 
 
 def get_demo_booking(car_id: int | None = None) -> sqlite3.Row | None:
@@ -11640,7 +11695,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         inventory_locations = get_inventory_locations()
         user_bookings = get_bookings_for_user(user["id"]) if user else []
         saved_cars = get_saved_cars_for_user(user["id"]) if user else []
-        latest_ticket = get_latest_ticket_for_user(user["id"]) if user else None
+        support_tickets = get_support_tickets_for_user(user["id"]) if user else []
         is_first_time_user = bool(user and not user_bookings)
         is_guest_checkout = bool(not user and booking and selected_car_id)
         show_start_experience = bool(user and is_first_time_user and not selected_car_id)
@@ -12058,15 +12113,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <button class="light-button" type="button" id="cancelPendingRequest">Cancel Request</button>
             </div>
             """
-        support_ticket_message = ""
-        if latest_ticket:
-            owner = row_value(latest_ticket, "claimed_by") or "FairFares support"
-            comment = row_value(latest_ticket, "admin_comment")
-            status = row_value(latest_ticket, "status").replace("_", " ").title()
-            support_ticket_message = (
-                f"<div class=\"support-summary support-ticket-state\"><b>{escape(owner)} is working on ticket {escape(latest_ticket['ticket_id'])}</b>"
-                f"<span>Status: {escape(status)}{(' · ' + escape(comment)) if comment else ''}</span></div>"
-            )
+        support_ticket_message, support_history = render_support_history(
+            support_tickets,
+            int(row_value(booking, "id") or 0) if booking else None,
+        )
         support_provider_summary = (
             f"{row_value(booking, 'provider') or 'Provider'} pickup support for {row_value(booking, 'pickup_location') or 'your pickup location'}."
             if booking
@@ -12103,6 +12153,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,
             support_ticket_message=support_ticket_message,
+            support_history=support_history,
             support_provider_summary=escape(support_provider_summary),
             manage_panels_class="manage-panels" if (user and booking and not show_start_experience) else "manage-panels is-hidden",
             provider=escape(booking["provider"] if booking else "Pending"),

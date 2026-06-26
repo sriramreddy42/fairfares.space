@@ -672,6 +672,36 @@
   color: var(--muted);
   font-weight: 700;
 }
+.support-history {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.support-history summary {
+  color: var(--navy);
+  cursor: pointer;
+  font-weight: 900;
+}
+.support-history ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.support-history li {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+.support-history li span {
+  color: var(--muted);
+  font-weight: 800;
+}
 .document-preview h3 {
   color: var(--navy);
   margin: 0;
