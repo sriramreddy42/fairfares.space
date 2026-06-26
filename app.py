@@ -502,19 +502,22 @@ def masked_env_status(env_name: str) -> dict[str, str]:
     }
 
 
-def stripe_api_request(path: str, params: dict[str, object]) -> tuple[dict[str, object], str]:
+def stripe_api_request(path: str, params: dict[str, object], idempotency_key: str = "") -> tuple[dict[str, object], str]:
     secret = stripe_secret_key()
     if not secret:
         return {}, "Stripe secret key is not configured."
     body = urllib.parse.urlencode({key: str(value) for key, value in params.items()}).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {secret}",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "fairfares-stripe/1.0",
+    }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     request = urllib.request.Request(
         f"https://api.stripe.com/v1/{path.lstrip('/')}",
         data=body,
-        headers={
-            "Authorization": f"Bearer {secret}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "fairfares-stripe/1.0",
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -2647,11 +2650,20 @@ def confirm_booking_hold_payment(
     return True, invoice_number
 
 
-def stripe_refund_payment_reference(payment_reference: str, booking_id: int) -> tuple[bool, str, str]:
+def stripe_refund_payment_reference(
+    payment_reference: str,
+    booking_id: int,
+    amount: object,
+    idempotency_key: str,
+) -> tuple[bool, str, str]:
     payment_reference = (payment_reference or "").strip()
     if not payment_reference:
         return False, "No Stripe payment reference saved.", ""
+    amount_cents = int(round(max(0.0, float(amount or 0)) * 100))
+    if amount_cents <= 0:
+        return False, "Stored Stripe transaction amount is not refundable.", ""
     refund_params: dict[str, object] = {
+        "amount": amount_cents,
         "metadata[booking_id]": booking_id,
         "metadata[source]": "fairfares_auto_cancellation",
     }
@@ -2669,7 +2681,7 @@ def stripe_refund_payment_reference(payment_reference: str, booking_id: int) -> 
         refund_params["payment_intent"] = payment_intent
     else:
         return False, "Payment was not created by Stripe Checkout.", ""
-    refund, status = stripe_api_request("refunds", refund_params)
+    refund, status = stripe_api_request("refunds", refund_params, idempotency_key=idempotency_key)
     refund_id = str(refund.get("id") or "")
     refund_status = str(refund.get("status") or "")
     if refund_id:
@@ -2686,6 +2698,9 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
             WHERE booking_id = ?
               AND transaction_status IN ('PAID', 'HOLD_PAID')
               AND invoice_number != ''
+              AND payment_method = 'Stripe Checkout'
+              AND amount > 0
+              AND substr(invoice_number, 1, 3) IN ('pi_', 'ch_', 'cs_')
             ORDER BY id ASC
             """,
             (booking_id,),
@@ -2696,7 +2711,13 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
     refunded_count = 0
     details: list[str] = []
     for transaction in transactions:
-        ok, message, refund_id = stripe_refund_payment_reference(row_value(transaction, "invoice_number"), booking_id)
+        idempotency_key = f"fairfares-refund-booking-{booking_id}-txn-{row_value(transaction, 'id')}"
+        ok, message, refund_id = stripe_refund_payment_reference(
+            row_value(transaction, "invoice_number"),
+            booking_id,
+            row_value(transaction, "amount"),
+            idempotency_key,
+        )
         details.append(message)
         with db() as con:
             con.execute(
@@ -7754,6 +7775,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking = get_booking_for_user(user["id"])
         if not booking:
             self.not_found()
+            return
+        if booking["booking_status"] == "CANCELLED":
+            self.send_json({"ok": False, "message": "This booking is already cancelled."}, 409)
+            return
+        if booking["payment_status"] == "REFUNDED":
+            self.send_json({"ok": False, "message": "This booking has already been refunded."}, 409)
             return
         reason = form.get("reason") or "Customer cancellation"
         note = form.get("note", "")
