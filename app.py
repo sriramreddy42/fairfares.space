@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625ag"
+ASSET_VERSION = "20260625ah"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -11350,7 +11350,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
                     {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
-                        <button type="submit">Pay securely with Stripe</button>
+                        <button class="stripe-pay-button" type="submit">
+                            <span>Pay securely with</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
                         <small>Card details are handled by Stripe. FairFares stores only the payment status and receipt reference.</small>
                     </form>
                     {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}

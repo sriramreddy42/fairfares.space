@@ -140,6 +140,41 @@
   grid-column: 1 / -1;
 }
 
+.payment-hold-form .stripe-pay-button {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(231, 241, 255, 0.72)),
+    linear-gradient(135deg, rgba(99, 91, 255, 0.18), rgba(0, 212, 255, 0.1));
+  border: 1px solid rgba(117, 130, 255, 0.34);
+  border-radius: 12px;
+  box-shadow: 0 14px 32px rgba(49, 64, 130, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  color: #07143f;
+  display: inline-flex;
+  gap: 10px;
+  justify-content: center;
+  min-height: 52px;
+  padding: 10px 16px;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.payment-hold-form .stripe-pay-button:hover {
+  border-color: rgba(99, 91, 255, 0.58);
+  box-shadow: 0 18px 38px rgba(49, 64, 130, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  transform: translateY(-1px);
+}
+
+.payment-hold-form .stripe-pay-button span {
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.payment-hold-form .stripe-pay-button img {
+  display: block;
+  height: 28px;
+  max-width: 92px;
+  object-fit: contain;
+}
+
 .payment-hold-paid {
   background: #eefaf0;
   border: 1px solid #a5e8b1;
