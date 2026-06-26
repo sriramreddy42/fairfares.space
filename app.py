@@ -40,7 +40,7 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625ae"
+ASSET_VERSION = "20260625af"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -11334,9 +11334,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
-                        <p class="eyebrow">{'Action needed' if hold_expired else 'Secure checkout'}</p>
-                    <h3>{'Payment window expired' if hold_expired else 'Secure the reservation now.'}</h3>
-                    <p>{'Restart checkout to open a new payment window, or remove this vehicle from your trip.' if hold_expired else 'The amount due now is applied to your pickup balance. Cancellation and refund eligibility follow the rental terms shown before confirmation.'}</p>
+                        <p class="eyebrow">{'Action needed' if hold_expired else 'Payment window'}</p>
+                    <h3>{'Window expired' if hold_expired else 'Pay 10% now'}</h3>
+                    <p>{'Restart checkout or remove this vehicle.' if hold_expired else 'The remaining balance is due at pickup.'}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
@@ -11357,17 +11357,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
                 </section>
             """
-            booking_summary_heading = "Review your booking." if hold_expired else ("Review your booking." if hold_pending else "Your car is booked.")
+            booking_summary_heading = "Review booking" if hold_expired else ("Review booking" if hold_pending else "Booking confirmed")
             booking_summary_copy = (
-                "Confirm your contact details before choosing the next step."
+                "Confirm details before choosing the next step."
                 if hold_expired
-                else "Confirm your contact details and complete the amount due now. The remaining balance is handled at pickup."
+                else "Save contact details and complete the 10% hold."
                 if hold_pending
-                else "Your booking record keeps the vehicle, dates, pickup details, documents, and payment status organized in one place."
+                else "Vehicle, dates, documents, and payment status are saved here."
             )
             booking_confirmation_card = f"""
             <div class="checkout-finalize-heading" id="checkoutFinalizeHeading">
-                <h2>{'Review your trip' if hold_expired else "Let's finalize your trip!"}</h2>
+                <p class="eyebrow">Checkout</p>
+                <h2>{'Review trip' if hold_expired else "Finalize trip"}</h2>
             </div>
             <section class="booking-confirmation-card {'is-expired-checkout' if hold_expired else ''}" id="bookingConfirmation">
                 <div class="booking-confirmation-intro">
