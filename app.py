@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626identity"
+ASSET_VERSION = "20260626pickupidentity"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -597,7 +597,7 @@ def identity_status_copy(status: str) -> tuple[str, str]:
         return "Identity processing", "Stripe is still reviewing the document/selfie result."
     if normalized in {"ACTION_REQUIRED", "REVIEW_REQUIRED"}:
         return "Identity needs review", "Customer may need to retry or admin must review before release."
-    return "Identity not verified", "Start Stripe Identity before pickup for stronger document/selfie verification."
+    return "Identity not verified", "Start Stripe Identity during pickup before releasing the vehicle."
 
 
 def latest_identity_verification(user_id: int | None = None, booking_id: int | None = None) -> sqlite3.Row | None:
@@ -623,6 +623,32 @@ def latest_identity_verification(user_id: int | None = None, booking_id: int | N
             """,
             params,
         ).fetchone()
+
+
+def create_stripe_identity_session_for(
+    user: sqlite3.Row,
+    booking: sqlite3.Row,
+    return_url: str,
+) -> tuple[dict[str, object], str]:
+    if not stripe_identity_enabled():
+        return {}, "Stripe Identity is not configured on this server."
+    params = {
+        "type": "document",
+        "return_url": return_url,
+        "metadata[user_id]": row_value(user, "id"),
+        "metadata[booking_id]": row_value(booking, "id"),
+        "metadata[public_booking_id]": row_value(booking, "booking_id"),
+        "provided_details[email]": row_value(user, "email"),
+        "provided_details[phone]": row_value(user, "phone") or "",
+        "options[document][allowed_types][]": "driving_license",
+        "options[document][require_matching_selfie]": "true",
+        "options[document][require_live_capture]": "true",
+    }
+    return stripe_api_request(
+        "identity/verification_sessions",
+        params,
+        idempotency_key=f"identity-{row_value(user, 'id')}-{row_value(booking, 'id')}-{date.today().isoformat()}",
+    )
 
 
 def latest_external_identity_check(user_id: int | None = None, booking_id: int | None = None) -> sqlite3.Row | None:
@@ -7483,6 +7509,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/payment/stripe-session": self.create_stripe_checkout_session,
             "/stripe/webhook": self.stripe_webhook,
             "/identity/stripe-session": self.create_stripe_identity_session,
+            "/admin/identity/stripe-session": self.create_admin_stripe_identity_session,
             "/payment/hold": self.pay_booking_hold,
             "/booking/hold/continue": self.continue_booking_hold,
             "/booking/hold/remove": self.remove_booking_hold,
@@ -8782,29 +8809,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "verified": True, "message": "Identity is already verified."})
             return
         origin = self.public_origin().rstrip("/")
-        params = {
-            "type": "document",
-            "return_url": f"{origin}/manage-booking?identity=return",
-            "metadata[user_id]": row_value(user, "id"),
-            "metadata[booking_id]": row_value(booking, "id"),
-            "metadata[public_booking_id]": row_value(booking, "booking_id"),
-            "provided_details[email]": row_value(user, "email"),
-            "provided_details[phone]": row_value(user, "phone") or "",
-            "options[document][allowed_types][]": "driving_license",
-            "options[document][require_matching_selfie]": "true",
-            "options[document][require_live_capture]": "true",
-        }
-        session, status = stripe_api_request(
-            "identity/verification_sessions",
-            params,
-            idempotency_key=f"identity-{row_value(user, 'id')}-{row_value(booking, 'id')}-{date.today().isoformat()}",
-        )
+        session, status = create_stripe_identity_session_for(user, booking, f"{origin}/manage-booking?identity=return")
         url = str(session.get("url") or "")
         if not url:
             self.send_json({"ok": False, "message": status}, 502)
             return
         save_identity_verification_from_session(session, int(user["id"]), int(booking["id"]))
         self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity."})
+
+    def create_admin_stripe_identity_session(self) -> None:
+        admin = self.require_admin()
+        if not admin:
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id", "0") or 0)
+        except ValueError:
+            booking_id = 0
+        if not booking_id:
+            self.send_json({"ok": False, "message": "Booking is required for Stripe Identity."}, 400)
+            return
+        with db() as con:
+            booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            if not booking:
+                self.send_json({"ok": False, "message": "Booking not found."}, 404)
+                return
+            customer = con.execute("SELECT * FROM users WHERE id = ?", (booking["user_id"],)).fetchone()
+            if not customer:
+                self.send_json({"ok": False, "message": "Customer not found."}, 404)
+                return
+        existing = latest_identity_verification(int(customer["id"]), int(booking["id"]))
+        if existing and row_value(existing, "status") == "VERIFIED":
+            self.send_json({"ok": True, "verified": True, "message": "Identity is already verified."})
+            return
+        origin = self.public_origin().rstrip("/")
+        session, status = create_stripe_identity_session_for(customer, booking, f"{origin}/admin/pickup?identity=return")
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "message": status}, 502)
+            return
+        save_identity_verification_from_session(session, int(customer["id"]), int(booking["id"]))
+        self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity for pickup verification."})
 
     def payment_success_page(self) -> None:
         user = self.current_user()
@@ -11212,6 +11257,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <input type="hidden" name="user_id" value="{row["user_id"]}">
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
+                        <div><b>Stripe Identity at pickup</b><span>Start DL and selfie verification while the customer is present.</span></div>
+                    </div>
+                    <div class="pickup-prefill-panel pickup-stripe-identity-panel" data-admin-stripe-identity>
+                        <div>
+                            <b>{escape(identity_title)}</b>
+                            <span>{escape(identity_body)}</span>
+                        </div>
+                        <button type="button" data-admin-stripe-identity-button {"disabled" if row_value(identity_row, "status") == "VERIFIED" else ""}>{"Verified" if row_value(identity_row, "status") == "VERIFIED" else "Start Stripe Identity"}</button>
+                        <small data-admin-stripe-identity-status>Customer completes the secure Stripe flow before staff releases the vehicle.</small>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
                         <div><b>Customer and driver license</b><span>Capture required renter identity details at pickup.</span></div>
                     </div>
                     <div class="pickup-form-grid">
@@ -12564,19 +12622,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             identity_row = latest_identity_verification(int(row_value(user, "id") or 0), int(row_value(booking, "id") or 0)) if user else None
             identity_status = row_value(identity_row, "status") if identity_row else "PENDING"
             identity_title, identity_body = identity_status_copy(identity_status)
-            identity_button = (
-                ""
-                if identity_status == "VERIFIED"
-                else '<button type="button" class="light-button" id="stripeIdentityButton">Verify with Stripe Identity</button>'
-            )
+            if identity_status != "VERIFIED":
+                identity_title = "Identity checked at pickup"
+                identity_body = "Staff will start Stripe Identity during pickup before the vehicle is released."
             trip_identity_summary = f"""
                 <section class="trip-identity-summary {escape(str(identity_status).lower().replace("_", "-"))}" aria-label="Identity verification">
                     <div>
                         <b>{escape(identity_title)}</b>
                         <span>{escape(identity_body)}</span>
                     </div>
-                    {identity_button}
-                    <small id="stripeIdentityStatus" aria-live="polite"></small>
                 </section>
             """
         price_breakdown_summary = ""

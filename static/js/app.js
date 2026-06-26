@@ -2853,6 +2853,48 @@ document.getElementById("stripeIdentityButton")?.addEventListener("click", (even
     });
 });
 
+document.querySelectorAll("[data-admin-stripe-identity-button]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const form = button.closest(".pickup-form");
+    const panel = button.closest("[data-admin-stripe-identity]");
+    const status = panel?.querySelector("[data-admin-stripe-identity-status]");
+    const bookingInput = form?.querySelector('input[name="booking_id"]');
+    if (!(bookingInput instanceof HTMLInputElement)) return;
+    const originalLabel = button.textContent;
+    const payload = new URLSearchParams();
+    payload.set("booking_id", bookingInput.value);
+    button.disabled = true;
+    button.textContent = "Opening Stripe Identity...";
+    if (status) status.textContent = "Opening secure DL and selfie verification for pickup...";
+    try {
+      const response = await fetch("/admin/identity/stripe-session", {
+        method: "POST",
+        body: payload,
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "fetch",
+        },
+      });
+      const result = await response.json();
+      if (!response.ok || result.ok === false) throw new Error(result.message || "Stripe Identity could not be opened.");
+      if (result.verified) {
+        if (status) status.textContent = result.message || "Identity is already verified.";
+        button.textContent = "Verified";
+        return;
+      }
+      if (result.url) {
+        window.location.href = result.url;
+        return;
+      }
+      throw new Error(result.message || "Stripe Identity could not be opened.");
+    } catch (error) {
+      if (status) status.textContent = error.message || "Stripe Identity could not be opened.";
+      button.disabled = false;
+      button.textContent = originalLabel || "Start Stripe Identity";
+    }
+  });
+});
+
 document.getElementById("continueHoldButton")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
   const status = document.getElementById("paymentHoldStatus");
