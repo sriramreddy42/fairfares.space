@@ -41,7 +41,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626pay"
+ASSET_VERSION = "20260626trip"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -11320,6 +11320,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
+        trip_payment_summary = ""
+        if booking:
+            payment_status = row_value(booking, "payment_status")
+            if payment_status == "PAID":
+                trip_payment_summary = """
+                    <div class="trip-payment-summary is-paid-full">
+                        <div><b>Full payment received</b><span>Your pickup balance is $0.00.</span></div>
+                    </div>
+                """
+            elif payment_status == "HOLD_PAID":
+                trip_payment_summary = f"""
+                    <div class="trip-payment-summary is-hold-paid">
+                        <div><b>10% hold received</b><span>Pay the remaining {escape(format_money(active_breakdown["due_at_pickup"]))} for hassle-free pickup.</span></div>
+                        <form class="payment-hold-form trip-payment-form" id="paymentHoldForm">
+                            <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
+                                <span>Pay remaining balance</span>
+                            </button>
+                        </form>
+                    </div>
+                """
+            elif payment_status == "HOLD_PENDING":
+                trip_payment_summary = f"""
+                    <div class="trip-payment-summary">
+                        <div><b>Payment pending</b><span>{escape(format_money(active_breakdown["booking_hold"]))} due now to hold this booking.</span></div>
+                    </div>
+                """
         price_breakdown_summary = ""
         if booking:
             price_breakdown_summary = f"""
@@ -11633,6 +11659,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
             request_notice=request_notice,
+            trip_payment_summary=trip_payment_summary,
             trip_card_class="trip-card" if booking else "trip-card is-hidden",
             booking_car_visual=booking_car_visual,
             first_time_manage_content=first_time_manage_content,
