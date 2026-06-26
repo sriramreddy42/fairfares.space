@@ -2699,14 +2699,17 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
   event.preventDefault();
   const form = event.currentTarget;
   const status = document.getElementById("paymentHoldStatus");
-  const submitButton = form.querySelector("button[type='submit']");
-  const originalLabel = submitButton ? submitButton.textContent : "";
+  const submitButton = event.submitter || form.querySelector("button[type='submit']");
+  const originalLabel = submitButton ? submitButton.innerHTML : "";
+  const paymentOption = submitButton?.value || "hold";
   if (submitButton) submitButton.disabled = true;
-  if (submitButton) submitButton.textContent = "Opening Stripe...";
+  if (submitButton) submitButton.innerHTML = "<span>Opening Stripe...</span>";
   if (status) status.textContent = "Opening secure Stripe checkout...";
+  const payload = new URLSearchParams(new FormData(form));
+  payload.set("payment_option", paymentOption);
   fetch("/payment/stripe-session", {
     method: "POST",
-    body: new URLSearchParams(new FormData(form)),
+    body: payload,
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
@@ -2719,7 +2722,7 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
     .catch((payload) => {
       if (status) status.textContent = payload?.message || "Stripe checkout could not be opened.";
       if (submitButton) submitButton.disabled = false;
-      if (submitButton && originalLabel) submitButton.textContent = originalLabel;
+      if (submitButton && originalLabel) submitButton.innerHTML = originalLabel;
     });
 });
 

@@ -40,7 +40,8 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
-ASSET_VERSION = "20260625ai"
+FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
+ASSET_VERSION = "20260626pay"
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
@@ -793,6 +794,14 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
     savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
     breakdown = booking_price_breakdown(booking)
+    paid_in_full = row_value(booking, "payment_status") == "PAID"
+    payment_lines = (
+        f"Paid today: {format_money(breakdown['total'])}\n"
+        "Due at pickup: $0.00\n"
+        if paid_in_full
+        else f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
+        f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
+    )
     booking_summary = (
         f"Booking ID: {booking['booking_id']}\n"
         f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
@@ -801,8 +810,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
         f"Rental subtotal: {format_money(breakdown['base'])}\n"
         f"Taxes and fees estimate: {format_money(breakdown['tax_fee_amount'])}\n"
         f"FairFares total: {format_money(breakdown['total'])}\n"
-        f"10% booking hold: {format_money(breakdown['booking_hold'])}\n"
-        f"Due at pickup after hold: {format_money(breakdown['due_at_pickup'])}\n"
+        f"{payment_lines}"
         f"Payment: {payment_status_label(booking['payment_status'])}\n"
         f"Questions: {support_phone}\n"
     )
@@ -827,8 +835,8 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>Rental subtotal</b></td><td>{html.escape(format_money(breakdown['base']))}</td></tr>
             <tr><td><b>Taxes and fees</b></td><td>{html.escape(format_money(breakdown['tax_fee_amount']))}</td></tr>
             <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
-            <tr><td><b>10% booking hold</b></td><td>{html.escape(format_money(breakdown['booking_hold']))}</td></tr>
-            <tr><td><b>Due at pickup</b></td><td>{html.escape(format_money(breakdown['due_at_pickup']))}</td></tr>
+            <tr><td><b>{'Paid today' if paid_in_full else '10% booking hold'}</b></td><td>{html.escape(format_money(breakdown['total'] if paid_in_full else breakdown['booking_hold']))}</td></tr>
+            <tr><td><b>Due at pickup</b></td><td>{html.escape('$0.00' if paid_in_full else format_money(breakdown['due_at_pickup']))}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
           </table>
           <p><b>{'FairFares savings' if float(row_value(booking, 'discount_amount') or 0) > 0 else 'Price match promise'}:</b> {html.escape(savings_or_price_promise)}</p>
@@ -2451,6 +2459,10 @@ def daily_price_range(price: object) -> tuple[int, int]:
 
 
 BOOKING_HOLD_RATE = 0.10
+
+
+def full_payment_total(total: object) -> float:
+    return round(max(0.0, float(total or 0) - FULL_PAYMENT_DISCOUNT_AMOUNT), 2)
 MARKET_COMPARISON_RATE = 0.12
 DAILY_FEE_LINES = (
     ("CO road safety fee", 2.44),
@@ -2558,6 +2570,8 @@ def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict
                 "savings": round(float(row_value(row, "fairfares_savings_amount") or max(0.0, stored_total * MARKET_COMPARISON_RATE + discount)), 2),
             }
         )
+    if row_value(row, "payment_status") == "PAID":
+        breakdown.update({"booking_hold": 0.0, "due_at_pickup": 0.0})
     return breakdown
 
 
@@ -2568,41 +2582,61 @@ def confirm_booking_hold_payment(
     cardholder_name: str = "Stripe customer",
     invoice_number: str = "",
     origin: str = "",
+    payment_option: str = "hold",
 ) -> tuple[bool, str]:
     invoice_number = invoice_number or f"HOLD-{secrets.randbelow(900000) + 100000}"
+    payment_option = "full" if payment_option == "full" else "hold"
     with db() as con:
         booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
         if not booking:
             return False, "Booking not found."
-        if row_value(booking, "payment_status") == "HOLD_PAID":
-            return True, "Booking hold already paid."
+        if row_value(booking, "payment_status") in {"HOLD_PAID", "PAID"}:
+            return True, "Booking payment already recorded."
         breakdown = booking_price_breakdown(booking)
-        hold_amount = round(float(amount or breakdown["booking_hold"]), 2)
+        paid_amount = round(float(amount or (full_payment_total(breakdown["total"]) if payment_option == "full" else breakdown["booking_hold"])), 2)
+        next_payment_status = "PAID" if payment_option == "full" else "HOLD_PAID"
+        next_transaction_status = "PAID" if payment_option == "full" else "HOLD_PAID"
+        next_billing_note = "Payment confirmed by Stripe checkout."
+        next_discount = float(row_value(booking, "discount_amount") or 0)
+        next_total = float(row_value(booking, "total_price") or breakdown["total"] or 0)
+        next_hold_amount = paid_amount
+        next_due_at_pickup = float(breakdown["due_at_pickup"])
+        if payment_option == "full":
+            next_discount = round(next_discount + FULL_PAYMENT_DISCOUNT_AMOUNT, 2)
+            next_total = full_payment_total(next_total)
+            next_hold_amount = 0.0
+            next_due_at_pickup = 0.0
+            next_billing_note = "Full payment confirmed by Stripe checkout with $10 pickup discount."
         while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
             invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
         con.execute(
             """
             INSERT INTO transactions
             (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
-            VALUES (?, ?, ?, ?, 'HOLD_PAID', 'MATCHED', 'Payment confirmed by Stripe checkout.', ?)
+            VALUES (?, ?, ?, ?, ?, 'MATCHED', ?, ?)
             """,
-            (booking_id, payment_method, cardholder_name, hold_amount, invoice_number),
+            (booking_id, payment_method, cardholder_name, paid_amount, next_transaction_status, next_billing_note, invoice_number),
         )
         con.execute(
             """
             UPDATE bookings
-            SET payment_status = 'HOLD_PAID',
+            SET payment_status = ?,
                 booking_status = 'CONFIRMED',
                 status = 'CONFIRMED',
+                discount_amount = ?,
+                total_price = ?,
                 booking_hold_amount = ?,
                 due_at_pickup_amount = ?,
                 hold_expires_at = NULL
             WHERE id = ?
             """,
-            (hold_amount, breakdown["due_at_pickup"], booking_id),
+            (next_payment_status, next_discount, next_total, next_hold_amount, next_due_at_pickup, booking_id),
         )
         con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
-    notify_slack_payment(booking, f"10% hold paid by Stripe: {format_money(hold_amount)}")
+    notify_slack_payment(
+        booking,
+        f"{'Full payment' if payment_option == 'full' else '10% hold'} paid by Stripe: {format_money(paid_amount)}",
+    )
     send_confirmed_booking_email_once(booking_id, origin)
     return True, invoice_number
 
@@ -4967,6 +5001,8 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
     if status == "EXPIRED_HOLD":
         return "Expired"
     if status == "CONFIRMED":
+        if payment_status == "PAID":
+            return "Confirmed / Paid in full"
         return "Confirmed" if payment_status == "HOLD_PAID" else "Confirmed / Pay at pickup"
     labels = {
         "CANCELLATION_REQUESTED": "Request sent to admin",
@@ -4993,7 +5029,7 @@ def payment_status_label(status: str) -> str:
         "HOLD_EXPIRED": "Expired",
         "HOLD_DUE": "10% due now",
         "HOLD_PAID": "10% paid",
-        "PAID": "Paid",
+        "PAID": "Paid in full",
         "PENDING": "Payment pending",
         "REFUND_REVIEW": "Refund review",
         "REFUNDED": "Refunded",
@@ -7763,13 +7799,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking["booking_status"] == "EXPIRED_HOLD":
             self.send_json({"ok": False, "message": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
             return
-        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "HOLD_PAID":
-            self.send_json({"ok": False, "message": "This booking does not need a 10% payment right now."}, 400)
+        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] in {"HOLD_PAID", "PAID"}:
+            self.send_json({"ok": False, "message": "This booking does not need a payment right now."}, 400)
             return
+        form = self.read_form()
+        payment_option = "full" if form.get("payment_option") == "full" else "hold"
         breakdown = booking_price_breakdown(booking)
-        hold_amount = round(float(breakdown["booking_hold"]), 2)
-        amount_cents = max(50, int(round(hold_amount * 100)))
+        checkout_amount = full_payment_total(breakdown["total"]) if payment_option == "full" else round(float(breakdown["booking_hold"]), 2)
+        amount_cents = max(50, int(round(checkout_amount * 100)))
         origin = self.public_origin().rstrip("/")
+        product_name = "FairFares full booking payment" if payment_option == "full" else "FairFares 10% booking hold"
+        product_description = (
+            f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - full payment includes $10 pickup discount"
+            if payment_option == "full"
+            else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}"
+        )
         params = {
             "mode": "payment",
             "success_url": f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
@@ -7779,11 +7823,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "line_items[0][quantity]": 1,
             "line_items[0][price_data][currency]": "usd",
             "line_items[0][price_data][unit_amount]": amount_cents,
-            "line_items[0][price_data][product_data][name]": "FairFares 10% booking hold",
-            "line_items[0][price_data][product_data][description]": f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}",
+            "line_items[0][price_data][product_data][name]": product_name,
+            "line_items[0][price_data][product_data][description]": product_description,
+            "metadata[payment_option]": payment_option,
             "metadata[booking_id]": row_value(booking, "id"),
             "metadata[public_booking_id]": row_value(booking, "booking_id"),
             "metadata[user_id]": row_value(user, "id"),
+            "payment_intent_data[metadata][payment_option]": payment_option,
             "payment_intent_data[metadata][booking_id]": row_value(booking, "id"),
             "payment_intent_data[metadata][public_booking_id]": row_value(booking, "booking_id"),
             "payment_intent_data[metadata][user_id]": row_value(user, "id"),
@@ -7823,6 +7869,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             if session.get("payment_status") == "paid" and booking_id:
                 amount_total = float(session.get("amount_total") or 0) / 100
+                payment_option = "full" if metadata.get("payment_option") == "full" else "hold"
                 confirm_booking_hold_payment(
                     booking_id,
                     amount_total,
@@ -7830,6 +7877,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
                     str(session.get("payment_intent") or session.get("id") or ""),
                     self.public_origin(),
+                    payment_option,
                 )
         self.activation_message_page(
             "Payment received",
@@ -7867,6 +7915,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 booking_id = 0
             if booking_id:
                 amount_total = float(data_object.get("amount_total") or 0) / 100
+                payment_option = "full" if metadata.get("payment_option") == "full" else "hold"
                 confirm_booking_hold_payment(
                     booking_id,
                     amount_total,
@@ -7874,6 +7923,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     str(data_object.get("customer_email") or "Stripe customer"),
                     str(data_object.get("payment_intent") or data_object.get("id") or ""),
                     self.public_origin(),
+                    payment_option,
                 )
         self.send_json({"received": True})
 
@@ -9977,6 +10027,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("HOLD_PENDING", "Hold payment pending"),
             ("HOLD_EXPIRED", "Expired"),
             ("HOLD_PAID", "10% hold paid"),
+            ("PAID", "Paid in full"),
             ("PAY_AT_PICKUP", "Pay at pickup"),
         )
         payment_options = "".join(
@@ -10440,7 +10491,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
         if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
             booking_status = "CONFIRMED"
-        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAY_AT_PICKUP"}:
+        if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAID", "PAY_AT_PICKUP"}:
             payment_status = "PAY_AT_PICKUP"
         reason = form.get("reason", "")
         if booking_status in {"CONFIRMED", "PICKED_UP", "RETURNED"}:
@@ -11381,7 +11432,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </section>
             """
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
+            full_paid = bool(row_value(booking, "payment_status") == "PAID")
             hold_remaining = booking_hold_remaining_label(booking)
+            full_payment_due_now = float(active_breakdown["total"]) if full_paid else full_payment_total(active_breakdown["total"])
             active_discount_amount = float(active_breakdown["discount_amount"] or 0)
             active_discount_code = row_value(booking, "discount_code") if booking else ""
             discount_summary = (
@@ -11409,8 +11462,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
                         <p class="eyebrow">{'Action needed' if hold_expired else 'Payment window'}</p>
-                    <h3>{'Window expired' if hold_expired else 'Pay 10% now'}</h3>
-                    <p>{'Restart checkout or remove this vehicle.' if hold_expired else 'The remaining balance is due at pickup.'}</p>
+                    <h3>{'Window expired' if hold_expired else 'Choose payment option'}</h3>
+                    <p>{'Restart checkout or remove this vehicle.' if hold_expired else 'Pay in full for pickup savings, or hold the booking with 10% due now.'}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
@@ -11420,12 +11473,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
                         <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
+                        <span class="is-discount"><b>-{escape(format_money(FULL_PAYMENT_DISCOUNT_AMOUNT))}</b>Pay-in-full savings</span>
+                        <span><b>{escape(format_money(full_payment_due_now))}</b>Pay in full today</span>
                     </div>
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
                     {'<p class="payment-hold-paid">Payment received. Your pickup balance is updated.</p>' if hold_paid else ''}
-                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or hold_expired) else ''}>
-                        <button class="stripe-pay-button" type="submit">
-                            <span>Pay securely with</span>
+                    {'<p class="payment-hold-paid">Paid in full. Your pickup balance is $0.00.</p>' if full_paid else ''}
+                    <form class="payment-hold-form" id="paymentHoldForm"{' hidden' if (is_guest_checkout or hold_paid or full_paid or hold_expired) else ''}>
+                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
+                            <span>Pay in full and save $10. Enjoy faster, hassle-free pickup.</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
+                        <button class="stripe-pay-button" type="submit" name="payment_option" value="hold">
+                            <span>Pay 10% now to hold your booking. Balance due at pickup.</span>
                             <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
                         </button>
                         <small>Card details are handled by Stripe. FairFares stores only the payment status and receipt reference.</small>

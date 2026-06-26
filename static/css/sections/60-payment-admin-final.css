@@ -163,6 +163,13 @@
   transform: translateY(-1px);
 }
 
+.payment-hold-form .full-pay-button {
+  background:
+    linear-gradient(135deg, rgba(238, 250, 240, 0.96), rgba(220, 252, 231, 0.86)),
+    linear-gradient(135deg, rgba(22, 163, 74, 0.18), rgba(20, 184, 166, 0.12));
+  border-color: rgba(22, 163, 74, 0.42);
+}
+
 .payment-hold-form .stripe-pay-button span {
   font-size: 0.95rem;
   font-weight: 900;
@@ -1265,4 +1272,3 @@
     min-height: 40px !important;
   }
 }
-
