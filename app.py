@@ -7872,6 +7872,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         session_id = urllib.parse.parse_qs(parsed.query).get("session_id", [""])[0]
+        success_title = "Payment received"
+        success_message = "Your 10% booking hold is being confirmed. Your pickup balance is updated on Manage Booking."
         if session_id:
             session, _status = stripe_api_get(f"checkout/sessions/{urllib.parse.quote(session_id)}")
             metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
@@ -7894,6 +7896,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if session.get("payment_status") == "paid" and booking_id:
                 amount_total = float(session.get("amount_total") or 0) / 100
                 payment_option = "full" if metadata.get("payment_option") == "full" else "hold"
+                if payment_option == "full":
+                    success_title = "Full payment received"
+                    success_message = "Your booking is paid in full. Your pickup balance is $0.00."
                 confirm_booking_hold_payment(
                     booking_id,
                     amount_total,
@@ -7904,8 +7909,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     payment_option,
                 )
         self.activation_message_page(
-            "Payment received",
-            "Your 10% booking hold is being confirmed. Your pickup balance is updated on Manage Booking.",
+            success_title,
+            success_message,
             "Open Manage Booking",
             "/manage-booking",
         )
