@@ -501,6 +501,16 @@ def stripe_webhook_secret() -> str:
     return os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 
 
+def idscan_api_key() -> str:
+    load_env_file()
+    return os.environ.get("IDSCAN_API_KEY", "").strip()
+
+
+def idscan_verify_url() -> str:
+    load_env_file()
+    return os.environ.get("IDSCAN_VERIFY_URL", "").strip()
+
+
 def stripe_identity_enabled() -> bool:
     return bool(stripe_secret_key())
 
@@ -650,6 +660,129 @@ def external_identity_status_copy(row: sqlite3.Row | None) -> tuple[str, str]:
     if status in {"FAILED", "REVIEW_REQUIRED"}:
         return f"{provider} review", row_value(row, "result_summary") or "Provider returned a review result."
     return "AAMVA/DLDV not configured", "Use Stripe Identity now; add Entrust or IDScan.net credentials before DMV-record checks."
+
+
+def compact_data_url_payload(value: str) -> str:
+    text = (value or "").strip()
+    if ";base64," in text:
+        return text.split(";base64,", 1)[1]
+    return text
+
+
+def truthy_result(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "pass", "passed", "valid", "verified", "match"}
+
+
+def falsey_result(value: object) -> bool:
+    if isinstance(value, bool):
+        return not value
+    return str(value).strip().lower() in {"false", "0", "no", "fail", "failed", "invalid", "expired", "no_match"}
+
+
+def parse_idscan_result(payload: dict[str, object]) -> tuple[str, str]:
+    document_valid = payload.get("documentValid", payload.get("document_valid", payload.get("valid")))
+    ocr_successful = payload.get("ocrSuccessful", payload.get("ocr_successful", payload.get("ocr")))
+    expired = payload.get("expired", payload.get("documentExpired", payload.get("isExpired")))
+    face_match = payload.get("faceMatch", payload.get("face_match", payload.get("selfieMatch")))
+    dmv_match = payload.get("dmvMatch", payload.get("dmv_match", payload.get("aamvaMatch")))
+    parts = [
+        f"documentValid={document_valid}",
+        f"ocrSuccessful={ocr_successful}",
+        f"expired={expired}",
+    ]
+    if face_match is not None:
+        parts.append(f"faceMatch={face_match}")
+    if dmv_match is not None:
+        parts.append(f"dmvMatch={dmv_match}")
+    document_ok = truthy_result(document_valid)
+    ocr_ok = truthy_result(ocr_successful) or ocr_successful is None
+    not_expired = not truthy_result(expired)
+    face_ok = face_match is None or truthy_result(face_match)
+    dmv_ok = dmv_match is None or truthy_result(dmv_match)
+    if document_ok and ocr_ok and not_expired and face_ok and dmv_ok:
+        return "VERIFIED", "; ".join(parts)
+    if falsey_result(document_valid) or truthy_result(expired) or falsey_result(face_match) or falsey_result(dmv_match):
+        return "FAILED", "; ".join(parts)
+    return "REVIEW_REQUIRED", "; ".join(parts)
+
+
+def save_external_identity_check(
+    user_id: int,
+    booking_id: int | None,
+    provider: str,
+    status: str,
+    reason: str,
+    summary: str,
+    requested_by: int | None = None,
+    provider_reference: str = "",
+) -> None:
+    with db() as con:
+        con.execute(
+            """
+            INSERT INTO external_identity_checks
+            (user_id, booking_id, provider, status, request_reason, provider_reference, result_summary, requested_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, booking_id, provider, status, reason, provider_reference, summary, requested_by),
+        )
+
+
+def run_idscan_verification(
+    user_id: int,
+    booking_id: int,
+    front_image: str,
+    back_image: str,
+    requested_by: int,
+    reason: str = "Admin pickup verification",
+) -> tuple[bool, str, str]:
+    front = compact_data_url_payload(front_image)
+    back = compact_data_url_payload(back_image)
+    if not front or not back:
+        message = "DL front and back images are required before IDScan verification."
+        save_external_identity_check(user_id, booking_id, "IDSCAN", "REVIEW_REQUIRED", reason, message, requested_by)
+        return False, "REVIEW_REQUIRED", message
+    api_key = idscan_api_key()
+    verify_url = idscan_verify_url()
+    if not api_key or not verify_url:
+        message = "IDScan.net is not configured. Set IDSCAN_API_KEY and IDSCAN_VERIFY_URL after onboarding."
+        save_external_identity_check(user_id, booking_id, "IDSCAN", "NOT_CONFIGURED", reason, message, requested_by)
+        return False, "NOT_CONFIGURED", message
+    payload = json.dumps(
+        {
+            "frontImage": front,
+            "backImage": back,
+            "metadata": {"userId": user_id, "bookingId": booking_id, "source": "FairFares pickup"},
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        verify_url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "fairfares-idscan/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            result = json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace").strip()[:500]
+        message = f"IDScan.net rejected the request ({error.code}): {detail}"
+        save_external_identity_check(user_id, booking_id, "IDSCAN", "FAILED", reason, message, requested_by)
+        return False, "FAILED", message
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as error:
+        message = f"IDScan.net request failed: {error}"
+        save_external_identity_check(user_id, booking_id, "IDSCAN", "FAILED", reason, message, requested_by)
+        return False, "FAILED", message
+    status, summary = parse_idscan_result(result if isinstance(result, dict) else {})
+    provider_reference = str(result.get("id") or result.get("reference") or result.get("transactionId") or "") if isinstance(result, dict) else ""
+    save_external_identity_check(user_id, booking_id, "IDSCAN", status, reason, summary, requested_by, provider_reference)
+    return status == "VERIFIED", status, summary
 
 
 def verified_outputs_summary(session: dict[str, object]) -> tuple[str, str, str]:
@@ -7402,6 +7535,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/pickup/prefill": self.prefill_pickup_documents,
+            "/admin/identity/idscan": self.run_admin_idscan_check,
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/tickets/escalate": self.escalate_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
@@ -10194,6 +10328,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "STRIPE_PUBLISHABLE_KEY",
                 "STRIPE_SECRET_KEY",
                 "STRIPE_WEBHOOK_SECRET",
+                "IDSCAN_API_KEY",
+                "IDSCAN_VERIFY_URL",
             )
         )
         body = render_template(
@@ -11100,6 +11236,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         </div>
                         <button type="button" data-pickup-prefill-button>Prefill empty fields</button>
                         <small data-pickup-prefill-status>Confirm customer consent before sending document photos for OCR. This is not DMV verification.</small>
+                    </div>
+                    <div class="pickup-prefill-panel pickup-idscan-panel" data-idscan-check>
+                        <div>
+                            <b>IDScan.net verification</b>
+                            <span>Sends DL front/back to the configured IDScan endpoint and logs the provider result.</span>
+                        </div>
+                        <button type="button" data-idscan-check-button>Run IDScan check</button>
+                        <small data-idscan-status>Requires saved or newly captured DL front/back images and IDSCAN env credentials.</small>
                     </div>
                 </section>
                 <section class="pickup-form-section wide-field">
@@ -12193,6 +12337,41 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "message": message,
             }
         )
+
+    def run_admin_idscan_check(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id", "0") or 0)
+        except ValueError:
+            booking_id = 0
+        if not booking_id:
+            self.send_json({"ok": False, "status": "FAILED", "message": "Booking is required for IDScan verification."}, 400)
+            return
+        front_image = form.get("front_image_url", "")
+        back_image = form.get("back_image_url", "")
+        with db() as con:
+            booking = con.execute("SELECT id, user_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            if not booking:
+                self.send_json({"ok": False, "status": "FAILED", "message": "Booking not found."}, 404)
+                return
+            license_row = con.execute(
+                "SELECT front_image_url, back_image_url FROM driver_licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (booking["user_id"],),
+            ).fetchone()
+        if license_row:
+            front_image = front_image or row_value(license_row, "front_image_url")
+            back_image = back_image or row_value(license_row, "back_image_url")
+        ok, status, message = run_idscan_verification(
+            int(booking["user_id"]),
+            int(booking["id"]),
+            front_image,
+            back_image,
+            int(user["id"]),
+        )
+        self.send_json({"ok": ok, "status": status, "message": message})
 
     def manage_booking(self) -> None:
         parsed = urllib.parse.urlparse(self.path)

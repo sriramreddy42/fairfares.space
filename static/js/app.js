@@ -3163,6 +3163,40 @@ document.querySelectorAll("[data-pickup-prefill-button]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-idscan-check-button]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const form = button.closest(".pickup-form");
+    const panel = button.closest("[data-idscan-check]");
+    const status = panel?.querySelector("[data-idscan-status]");
+    if (!form) return;
+    const payload = new URLSearchParams();
+    ["booking_id", "front_image_url", "back_image_url"].forEach((name) => {
+      const input = form.querySelector(`input[name="${name}"]`);
+      if (input instanceof HTMLInputElement && input.value) payload.set(name, input.value);
+    });
+    button.disabled = true;
+    if (status) status.textContent = "Sending DL images to IDScan...";
+    try {
+      const response = await fetch("/admin/identity/idscan", {
+        method: "POST",
+        body: payload,
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "fetch",
+        },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "IDScan verification failed.");
+      if (status) status.textContent = `${result.status || "REVIEW_REQUIRED"}: ${result.message || "Check saved."}`;
+      window.setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      if (status) status.textContent = error.message || "IDScan verification failed.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
+
 function initAppFeedbackWidget() {
   if (document.getElementById("appFeedbackWidget")) return;
   const widget = document.createElement("section");

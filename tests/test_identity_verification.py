@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import app
 
@@ -83,13 +84,62 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertIn("Entrust", external_body)
         self.assertIn("IDScan.net", external_body)
 
-    def test_frontend_and_routes_include_stripe_identity(self):
+    def test_idscan_result_parser_is_strict(self):
+        status, summary = app.parse_idscan_result(
+            {
+                "documentValid": True,
+                "ocrSuccessful": True,
+                "expired": False,
+                "faceMatch": True,
+                "dmvMatch": True,
+            }
+        )
+        self.assertEqual(status, "VERIFIED")
+        self.assertIn("dmvMatch=True", summary)
+
+        status, summary = app.parse_idscan_result(
+            {
+                "documentValid": True,
+                "ocrSuccessful": True,
+                "expired": True,
+            }
+        )
+        self.assertEqual(status, "FAILED")
+        self.assertIn("expired=True", summary)
+
+        status, _summary = app.parse_idscan_result({"ocrSuccessful": True})
+        self.assertEqual(status, "REVIEW_REQUIRED")
+
+    def test_idscan_not_configured_is_logged_without_network_call(self):
+        with mock.patch.object(app, "idscan_api_key", return_value=""), mock.patch.object(app, "idscan_verify_url", return_value=""):
+            ok, status, message = app.run_idscan_verification(
+                self.user_id,
+                int(self.booking["id"]),
+                "data:image/jpeg;base64,front",
+                "data:image/jpeg;base64,back",
+                self.user_id,
+            )
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "NOT_CONFIGURED")
+        self.assertIn("IDSCAN_API_KEY", message)
+        row = app.latest_external_identity_check(self.user_id, int(self.booking["id"]))
+        self.assertIsNotNone(row)
+        self.assertEqual(row["provider"], "IDSCAN")
+        self.assertEqual(row["status"], "NOT_CONFIGURED")
+
+    def test_frontend_and_routes_include_identity_providers(self):
         js = Path("static/js/app.js").read_text()
         py = Path("app.py").read_text()
         self.assertIn("/identity/stripe-session", js)
         self.assertIn("stripeIdentityButton", js)
         self.assertIn("/identity/stripe-session", py)
         self.assertIn("identity.verification_session.", py)
+        self.assertIn("/admin/identity/idscan", js)
+        self.assertIn("/admin/identity/idscan", py)
+        self.assertIn("data-idscan-check-button", py)
+        self.assertIn("IDSCAN_API_KEY", py)
+        self.assertIn("IDSCAN_VERIFY_URL", py)
 
 
 if __name__ == "__main__":
