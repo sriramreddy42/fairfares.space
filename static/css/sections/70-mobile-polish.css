@@ -553,7 +553,8 @@
     align-items: center !important;
     display: grid !important;
     gap: 8px !important;
-    grid-template-columns: 44px minmax(0, 1fr) !important;
+    grid-template-columns: 44px 156px !important;
+    justify-content: space-between !important;
     min-height: 64px !important;
     overflow: visible !important;
     padding: 8px 10px !important;
@@ -588,6 +589,7 @@
     overflow: visible !important;
     padding: 0 !important;
     scrollbar-width: none;
+    width: 156px !important;
   }
 
   .admin-shell-header .admin-nav-stack::-webkit-scrollbar {
@@ -957,34 +959,41 @@
     width: min(340px, calc(100vw - 34px)) !important;
   }
 
-  .admin-shell-header .admin-primary-nav {
-    display: grid !important;
+  .admin-screen .admin-shell-header .admin-primary-nav {
+    align-items: center !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
     gap: 8px !important;
-    grid-template-columns: repeat(3, 32px) 34px !important;
     justify-content: end !important;
     overflow: visible !important;
     position: relative !important;
-    width: max-content !important;
+    width: 156px !important;
   }
 
-  .admin-shell-header .admin-primary-nav > a:nth-of-type(n+4) {
+  .admin-screen .admin-shell-header .admin-primary-nav > a:nth-of-type(-n+3) {
+    display: inline-flex !important;
+    flex: 0 0 32px !important;
+    position: relative !important;
+  }
+
+  .admin-screen .admin-shell-header .admin-primary-nav > a:nth-of-type(n+4) {
     display: none !important;
   }
 
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
-    display: grid !important;
-    grid-column: 4 !important;
-    left: calc(100% - 34px) !important;
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
+    display: inline-flex !important;
+    left: 122px !important;
     position: absolute !important;
     z-index: 35 !important;
   }
 
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(4) { top: 42px !important; }
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(5) { top: 82px !important; }
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(6) { top: 122px !important; }
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(7) { top: 162px !important; }
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(8) { top: 202px !important; }
-  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(9) { top: 242px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(4) { top: 42px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(5) { top: 82px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(6) { top: 122px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(7) { top: 162px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(8) { top: 202px !important; }
+  .admin-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(9) { top: 242px !important; }
 
   .admin-mobile-nav-toggle {
     align-items: center !important;
@@ -995,9 +1004,8 @@
     box-shadow: none !important;
     cursor: pointer !important;
     display: inline-grid !important;
+    flex: 0 0 34px !important;
     gap: 5px !important;
-    grid-column: 4 !important;
-    grid-row: 1 !important;
     height: 36px !important;
     justify-content: center !important;
     min-height: 36px !important;
