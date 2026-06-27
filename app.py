@@ -7329,10 +7329,14 @@ AGREEMENT_FIELD_GROUPS = (
 AGREEMENT_FIELD_KEYS = tuple(field for _, _, fields in AGREEMENT_FIELD_GROUPS for field, _ in fields)
 
 
-def row_value(row: sqlite3.Row | dict[str, object], key: str, default: str = "") -> str:
+def row_value(row: sqlite3.Row | dict[str, object] | None, key: str, default: str = "") -> str:
+    if row is None:
+        return str(default)
     if isinstance(row, dict):
         value = row.get(key, default)
         return str(value if value is not None else default)
+    if not hasattr(row, "keys"):
+        return str(default)
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 

@@ -201,6 +201,12 @@ class AuthBootstrapTest(unittest.TestCase):
         self.assertIn(".admin-status-notice", css)
         self.assertIn(".staff-password-reset-form", css)
 
+    def test_row_value_accepts_missing_oncall_shift(self):
+        app.init_db()
+
+        self.assertEqual(app.row_value(None, "shift_date"), "")
+        self.assertEqual(app.row_value(None, "shift_date") or "No upcoming shift", "No upcoming shift")
+
 
 if __name__ == "__main__":
     unittest.main()
