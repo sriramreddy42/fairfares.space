@@ -78,7 +78,7 @@
   }
 
   .price-match-scroll {
-    height: auto !important;
+    height: calc(100% + 54px) !important;
   }
 
   .price-match-track img {
