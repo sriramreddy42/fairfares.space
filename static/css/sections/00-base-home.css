@@ -175,7 +175,7 @@ input, select, textarea, button {
 }
 
 .price-match-track img {
-  animation: priceMatchPass 16s ease-in-out 0.35s 1 both;
+  animation: priceMatchPass 18s linear 0.35s 1 both;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
   height: auto;
   max-width: none;
@@ -184,20 +184,17 @@ input, select, textarea, button {
   position: absolute;
   left: 0;
   top: 50%;
-  transform: translate(100vw, -50%);
+  transform: translate3d(105vw, -50%, 0);
+  will-change: transform;
   width: clamp(360px, 42vw, 760px);
-}
-
-.price-match-scroll:hover .price-match-track img {
-  animation-play-state: paused;
 }
 
 @keyframes priceMatchPass {
   from {
-    transform: translate(100vw, -50%);
+    transform: translate3d(105vw, -50%, 0);
   }
   to {
-    transform: translate(-120%, -50%);
+    transform: translate3d(-110vw, -50%, 0);
   }
 }
 
