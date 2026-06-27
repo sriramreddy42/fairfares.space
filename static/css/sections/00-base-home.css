@@ -110,9 +110,10 @@ input, select, textarea, button {
   gap: 32px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 122px;
-  overflow: hidden;
+  overflow: visible;
   padding: 18px 38px;
   position: relative;
+  z-index: 10;
 }
 .top-brand .logo-lockup,
 .top-brand .top-benefits {
@@ -158,31 +159,14 @@ input, select, textarea, button {
 .price-match-scroll {
   background: transparent;
   grid-column: 1 / -1;
-  inset: 0;
+  height: calc(100% + 78px);
+  left: 0;
   overflow: hidden;
   pointer-events: none;
   position: absolute;
-  z-index: 5;
-}
-
-.price-match-scroll::before,
-.price-match-scroll::after {
-  content: "";
-  inset-block: 0;
-  pointer-events: none;
-  position: absolute;
-  width: min(12vw, 180px);
-  z-index: 2;
-}
-
-.price-match-scroll::before {
-  background: linear-gradient(90deg, #061b44 0%, rgba(6, 27, 68, 0) 100%);
-  left: 0;
-}
-
-.price-match-scroll::after {
-  background: linear-gradient(270deg, #031533 0%, rgba(3, 21, 51, 0) 100%);
   right: 0;
+  top: 0;
+  z-index: 8;
 }
 
 .price-match-track {
@@ -191,20 +175,16 @@ input, select, textarea, button {
 }
 
 .price-match-track img {
-  animation: priceMatchPass 16s linear infinite;
+  animation: priceMatchPass 11s ease-in-out 0.35s 1 both;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
-  height: min(112px, 92%);
+  height: auto;
   max-width: none;
   object-fit: contain;
   opacity: 0.96;
   position: absolute;
   top: 50%;
   transform: translate(110vw, -50%);
-  width: auto;
-}
-
-.price-match-track img:nth-child(2) {
-  animation-delay: 8s;
+  width: clamp(360px, 42vw, 760px);
 }
 
 .price-match-scroll:hover .price-match-track img {
@@ -213,10 +193,10 @@ input, select, textarea, button {
 
 @keyframes priceMatchPass {
   from {
-    transform: translate(110vw, -50%);
+    transform: translate(108vw, -50%);
   }
   to {
-    transform: translate(-125%, -50%);
+    transform: translate(-115%, -50%);
   }
 }
 
@@ -236,6 +216,8 @@ input, select, textarea, button {
   justify-content: space-between;
   min-height: 78px;
   padding: 0 34px;
+  position: relative;
+  z-index: 4;
 }
 .nav-links, .nav-actions {
   align-items: center;
