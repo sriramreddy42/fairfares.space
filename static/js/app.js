@@ -335,19 +335,30 @@ async function submitWorkspaceForm(form, extra = {}) {
   return payload;
 }
 
-function workspacePostIdFromForm(form) {
-  const postId = Number(new FormData(form).get("post_id") || 0);
+function ensureWorkspacePostId(form) {
+  const postInput = form?.querySelector("input[name='post_id']");
+  const card = form?.closest(".workspace-post-card");
+  const formPostId = Number(postInput?.value || 0);
+  const cardPostId = Number(card?.dataset.workspacePostId || 0);
+  const postId = Number.isFinite(formPostId) && formPostId > 0 ? formPostId : cardPostId;
+  if (postInput instanceof HTMLInputElement && Number.isFinite(postId) && postId > 0) {
+    postInput.value = String(postId);
+  }
   return Number.isFinite(postId) && postId > 0 ? postId : 0;
 }
 
 document.addEventListener("click", async (event) => {
-  const reactionButton = event.target.closest(".workspace-reaction-tray button");
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const reactionButton = target?.closest(".workspace-reaction-tray button");
   if (!reactionButton) return;
   const form = reactionButton.closest("[data-workspace-reaction-form]");
   const card = reactionButton.closest(".workspace-post-card");
   if (!form || !card) return;
   event.preventDefault();
-  if (!workspacePostIdFromForm(form)) return;
+  if (!ensureWorkspacePostId(form)) {
+    window.alert("Missing post.");
+    return;
+  }
   const reaction = reactionButton.value || "LIKE";
   const reactionValue = form.querySelector("[data-workspace-reaction-value]");
   if (reactionValue instanceof HTMLInputElement) reactionValue.value = reaction;
@@ -365,7 +376,10 @@ document.addEventListener("submit", async (event) => {
   const reactionForm = event.target.closest("[data-workspace-reaction-form]");
   if (!reactionForm) return;
   event.preventDefault();
-  if (!workspacePostIdFromForm(reactionForm)) return;
+  if (!ensureWorkspacePostId(reactionForm)) {
+    window.alert("Missing post.");
+    return;
+  }
   const card = reactionForm.closest(".workspace-post-card");
   try {
     const payload = await submitWorkspaceForm(reactionForm);
@@ -402,6 +416,10 @@ document.addEventListener("submit", async (event) => {
   const shareForm = event.target.closest("[data-workspace-share-form]");
   if (!shareForm) return;
   event.preventDefault();
+  if (!ensureWorkspacePostId(shareForm)) {
+    window.alert("Missing post.");
+    return;
+  }
   const button = shareForm.querySelector("button[type='submit']");
   const originalText = button?.textContent || "Share to Slack";
   if (button instanceof HTMLButtonElement) {
