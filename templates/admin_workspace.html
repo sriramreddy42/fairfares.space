@@ -16,11 +16,12 @@
   <main class="workspace-shell" aria-label="Admin workspace">
     <aside class="workspace-left admin-social-rail admin-workspace-profile" aria-label="Profile and shortcuts">
       <button class="workspace-groups-open" type="button" data-workspace-groups-open aria-expanded="false" aria-controls="workspaceGroupsDrawer">Groups <span>$workspace_group_count</span></button>
-      <article class="admin-profile-card">
+      <article class="admin-profile-card" data-workspace-profile-card>
         <label class="admin-profile-avatar admin-profile-avatar-upload" title="Upload profile photo" $admin_avatar_style data-admin-profile-avatar>
           <input type="file" accept="image/*" data-admin-profile-photo>
           <span>$admin_avatar_text</span>
         </label>
+        <a class="workspace-profile-slack" href="$workspace_slack_url" target="_blank" rel="noopener" aria-label="Open Slack">Slack</a>
         <b>$admin_name</b>
         <small>$staff_role workspace</small>
         <div class="workspace-profile-meta">

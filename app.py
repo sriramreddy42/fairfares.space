@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626adminbookingmobile"
+ASSET_VERSION = "20260626mobilepolish"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -11548,14 +11548,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         </div>
                         <button type="button" data-pickup-prefill-button>Prefill empty fields</button>
                         <small data-pickup-prefill-status>Confirm customer consent before sending document photos for OCR. This is not DMV verification.</small>
-                    </div>
-                    <div class="pickup-prefill-panel pickup-idscan-panel" data-idscan-check>
-                        <div>
-                            <b>IDScan.net verification</b>
-                            <span>Sends DL front/back to the configured IDScan endpoint and logs the provider result.</span>
-                        </div>
-                        <button type="button" data-idscan-check-button>Run IDScan check</button>
-                        <small data-idscan-status>Requires saved or newly captured DL front/back images and IDSCAN env credentials.</small>
                     </div>
                 </section>
                 <section class="pickup-form-section wide-field">

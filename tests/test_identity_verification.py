@@ -179,7 +179,7 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertIn("Staff will start Stripe Identity during pickup", py)
         self.assertIn("/admin/identity/idscan", js)
         self.assertIn("/admin/identity/idscan", py)
-        self.assertIn("data-idscan-check-button", py)
+        self.assertIn("run_admin_idscan_check", py)
         self.assertIn("IDSCAN_API_KEY", py)
         self.assertIn("IDSCAN_VERIFY_URL", py)
 

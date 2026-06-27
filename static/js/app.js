@@ -120,6 +120,15 @@ document.querySelectorAll("[data-dashboard-action]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-workspace-profile-card]").forEach((card) => {
+  card.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    if (target?.closest("a, button, input, label")) return;
+    if (!window.matchMedia("(max-width: 760px)").matches) return;
+    card.classList.toggle("is-open");
+  });
+});
+
 document.querySelectorAll("[data-policy-toggle]").forEach((button) => {
   button.addEventListener("click", () => {
     const card = button.closest(".checkout-policy-card");
@@ -333,6 +342,7 @@ document.addEventListener("click", async (event) => {
   const card = reactionButton.closest(".workspace-post-card");
   if (!form || !card) return;
   event.preventDefault();
+  if (!new FormData(form).get("post_id")) return;
   const reaction = reactionButton.value || "LIKE";
   const reactionValue = form.querySelector("[data-workspace-reaction-value]");
   if (reactionValue instanceof HTMLInputElement) reactionValue.value = reaction;
@@ -350,6 +360,7 @@ document.addEventListener("submit", async (event) => {
   const reactionForm = event.target.closest("[data-workspace-reaction-form]");
   if (!reactionForm) return;
   event.preventDefault();
+  if (!new FormData(reactionForm).get("post_id")) return;
   const card = reactionForm.closest(".workspace-post-card");
   try {
     const payload = await submitWorkspaceForm(reactionForm);
@@ -2825,6 +2836,10 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
       }
       const guestActions = document.getElementById("guestAfterSaveActions");
       if (guestActions) guestActions.hidden = false;
+      if (form.dataset.guestBooking !== "true") {
+        form.classList.add("is-saved");
+        document.getElementById("bookingHoldPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
       showBookingReferralModal(form, payload);
     })
     .catch((payload) => {
