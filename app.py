@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627workspaceformpost"
+ASSET_VERSION = "20260627reactionsummary"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -5092,12 +5092,87 @@ def get_workspace_post_stats(post_id: int) -> dict[str, int]:
     }
 
 
+def get_workspace_reaction_counts(post_id: int) -> dict[str, int]:
+    allowed_reactions = {key for key, _emoji, _label in WORKSPACE_REACTIONS}
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT reaction, COUNT(*) AS total
+            FROM workspace_post_reactions
+            WHERE post_id = ?
+            GROUP BY reaction
+            """,
+            (post_id,),
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        reaction = str(row_value(row, "reaction") or "").upper().strip()
+        if reaction in allowed_reactions:
+            counts[reaction] = int(row_value(row, "total") or 0)
+    return counts
+
+
+def workspace_reaction_summary(post_id: int) -> str:
+    counts = get_workspace_reaction_counts(post_id)
+    parts = [
+        f"{counts[key]} {emoji} {label}"
+        for key, emoji, label in WORKSPACE_REACTIONS
+        if counts.get(key)
+    ]
+    return " · ".join(parts) if parts else "0 reactions"
+
+
 def workspace_reaction_button_label(reaction: str | None) -> tuple[str, str]:
     normalized = (reaction or "").upper().strip()
     for key, emoji, label in WORKSPACE_REACTIONS:
         if key == normalized:
             return emoji, label
     return "👍", "Like"
+
+
+def apply_workspace_reaction(post_id: int, user_id: int, reaction: str) -> dict[str, object]:
+    normalized = (reaction or "LIKE").upper().strip()
+    allowed_reactions = {key for key, _emoji, _label in WORKSPACE_REACTIONS}
+    if normalized not in allowed_reactions:
+        normalized = "LIKE"
+    active_reaction = ""
+    with db() as con:
+        post = con.execute("SELECT id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
+        if post:
+            existing = con.execute(
+                """
+                SELECT reaction
+                FROM workspace_post_reactions
+                WHERE post_id = ? AND user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (post_id, user_id),
+            ).fetchone()
+            existing_reaction = str(row_value(existing, "reaction") or "").upper().strip() if existing else ""
+            con.execute(
+                "DELETE FROM workspace_post_reactions WHERE post_id = ? AND user_id = ?",
+                (post_id, user_id),
+            )
+            if existing_reaction != normalized:
+                con.execute(
+                    """
+                    INSERT INTO workspace_post_reactions (post_id, user_id, reaction)
+                    VALUES (?, ?, ?)
+                    """,
+                    (post_id, user_id, normalized),
+                )
+                active_reaction = normalized
+    stats = get_workspace_post_stats(post_id)
+    emoji, label = workspace_reaction_button_label(active_reaction)
+    return {
+        "ok": True,
+        "reaction_count": stats["reaction_count"],
+        "reaction_summary": workspace_reaction_summary(post_id),
+        "reaction": active_reaction,
+        "emoji": emoji,
+        "label": label,
+    }
 
 
 def workspace_post_redirect(post_id: int) -> str:
@@ -5372,7 +5447,7 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
               </form>
               {image_html}
               <div class="workspace-post-stats">
-                <span data-workspace-reaction-count>{escape(str(row_value(post, "reaction_count") or 0))} reactions</span>
+                <span data-workspace-reaction-count>{escape(workspace_reaction_summary(post_id))}</span>
                 <span data-workspace-comment-count>{escape(str(row_value(post, "comment_count") or 0))} comments</span>
               </div>
               <div class="admin-feed-social-row" aria-label="Feed actions">
@@ -9518,28 +9593,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             self.redirect("/admin/workspace")
             return
-        reaction = (form.get("reaction") or "LIKE").upper().strip()
-        allowed_reactions = {key for key, _emoji, _label in WORKSPACE_REACTIONS}
-        if reaction not in allowed_reactions:
-            reaction = "LIKE"
-        with db() as con:
-            post = con.execute("SELECT id FROM workspace_posts WHERE id = ?", (post_id,)).fetchone()
-            if post:
-                con.execute(
-                    "DELETE FROM workspace_post_reactions WHERE post_id = ? AND user_id = ?",
-                    (post_id, row_value(user, "id")),
-                )
-                con.execute(
-                    """
-                    INSERT INTO workspace_post_reactions (post_id, user_id, reaction)
-                    VALUES (?, ?, ?)
-                    """,
-                    (post_id, row_value(user, "id"), reaction),
-                )
+        payload = apply_workspace_reaction(post_id, int(row_value(user, "id") or 0), form.get("reaction") or "LIKE")
         if self.wants_json():
-            stats = get_workspace_post_stats(post_id)
-            emoji, label = workspace_reaction_button_label(reaction)
-            self.send_json({"ok": True, "reaction_count": stats["reaction_count"], "reaction": reaction, "emoji": emoji, "label": label})
+            self.send_json(payload)
             return
         self.redirect(workspace_post_redirect(post_id))
 

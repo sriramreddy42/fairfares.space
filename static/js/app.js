@@ -366,9 +366,10 @@ document.addEventListener("click", async (event) => {
   if (reactionValue instanceof HTMLInputElement) reactionValue.value = reaction;
   try {
     const payload = await submitWorkspaceForm(form, { reaction });
-    card.querySelector("[data-workspace-reaction-count]").textContent = `${payload.reaction_count || 0} reactions`;
+    card.querySelector("[data-workspace-reaction-count]").textContent = payload.reaction_summary || `${payload.reaction_count || 0} reactions`;
     card.querySelector("[data-workspace-reaction-emoji]").textContent = payload.emoji || "👍";
     card.querySelector("[data-workspace-reaction-label]").textContent = payload.label || "Like";
+    if (reactionValue instanceof HTMLInputElement) reactionValue.value = payload.reaction || "LIKE";
   } catch (error) {
     window.alert(error.message);
   }
@@ -388,9 +389,11 @@ document.addEventListener("submit", async (event) => {
     const count = card?.querySelector("[data-workspace-reaction-count]");
     const emoji = card?.querySelector("[data-workspace-reaction-emoji]");
     const label = card?.querySelector("[data-workspace-reaction-label]");
-    count?.replaceChildren(document.createTextNode(`${payload.reaction_count || 0} reactions`));
+    const reactionValue = reactionForm.querySelector("[data-workspace-reaction-value]");
+    count?.replaceChildren(document.createTextNode(payload.reaction_summary || `${payload.reaction_count || 0} reactions`));
     emoji?.replaceChildren(document.createTextNode(payload.emoji || "👍"));
     label?.replaceChildren(document.createTextNode(payload.label || "Like"));
+    if (reactionValue instanceof HTMLInputElement) reactionValue.value = payload.reaction || "LIKE";
   } catch (error) {
     window.alert(error.message);
   }
