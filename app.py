@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626staffreset"
+ASSET_VERSION = "20260626agreementflow"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -7340,6 +7340,10 @@ def default_agreement_text(row: sqlite3.Row) -> str:
 
 
 def render_agreement_fields(values: dict[str, str]) -> str:
+    return render_agreement_fields_for_role(values)
+
+
+def render_agreement_fields_for_role(values: dict[str, str], role_filter: str = "") -> str:
     groups = []
     input_types = {
         "agreement_date": "date",
@@ -7351,6 +7355,8 @@ def render_agreement_fields(values: dict[str, str]) -> str:
         "vehicle_mileage": "number",
     }
     for title, role, fields in AGREEMENT_FIELD_GROUPS:
+        if role_filter and role != role_filter:
+            continue
         field_html = []
         for key, label in fields:
             step = ' step="0.01"' if input_types.get(key) == "number" else ""
@@ -7360,6 +7366,39 @@ def render_agreement_fields(values: dict[str, str]) -> str:
             )
         groups.append(f'<div class="agreement-group agreement-group-{role}"><h3>{escape(title)} fields</h3>{"".join(field_html)}</div>')
     return "".join(groups)
+
+
+def get_admin_agreement_context(booking_id: int) -> tuple[sqlite3.Row | None, sqlite3.Row | None, sqlite3.Row | None, sqlite3.Row | None]:
+    with db() as con:
+        booking = con.execute(
+            """
+            SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
+                   users.address, users.date_of_birth,
+                   cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
+                   cars.year AS car_year, cars.category AS car_category, cars.type AS car_type,
+                   cars.color AS car_color, cars.daily_price, cars.license_plate, cars.vin_number
+            FROM bookings
+            JOIN users ON users.id = bookings.user_id
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.id = ?
+            """,
+            (booking_id,),
+        ).fetchone()
+        if not booking:
+            return None, None, None, None
+        license_row = con.execute(
+            "SELECT * FROM driver_licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (booking["user_id"],),
+        ).fetchone()
+        insurance = con.execute(
+            "SELECT * FROM insurances WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
+            (booking_id,),
+        ).fetchone()
+        agreement = con.execute(
+            "SELECT * FROM rental_agreements WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
+            (booking_id,),
+        ).fetchone()
+    return booking, license_row, insurance, agreement
 
 
 def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
@@ -7620,6 +7659,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/commercials": self.admin_commercials_page,
             "/admin/email-marketing": self.admin_email_marketing_page,
             "/admin/pickup": self.admin_pickup_page,
+            "/admin/agreement/customer": self.admin_customer_agreement_page,
             "/admin/system": self.admin_system_page,
             "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
@@ -7699,6 +7739,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/send": self.send_email_campaign_now,
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
+            "/admin/agreement/customer": self.save_customer_agreement,
             "/admin/pickup/prefill": self.prefill_pickup_documents,
             "/admin/identity/idscan": self.run_admin_idscan_check,
             "/admin/tickets/update": self.update_admin_ticket,
@@ -11399,7 +11440,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
         agreement_values = agreement_default_values(row, license_row, insurance, agreement)
         agreement_text = agreement["agreement_text"] if agreement else build_rental_agreement_text(row, agreement_values)
-        agreement_fields = render_agreement_fields(agreement_values)
+        issuer_agreement_fields = render_agreement_fields_for_role(agreement_values, "issuer")
+        customer_agreement_complete = bool(agreement_values.get("customer_signature"))
+        customer_agreement_status = "Customer form saved" if customer_agreement_complete else "Customer form not completed"
+        customer_agreement_url = f"/admin/agreement/customer?booking_id={row['id']}"
         front_scan = license_row["front_image_url"] if license_row else ""
         back_scan = license_row["back_image_url"] if license_row else ""
         insurance_scan = insurance["document_url"] if insurance else ""
@@ -11569,10 +11613,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <div class="agreement-builder-head">
                         <div>
                             <b>Rental Agreement Builder</b>
-                            <span>Red fields are customer-provided. Blue fields are issuer/admin-provided.</span>
+                            <span>Customer fields are filled on a separate full-page form. Admin fields stay here.</span>
                         </div>
+                        <a class="secondary-print-button" href="{escape(customer_agreement_url)}" target="_blank" rel="noopener">Open customer form</a>
                     </div>
-                    <div class="agreement-field-grid">{agreement_fields}</div>
+                    <p class="agreement-flow-note">{escape(customer_agreement_status)}. Save admin pickup data after customer form completion to regenerate the final agreement with issuer fields.</p>
+                    <div class="agreement-field-grid">{issuer_agreement_fields}</div>
                 </div>
                 <div class="agreement-print-area wide-field">
                     <label><span>Generated Agreement Text</span><textarea name="agreement_text" rows="12">{escape(agreement_text)}</textarea></label>
@@ -11619,6 +11665,119 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>Free maintenance tracking ready</td>
         </tr>
         """
+
+    def admin_customer_agreement_page(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        try:
+            booking_id = int(query.get("booking_id", ["0"])[0] or 0)
+        except ValueError:
+            booking_id = 0
+        if form.get("electronic_consent") != "1":
+            self.send_html(b"Electronic signature consent is required.", 400)
+            return
+        booking, license_row, insurance, agreement = get_admin_agreement_context(booking_id)
+        if not booking:
+            self.not_found()
+            return
+        values = agreement_default_values(booking, license_row, insurance, agreement)
+        customer_fields = render_agreement_fields_for_role(values, "customer")
+        agreement_text = build_rental_agreement_text(booking, values)
+        saved_notice = (
+            '<p class="agreement-customer-notice">Customer agreement fields saved. Admin can continue pickup.</p>'
+            if query.get("saved", [""])[0]
+            else ""
+        )
+        stylesheet_links = "\n".join(
+            f'  <link rel="stylesheet" href="{escape(url)}">' for url in [*BASE_STYLESHEETS, *SHARED_STYLESHEETS]
+        )
+        body = f"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer Agreement | FairFares</title>
+{stylesheet_links}
+</head>
+<body class="admin-screen agreement-customer-screen">
+  <main class="agreement-customer-page">
+    <section class="agreement-customer-panel">
+      <div class="agreement-customer-head">
+        <div>
+          <p class="eyebrow">Rental Agreement</p>
+          <h1>Customer form</h1>
+          <span>{escape(row_value(booking, "booking_id"))} - {escape(row_value(booking, "user_name"))} - {escape(row_value(booking, "car_name"))}</span>
+        </div>
+        <a class="secondary-print-button" href="/admin/pickup">Back to pickup</a>
+      </div>
+      {saved_notice}
+      <form method="post" action="/admin/agreement/customer" class="agreement-customer-form">
+        <input type="hidden" name="booking_id" value="{escape(row_value(booking, "id"))}">
+        <div class="agreement-field-grid">{customer_fields}</div>
+        <label class="agreement-consent-field">
+          <input type="checkbox" name="electronic_consent" value="1" required>
+          <span>I agree to complete and sign this FairFares rental agreement electronically. I confirm the customer information is accurate and I can save or request a copy of this agreement.</span>
+        </label>
+        <button type="submit">Save customer agreement</button>
+      </form>
+    </section>
+    <section class="agreement-customer-panel">
+      <div class="agreement-customer-head">
+        <div>
+          <p class="eyebrow">Preview</p>
+          <h2>Generated agreement</h2>
+          <span>Review before saving. Admin fields can still be completed in pickup.</span>
+        </div>
+      </div>
+      <textarea class="agreement-customer-preview" readonly rows="22">{escape(agreement_text)}</textarea>
+    </section>
+  </main>
+</body>
+</html>
+        """.strip()
+        self.send_html(body.encode("utf-8"))
+
+    def save_customer_agreement(self) -> None:
+        user = self.require_admin()
+        if not user:
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id") or 0)
+        except ValueError:
+            booking_id = 0
+        booking, license_row, insurance, agreement = get_admin_agreement_context(booking_id)
+        if not booking:
+            self.not_found()
+            return
+        values = agreement_default_values(booking, license_row, insurance, agreement)
+        for _title, role, fields in AGREEMENT_FIELD_GROUPS:
+            if role != "customer":
+                continue
+            for key, _label in fields:
+                values[key] = form.get(f"agreement_{key}", "").strip()
+        signature_text = values.get("customer_signature", "").strip()
+        generated_agreement_text = build_rental_agreement_text(booking, values)
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO rental_agreements
+                (booking_id, agreement_text, agreement_data, signer_name, signature_text, signed_at)
+                VALUES (?, ?, ?, ?, ?, CASE WHEN ? != '' THEN CURRENT_TIMESTAMP ELSE NULL END)
+                """,
+                (
+                    booking_id,
+                    generated_agreement_text,
+                    json.dumps(values),
+                    values.get("lessee_name", row_value(booking, "user_name")),
+                    signature_text,
+                    signature_text,
+                ),
+            )
+        self.redirect(f"/admin/agreement/customer?booking_id={booking_id}&saved=1")
 
     def create_admin_backup(self) -> None:
         user = self.require_owner_admin()
@@ -12574,7 +12733,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         invoice_number,
                     ),
                 )
-            agreement_data = {key: form.get(f"agreement_{key}", "").strip() for key in AGREEMENT_FIELD_KEYS}
+            latest_agreement = con.execute(
+                "SELECT * FROM rental_agreements WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
+                (booking_id,),
+            ).fetchone()
+            agreement_data = saved_agreement_data(latest_agreement)
+            for key in AGREEMENT_FIELD_KEYS:
+                field_name = f"agreement_{key}"
+                if field_name in form:
+                    agreement_data[key] = form.get(field_name, "").strip()
             if form.get("signature_text") and not agreement_data.get("customer_signature"):
                 agreement_data["customer_signature"] = form.get("signature_text", "").strip()
             booking_row = con.execute(

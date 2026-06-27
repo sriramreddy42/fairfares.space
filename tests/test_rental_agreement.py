@@ -64,6 +64,35 @@ class RentalAgreementTest(unittest.TestCase):
         self.assertIn("valid auto insurance policy that extends coverage to rental vehicles", text)
         self.assertNotIn("laws of Texas", text)
 
+    def test_agreement_customer_flow_routes_and_split_fields_exist(self):
+        py = Path("app.py").read_text()
+        css = Path("static/css/sections/20-admin.css").read_text()
+        customer_fields = app.render_agreement_fields_for_role(
+            {
+                "lessee_name": "Agreement Tester",
+                "customer_signature": "Agreement Tester",
+                "issuer_name": "FairFares Rep",
+            },
+            "customer",
+        )
+        issuer_fields = app.render_agreement_fields_for_role(
+            {
+                "lessee_name": "Agreement Tester",
+                "issuer_name": "FairFares Rep",
+            },
+            "issuer",
+        )
+
+        self.assertIn("/admin/agreement/customer", py)
+        self.assertIn("Open customer form", py)
+        self.assertIn("electronic_consent", py)
+        self.assertIn("agreement-customer-page", css)
+        self.assertIn("agreement_lessee_name", customer_fields)
+        self.assertIn("agreement_customer_signature", customer_fields)
+        self.assertNotIn("agreement_issuer_name", customer_fields)
+        self.assertIn("agreement_issuer_name", issuer_fields)
+        self.assertNotIn("agreement_lessee_name", issuer_fields)
+
 
 if __name__ == "__main__":
     unittest.main()

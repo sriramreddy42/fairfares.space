@@ -2967,6 +2967,7 @@
 .agreement-builder-head {
   align-items: center;
   display: flex;
+  gap: 12px;
   justify-content: space-between;
 }
 .agreement-builder-head b {
@@ -2977,6 +2978,23 @@
 .agreement-builder-head span {
   color: var(--muted);
   font-size: 0.88rem;
+}
+.agreement-flow-note {
+  color: var(--muted);
+  font-weight: 800;
+  margin: 0;
+}
+.agreement-builder-head .secondary-print-button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--navy);
+  display: inline-flex;
+  font-weight: 900;
+  min-height: 42px;
+  padding: 0 14px;
+  text-decoration: none;
 }
 .agreement-field-grid {
   display: grid;
@@ -3061,6 +3079,79 @@
   background: #fff;
   color: var(--navy);
   grid-column: 1 / -1;
+}
+.agreement-customer-screen {
+  background: #f3f6fb;
+}
+.agreement-customer-page {
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 1120px;
+  padding: 28px;
+}
+.agreement-customer-panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+.agreement-customer-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.agreement-customer-head h1,
+.agreement-customer-head h2 {
+  color: var(--navy);
+  margin: 0;
+}
+.agreement-customer-head span,
+.agreement-consent-field span {
+  color: var(--muted);
+  font-weight: 800;
+}
+.agreement-customer-form {
+  display: grid;
+  gap: 16px;
+}
+.agreement-consent-field {
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto 1fr;
+  padding: 14px;
+}
+.agreement-customer-form button {
+  background: var(--red);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  min-height: 48px;
+}
+.agreement-customer-notice {
+  background: #eaf8ef;
+  border: 1px solid #bfe8ca;
+  border-radius: 8px;
+  color: #116329;
+  font-weight: 900;
+  margin: 0;
+  padding: 12px;
+}
+.agreement-customer-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--navy);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.45;
+  padding: 14px;
+  resize: vertical;
 }
 .admin-empty {
   background: #fff;
