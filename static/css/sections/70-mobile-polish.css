@@ -379,6 +379,11 @@
 
   .manage-screen.manage-checkout-screen .booking-confirmation-card {
     gap: 10px !important;
+    grid-template-areas:
+      "intro"
+      "form"
+      "summary"
+      "policies" !important;
   }
 
   .manage-screen.manage-checkout-screen .booking-hold-panel {
@@ -387,9 +392,10 @@
 
   .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
     align-items: start !important;
-    display: grid !important;
+    display: flex !important;
+    flex-direction: column !important;
     gap: 3px !important;
-    grid-template-columns: 1fr !important;
+    min-width: 0 !important;
   }
 
   .manage-screen.manage-checkout-screen .booking-hold-breakdown b {
@@ -398,6 +404,103 @@
 
   .stripe-pay-button img {
     max-height: 24px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-card {
+    align-items: start !important;
+    gap: 10px !important;
+    grid-template-columns: 94px minmax(0, 1fr) !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-car {
+    justify-items: start !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-car-image {
+    max-height: 68px !important;
+    width: 94px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-route {
+    display: grid !important;
+    gap: 8px !important;
+    grid-column: 1 / -1 !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .manage-screen.manage-checkout-screen .trip-route > div {
+    border: 1px solid rgba(207, 212, 223, 0.85) !important;
+    border-radius: 8px !important;
+    padding: 9px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-panel-copy {
+    gap: 4px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown {
+    display: grid !important;
+    gap: 6px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+    border: 1px solid #e7e9ef !important;
+    border-radius: 8px !important;
+    padding: 8px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown b {
+    font-size: 0.94rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form {
+    gap: 9px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form label:not(.toggle-row) {
+    min-height: 58px !important;
+    grid-template-rows: auto 38px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form input {
+    min-height: 38px !important;
+    padding: 7px 10px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .customer-info-form .toggle-row {
+    align-items: center !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: 24px minmax(0, 1fr) !important;
+    min-height: 48px !important;
+    padding: 9px 10px !important;
+  }
+
+  .checkout-policy-card ul {
+    max-height: 5.4em !important;
+    overflow: hidden !important;
+  }
+
+  .checkout-policy-card.is-expanded ul {
+    max-height: none !important;
+  }
+
+  .policy-see-more {
+    align-self: start !important;
+    background: transparent !important;
+    border: 0 !important;
+    color: #0b61a4 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    font: inherit !important;
+    font-size: 0.86rem !important;
+    font-weight: 950 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    text-decoration: underline !important;
+    text-underline-offset: 3px !important;
   }
 
   /* Admin / employee pages */

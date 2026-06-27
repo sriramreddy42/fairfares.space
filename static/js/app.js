@@ -120,6 +120,16 @@ document.querySelectorAll("[data-dashboard-action]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-policy-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const card = button.closest(".checkout-policy-card");
+    if (!card) return;
+    const expanded = card.classList.toggle("is-expanded");
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    button.textContent = expanded ? "Show less" : "See more";
+  });
+});
+
 const workspacePostModal = document.getElementById("workspacePostModal");
 
 function closeWorkspacePostModal() {

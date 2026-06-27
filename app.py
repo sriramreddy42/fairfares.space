@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626workspacefix"
+ASSET_VERSION = "20260626mobilecheckout"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -13056,6 +13056,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <li><a href="/wiki?q=insurance%20requirement">View the full insurance requirement</a>.</li>
                             <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
                         </ul>
+                        <button class="policy-see-more" type="button" data-policy-toggle aria-expanded="false">See more</button>
                     </article>
                     <article class="checkout-policy-card">
                         <p class="eyebrow">Cancellation policy</p>
@@ -13075,6 +13076,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <li>Cancellations 24+ hours before pickup can be automatically reviewed; inside 24 hours, admin approval is required.</li>
                             <li>Hold-payment cancellations are not automatically accepted after the 24-hour cutoff.</li>
                         </ul>
+                        <button class="policy-see-more" type="button" data-policy-toggle aria-expanded="false">See more</button>
                     </article>
                     <article class="checkout-policy-card">
                         <p class="eyebrow">Rental policies</p>
@@ -13085,6 +13087,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <li>Only approved drivers listed on the booking or rental agreement may drive the vehicle.</li>
                             <li><a href="/wiki">View FairFares wiki rules and restrictions</a>.</li>
                         </ul>
+                        <button class="policy-see-more" type="button" data-policy-toggle aria-expanded="false">See more</button>
                     </article>
                 </section>
             """
