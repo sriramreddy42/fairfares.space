@@ -10,11 +10,15 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import base64
+import mimetypes
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
+from email.parser import BytesParser
+from email.policy import default as EMAIL_POLICY
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -33,6 +37,7 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
+MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 DEFAULT_PROMOTED_ADMIN_EMAILS = "sriramreddy42@gmail.com"
@@ -43,8 +48,20 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627adminspace"
+ASSET_VERSION = "20260627drive"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
+DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
+DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
+DRIVE_FOLDER_ENVS = {
+    "driver_license": "DRIVE_DRIVER_LICENSES_FOLDER_ID",
+    "insurance": "DRIVE_INSURANCE_DOCUMENTS_FOLDER_ID",
+    "agreement": "DRIVE_RENTAL_AGREEMENTS_FOLDER_ID",
+    "pickup_return": "DRIVE_PICKUP_RETURN_PHOTOS_FOLDER_ID",
+    "invoice_receipt": "DRIVE_INVOICES_RECEIPTS_FOLDER_ID",
+    "roi": "DRIVE_ROI_FILES_FOLDER_ID",
+    "support": "DRIVE_SUPPORT_ATTACHMENTS_FOLDER_ID",
+    "archive": "DRIVE_ARCHIVE_FOLDER_ID",
+}
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
     ("LOVE", "❤️", "Love"),
@@ -76,6 +93,217 @@ def refresh_storage_paths() -> None:
     global DB_PATH, BACKUP_DIR
     DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
     BACKUP_DIR = Path(os.environ.get("FAIRFARES_BACKUP_DIR", DB_PATH.parent / "backups"))
+
+
+def drive_folder_id(folder_key: str) -> str:
+    env_name = DRIVE_FOLDER_ENVS.get(folder_key, DRIVE_ROOT_ENV)
+    return (os.environ.get(env_name) or os.environ.get(DRIVE_ROOT_ENV) or "").strip()
+
+
+def google_drive_config_status() -> dict[str, object]:
+    service_json = (os.environ.get(DRIVE_SERVICE_ACCOUNT_ENV) or "").strip()
+    folders = {key: bool((os.environ.get(env) or "").strip()) for key, env in DRIVE_FOLDER_ENVS.items()}
+    return {
+        "configured": bool(service_json and os.environ.get(DRIVE_ROOT_ENV)),
+        "service_account": bool(service_json),
+        "root_folder": bool((os.environ.get(DRIVE_ROOT_ENV) or "").strip()),
+        "folders": folders,
+    }
+
+
+def data_url_upload_parts(value: str, fallback_name: str) -> tuple[str, str, bytes] | None:
+    if not value or not value.startswith("data:") or ";base64," not in value:
+        return None
+    header, encoded = value.split(";base64,", 1)
+    mime_type = header.replace("data:", "", 1).strip() or "application/octet-stream"
+    if not re.match(r"^[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+$", mime_type):
+        return None
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return None
+    if not payload or len(payload) > MAX_DRIVE_UPLOAD_BYTES:
+        return None
+    extension = mimetypes.guess_extension(mime_type) or ".bin"
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", fallback_name).strip("-") or "fairfares-upload"
+    if not safe_name.lower().endswith(extension.lower()):
+        safe_name = f"{safe_name}{extension}"
+    return safe_name, mime_type, payload
+
+
+def google_drive_access_token() -> tuple[bool, str]:
+    service_json = (os.environ.get(DRIVE_SERVICE_ACCOUNT_ENV) or "").strip()
+    if not service_json:
+        return False, "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON is not configured."
+    try:
+        service_info = json.loads(service_json)
+    except json.JSONDecodeError:
+        return False, "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON is not valid JSON."
+    try:
+        from google.oauth2 import service_account
+        from google.auth.transport.requests import Request
+    except Exception:
+        return False, "google-auth is not installed."
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            service_info,
+            scopes=["https://www.googleapis.com/auth/drive.file"],
+        )
+        credentials.refresh(Request())
+    except Exception as exc:
+        return False, f"Google Drive auth failed: {exc}"
+    return True, credentials.token or ""
+
+
+def upload_bytes_to_google_drive(folder_key: str, filename: str, mime_type: str, payload: bytes) -> tuple[bool, dict[str, object] | str]:
+    folder_id = drive_folder_id(folder_key)
+    if not folder_id:
+        return False, f"Drive folder is not configured for {folder_key}."
+    token_ok, token_or_error = google_drive_access_token()
+    if not token_ok:
+        return False, token_or_error
+    boundary = f"fairfares-{secrets.token_hex(12)}"
+    metadata = {"name": filename, "parents": [folder_id]}
+    body = b"".join(
+        (
+            f"--{boundary}\r\n".encode(),
+            b"Content-Type: application/json; charset=UTF-8\r\n\r\n",
+            json.dumps(metadata).encode("utf-8"),
+            b"\r\n",
+            f"--{boundary}\r\n".encode(),
+            f"Content-Type: {mime_type}\r\n\r\n".encode(),
+            payload,
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        )
+    )
+    request = urllib.request.Request(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token_or_error}",
+            "Content-Type": f"multipart/related; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        return False, f"Google Drive upload failed ({exc.code}): {details[:300]}"
+    except Exception as exc:
+        return False, f"Google Drive upload failed: {exc}"
+    result["folder_id"] = folder_id
+    result["size"] = int(result.get("size") or len(payload))
+    return True, result
+
+
+def save_drive_file_record(
+    con: sqlite3.Connection,
+    *,
+    folder_key: str,
+    file_scope: str,
+    drive_file: dict[str, object],
+    uploaded_by: int | str | None = None,
+    user_id: int | str | None = None,
+    booking_id: int | str | None = None,
+    car_id: int | str | None = None,
+    expense_id: int | str | None = None,
+) -> None:
+    con.execute(
+        """
+        INSERT INTO drive_files
+        (file_scope, folder_key, drive_file_id, drive_folder_id, drive_web_view_link,
+         original_filename, mime_type, size_bytes, uploaded_by, user_id, booking_id, car_id, expense_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_scope,
+            folder_key,
+            str(drive_file.get("id") or ""),
+            str(drive_file.get("folder_id") or ""),
+            str(drive_file.get("webViewLink") or ""),
+            str(drive_file.get("name") or ""),
+            str(drive_file.get("mimeType") or ""),
+            int(drive_file.get("size") or 0),
+            uploaded_by,
+            user_id,
+            booking_id,
+            car_id,
+            expense_id,
+        ),
+    )
+
+
+def upload_data_url_to_drive(
+    con: sqlite3.Connection,
+    *,
+    folder_key: str,
+    file_scope: str,
+    data_url: str,
+    fallback_name: str,
+    uploaded_by: int | str | None = None,
+    user_id: int | str | None = None,
+    booking_id: int | str | None = None,
+    car_id: int | str | None = None,
+    expense_id: int | str | None = None,
+) -> str:
+    parts = data_url_upload_parts(data_url, fallback_name)
+    if not parts:
+        return data_url
+    filename, mime_type, payload = parts
+    ok, result = upload_bytes_to_google_drive(folder_key, filename, mime_type, payload)
+    if not ok or not isinstance(result, dict):
+        return data_url
+    save_drive_file_record(
+        con,
+        folder_key=folder_key,
+        file_scope=file_scope,
+        drive_file=result,
+        uploaded_by=uploaded_by,
+        user_id=user_id,
+        booking_id=booking_id,
+        car_id=car_id,
+        expense_id=expense_id,
+    )
+    return f"drive://{result.get('id')}"
+
+
+def upload_file_payload_to_drive(
+    con: sqlite3.Connection,
+    *,
+    folder_key: str,
+    file_scope: str,
+    file_data: dict[str, object] | None,
+    uploaded_by: int | str | None = None,
+    user_id: int | str | None = None,
+    booking_id: int | str | None = None,
+    car_id: int | str | None = None,
+    expense_id: int | str | None = None,
+) -> str:
+    if not file_data:
+        return ""
+    payload = file_data.get("payload")
+    if not isinstance(payload, bytes) or not payload:
+        return ""
+    filename = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(file_data.get("filename") or "fairfares-file")).strip("-")
+    mime_type = str(file_data.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    ok, result = upload_bytes_to_google_drive(folder_key, filename or "fairfares-file", mime_type, payload)
+    if not ok or not isinstance(result, dict):
+        return ""
+    save_drive_file_record(
+        con,
+        folder_key=folder_key,
+        file_scope=file_scope,
+        drive_file=result,
+        uploaded_by=uploaded_by,
+        user_id=user_id,
+        booking_id=booking_id,
+        car_id=car_id,
+        expense_id=expense_id,
+    )
+    return f"drive://{result.get('id')}"
 
 
 def load_env_file() -> None:
@@ -1760,6 +1988,24 @@ def init_db() -> None:
                 expense_date TEXT NOT NULL DEFAULT CURRENT_DATE,
                 amount REAL NOT NULL DEFAULT 0,
                 description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS drive_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_scope TEXT NOT NULL,
+                folder_key TEXT NOT NULL,
+                drive_file_id TEXT NOT NULL,
+                drive_folder_id TEXT NOT NULL DEFAULT '',
+                drive_web_view_link TEXT NOT NULL DEFAULT '',
+                original_filename TEXT NOT NULL DEFAULT '',
+                mime_type TEXT NOT NULL DEFAULT '',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                uploaded_by INTEGER,
+                user_id INTEGER,
+                booking_id INTEGER,
+                car_id INTEGER,
+                expense_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -7849,6 +8095,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.parse_qs(body)
         return {key: values[0].strip() for key, values in parsed.items()}
 
+    def read_form_with_files(self) -> tuple[dict[str, str], dict[str, dict[str, object]]]:
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            return self.read_form(), {}
+        form: dict[str, str] = {}
+        files: dict[str, dict[str, object]] = {}
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        message = BytesParser(policy=EMAIL_POLICY).parsebytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+        )
+        for part in message.iter_parts():
+            if part.get_content_disposition() != "form-data":
+                continue
+            key = part.get_param("name", header="content-disposition")
+            if not key:
+                continue
+            filename = part.get_filename() or ""
+            if filename:
+                payload = part.get_payload(decode=True) or b""
+                if len(payload) <= MAX_DRIVE_UPLOAD_BYTES:
+                    files[key] = {
+                        "filename": Path(filename).name,
+                        "mime_type": part.get_content_type() or mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                        "payload": payload,
+                    }
+                continue
+            payload_text = part.get_content()
+            form[key] = str(payload_text).strip()
+        return form, files
+
     def current_user(self) -> sqlite3.Row | None:
         header = self.headers.get("Cookie", "")
         jar = cookies.SimpleCookie(header)
@@ -10353,6 +10630,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         receipt_url = row_value(row, "receipt_url")
         if not receipt_url:
             return '<span>No receipt</span>'
+        if receipt_url.startswith("drive://"):
+            return '<span>Stored in private Drive</span>'
         return f'<a class="admin-text-link" href="{escape(receipt_url)}" target="_blank" rel="noopener">Open receipt</a>'
 
     def render_car_receipt_row(self, row: sqlite3.Row) -> str:
@@ -11995,7 +12274,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
-        form = self.read_form()
+        form, files = self.read_form_with_files()
         try:
             car_id = int(form.get("car_id") or 0)
         except ValueError:
@@ -12011,7 +12290,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             car = con.execute("SELECT * FROM cars WHERE id = ? AND UPPER(TRIM(status)) != 'DELETED'", (car_id,)).fetchone()
             if car and amount > 0:
-                con.execute(
+                receipt_ref = form.get("receipt_url", "").strip()
+                cursor = con.execute(
                     """
                     INSERT INTO car_service_costs (car_id, cost_type, amount, service_date, vendor, receipt_url, notes)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -12022,10 +12302,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         amount,
                         service_date,
                         form.get("vendor", "").strip(),
-                        form.get("receipt_url", "").strip(),
+                        receipt_ref,
                         form.get("notes", "").strip(),
                     ),
                 )
+                service_cost_id = cursor.lastrowid
+                drive_ref = upload_file_payload_to_drive(
+                    con,
+                    folder_key="roi",
+                    file_scope="vehicle_service_receipt",
+                    file_data=files.get("receipt_file"),
+                    uploaded_by=row_value(user, "id"),
+                    car_id=car_id,
+                    expense_id=service_cost_id,
+                )
+                if drive_ref:
+                    receipt_ref = drive_ref
+                    con.execute("UPDATE car_service_costs SET receipt_url = ? WHERE id = ?", (receipt_ref, service_cost_id))
                 notify_slack_vehicle(
                     car,
                     cost_type,
@@ -12038,7 +12331,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
-        form = self.read_form()
+        form, files = self.read_form_with_files()
         try:
             amount = max(0.0, float(form.get("amount") or 0))
         except ValueError:
@@ -12047,12 +12340,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         description = (form.get("description") or "").strip()
         if amount > 0 and description:
             with db() as con:
-                con.execute(
+                cursor = con.execute(
                     """
                     INSERT INTO business_expenses (expense_date, amount, description)
                     VALUES (?, ?, ?)
                     """,
                     (expense_date, amount, description),
+                )
+                expense_id = cursor.lastrowid
+                upload_file_payload_to_drive(
+                    con,
+                    folder_key="roi",
+                    file_scope="business_expense_file",
+                    file_data=files.get("expense_file"),
+                    uploaded_by=row_value(user, "id"),
+                    expense_id=expense_id,
                 )
         self.redirect("/admin/roi")
 
@@ -12610,6 +12912,62 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_id = form.get("booking_id")
         user_id = form.get("user_id")
         with db() as con:
+            booking_public_id = ""
+            booking_for_drive = con.execute("SELECT booking_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            if booking_for_drive:
+                booking_public_id = row_value(booking_for_drive, "booking_id")
+            drive_field_values = {
+                "front_image_url": upload_data_url_to_drive(
+                    con,
+                    folder_key="driver_license",
+                    file_scope="driver_license_front",
+                    data_url=form.get("front_image_url", ""),
+                    fallback_name=f"{booking_public_id or booking_id}-dl-front",
+                    uploaded_by=row_value(user, "id"),
+                    user_id=user_id,
+                    booking_id=booking_id,
+                ),
+                "back_image_url": upload_data_url_to_drive(
+                    con,
+                    folder_key="driver_license",
+                    file_scope="driver_license_back",
+                    data_url=form.get("back_image_url", ""),
+                    fallback_name=f"{booking_public_id or booking_id}-dl-back",
+                    uploaded_by=row_value(user, "id"),
+                    user_id=user_id,
+                    booking_id=booking_id,
+                ),
+                "insurance_document_url": upload_data_url_to_drive(
+                    con,
+                    folder_key="insurance",
+                    file_scope="insurance_document",
+                    data_url=form.get("insurance_document_url", ""),
+                    fallback_name=f"{booking_public_id or booking_id}-insurance",
+                    uploaded_by=row_value(user, "id"),
+                    user_id=user_id,
+                    booking_id=booking_id,
+                ),
+            }
+            for photo_field in (
+                "pickup_front_image",
+                "pickup_back_image",
+                "pickup_left_image",
+                "pickup_right_image",
+                "return_front_image",
+                "return_back_image",
+                "return_left_image",
+                "return_right_image",
+            ):
+                drive_field_values[photo_field] = upload_data_url_to_drive(
+                    con,
+                    folder_key="pickup_return",
+                    file_scope=photo_field,
+                    data_url=form.get(photo_field, ""),
+                    fallback_name=f"{booking_public_id or booking_id}-{photo_field}",
+                    uploaded_by=row_value(user, "id"),
+                    user_id=user_id,
+                    booking_id=booking_id,
+                )
             con.execute(
                 """
                 UPDATE users
@@ -12631,8 +12989,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 license_number = form.get("license_number") or "PHOTO_CAPTURED_PENDING_NUMBER"
                 license_state = form.get("license_state") or "CO"
                 license_expiry = form.get("license_expiry") or "2028-12-31"
-                front_image_url = form.get("front_image_url", "")
-                back_image_url = form.get("back_image_url", "")
+                front_image_url = drive_field_values.get("front_image_url", form.get("front_image_url", ""))
+                back_image_url = drive_field_values.get("back_image_url", form.get("back_image_url", ""))
                 dl_status, dl_notes = evaluate_driver_license(
                     license_number,
                     license_state,
@@ -12669,7 +13027,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         form.get("insurance_type") or "Rental coverage",
                         float(form.get("coverage_amount") or 0),
                         form.get("insurance_provider"),
-                        form.get("insurance_document_url", ""),
+                        drive_field_values.get("insurance_document_url", form.get("insurance_document_url", "")),
                         float(form.get("insurance_price") or 0),
                     ),
                 )
@@ -12732,14 +13090,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     price_match_discount,
                     original_total,
                     revised_total,
-                    form.get("pickup_front_image", ""),
-                    form.get("pickup_back_image", ""),
-                    form.get("pickup_left_image", ""),
-                    form.get("pickup_right_image", ""),
-                    form.get("return_front_image", ""),
-                    form.get("return_back_image", ""),
-                    form.get("return_left_image", ""),
-                    form.get("return_right_image", ""),
+                    drive_field_values.get("pickup_front_image", form.get("pickup_front_image", "")),
+                    drive_field_values.get("pickup_back_image", form.get("pickup_back_image", "")),
+                    drive_field_values.get("pickup_left_image", form.get("pickup_left_image", "")),
+                    drive_field_values.get("pickup_right_image", form.get("pickup_right_image", "")),
+                    drive_field_values.get("return_front_image", form.get("return_front_image", "")),
+                    drive_field_values.get("return_back_image", form.get("return_back_image", "")),
+                    drive_field_values.get("return_left_image", form.get("return_left_image", "")),
+                    drive_field_values.get("return_right_image", form.get("return_right_image", "")),
                     booking_id,
                 ),
             )
