@@ -551,30 +551,42 @@
 
   .admin-shell-header {
     align-items: center !important;
-    gap: 10px !important;
-    min-height: 78px !important;
-    overflow: hidden !important;
-    padding: 10px 12px !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: 44px minmax(0, 1fr) !important;
+    min-height: 64px !important;
+    overflow: visible !important;
+    padding: 8px 10px !important;
   }
 
   .admin-shell-header .logo-lockup {
-    flex: 0 0 auto;
+    border-radius: 0 !important;
+    display: block !important;
+    flex: 0 0 44px;
+    height: 44px !important;
+    justify-self: start !important;
+    overflow: hidden !important;
+    width: 44px !important;
   }
 
   .admin-shell-header .logo-lockup img {
-    max-height: 46px !important;
-    max-width: 150px !important;
+    height: 44px !important;
+    max-height: none !important;
+    max-width: none !important;
+    object-fit: cover !important;
+    object-position: left center !important;
+    width: 150px !important;
   }
 
   .admin-shell-header .admin-nav-stack {
-    align-items: stretch !important;
-    display: flex !important;
+    align-items: center !important;
+    display: grid !important;
     flex: 1 1 auto !important;
-    gap: 8px !important;
-    justify-items: stretch !important;
+    gap: 0 !important;
+    justify-items: end !important;
     min-width: 0 !important;
-    overflow-x: auto !important;
-    padding: 4px 2px 8px !important;
+    overflow: visible !important;
+    padding: 0 !important;
     scrollbar-width: none;
   }
 
@@ -587,28 +599,35 @@
     display: flex !important;
     flex: 0 0 auto !important;
     flex-wrap: nowrap !important;
-    gap: 7px !important;
+    gap: 8px !important;
   }
 
   .admin-shell-header .admin-subnav {
-    background: rgba(255, 255, 255, 0.24) !important;
-    border-radius: 12px !important;
-    padding: 6px !important;
+    display: none !important;
   }
 
   .admin-shell-header .admin-nav-stack .admin-primary-nav a,
   .admin-shell-header .admin-nav-stack .admin-subnav a,
   .admin-shell-header .admin-nav a {
-    border-radius: 14px !important;
-    height: 44px !important;
-    min-height: 44px !important;
-    min-width: 44px !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: var(--navy) !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    min-width: 32px !important;
     padding: 0 !important;
-    width: 44px !important;
+    transform: none !important;
+    width: 32px !important;
   }
 
   .admin-nav-icon {
-    font-size: 1.04rem !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    font-size: 1.35rem !important;
     height: 30px !important;
     width: 30px !important;
   }
@@ -621,8 +640,8 @@
     font-size: 0.66rem !important;
     min-height: 19px !important;
     min-width: 19px !important;
-    right: -7px !important;
-    top: -8px !important;
+    right: -5px !important;
+    top: -7px !important;
   }
 
   .admin-hero .admin-subnav {
@@ -938,139 +957,60 @@
     width: min(340px, calc(100vw - 34px)) !important;
   }
 
-  .workspace-screen .admin-shell-header {
-    align-items: center !important;
+  .admin-shell-header .admin-primary-nav {
     display: grid !important;
     gap: 8px !important;
-    grid-template-columns: minmax(92px, 0.95fr) minmax(0, 2.8fr) !important;
-    justify-items: stretch !important;
-    min-height: 0 !important;
+    grid-template-columns: repeat(3, 32px) 34px !important;
+    justify-content: end !important;
     overflow: visible !important;
-    padding: 10px 12px !important;
-  }
-
-  .workspace-screen .admin-shell-header .logo-lockup {
-    justify-self: start !important;
-  }
-
-  .workspace-screen .admin-shell-header .logo-lockup img {
-    max-height: 48px !important;
-    max-width: 128px !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-nav-stack {
-    display: grid !important;
-    justify-self: stretch !important;
-    overflow: visible !important;
-    padding: 0 !important;
-    width: 100% !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-primary-nav {
-    display: grid !important;
-    gap: 6px !important;
-    grid-template-columns: repeat(3, minmax(38px, 1fr)) 40px !important;
     position: relative !important;
-    width: 100% !important;
+    width: max-content !important;
   }
 
-  .workspace-screen .admin-shell-header .admin-primary-nav a {
-    border-radius: 10px !important;
-    display: grid !important;
-    height: 48px !important;
-    justify-items: center !important;
-    min-height: 48px !important;
-    min-width: 0 !important;
-    padding: 5px 3px !important;
-    width: 100% !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-primary-nav > a:nth-of-type(n+4) {
+  .admin-shell-header .admin-primary-nav > a:nth-of-type(n+4) {
     display: none !important;
   }
 
-  .workspace-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
     display: grid !important;
+    grid-column: 4 !important;
+    left: calc(100% - 34px) !important;
+    position: absolute !important;
+    z-index: 35 !important;
   }
 
-  .workspace-screen .admin-shell-header .admin-primary-nav.is-open {
-    background: rgba(245, 250, 255, 0.72) !important;
-    border: 1px solid rgba(126, 198, 232, 0.36) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 14px 34px rgba(7, 20, 63, 0.12) !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) 40px !important;
-    padding: 6px !important;
-  }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(4) { top: 42px !important; }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(5) { top: 82px !important; }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(6) { top: 122px !important; }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(7) { top: 162px !important; }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(8) { top: 202px !important; }
+  .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(9) { top: 242px !important; }
 
-  .workspace-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
-    grid-column: span 1 !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-nav-label {
-    gap: 2px !important;
-    grid-template-rows: 26px auto !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-nav-icon {
-    height: 26px !important;
-    width: 26px !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-nav-text {
-    color: inherit !important;
-    display: block !important;
-    font-size: 0.56rem !important;
-    font-weight: 900 !important;
-    line-height: 1 !important;
-    max-width: 100% !important;
-    opacity: 0.92 !important;
-    overflow: hidden !important;
-    position: static !important;
-    text-align: center !important;
-    text-overflow: ellipsis !important;
-    transform: none !important;
-    white-space: nowrap !important;
-    width: 100% !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-nav-badge {
-    right: 8px !important;
-    top: -6px !important;
-  }
-
-  .workspace-mobile-nav-toggle {
+  .admin-mobile-nav-toggle {
     align-items: center !important;
     align-self: stretch !important;
-    background: rgba(255, 255, 255, 0.86) !important;
-    border: 1px solid rgba(126, 198, 232, 0.48) !important;
-    border-radius: 10px !important;
-    box-shadow: 0 8px 18px rgba(7, 20, 63, 0.08) !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
     cursor: pointer !important;
     display: inline-grid !important;
-    gap: 4px !important;
+    gap: 5px !important;
     grid-column: 4 !important;
     grid-row: 1 !important;
-    height: 48px !important;
+    height: 36px !important;
     justify-content: center !important;
-    min-height: 48px !important;
+    min-height: 36px !important;
     padding: 0 !important;
-    width: 40px !important;
+    width: 34px !important;
   }
 
-  .workspace-mobile-nav-toggle span {
+  .admin-mobile-nav-toggle span {
     background: var(--navy) !important;
     border-radius: 999px !important;
     display: block !important;
     height: 3px !important;
-    width: 22px !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-primary-nav.is-open .workspace-mobile-nav-toggle {
-    background: rgba(7, 20, 63, 0.94) !important;
-  }
-
-  .workspace-screen .admin-shell-header .admin-primary-nav.is-open .workspace-mobile-nav-toggle span {
-    background: #fff !important;
+    width: 24px !important;
   }
 
   /* Workspace: fixed side rails become compact sections; only feed scrolls naturally. */
@@ -1435,21 +1375,21 @@
   }
 
   .admin-shell-header .logo-lockup img {
-    max-width: 122px !important;
+    max-width: none !important;
   }
 
   .workspace-screen .admin-shell-header .logo-lockup img {
-    max-height: 44px !important;
-    max-width: 108px !important;
+    max-height: none !important;
+    max-width: none !important;
   }
 
   .admin-shell-header .admin-nav-stack .admin-primary-nav a,
   .admin-shell-header .admin-nav-stack .admin-subnav a,
   .admin-shell-header .admin-nav a {
-    height: 40px !important;
-    min-height: 40px !important;
-    min-width: 40px !important;
-    width: 40px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    min-width: 32px !important;
+    width: 32px !important;
   }
 
   .admin-nav-icon {

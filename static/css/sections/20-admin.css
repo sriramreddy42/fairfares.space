@@ -1651,7 +1651,8 @@
 .workspace-profile-slack {
   display: none;
 }
-.workspace-mobile-nav-toggle {
+.workspace-mobile-nav-toggle,
+.admin-mobile-nav-toggle {
   display: none;
 }
 .workspace-profile-meta span {

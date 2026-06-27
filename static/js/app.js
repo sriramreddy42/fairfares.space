@@ -129,14 +129,14 @@ document.querySelectorAll("[data-workspace-profile-card]").forEach((card) => {
   });
 });
 
-document.querySelectorAll(".workspace-screen .admin-primary-nav").forEach((nav) => {
-  if (nav.querySelector("[data-workspace-mobile-nav-toggle]")) return;
+document.querySelectorAll(".admin-screen .admin-primary-nav").forEach((nav) => {
+  if (nav.querySelector("[data-admin-mobile-nav-toggle]")) return;
   const button = document.createElement("button");
-  button.className = "workspace-mobile-nav-toggle";
+  button.className = "admin-mobile-nav-toggle";
   button.type = "button";
-  button.setAttribute("aria-label", "Open more workspace navigation");
+  button.setAttribute("aria-label", "Open more navigation");
   button.setAttribute("aria-expanded", "false");
-  button.setAttribute("data-workspace-mobile-nav-toggle", "true");
+  button.setAttribute("data-admin-mobile-nav-toggle", "true");
   button.innerHTML = "<span></span><span></span><span></span>";
   nav.appendChild(button);
   button.addEventListener("click", (event) => {
@@ -148,10 +148,10 @@ document.querySelectorAll(".workspace-screen .admin-primary-nav").forEach((nav) 
 
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-  if (target?.closest(".workspace-screen .admin-primary-nav")) return;
-  document.querySelectorAll(".workspace-screen .admin-primary-nav.is-open").forEach((nav) => {
+  if (target?.closest(".admin-screen .admin-primary-nav")) return;
+  document.querySelectorAll(".admin-screen .admin-primary-nav.is-open").forEach((nav) => {
     nav.classList.remove("is-open");
-    nav.querySelector("[data-workspace-mobile-nav-toggle]")?.setAttribute("aria-expanded", "false");
+    nav.querySelector("[data-admin-mobile-nav-toggle]")?.setAttribute("aria-expanded", "false");
   });
 });
 
