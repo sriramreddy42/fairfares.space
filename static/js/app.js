@@ -320,11 +320,13 @@ document.querySelectorAll("[data-workspace-comment-toggle]").forEach((button) =>
 async function submitWorkspaceForm(form, extra = {}) {
   const data = new FormData(form);
   Object.entries(extra).forEach(([key, value]) => data.set(key, value));
+  const body = new URLSearchParams(data);
   const response = await fetch(form.action, {
     method: "POST",
-    body: data,
+    body,
     headers: {
       Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
       "X-Requested-With": "fetch",
     },
   });
