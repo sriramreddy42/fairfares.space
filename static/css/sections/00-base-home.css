@@ -175,15 +175,16 @@ input, select, textarea, button {
 }
 
 .price-match-track img {
-  animation: priceMatchPass 11s ease-in-out 0.35s 1 both;
+  animation: priceMatchPass 16s ease-in-out 0.35s 1 both;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
   height: auto;
   max-width: none;
   object-fit: contain;
   opacity: 0.96;
   position: absolute;
+  left: 0;
   top: 50%;
-  transform: translate(110vw, -50%);
+  transform: translate(100vw, -50%);
   width: clamp(360px, 42vw, 760px);
 }
 
@@ -193,10 +194,10 @@ input, select, textarea, button {
 
 @keyframes priceMatchPass {
   from {
-    transform: translate(108vw, -50%);
+    transform: translate(100vw, -50%);
   }
   to {
-    transform: translate(-115%, -50%);
+    transform: translate(-120%, -50%);
   }
 }
 
