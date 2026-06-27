@@ -93,6 +93,34 @@ class RentalAgreementTest(unittest.TestCase):
         self.assertIn("agreement_issuer_name", issuer_fields)
         self.assertNotIn("agreement_lessee_name", issuer_fields)
 
+    def test_customer_agreement_page_renders_for_admin(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=2)
+
+        class TestHandler(app.FairFaresHandler):
+            def __init__(self):
+                pass
+
+            def require_admin(self):
+                with app.db() as con:
+                    return con.execute("SELECT * FROM users WHERE email = ?", (app.DEFAULT_ADMIN_EMAIL,)).fetchone()
+
+            def send_html(self, body, status=200):
+                self.rendered_body = body.decode("utf-8") if isinstance(body, bytes) else body
+                self.rendered_status = status
+
+            def not_found(self):
+                self.rendered_body = "not found"
+                self.rendered_status = 404
+
+        handler = TestHandler()
+        handler.path = f"/admin/agreement/customer?booking_id={booking['id']}"
+        handler.admin_customer_agreement_page()
+
+        self.assertEqual(handler.rendered_status, 200)
+        self.assertIn("Customer form", handler.rendered_body)
+        self.assertIn("electronic_consent", handler.rendered_body)
+
 
 if __name__ == "__main__":
     unittest.main()

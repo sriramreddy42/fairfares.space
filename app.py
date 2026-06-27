@@ -11675,9 +11675,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_id = int(query.get("booking_id", ["0"])[0] or 0)
         except ValueError:
             booking_id = 0
-        if form.get("electronic_consent") != "1":
-            self.send_html(b"Electronic signature consent is required.", 400)
-            return
         booking, license_row, insurance, agreement = get_admin_agreement_context(booking_id)
         if not booking:
             self.not_found()
@@ -11749,6 +11746,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_id = int(form.get("booking_id") or 0)
         except ValueError:
             booking_id = 0
+        if form.get("electronic_consent") != "1":
+            self.send_html(b"Electronic signature consent is required.", 400)
+            return
         booking, license_row, insurance, agreement = get_admin_agreement_context(booking_id)
         if not booking:
             self.not_found()
