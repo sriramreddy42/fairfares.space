@@ -48,7 +48,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627receipt1"
+ASSET_VERSION = "20260627tickets1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -11341,25 +11341,61 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <button type="submit">Escalate to on-call</button>
                 </form>
             """
+        row_class = "ticket-open ticket-critical" if row["status"] != "CLOSED" and priority in {"P0", "P1"} else "ticket-open" if row["status"] != "CLOSED" else ""
+        booking_label = row_value(row, "booking_id") or "No booking"
+        claimed_label = row_value(row, "claimed_by") or "Unclaimed"
         return f"""
-        <tr class="{'ticket-open ticket-critical' if row["status"] != "CLOSED" and priority in {"P0", "P1"} else 'ticket-open' if row["status"] != "CLOSED" else ''}">
-            <td><b>{escape(row["ticket_id"])}</b><span>{escape(row["created_at"])}</span>{urgent}</td>
-            <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
-            <td>{escape(row["booking_id"] or "No booking")}</td>
-            <td>{priority_badge}<span>{escape(sla)}</span><span>{escape(row["alert_summary"] or "Dashboard alert queued")}</span></td>
-            <td>{escape(row["topic"])}<span>{escape(row["preferred_contact"])}</span></td>
-            <td>{escape(row["message"] or "-")}</td>
-            <td>
-                <form method="post" action="/admin/tickets/update" class="admin-stack-form">
-                    <input type="hidden" name="ticket_id" value="{row["id"]}">
-                    <input name="claimed_by" value="{escape(row["claimed_by"])}" placeholder="Claimed by">
-                    <select name="status">{status_options}</select>
-                    <textarea name="admin_comment" rows="2" placeholder="Comment / follow-up">{escape(row["admin_comment"])}</textarea>
-                    <button type="submit">Update Ticket</button>
-                </form>
-                {escalation_action}
+        <tr class="{row_class}">
+            <td colspan="8">
+                <article class="ticket-card">
+                    <header class="ticket-card-head">
+                        <div class="ticket-id-block">
+                            <b>{escape(row_value(row, "ticket_id"))}</b>
+                            <span>{escape(row_value(row, "created_at"))}</span>
+                        </div>
+                        <div class="ticket-priority-block">
+                            {priority_badge}
+                            {urgent}
+                            <span>{escape(sla)}</span>
+                        </div>
+                        <div class="ticket-owner-block">
+                            <b>{escape(claimed_label)}</b>
+                            <span>{escape(row_value(row, "status").replace("_", " ").title())}</span>
+                        </div>
+                    </header>
+                    <div class="ticket-card-grid">
+                        <section class="ticket-customer-block">
+                            <span>Customer</span>
+                            <b>{escape(row_value(row, "user_name"))}</b>
+                            <small>{escape(row_value(row, "user_email"))}</small>
+                        </section>
+                        <section class="ticket-meta-block">
+                            <span>Booking</span>
+                            <b>{escape(booking_label)}</b>
+                            <small>{escape(row_value(row, "topic"))} · {escape(row_value(row, "preferred_contact"))}</small>
+                        </section>
+                        <section class="ticket-alert-block">
+                            <span>Alert</span>
+                            <b>{escape(row_value(row, "alert_summary") or "Dashboard alert queued")}</b>
+                        </section>
+                        <section class="ticket-message-block">
+                            <span>Message</span>
+                            <p>{escape(row_value(row, "message") or "-")}</p>
+                        </section>
+                        <section class="ticket-action-block">
+                            <form method="post" action="/admin/tickets/update" class="admin-stack-form ticket-update-form">
+                                <input type="hidden" name="ticket_id" value="{row["id"]}">
+                                <input name="claimed_by" value="{escape(row_value(row, "claimed_by"))}" placeholder="Claimed by">
+                                <select name="status">{status_options}</select>
+                                <textarea name="admin_comment" rows="2" placeholder="Comment / follow-up">{escape(row_value(row, "admin_comment"))}</textarea>
+                                <button type="submit">Update</button>
+                            </form>
+                            {escalation_action}
+                        </section>
+                    </div>
+                    {escalation_note}
+                </article>
             </td>
-            <td>{escape(row["claimed_by"] or "Unclaimed")}{escalation_note}</td>
         </tr>
         """
 
@@ -12212,7 +12248,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_id = cursor.lastrowid
             receipt_ref = upload_file_payload_to_drive(
                 con,
-                folder_key="roi_file",
+                folder_key="roi",
                 file_scope="vehicle_purchase_receipt",
                 file_data=purchase_receipt_file,
                 uploaded_by=row_value(user, "id"),
@@ -12374,6 +12410,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if drive_ref:
                     receipt_ref = drive_ref
                     con.execute("UPDATE car_service_costs SET receipt_url = ? WHERE id = ?", (receipt_ref, service_cost_id))
+                elif files.get("receipt_file"):
+                    receipt_ref = save_file_payload_locally(
+                        folder_name="vehicle-service-receipts",
+                        file_data=files.get("receipt_file"),
+                        fallback_name=f"vehicle-{car_id}-{cost_type.lower()}-receipt",
+                    )
+                    if receipt_ref:
+                        con.execute("UPDATE car_service_costs SET receipt_url = ? WHERE id = ?", (receipt_ref, service_cost_id))
                 notify_slack_vehicle(
                     car,
                     cost_type,

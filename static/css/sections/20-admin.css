@@ -2101,6 +2101,106 @@
   font-weight: 700;
   margin-top: 3px;
 }
+.ticket-table {
+  border-collapse: separate;
+  border-spacing: 0 10px;
+}
+.ticket-table thead {
+  display: none;
+}
+.ticket-table td {
+  border: 0;
+  padding: 0;
+}
+.ticket-card {
+  background: #fff;
+  border: 1px solid rgba(207, 212, 223, 0.9);
+  border-left: 5px solid rgba(7, 20, 63, 0.25);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.ticket-critical .ticket-card {
+  background: linear-gradient(90deg, rgba(236, 0, 22, 0.055), #fff 46%);
+  border-left-color: var(--red);
+}
+.ticket-card-head {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(220px, 1.4fr) minmax(150px, 0.8fr);
+}
+.ticket-id-block,
+.ticket-priority-block,
+.ticket-owner-block,
+.ticket-card-grid section {
+  min-width: 0;
+}
+.ticket-id-block b,
+.ticket-owner-block b,
+.ticket-card-grid b {
+  color: var(--navy);
+  display: block;
+  overflow-wrap: break-word;
+}
+.ticket-id-block span,
+.ticket-priority-block span,
+.ticket-owner-block span,
+.ticket-card-grid span,
+.ticket-card-grid small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-top: 2px;
+  overflow-wrap: break-word;
+}
+.ticket-priority-block {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ticket-card-grid {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(170px, 0.9fr) minmax(150px, 0.8fr) minmax(220px, 1fr) minmax(260px, 1.35fr) minmax(210px, 0.95fr);
+}
+.ticket-message-block p {
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.25;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ticket-update-form {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr 0.8fr;
+}
+.ticket-update-form textarea,
+.ticket-update-form button {
+  grid-column: 1 / -1;
+}
+.ticket-update-form input,
+.ticket-update-form select,
+.ticket-update-form textarea,
+.ticket-update-form button,
+.ticket-escalation-form textarea,
+.ticket-escalation-form button {
+  border-radius: 7px;
+  font-size: 0.84rem;
+  min-height: 34px;
+  padding: 7px 9px;
+}
+.ticket-update-form button,
+.ticket-escalation-form button {
+  min-height: 36px;
+}
 .ticket-escalation-note {
   background: rgba(236, 0, 22, 0.07);
   border: 1px solid rgba(236, 0, 22, 0.18);
@@ -2125,6 +2225,36 @@
   border-radius: 7px;
   margin-top: 10px;
   padding: 10px;
+}
+@media (max-width: 1180px) {
+  .ticket-card-head {
+    grid-template-columns: minmax(130px, 0.8fr) minmax(190px, 1.2fr) minmax(130px, 0.8fr);
+  }
+  .ticket-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ticket-message-block,
+  .ticket-action-block {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 700px) {
+  .ticket-card {
+    gap: 8px;
+    padding: 10px;
+  }
+  .ticket-card-head,
+  .ticket-card-grid,
+  .ticket-update-form {
+    grid-template-columns: 1fr;
+  }
+  .ticket-priority-block {
+    align-items: flex-start;
+  }
+  .ticket-message-block,
+  .ticket-action-block {
+    grid-column: auto;
+  }
 }
 .booking-calendar-card {
   background:
