@@ -48,7 +48,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627poster7"
+ASSET_VERSION = "20260627receipt1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -304,6 +304,31 @@ def upload_file_payload_to_drive(
         expense_id=expense_id,
     )
     return f"drive://{result.get('id')}"
+
+
+def save_file_payload_locally(
+    *,
+    folder_name: str,
+    file_data: dict[str, object] | None,
+    fallback_name: str,
+) -> str:
+    if not file_data:
+        return ""
+    payload = file_data.get("payload")
+    if not isinstance(payload, bytes) or not payload:
+        return ""
+    filename = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(file_data.get("filename") or fallback_name)).strip("-")
+    if not filename:
+        filename = fallback_name
+    extension = Path(filename).suffix or mimetypes.guess_extension(str(file_data.get("mime_type") or "")) or ".bin"
+    safe_name = f"{Path(filename).stem[:80]}-{secrets.token_hex(8)}{extension}"
+    upload_dir = DB_PATH.parent / "uploads" / folder_name
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    target = (upload_dir / safe_name).resolve()
+    if not str(target).startswith(str(upload_dir.resolve())):
+        return ""
+    target.write_bytes(payload)
+    return f"local://uploads/{folder_name}/{safe_name}"
 
 
 def load_env_file() -> None:
@@ -1967,6 +1992,7 @@ def init_db() -> None:
                 license_plate TEXT NOT NULL DEFAULT '',
                 vin_number TEXT NOT NULL DEFAULT '',
                 purchase_cost REAL NOT NULL DEFAULT 0,
+                purchase_receipt_url TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0
             );
 
@@ -2494,6 +2520,7 @@ def init_db() -> None:
         ensure_column(con, "cars", "license_plate", "license_plate TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "vin_number", "vin_number TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "purchase_cost", "purchase_cost REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "cars", "purchase_receipt_url", "purchase_receipt_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "booking_status", "booking_status TEXT NOT NULL DEFAULT 'CONFIRMED'")
         ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
@@ -10365,7 +10392,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             available_cars=metrics["available"],
             booked_count=metrics["booked"],
             user_count=metrics["users"],
-            cars=cars or '<tr><td colspan="9">No inventory yet.</td></tr>',
+            cars=cars or '<tr><td colspan="10">No inventory yet.</td></tr>',
             fleet_summary=fleet_summary or '<tr><td colspan="7">No fleet data yet.</td></tr>',
         )
         self.send_html(body)
@@ -10600,6 +10627,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
             car_image=escape(row_value(car, "image_url") or "/static/img/booking-confirmation-promise.png"),
             purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
+            purchase_receipt=self.render_receipt_link(car),
             booking_count=escape(str(detail["booking_count"])),
             total_revenue=format_money(detail["total_revenue"]),
             repair_total=format_money(detail["repair_total"]),
@@ -10627,11 +10655,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """
 
     def render_receipt_link(self, row: sqlite3.Row) -> str:
-        receipt_url = row_value(row, "receipt_url")
+        receipt_url = row_value(row, "receipt_url") or row_value(row, "purchase_receipt_url")
         if not receipt_url:
             return '<span>No receipt</span>'
         if receipt_url.startswith("drive://"):
             return '<span>Stored in private Drive</span>'
+        if receipt_url.startswith("local://"):
+            return '<span>Stored in FairFares storage</span>'
         return f'<a class="admin-text-link" href="{escape(receipt_url)}" target="_blank" rel="noopener">Open receipt</a>'
 
     def render_car_receipt_row(self, row: sqlite3.Row) -> str:
@@ -11601,7 +11631,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["year"] or "-")}</td>
             <td>{escape(row["type"] or row["category"])}</td>
             <td>{escape(row["fuel_type"])}</td>
-            <td><input form="car-update-{row["id"]}" name="purchase_cost" type="number" min="0" step="0.01" value="{float(row_value(row, "purchase_cost") or 0):.2f}" aria-label="Purchase cost"></td>
+            <td><input form="car-update-{row["id"]}" name="purchase_cost" type="number" min="0.01" step="0.01" value="{float(row_value(row, "purchase_cost") or 0):.2f}" aria-label="Purchase cost"></td>
+            <td>{self.render_receipt_link(row)}</td>
             <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle location"></td>
             <td><input form="car-update-{row["id"]}" name="daily_price" type="number" step="0.01" value="{row["daily_price"]:.2f}" aria-label="Daily price"></td>
             <td>
@@ -12123,7 +12154,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
-        form = self.read_form()
+        form, files = self.read_form_with_files()
         brand = form.get("brand", "")
         model = form.get("model", "")
         name = f"{brand} {model}".strip() or form.get("name", "New Car")
@@ -12135,12 +12166,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             purchase_cost = max(0.0, float(form.get("purchase_cost") or 0))
         except ValueError:
             purchase_cost = 0.0
+        purchase_receipt_file = files.get("purchase_receipt_file")
+        if purchase_cost <= 0 or not purchase_receipt_file:
+            self.redirect("/admin/inventory?error=purchase_receipt_required")
+            return
         try:
             days = int(form.get("days") or 7)
         except ValueError:
             days = 7
         with db() as con:
-            con.execute(
+            cursor = con.execute(
                 """
                 INSERT INTO cars
                 (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
@@ -12174,6 +12209,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     int(form.get("sort_order") or 99),
                 ),
             )
+            car_id = cursor.lastrowid
+            receipt_ref = upload_file_payload_to_drive(
+                con,
+                folder_key="roi_file",
+                file_scope="vehicle_purchase_receipt",
+                file_data=purchase_receipt_file,
+                uploaded_by=row_value(user, "id"),
+                car_id=car_id,
+            )
+            if not receipt_ref:
+                receipt_ref = save_file_payload_locally(
+                    folder_name="vehicle-purchase-receipts",
+                    file_data=purchase_receipt_file,
+                    fallback_name=f"vehicle-{car_id}-purchase-receipt",
+                )
+            if not receipt_ref:
+                con.execute("DELETE FROM cars WHERE id = ?", (car_id,))
+                self.redirect("/admin/inventory?error=purchase_receipt_upload_failed")
+                return
+            con.execute("UPDATE cars SET purchase_receipt_url = ? WHERE id = ?", (receipt_ref, car_id))
         self.redirect("/admin/inventory")
 
     def update_admin_car_status(self) -> None:
