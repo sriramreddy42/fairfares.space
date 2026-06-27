@@ -129,32 +129,6 @@ document.querySelectorAll("[data-workspace-profile-card]").forEach((card) => {
   });
 });
 
-document.querySelectorAll(".admin-screen .admin-primary-nav").forEach((nav) => {
-  if (nav.querySelector("[data-admin-mobile-nav-toggle]")) return;
-  const button = document.createElement("button");
-  button.className = "admin-mobile-nav-toggle";
-  button.type = "button";
-  button.setAttribute("aria-label", "Open more navigation");
-  button.setAttribute("aria-expanded", "false");
-  button.setAttribute("data-admin-mobile-nav-toggle", "true");
-  button.innerHTML = "<span></span><span></span><span></span>";
-  nav.appendChild(button);
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    const isOpen = nav.classList.toggle("is-open");
-    button.setAttribute("aria-expanded", isOpen ? "true" : "false");
-  });
-});
-
-document.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-  if (target?.closest(".admin-screen .admin-primary-nav")) return;
-  document.querySelectorAll(".admin-screen .admin-primary-nav.is-open").forEach((nav) => {
-    nav.classList.remove("is-open");
-    nav.querySelector("[data-admin-mobile-nav-toggle]")?.setAttribute("aria-expanded", "false");
-  });
-});
-
 document.querySelectorAll("[data-policy-toggle]").forEach((button) => {
   button.addEventListener("click", () => {
     const card = button.closest(".checkout-policy-card");
