@@ -651,18 +651,24 @@
     border: 1px solid rgba(199, 241, 255, 0.22) !important;
     border-radius: 10px !important;
     display: grid !important;
-    gap: 8px !important;
+    gap: 6px !important;
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    padding: 8px !important;
+    padding: 7px !important;
   }
 
   .admin-hero .admin-subnav a {
     border-radius: 8px !important;
-    height: 42px !important;
-    min-height: 42px !important;
+    height: 48px !important;
+    min-height: 48px !important;
     min-width: 0 !important;
     padding: 0 !important;
     width: auto !important;
+  }
+
+  .admin-hero .admin-subnav .admin-nav-icon {
+    font-size: 1.35rem !important;
+    height: 32px !important;
+    width: 32px !important;
   }
 
   .admin-hero .admin-subnav .admin-nav-badge {
@@ -700,15 +706,68 @@
     grid-template-columns: 1fr !important;
   }
 
+  .admin-inventory-screen .admin-metrics,
+  .admin-roi-screen .admin-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
   .admin-metrics article,
   .admin-link-grid a,
   .admin-card {
     border-radius: 10px !important;
-    padding: 12px !important;
+    padding: 10px !important;
+  }
+
+  .admin-inventory-screen .admin-metrics article,
+  .admin-roi-screen .admin-metrics article {
+    gap: 3px !important;
+    min-height: 64px !important;
+    padding: 10px 12px !important;
+  }
+
+  .admin-inventory-screen .admin-metrics span,
+  .admin-roi-screen .admin-metrics span {
+    font-size: 0.78rem !important;
+    line-height: 1.15 !important;
   }
 
   .admin-metrics article b {
-    font-size: 1.35rem !important;
+    font-size: 1.28rem !important;
+  }
+
+  .admin-inventory-screen .admin-card-head,
+  .admin-roi-screen .admin-card-head {
+    gap: 4px !important;
+  }
+
+  .admin-inventory-screen .admin-card-head p,
+  .admin-roi-screen .admin-card-head p {
+    font-size: 0.78rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .admin-inventory-screen .admin-form,
+  .admin-roi-screen .admin-form {
+    gap: 8px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .admin-inventory-screen .admin-form label,
+  .admin-roi-screen .admin-form label {
+    min-width: 0 !important;
+  }
+
+  .admin-inventory-screen .admin-form label.wide,
+  .admin-roi-screen .admin-form label.wide {
+    grid-column: 1 / -1 !important;
+  }
+
+  .admin-inventory-screen .admin-form button,
+  .admin-roi-screen .admin-form button {
+    border-radius: 8px !important;
+    grid-column: 1 / -1 !important;
+    min-height: 42px !important;
+    padding: 9px 12px !important;
   }
 
   .admin-card h2,
@@ -853,6 +912,64 @@
     font-size: 0.82rem !important;
     min-height: 36px !important;
     padding: 7px 9px !important;
+  }
+
+  .admin-tickets-screen .ticket-table {
+    border-collapse: separate !important;
+    border-spacing: 0 10px !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .admin-tickets-screen .admin-table-wrap {
+    background: transparent !important;
+    border: 0 !important;
+    margin-inline: 0 !important;
+    overflow: visible !important;
+  }
+
+  .admin-tickets-screen .ticket-table thead {
+    display: none !important;
+  }
+
+  .admin-tickets-screen .ticket-table tbody,
+  .admin-tickets-screen .ticket-table tr,
+  .admin-tickets-screen .ticket-table td {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .admin-tickets-screen .ticket-table tr {
+    background: #fff !important;
+    border: 1px solid rgba(207, 212, 223, 0.9) !important;
+    border-left: 5px solid rgba(230, 0, 25, 0.82) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 20px rgba(7, 20, 63, 0.06) !important;
+    overflow: hidden !important;
+    padding: 10px !important;
+  }
+
+  .admin-tickets-screen .ticket-table td {
+    border: 0 !important;
+    padding: 5px 0 !important;
+  }
+
+  .admin-tickets-screen .ticket-table td:nth-child(3),
+  .admin-tickets-screen .ticket-table td:nth-child(4),
+  .admin-tickets-screen .ticket-table td:nth-child(5) {
+    display: inline-block !important;
+    margin-right: 8px !important;
+    width: auto !important;
+  }
+
+  .admin-tickets-screen .ticket-table .admin-stack-form {
+    gap: 7px !important;
+    grid-template-columns: 1fr !important;
+    padding: 0 !important;
+  }
+
+  .admin-tickets-screen .ticket-table .admin-stack-form button {
+    min-height: 40px !important;
   }
 
   .admin-screen .admin-bookings-table .approval-note,
@@ -1382,5 +1499,10 @@
 
   .admin-table {
     min-width: 620px;
+  }
+
+  .admin-inventory-screen .admin-form,
+  .admin-roi-screen .admin-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }

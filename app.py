@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627reactionsummary"
+ASSET_VERSION = "20260627adminspace"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -10912,7 +10912,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         today_oncall = get_oncall_shift_for_day()
         sorted_tickets = sort_tickets_for_admin(get_admin_tickets(), user, today_oncall)
-        tickets = "\n".join(self.render_ticket_row(row, today_oncall) for row in sorted_tickets)
+        tickets = "\n".join(self.render_ticket_row(row, today_oncall, user) for row in sorted_tickets)
         oncall_owner = (
             f"{row_value(today_oncall, 'admin_name')} ({row_value(today_oncall, 'admin_email')})"
             if today_oncall
@@ -10990,7 +10990,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         </article>
         """
 
-    def render_ticket_row(self, row: sqlite3.Row, today_oncall: sqlite3.Row | None = None) -> str:
+    def render_ticket_row(self, row: sqlite3.Row, today_oncall: sqlite3.Row | None = None, viewer: sqlite3.Row | None = None) -> str:
         status_options = "".join(
             f'<option value="{status}" {"selected" if row["status"] == status else ""}>{status.replace("_", " ").title()}</option>'
             for status in ("OPEN", "IN_PROGRESS", "FOLLOWUP", "CLOSED")
@@ -11000,6 +11000,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         priority_badge = f'<span class="ticket-priority ticket-priority-{priority.lower()}">{escape(priority)}</span>'
         sla = support_sla_text(priority)
         escalated = bool(int(row_value(row, "escalated_to_oncall") or 0))
+        viewer_id = int(row_value(viewer, "id") or 0)
+        oncall_id = int(row_value(today_oncall, "admin_user_id") or 0)
+        viewer_is_oncall = bool(viewer_id and viewer_id == oncall_id)
+        viewer_is_employee = normalized_user_role(row_value(viewer, "role")) == ROLE_EMPLOYEE and not is_admin_user(viewer)
+        auto_escalated = priority == "P0" and not escalated
         escalator = row_value(row, "escalated_by_name") or "System auto-escalation"
         oncall_owner = (
             f"{row_value(today_oncall, 'admin_name')} ({row_value(today_oncall, 'admin_email')})"
@@ -11009,22 +11014,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         escalation_note = (
             f"""
             <div class="ticket-escalation-note">
-              <b>On-call escalated</b>
+              <b>{'Auto escalated' if auto_escalated else 'Manually escalated'}</b>
               <span>Owner: {escape(oncall_owner)}</span>
-              <span>{escape(escalator)}{f' · {escape(row_value(row, "escalated_at"))}' if row_value(row, "escalated_at") else ''}</span>
-              <small>{escape(row_value(row, "escalation_reason") or "No reason saved.")}</small>
+              <span>{escape('System priority routing' if auto_escalated else escalator)}{f' · {escape(row_value(row, "escalated_at"))}' if row_value(row, "escalated_at") else ''}</span>
+              <small>{escape(row_value(row, "escalation_reason") or ('P0 tickets route to on-call automatically.' if auto_escalated else 'No reason saved.'))}</small>
             </div>
             """
             if escalated or priority == "P0"
             else ""
         )
         escalation_action = ""
-        if row_value(row, "status") != "CLOSED" and not escalated:
+        if row_value(row, "status") != "CLOSED" and not escalated and priority != "P0" and viewer_is_employee and not viewer_is_oncall:
             escalation_action = f"""
                 <form method="post" action="/admin/tickets/escalate" class="admin-stack-form ticket-escalation-form">
                     <input type="hidden" name="ticket_id" value="{row["id"]}">
                     <textarea name="reason" rows="2" required placeholder="Reason for on-call escalation"></textarea>
-                    <button type="submit">Escalate On-Call</button>
+                    <button type="submit">Escalate to on-call</button>
                 </form>
             """
         return f"""
@@ -12268,6 +12273,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def escalate_admin_ticket(self) -> None:
         user = self.require_admin()
         if not user:
+            return
+        if is_admin_user(user):
+            self.redirect("/admin/tickets")
             return
         form = self.read_form()
         try:
