@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626mobilecheckout"
+ASSET_VERSION = "20260626adminbookingmobile"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -11373,19 +11373,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             request_note = f'<small class="approval-note"><b>{escape(request_type)}</b>{escape(action_copy)}</small>'
         return f"""
         <tr class="{'admin-request-row' if is_request else ''}">
-            <td><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
-            <td>{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
-            <td>{escape(row["car_name"])}</td>
-            <td>
+            <td data-label="Booking"><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
+            <td data-label="User">{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
+            <td data-label="Car">{escape(row["car_name"])}</td>
+            <td data-label="Dates">
                 <b>{escape(row["pickup_date"])} at {escape(row["pickup_time"])}</b>
                 <span>{escape(row["dropoff_date"])} at {escape(row["dropoff_time"])}</span>
             </td>
-            <td>
+            <td data-label="Total">
                 <b>{escape(format_money(row["total_price"]))}</b>
                 <span>{escape(payment_label)}</span>
                 <span>{escape(pickup_balance_label)}</span>
             </td>
-            <td>
+            <td data-label="Status">
                 {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
                 <form method="post" action="/admin/bookings/status" class="admin-stack-form">
                     <input type="hidden" name="booking_id" value="{row["id"]}">
@@ -11397,7 +11397,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </form>
                 {refund_action}
             </td>
-            <td><a class="admin-text-link" href="/admin/pickup">Open Pickup</a></td>
+            <td data-label="Pickup"><a class="admin-text-link" href="/admin/pickup">Open Pickup</a></td>
         </tr>
         """
 

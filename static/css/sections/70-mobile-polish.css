@@ -655,6 +655,137 @@
     white-space: normal !important;
   }
 
+  .admin-screen .admin-table td[data-label] {
+    overflow-wrap: anywhere !important;
+  }
+
+  .admin-screen .admin-bookings-table {
+    border-collapse: separate !important;
+    border-spacing: 0 10px !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .admin-screen .admin-bookings-table-wrap {
+    background: transparent !important;
+    border: 0 !important;
+    margin-inline: 0 !important;
+    overflow: visible !important;
+  }
+
+  .admin-screen .admin-bookings-table thead {
+    display: none !important;
+  }
+
+  .admin-screen .admin-bookings-table tbody,
+  .admin-screen .admin-bookings-table tr,
+  .admin-screen .admin-bookings-table td {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .admin-screen .admin-bookings-table tr {
+    background: #fff !important;
+    border: 1px solid rgba(207, 212, 223, 0.9) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 20px rgba(7, 20, 63, 0.06) !important;
+    overflow: hidden !important;
+    padding: 8px !important;
+  }
+
+  .admin-screen .admin-bookings-table tr.admin-request-row {
+    border-color: rgba(230, 0, 25, 0.28) !important;
+  }
+
+  .admin-screen .admin-bookings-table td {
+    align-items: start !important;
+    border: 0 !important;
+    color: var(--navy) !important;
+    display: grid !important;
+    gap: 3px !important;
+    grid-template-columns: 78px minmax(0, 1fr) !important;
+    padding: 7px 4px !important;
+  }
+
+  .admin-screen .admin-bookings-table td::before {
+    color: var(--muted) !important;
+    content: attr(data-label) !important;
+    font-size: 0.68rem !important;
+    font-weight: 950 !important;
+    letter-spacing: 0.03em !important;
+    line-height: 1.2 !important;
+    text-transform: uppercase !important;
+  }
+
+  .admin-screen .admin-bookings-table td:first-child {
+    background: rgba(245, 250, 255, 0.9) !important;
+    border-radius: 8px !important;
+    margin-bottom: 2px !important;
+  }
+
+  .admin-screen .admin-bookings-table td b,
+  .admin-screen .admin-bookings-table td span {
+    min-width: 0 !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .admin-screen .admin-bookings-table td b {
+    font-size: 0.9rem !important;
+    line-height: 1.18 !important;
+  }
+
+  .admin-screen .admin-bookings-table td span {
+    font-size: 0.78rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .admin-screen .admin-bookings-table td[data-label="Status"],
+  .admin-screen .admin-bookings-table td[data-label="Pickup"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .admin-screen .admin-bookings-table td[data-label="Status"]::before,
+  .admin-screen .admin-bookings-table td[data-label="Pickup"]::before {
+    margin-bottom: 2px !important;
+  }
+
+  .admin-screen .admin-bookings-table .admin-stack-form {
+    background: rgba(248, 251, 255, 0.9) !important;
+    border: 1px solid rgba(207, 212, 223, 0.85) !important;
+    border-radius: 8px !important;
+    display: grid !important;
+    gap: 7px !important;
+    padding: 8px !important;
+  }
+
+  .admin-screen .admin-bookings-table .admin-stack-form select,
+  .admin-screen .admin-bookings-table .admin-stack-form input,
+  .admin-screen .admin-bookings-table .admin-stack-form button {
+    border-radius: 8px !important;
+    font-size: 0.82rem !important;
+    min-height: 36px !important;
+    padding: 7px 9px !important;
+  }
+
+  .admin-screen .admin-bookings-table .approval-note,
+  .admin-screen .admin-bookings-table .admin-request-summary {
+    border-radius: 8px !important;
+    font-size: 0.76rem !important;
+    line-height: 1.28 !important;
+    padding: 8px !important;
+  }
+
+  .admin-screen .admin-bookings-table .admin-text-link {
+    border: 1px solid rgba(230, 0, 25, 0.22) !important;
+    border-radius: 8px !important;
+    display: inline-flex !important;
+    justify-content: center !important;
+    min-height: 36px !important;
+    padding: 8px 10px !important;
+    text-align: center !important;
+    text-decoration: none !important;
+  }
+
   .booking-calendar-card,
   .booking-calendar-day,
   .booking-calendar-dialog,
@@ -666,13 +797,20 @@
 
   .booking-calendar-tabs,
   .booking-calendar-filters {
+    display: grid !important;
     gap: 7px !important;
-    overflow-x: auto !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    overflow: visible !important;
   }
 
   .booking-calendar-tabs a {
-    flex: 0 0 auto !important;
-    min-width: 112px !important;
+    border-radius: 8px !important;
+    flex: 1 1 auto !important;
+    font-size: 0.76rem !important;
+    min-height: 34px !important;
+    min-width: 0 !important;
+    padding: 7px 6px !important;
+    text-align: center !important;
   }
 
   .booking-calendar-weekly,
@@ -680,6 +818,20 @@
   .oncall-calendar-grid {
     gap: 8px !important;
     grid-template-columns: 1fr !important;
+  }
+
+  .booking-calendar-grid {
+    max-height: 320px !important;
+    overflow-y: auto !important;
+    padding-right: 2px !important;
+  }
+
+  .booking-calendar-monthly {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .booking-calendar-day.is-empty {
+    display: none !important;
   }
 
   .booking-calendar-event {
