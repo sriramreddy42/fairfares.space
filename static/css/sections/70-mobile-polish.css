@@ -78,11 +78,12 @@
   }
 
   .price-match-scroll {
-    height: 82px !important;
+    height: auto !important;
   }
 
-  .price-match-track {
-    animation-duration: 22s !important;
+  .price-match-track img {
+    animation-duration: 13s !important;
+    height: 58px !important;
   }
 
   .main-nav,

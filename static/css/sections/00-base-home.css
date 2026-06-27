@@ -110,7 +110,14 @@ input, select, textarea, button {
   gap: 32px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 122px;
+  overflow: hidden;
   padding: 18px 38px;
+  position: relative;
+}
+.top-brand .logo-lockup,
+.top-brand .top-benefits {
+  position: relative;
+  z-index: 2;
 }
 .logo-lockup img, .login-logo img {
   display: block;
@@ -149,12 +156,13 @@ input, select, textarea, button {
 .benefit-pill span:last-child { color: #fff; }
 
 .price-match-scroll {
-  background: #101419;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 10px 24px rgba(3, 16, 38, 0.2);
-  height: clamp(92px, 12vw, 168px);
+  background: transparent;
+  grid-column: 1 / -1;
+  inset: 0;
   overflow: hidden;
-  position: relative;
+  pointer-events: none;
+  position: absolute;
+  z-index: 5;
 }
 
 .price-match-scroll::before,
@@ -168,47 +176,55 @@ input, select, textarea, button {
 }
 
 .price-match-scroll::before {
-  background: linear-gradient(90deg, #101419 0%, rgba(16, 20, 25, 0) 100%);
+  background: linear-gradient(90deg, #061b44 0%, rgba(6, 27, 68, 0) 100%);
   left: 0;
 }
 
 .price-match-scroll::after {
-  background: linear-gradient(270deg, #101419 0%, rgba(16, 20, 25, 0) 100%);
+  background: linear-gradient(270deg, #031533 0%, rgba(3, 21, 51, 0) 100%);
   right: 0;
 }
 
 .price-match-track {
-  align-items: stretch;
-  display: flex;
-  height: 100%;
-  width: max-content;
-  animation: priceMatchScroll 30s linear infinite;
+  inset: 0;
+  position: absolute;
 }
 
 .price-match-track img {
-  flex: 0 0 auto;
-  height: 100%;
+  animation: priceMatchPass 16s linear infinite;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
+  height: min(112px, 92%);
   max-width: none;
-  object-fit: cover;
+  object-fit: contain;
+  opacity: 0.96;
+  position: absolute;
+  top: 50%;
+  transform: translate(110vw, -50%);
   width: auto;
 }
 
-.price-match-scroll:hover .price-match-track {
+.price-match-track img:nth-child(2) {
+  animation-delay: 8s;
+}
+
+.price-match-scroll:hover .price-match-track img {
   animation-play-state: paused;
 }
 
-@keyframes priceMatchScroll {
+@keyframes priceMatchPass {
   from {
-    transform: translateX(0);
+    transform: translate(110vw, -50%);
   }
   to {
-    transform: translateX(-50%);
+    transform: translate(-125%, -50%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .price-match-track {
+  .price-match-track img {
     animation: none;
+    left: 50%;
+    transform: translate(-50%, -50%);
   }
 }
 
