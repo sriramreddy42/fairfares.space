@@ -941,21 +941,21 @@
   .workspace-screen .admin-shell-header {
     align-items: center !important;
     display: grid !important;
-    gap: 10px !important;
-    grid-template-columns: 1fr !important;
-    justify-items: center !important;
+    gap: 8px !important;
+    grid-template-columns: minmax(92px, 0.95fr) minmax(0, 2.8fr) !important;
+    justify-items: stretch !important;
     min-height: 0 !important;
     overflow: visible !important;
-    padding: 12px 14px !important;
+    padding: 10px 12px !important;
   }
 
   .workspace-screen .admin-shell-header .logo-lockup {
-    justify-self: center !important;
+    justify-self: start !important;
   }
 
   .workspace-screen .admin-shell-header .logo-lockup img {
-    max-height: 56px !important;
-    max-width: 220px !important;
+    max-height: 48px !important;
+    max-width: 128px !important;
   }
 
   .workspace-screen .admin-shell-header .admin-nav-stack {
@@ -968,36 +968,58 @@
 
   .workspace-screen .admin-shell-header .admin-primary-nav {
     display: grid !important;
-    gap: 8px !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    grid-template-columns: repeat(3, minmax(38px, 1fr)) 40px !important;
+    position: relative !important;
     width: 100% !important;
   }
 
   .workspace-screen .admin-shell-header .admin-primary-nav a {
-    border-radius: 12px !important;
+    border-radius: 10px !important;
     display: grid !important;
-    height: 58px !important;
+    height: 48px !important;
     justify-items: center !important;
-    min-height: 58px !important;
+    min-height: 48px !important;
     min-width: 0 !important;
-    padding: 6px 4px !important;
+    padding: 5px 3px !important;
     width: 100% !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav > a:nth-of-type(n+4) {
+    display: none !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
+    display: grid !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav.is-open {
+    background: rgba(245, 250, 255, 0.72) !important;
+    border: 1px solid rgba(126, 198, 232, 0.36) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 14px 34px rgba(7, 20, 63, 0.12) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 40px !important;
+    padding: 6px !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav.is-open > a:nth-of-type(n+4) {
+    grid-column: span 1 !important;
   }
 
   .workspace-screen .admin-shell-header .admin-nav-label {
     gap: 2px !important;
-    grid-template-rows: 30px auto !important;
+    grid-template-rows: 26px auto !important;
   }
 
   .workspace-screen .admin-shell-header .admin-nav-icon {
-    height: 30px !important;
-    width: 30px !important;
+    height: 26px !important;
+    width: 26px !important;
   }
 
   .workspace-screen .admin-shell-header .admin-nav-text {
     color: inherit !important;
     display: block !important;
-    font-size: 0.62rem !important;
+    font-size: 0.56rem !important;
     font-weight: 900 !important;
     line-height: 1 !important;
     max-width: 100% !important;
@@ -1012,8 +1034,43 @@
   }
 
   .workspace-screen .admin-shell-header .admin-nav-badge {
-    right: 18px !important;
-    top: -7px !important;
+    right: 8px !important;
+    top: -6px !important;
+  }
+
+  .workspace-mobile-nav-toggle {
+    align-items: center !important;
+    align-self: stretch !important;
+    background: rgba(255, 255, 255, 0.86) !important;
+    border: 1px solid rgba(126, 198, 232, 0.48) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 18px rgba(7, 20, 63, 0.08) !important;
+    cursor: pointer !important;
+    display: inline-grid !important;
+    gap: 4px !important;
+    grid-column: 4 !important;
+    grid-row: 1 !important;
+    height: 48px !important;
+    justify-content: center !important;
+    min-height: 48px !important;
+    padding: 0 !important;
+    width: 40px !important;
+  }
+
+  .workspace-mobile-nav-toggle span {
+    background: var(--navy) !important;
+    border-radius: 999px !important;
+    display: block !important;
+    height: 3px !important;
+    width: 22px !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav.is-open .workspace-mobile-nav-toggle {
+    background: rgba(7, 20, 63, 0.94) !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav.is-open .workspace-mobile-nav-toggle span {
+    background: #fff !important;
   }
 
   /* Workspace: fixed side rails become compact sections; only feed scrolls naturally. */
@@ -1382,8 +1439,8 @@
   }
 
   .workspace-screen .admin-shell-header .logo-lockup img {
-    max-height: 54px !important;
-    max-width: 210px !important;
+    max-height: 44px !important;
+    max-width: 108px !important;
   }
 
   .admin-shell-header .admin-nav-stack .admin-primary-nav a,

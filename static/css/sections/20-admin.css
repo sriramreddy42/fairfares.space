@@ -1651,6 +1651,9 @@
 .workspace-profile-slack {
   display: none;
 }
+.workspace-mobile-nav-toggle {
+  display: none;
+}
 .workspace-profile-meta span {
   background: rgba(255, 255, 255, 0.58);
   border: 1px solid rgba(126, 198, 232, 0.28);
