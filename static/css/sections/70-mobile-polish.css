@@ -77,6 +77,14 @@
     display: none !important;
   }
 
+  .price-match-scroll {
+    height: 82px !important;
+  }
+
+  .price-match-track {
+    animation-duration: 22s !important;
+  }
+
   .main-nav,
   .manage-nav {
     min-height: 54px !important;

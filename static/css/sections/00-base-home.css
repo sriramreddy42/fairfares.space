@@ -148,6 +148,70 @@ input, select, textarea, button {
 .benefit-pill strong { font-size: 1rem; }
 .benefit-pill span:last-child { color: #fff; }
 
+.price-match-scroll {
+  background: #101419;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 24px rgba(3, 16, 38, 0.2);
+  height: clamp(92px, 12vw, 168px);
+  overflow: hidden;
+  position: relative;
+}
+
+.price-match-scroll::before,
+.price-match-scroll::after {
+  content: "";
+  inset-block: 0;
+  pointer-events: none;
+  position: absolute;
+  width: min(12vw, 180px);
+  z-index: 2;
+}
+
+.price-match-scroll::before {
+  background: linear-gradient(90deg, #101419 0%, rgba(16, 20, 25, 0) 100%);
+  left: 0;
+}
+
+.price-match-scroll::after {
+  background: linear-gradient(270deg, #101419 0%, rgba(16, 20, 25, 0) 100%);
+  right: 0;
+}
+
+.price-match-track {
+  align-items: stretch;
+  display: flex;
+  height: 100%;
+  width: max-content;
+  animation: priceMatchScroll 30s linear infinite;
+}
+
+.price-match-track img {
+  flex: 0 0 auto;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  width: auto;
+}
+
+.price-match-scroll:hover .price-match-track {
+  animation-play-state: paused;
+}
+
+@keyframes priceMatchScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .price-match-track {
+    animation: none;
+  }
+}
+
 .main-nav {
   align-items: center;
   background: #fff;
@@ -939,4 +1003,3 @@ legend { font-size: 0.86rem; font-weight: 700; text-transform: uppercase; }
   padding: 12px;
 }
 .details-link { color: var(--red); font-weight: 700; }
-
