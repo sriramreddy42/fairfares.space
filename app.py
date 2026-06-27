@@ -7121,6 +7121,20 @@ def vehicle_model(row: sqlite3.Row) -> str:
 
 
 def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str:
+    breakdown = booking_price_breakdown(row)
+    paid_amount = booking_paid_amount(row)
+    pickup_due = float(breakdown.get("due_at_pickup", 0) or 0)
+    payment_status = row_value(row, "payment_status")
+    pickup_location = row_value(row, "pickup_location")
+    return_location = row_value(row, "return_location") or pickup_location
+    pickup_datetime = f"{row_value(row, 'pickup_date')} {row_value(row, 'pickup_time')}".strip()
+    return_datetime = f"{row_value(row, 'dropoff_date')} {row_value(row, 'dropoff_time')}".strip()
+    actual_pickup = f"{row_value(row, 'actual_pickup_date') or row_value(row, 'pickup_date')} {row_value(row, 'actual_pickup_time') or row_value(row, 'pickup_time')}".strip()
+    actual_return = f"{row_value(row, 'actual_return_date') or row_value(row, 'dropoff_date')} {row_value(row, 'actual_return_time') or row_value(row, 'dropoff_time')}".strip()
+    vehicle_identity = (
+        f"{row_value(row, 'car_year')} {vehicle_make(row)} {vehicle_model(row)} "
+        f"({row_value(row, 'car_color')} {row_value(row, 'car_type') or row_value(row, 'car_category')})"
+    ).strip()
     price_match_agency = row_value(row, "price_match_agency")
     price_match_amount = float(row_value(row, "price_match_amount") or 0)
     price_match_discount = float(row_value(row, "price_match_discount_amount") or 0)
@@ -7137,115 +7151,187 @@ def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str
         else "Late return charge: None."
     )
     savings_or_price_promise = booking_savings_explainer(row)
-    return f"""SHORT TERM VEHICLE RENTAL AGREEMENT
+    return f"""FAIRFARES VEHICLE RENTAL AGREEMENT
+Version 1.0
+Booking ID: {row_value(row, 'booking_id')}
+Agreement Date: {values.get('agreement_date', '')}
 
-This agreement is entered into this day, {values.get('agreement_date', '')} between
+IMPORTANT LEGAL NOTICE: This generated agreement is intended to document the rental terms accepted at pickup. Staff must verify all blank or incomplete fields before releasing the vehicle. FairFares should have this master form reviewed by Colorado counsel before live use.
 
-Lessor:
-Name: {values.get('lessor_name', '')}
-Address: {values.get('lessor_address', '')}
-Email: {values.get('lessor_email', '')}
-Phone: {values.get('lessor_phone', '')}
+1. DEFINITIONS.
+"Agreement" means this FairFares Vehicle Rental Agreement and all attached pickup/return records, photos, receipts, invoices, and signed documents. "FairFares" or "Lessor" means {values.get('lessor_name', 'FairFares')}. "Customer," "Renter," or "Lessee" means the person signing below. "Vehicle" means the vehicle identified in this Agreement. "Rental Period" means the period from pickup until the vehicle is returned, inspected, and accepted by FairFares.
 
-Lessee:
-Name: {values.get('lessee_name', '')}
-Address: {values.get('lessee_address', '')}
-Driving License Information: State: {values.get('license_state', '')} Number: {values.get('license_number', '')} Expiration Date: {values.get('license_expiry', '')}
-Email: {row_value(row, 'user_email')}
-Phone: {row_value(row, 'phone')}
-Additional Driver: {row_value(row, 'additional_driver_name') or 'None'} {f"({row_value(row, 'additional_driver_age')})" if row_value(row, 'additional_driver_age') else ""}
+2. RENTAL AGREEMENT.
+FairFares agrees to rent the Vehicle to Lessee only under the terms of this Agreement. This is a rental only; Lessee receives no ownership interest, title, lien, or transfer right in the Vehicle.
 
-1. RECITALS.
-WHEREAS, the Lessor is authorized to lease the Vehicle, and the Lessee is desirous of leasing the Vehicle from the Lessor on the terms set out in this Vehicle Lease Agreement. This Agreement is a lease only and Lessee will have no right, title, or interest in or to the Vehicle except for use of the Vehicle as described in this Agreement.
+3. PARTIES AND CONTACT INFORMATION.
+Lessor: {values.get('lessor_name', '')}
+Lessor Address: {values.get('lessor_address', '')}
+Lessor Email: {values.get('lessor_email', '')}
+Lessor Phone: {values.get('lessor_phone', '')}
+Lessee Legal Name: {values.get('lessee_name', '')}
+Lessee Address: {values.get('lessee_address', '')}
+Lessee Email: {row_value(row, 'user_email')}
+Lessee Phone: {row_value(row, 'phone')}
 
-2. DESCRIPTION OF RENTED VEHICLE.
-Make: {vehicle_make(row)}
-Model: {vehicle_model(row)}
-Color: {row_value(row, 'car_color')}
-Year: {row_value(row, 'car_year')}
-Body: {row_value(row, 'car_type') or row_value(row, 'car_category')}
-Mileage: {values.get('vehicle_mileage', '')}
-License Plate: {row_value(row, 'license_plate')}
-VIN: {row_value(row, 'vin_number')}
+4. ELIGIBILITY REQUIREMENTS.
+Lessee must be legally eligible to rent and operate the Vehicle, must provide accurate identity and contact information, must satisfy payment and insurance requirements, and must not be disqualified by FairFares or provider risk review. Drivers under 25, temporary licenses, international licenses, debit/prepaid payment methods, or unusual booking facts may require additional review.
+
+5. DRIVER LICENSE VERIFICATION.
+License State: {values.get('license_state', '')}
+License Number: {values.get('license_number', '')}
+License Expiration: {values.get('license_expiry', '')}
+Lessee authorizes FairFares to inspect, photograph, scan, or otherwise record driver license information for booking, pickup, identity, fraud prevention, insurance, legal, and vehicle-release purposes. Failure to provide a valid, unexpired license may block vehicle release.
+
+6. INSURANCE REQUIREMENTS.
+Lessee must provide proof of a valid auto insurance policy that extends coverage to rental vehicles. Recommended coverage includes collision, comprehensive, liability, rental vehicle coverage if required by the insurer, and roadside assistance. FairFares may verify coverage before releasing the Vehicle. If Lessee's current policy does not adequately cover rental vehicles, Lessee must contact the insurer before pickup or obtain provider-approved coverage where offered.
+
+7. INSURANCE DECLARATION.
 Insurance Company: {values.get('insurance_company', '')}
-Policy#: {values.get('insurance_policy', '')}
-Purpose: Personal Use Only
+Policy Number: {values.get('insurance_policy', '')}
+Lessee declares that the insurance information provided is true, current, and sufficient for this rental. Lessee remains responsible for deductibles, exclusions, denied claims, coverage gaps, uninsured loss, and any damage or liability not paid by insurance.
 
-3. AMOUNT DUE AT LEASE SIGNING.
-A refundable security deposit shall be paid in the amount of ${values.get('security_deposit', '250.00')}.
-Rental subtotal: {format_money(row_value(row, 'subtotal_price') or row_value(row, 'total_price'))}
-Discount applied: {row_value(row, 'discount_code') or 'None'} - {format_money(row_value(row, 'discount_amount'))}
+8. PAYMENT AUTHORIZATION.
+Payment Status: {payment_status}
+Rental Subtotal: {format_money(row_value(row, 'subtotal_price') or row_value(row, 'total_price'))}
+Discount Applied: {row_value(row, 'discount_code') or 'None'} - {format_money(row_value(row, 'discount_amount'))}
+Amount Paid/Authorized: {format_money(paid_amount)}
+Balance Due at Pickup: {format_money(pickup_due)}
+Final Total: {format_money(row_value(row, 'total_price'))}
 {price_match_line}
 {late_fee_line}
-Final total due: {format_money(row_value(row, 'total_price'))}
 How FairFares saved you money: {savings_or_price_promise}
+Lessee authorizes FairFares and its payment processors, including Stripe where applicable, to charge amounts due under this Agreement, including rental charges, balances, deposits, late fees, damage, tolls, tickets, cleaning, fuel, keys, towing, roadside charges, and other post-return charges permitted by this Agreement.
 
-4. LEASE PAYMENT.
-As consideration of this lease, Lessee shall pay ${values.get('monthly_payment', '')} monthly on a month-to-month basis.
+9. SECURITY DEPOSIT AUTHORIZATION.
+Security Deposit/Authorization: ${values.get('security_deposit', '250.00')}
+FairFares may hold, charge, apply, or release a security deposit or payment authorization according to booking terms, payment processor rules, damage review, toll/ticket processing, and bank timing. Deposit release does not waive later claims discovered after return.
 
-5. TERM.
-This is a month-to-month rental agreement. Either party may end the lease with 15 days of advanced written notice by email or personal text message. Returning in advance of the agreed date will not automatically entitle Lessee to prorated lease payment.
+10. VEHICLE DESCRIPTION.
+Vehicle: {vehicle_identity}
+VIN: {row_value(row, 'vin_number')}
+License Plate: {row_value(row, 'license_plate')}
+Starting Mileage: {values.get('vehicle_mileage', '')}
+Fuel Level Out: Staff to record at pickup.
+Vehicle Condition Out: Staff and Lessee must review pickup photos and visible condition before release.
 
-6. FORM OF PAYMENT.
-Monthly payments are to be made on the {values.get('payment_due_day', '')} day of each month. Payments may be made by cashier's check, money order, certified check, Zelle, cash, or any other means agreed upon by the Lessor and Lessee.
+11. RENTAL PERIOD AND LOCATIONS.
+Scheduled Pickup: {pickup_datetime}
+Scheduled Return: {return_datetime}
+Actual Pickup: {actual_pickup}
+Actual Return: {actual_return}
+Pickup Location: {pickup_location}
+Return Location: {return_location}
 
-7. SECURITY DEPOSIT.
-The security deposit will be returned at termination, subject to the Lessor applying it against lease charges, tolls, damages, cleaning, smoking, or other amounts due.
+12. VEHICLE PICKUP PROCEDURE.
+Before release, FairFares may require payment confirmation, Stripe Identity or other identity review, valid driver license, insurance proof, agreement signature, pickup condition photos, fuel/mileage record, and staff approval. Lessee must inspect the Vehicle before leaving and immediately report visible damage, cleanliness issues, warning lights, missing accessories, or other concerns.
 
-8. LATE PAYMENT FEES.
-A late fee of $50.00 per day will be charged on payments made after the due date.
+13. VEHICLE RETURN PROCEDURE.
+Lessee must return the Vehicle at the agreed return location, date, and time unless FairFares approves a modification. Vehicle must be returned with the same fuel level, in substantially similar condition except ordinary wear, clean, with keys/accessories, and ready for inspection. Late, dirty, damaged, incomplete, or unauthorized returns may create additional charges.
 
-9. MILEAGE PERMITTED.
-Lessee may drive the Vehicle for a maximum of {values.get('mileage_allowed', '')} miles per month and will be charged ${values.get('extra_mile_rate', '')} per extra mile.
+14. VEHICLE CONDITION REPORT.
+Pickup and return photos, uploaded damage photos, inspection forms, mileage, fuel readings, staff notes, and customer notes are part of this Agreement. Lessee accepts responsibility for damage, loss, missing items, or abnormal wear occurring during the Rental Period, subject to insurance and applicable law.
 
-10. USAGE OF THE VEHICLE.
-The vehicle may be used for personal purposes only, such as commuting to work or school. Commercial use including Uber, Lyft, DoorDash, or similar applications is not permitted and is a material breach of this Agreement.
+15. MILEAGE POLICY.
+Mileage Allowance: {values.get('mileage_allowed', '')} miles per month or as otherwise stated in booking terms.
+Extra Mile Rate: ${values.get('extra_mile_rate', '')} per mile.
+Mileage may be reviewed from odometer records, photos, GPS/telematics where disclosed, or provider records.
 
-11. GAP LIABILITY NOTICE.
-In the event of theft or total loss, Lessee is liable for any gap between the amount due and insurance settlement proceeds or deductible.
+16. FUEL POLICY.
+Lessee must return the Vehicle with the same fuel or charge level recorded at pickup unless written terms state otherwise. Refueling, recharging, service, towing, or downtime caused by low fuel/charge may be charged to Lessee.
 
-12. INSURANCE.
-Lessee must maintain automobile liability insurance, collision, and comprehensive coverage as required by applicable law, with deductible no greater than $500.00 per claim. Proof of insurance must be provided to Lessor upon request. Driving without insurance coverage is a material breach.
+17. PERMITTED USES.
+The Vehicle may be used only for lawful personal transportation by approved drivers listed in this Agreement or booking record. Lessee must follow traffic laws, parking rules, toll rules, manufacturer requirements, and FairFares instructions.
 
-13. EXCESSIVE WEAR AND USE.
-Lessee may be charged for excessive wear including damaged glass, body panels, lights, paint, smoking, interior damage, worn tires, or mechanical damage that interferes with safe operation.
+18. PROHIBITED USES.
+Prohibited uses include rideshare, delivery, commercial use, racing, towing, off-road use, subleasing, car sharing, illegal activity, reckless driving, intoxicated/impaired driving, driving without required license or insurance, unauthorized drivers, leaving the United States without approval, smoking, tampering with tracking/safety equipment, disabling warning systems, or modifying the Vehicle.
 
-14. NOTICE.
-All notices required under this Lease are deemed delivered when delivered in person, by email, or by mail to the appropriate party.
+19. ADDITIONAL DRIVERS.
+Additional Driver: {row_value(row, 'additional_driver_name') or 'None'} {f"({row_value(row, 'additional_driver_age')})" if row_value(row, 'additional_driver_age') else ""}
+No additional driver may operate the Vehicle unless approved by FairFares and documented in the booking or agreement. Lessee remains responsible for approved and unauthorized drivers.
 
-15. ASSIGNMENT.
-Lessee may not assign, transfer, or sublet obligations, rights, or interest under this Agreement without Lessor's prior written consent.
+20. ACCIDENT PROCEDURES.
+In any accident or damage event, Lessee must first ensure safety, call emergency services when needed, contact police when required, notify FairFares/support promptly, collect other party and witness information, take photos, preserve evidence, and cooperate with insurance, police, and FairFares investigation. Lessee must not admit fault, abandon the Vehicle, or authorize repairs without FairFares approval unless necessary for emergency safety.
 
-16. TERMINATION AND DEFAULT.
-Lessor may terminate immediately if Lessee fails to pay, misrepresents information, damages the vehicle, fails to maintain insurance, fails to return the vehicle, or breaches this Agreement. If Lessee terminates without prior notice, a $100.00 fee may be charged and deposit may not be returned.
+21. MECHANICAL BREAKDOWN.
+If the Vehicle breaks down or shows warning lights, Lessee must stop safely, contact FairFares/support, and follow instructions. Lessee may not continue driving when doing so may worsen damage. Unauthorized repairs, towing, diagnostics, or parts may not be reimbursed.
 
-17. VEHICLE RETURN.
-Vehicle must be returned clean, with the same fuel level, and in the care of Lessor. Dirty vehicles may incur a $50.00 cleaning fee and smoking inside the vehicle may incur a $200.00 charge.
+22. VEHICLE DAMAGE.
+Lessee is responsible for damage, loss, theft, diminished value, downtime, towing, storage, administrative costs, and claim-related charges arising during the Rental Period, except to the extent prohibited by law or paid by insurance/provider coverage. Damage includes tire, glass, key, wheel, undercarriage, interior, smoke, pet, water, hail, collision, theft, vandalism, and misuse damage.
 
-18. COSTS, EXPENSES, FEES, AND CHARGES.
-Lessee agrees to pay all fines, tickets, toll charges, penalties, and expenses incurred in connection with operation of the vehicle during the term.
+23. CUSTOMER RESPONSIBILITIES.
+Lessee must safeguard keys, lock the Vehicle, use proper fuel/charging, obey laws, keep the Vehicle reasonably clean, avoid prohibited uses, maintain insurance, respond to FairFares communications, disclose damage or incidents, pay charges due, and return the Vehicle as agreed.
 
-19. MAINTENANCE.
-Lessor will maintain the vehicle for normal wear and tear. Lessee must bring the vehicle for scheduled maintenance when requested and may not conduct maintenance without permission.
+24. FEES AND CHARGES.
+Possible charges include rental balance, late return, extra mileage, fuel/recharge, cleaning, smoking, pet cleaning, tolls, tickets, impound, towing, storage, key replacement, damage, loss, deductible, unauthorized driver/use, chargeback, payment failure, administrative processing, and provider-imposed charges.
 
-20. ACCEPTABLE DRIVERS AND LIMITATIONS.
-Only Lessee may operate the vehicle. Car sharing is not allowed under any circumstances. Lessee may not modify the vehicle without prior written consent.
+25. TOLLS AND TICKETS.
+Lessee is responsible for tolls, parking tickets, traffic citations, camera violations, impound charges, and related administrative fees during the Rental Period, even if FairFares receives notice after return.
 
-21. WARRANTIES.
-The Vehicle is provided in "as is" condition and Lessor makes no express or implied warranties regarding condition, quality, durability, capability, or suitability.
+26. ROADSIDE ASSISTANCE.
+Roadside assistance may be available depending on provider, insurance, location, and event. Lessee may be responsible for roadside costs caused by negligence, misuse, lockout, lost keys, dead battery caused by customer conduct, empty fuel/charge, tire damage, or unauthorized travel.
 
-22. GOVERNING LAW.
-This Lease shall be construed in accordance with the laws of Texas.
+27. THEFT OF VEHICLE.
+Lessee must immediately report theft, attempted theft, lost keys, or unauthorized taking to police and FairFares. Lessee must cooperate with insurance and investigation and may be responsible for loss not paid by insurance.
 
-23. SIGNATORIES.
+28. LOSS OF KEYS.
+Lost, stolen, damaged, or unreturned keys/fobs/accessories may result in replacement, towing, reprogramming, downtime, delivery, and administrative charges.
+
+29. PRIVACY POLICY.
+FairFares may collect, store, and use booking, payment, identity, license, insurance, vehicle, photo, location, support, and agreement data for rental operations, fraud prevention, safety, legal compliance, customer support, and recordkeeping. FairFares handles data according to its posted privacy practices and applicable law.
+
+30. GPS / VEHICLE TRACKING DISCLOSURE.
+The Vehicle may include GPS, telematics, manufacturer connected services, or provider tracking for safety, recovery, theft prevention, maintenance, mileage, location, operational, and legal purposes. Lessee must not disable, tamper with, remove, or obstruct tracking or safety equipment.
+
+31. AI AND IDENTITY VERIFICATION.
+FairFares may use Stripe Identity, staff review, OCR/photo prefill, AI-assisted extraction, or approved provider checks to assist with identity, driver license, insurance, pickup, support, and record workflows. AI/OCR suggestions are not DMV verification and must be reviewed by staff. Lessee consents to the use of necessary document images and data for these purposes.
+
+32. STRIPE PAYMENT AUTHORIZATION.
+Lessee authorizes Stripe or other processors to process payment, identity, receipt, refund, and charge records related to this booking. Payment confirmation does not waive FairFares' right to collect later charges under this Agreement.
+
+33. DRIVER INSURANCE VERIFICATION.
+FairFares may request updated insurance proof, contact insurer/provider where permitted, review insurance documents, and refuse release or continued rental if coverage appears missing, expired, insufficient, unverifiable, or inconsistent with rental use.
+
+34. CUSTOMER DECLARATIONS.
+Lessee declares that all information provided is true and complete; the driver license is valid and unexpired; insurance coverage is active and applicable to rental vehicles; Lessee is not impaired or prohibited from driving; payment authorization is valid; and Lessee has read and agrees to this Agreement.
+
+35. INDEMNIFICATION.
+To the maximum extent permitted by law, Lessee agrees to indemnify, defend, and hold FairFares, its owners, employees, agents, providers, and partners harmless from claims, losses, damages, penalties, fees, costs, and expenses arising from Lessee's use, possession, operation, breach, negligence, misconduct, unauthorized use, or violation of law.
+
+36. LIMITATION OF LIABILITY.
+To the maximum extent permitted by law, FairFares is not liable for indirect, incidental, special, consequential, punitive, lost-profit, trip-interruption, or personal property losses, except where prohibited by law. Nothing in this Agreement limits liability that cannot legally be limited.
+
+37. GOVERNING LAW (COLORADO).
+This Agreement is governed by the laws of the State of Colorado, without regard to conflict-of-law rules. Venue and dispute procedures are subject to applicable Colorado law and any mandatory consumer protection requirements.
+
+38. ELECTRONIC SIGNATURE.
+Lessee agrees that electronic records, typed signatures, checkbox consent, uploaded documents, Stripe records, payment records, and saved agreement text may be used as enforceable records and signatures to the extent allowed by law.
+
+39. PICKUP CHECKLIST.
+Staff/Lessee must confirm before release: identity verification, valid license, insurance proof, payment/authorization, pickup photos, mileage/fuel, visible condition, keys/accessories, agreement signature, emergency/support contacts, and any special restrictions.
+
+40. RETURN CHECKLIST.
+Staff/Lessee should confirm at return: return time/location, mileage/fuel, cleanliness, keys/accessories, new damage, photos, toll/ticket notes, late fees, remaining balance, support issues, and final closeout status.
+
+41. EMERGENCY CONTACTS.
+Emergency services: 911 when urgent.
+FairFares Support: use Manage Booking support or contact FairFares staff.
+Lessor Phone: {values.get('lessor_phone', '')}
+Lessor Email: {values.get('lessor_email', '')}
+
+42. SIGNATURE PAGE.
 LESSEE:
 By: {values.get('customer_signature', '') or '_________________'}
+Printed Name: {values.get('lessee_name', '')}
 Date: {values.get('agreement_date', '')}
 
-LESSOR:
+LESSOR / FAIRFARES REPRESENTATIVE:
 By: {values.get('issuer_signature', '') or '_________________'}
-Name: {values.get('issuer_name', '')}
+Printed Name: {values.get('issuer_name', '')}
 Date: {values.get('agreement_date', '')}
+
+43. APPENDIX.
+The appendix includes damage photos, pickup inspection forms, return inspection forms, insurance documents, driver license records, receipts, invoices, payment records, Stripe records, support tickets, and booking modifications saved in FairFares systems.
 """
 
 
