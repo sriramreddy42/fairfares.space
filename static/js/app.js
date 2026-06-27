@@ -335,6 +335,11 @@ async function submitWorkspaceForm(form, extra = {}) {
   return payload;
 }
 
+function workspacePostIdFromForm(form) {
+  const postId = Number(new FormData(form).get("post_id") || 0);
+  return Number.isFinite(postId) && postId > 0 ? postId : 0;
+}
+
 document.addEventListener("click", async (event) => {
   const reactionButton = event.target.closest(".workspace-reaction-tray button");
   if (!reactionButton) return;
@@ -342,7 +347,7 @@ document.addEventListener("click", async (event) => {
   const card = reactionButton.closest(".workspace-post-card");
   if (!form || !card) return;
   event.preventDefault();
-  if (!new FormData(form).get("post_id")) return;
+  if (!workspacePostIdFromForm(form)) return;
   const reaction = reactionButton.value || "LIKE";
   const reactionValue = form.querySelector("[data-workspace-reaction-value]");
   if (reactionValue instanceof HTMLInputElement) reactionValue.value = reaction;
@@ -360,7 +365,7 @@ document.addEventListener("submit", async (event) => {
   const reactionForm = event.target.closest("[data-workspace-reaction-form]");
   if (!reactionForm) return;
   event.preventDefault();
-  if (!new FormData(reactionForm).get("post_id")) return;
+  if (!workspacePostIdFromForm(reactionForm)) return;
   const card = reactionForm.closest(".workspace-post-card");
   try {
     const payload = await submitWorkspaceForm(reactionForm);

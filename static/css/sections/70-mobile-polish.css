@@ -938,6 +938,84 @@
     width: min(340px, calc(100vw - 34px)) !important;
   }
 
+  .workspace-screen .admin-shell-header {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 1fr !important;
+    justify-items: center !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 12px 14px !important;
+  }
+
+  .workspace-screen .admin-shell-header .logo-lockup {
+    justify-self: center !important;
+  }
+
+  .workspace-screen .admin-shell-header .logo-lockup img {
+    max-height: 56px !important;
+    max-width: 220px !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-nav-stack {
+    display: grid !important;
+    justify-self: stretch !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav {
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    width: 100% !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-primary-nav a {
+    border-radius: 12px !important;
+    display: grid !important;
+    height: 58px !important;
+    justify-items: center !important;
+    min-height: 58px !important;
+    min-width: 0 !important;
+    padding: 6px 4px !important;
+    width: 100% !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-nav-label {
+    gap: 2px !important;
+    grid-template-rows: 30px auto !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-nav-icon {
+    height: 30px !important;
+    width: 30px !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-nav-text {
+    color: inherit !important;
+    display: block !important;
+    font-size: 0.62rem !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    max-width: 100% !important;
+    opacity: 0.92 !important;
+    overflow: hidden !important;
+    position: static !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    transform: none !important;
+    white-space: nowrap !important;
+    width: 100% !important;
+  }
+
+  .workspace-screen .admin-shell-header .admin-nav-badge {
+    right: 18px !important;
+    top: -7px !important;
+  }
+
   /* Workspace: fixed side rails become compact sections; only feed scrolls naturally. */
   .workspace-shell {
     display: grid !important;
@@ -967,17 +1045,19 @@
     cursor: pointer !important;
     display: grid !important;
     gap: 8px 10px !important;
-    grid-template-columns: 54px minmax(0, 1fr) auto !important;
+    grid-template-columns: 58px minmax(0, 1fr) auto !important;
     padding: 12px !important;
   }
 
-  .admin-profile-avatar {
+  .admin-profile-card > .admin-profile-avatar {
     height: 54px !important;
+    justify-self: center !important;
     width: 54px !important;
   }
 
   .admin-profile-card b {
     font-size: 1.02rem !important;
+    align-self: end !important;
     min-width: 0 !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
@@ -985,6 +1065,7 @@
   }
 
   .admin-profile-card > small {
+    align-self: start !important;
     grid-column: 2 !important;
     margin-top: -6px !important;
   }
@@ -1003,6 +1084,20 @@
     min-height: 36px !important;
     padding: 8px 10px !important;
     text-decoration: none !important;
+  }
+
+  .workspace-profile-slack span {
+    align-items: center !important;
+    background:
+      linear-gradient(135deg, #36c5f0 0 24%, #2eb67d 24% 50%, #ecb22e 50% 74%, #e01e5a 74%) !important;
+    border-radius: 6px !important;
+    color: #fff !important;
+    display: inline-flex !important;
+    font-size: 0.78rem !important;
+    height: 20px !important;
+    justify-content: center !important;
+    margin-right: 5px !important;
+    width: 20px !important;
   }
 
   .workspace-profile-meta span {
@@ -1067,6 +1162,11 @@
     min-height: 52px !important;
     min-width: 0 !important;
     padding: 6px 8px !important;
+  }
+
+  .workspace-compose-trigger .admin-profile-avatar {
+    height: 42px !important;
+    width: 42px !important;
   }
 
   .workspace-compose-trigger span:last-child {
@@ -1279,6 +1379,11 @@
 
   .admin-shell-header .logo-lockup img {
     max-width: 122px !important;
+  }
+
+  .workspace-screen .admin-shell-header .logo-lockup img {
+    max-height: 54px !important;
+    max-width: 210px !important;
   }
 
   .admin-shell-header .admin-nav-stack .admin-primary-nav a,
