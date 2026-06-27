@@ -372,6 +372,34 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
+document.addEventListener("submit", async (event) => {
+  const shareForm = event.target.closest("[data-workspace-share-form]");
+  if (!shareForm) return;
+  event.preventDefault();
+  const button = shareForm.querySelector("button[type='submit']");
+  const originalText = button?.textContent || "Share to Slack";
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = true;
+    button.textContent = "Sharing...";
+  }
+  try {
+    const payload = await submitWorkspaceForm(shareForm);
+    if (button instanceof HTMLButtonElement) {
+      button.textContent = payload.message ? "Shared" : "Shared";
+      window.setTimeout(() => {
+        button.textContent = originalText;
+        button.disabled = false;
+      }, 1400);
+    }
+  } catch (error) {
+    if (button instanceof HTMLButtonElement) {
+      button.textContent = originalText;
+      button.disabled = false;
+    }
+    window.alert(error.message);
+  }
+});
+
 document.addEventListener("click", () => closeWorkspacePostMenus());
 
 const workspaceGroupsDrawer = document.getElementById("workspaceGroupsDrawer");

@@ -43,7 +43,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260626agreementflow"
+ASSET_VERSION = "20260626workspacefix"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 WORKSPACE_REACTIONS = (
     ("LIKE", "👍", "Like"),
@@ -5388,7 +5388,7 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
                   </div>
                 </form>
                 <button type="button" data-workspace-comment-toggle><i class="workspace-button-icon" aria-hidden="true">&#9998;</i>Comment</button>
-                <form method="post" action="/admin/workspace/post/share-slack">
+                <form method="post" action="/admin/workspace/post/share-slack" data-workspace-share-form>
                   <input type="hidden" name="post_id" value="{escape(row_value(post, "id"))}">
                   <button type="submit"><i class="workspace-button-icon" aria-hidden="true">&#10148;</i>Share to Slack</button>
                 </form>
@@ -9587,8 +9587,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             post_id = 0
         if not post_id:
+            if self.wants_json():
+                self.send_json({"ok": False, "error": "Missing post."}, 400)
+                return
             self.redirect("/admin/workspace")
             return
+        status = "Post not found."
         with db() as con:
             post = con.execute(
                 """
@@ -9608,7 +9612,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"Feed: {group_name}\n"
                 f"{row_value(post, 'body')}"
             )
-            send_slack_notification("general", text[:3000])
+            status = send_slack_notification("general", text[:3000])
+        if self.wants_json():
+            self.send_json({"ok": bool(post), "message": status if post else "Post not found."}, 200 if post else 404)
+            return
         self.redirect(workspace_post_redirect(post_id))
 
     def create_guest_booking(self) -> None:
@@ -9947,7 +9954,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 sub_links.append(f'<a{active_class} href="{href}" title="{escape(label)}" aria-label="{escape(label)}">{render_admin_nav_label(label, badge_counts.get(key, 0))}</a>')
         subnav_html = f'<nav class="admin-subnav" aria-label="Admin filters">{"".join(sub_links)}</nav>' if sub_links else ""
         oncall_drawer = ""
-        if is_admin_user(user):
+        if is_admin_user(user) and active != "workspace":
             next_shift = next_oncall_shift_for_user(int(row_value(user, "id") or 0))
             next_label = row_value(next_shift, "shift_date") or "Set schedule"
             today_oncall = get_oncall_shift_for_day()
@@ -10071,10 +10078,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feed_scope = f"{row_value(author_row, 'name') or 'Staff'} posts"
         else:
             feed_scope = row_value(selected_group, "name") if selected_group else "Company feed"
-        today_oncall = get_oncall_shift_for_day()
-        oncall_copy = ""
-        if today_oncall and int(row_value(today_oncall, "admin_id") or 0) == current_user_id:
-            oncall_copy = "On-call today"
         workspace_slack_url = row_value(selected_group, "slack_url") if selected_group else ""
         if not workspace_slack_url:
             workspace_slack_url = "https://slack.com/app_redirect?channel=general"
@@ -10119,7 +10122,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             escalation_badge_class="has-count" if metrics["escalations"] else "",
             user_count=metrics["users"],
             workspace_post_count=escape(str(own_post_count)),
-            workspace_oncall_copy=escape(oncall_copy),
             workspace_groups=render_workspace_groups(groups, selected_group_id),
             workspace_group_count=escape(str(len(groups))),
             workspace_feed_scope=escape(feed_scope),
@@ -10566,37 +10568,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
-        runtime_config_rows = "\n".join(
-            self.render_runtime_config_row(masked_env_status(env_name))
-            for env_name in (
-                "PUBLIC_BASE_URL",
-                "STRIPE_PUBLISHABLE_KEY",
-                "STRIPE_SECRET_KEY",
-                "STRIPE_WEBHOOK_SECRET",
-                "IDSCAN_API_KEY",
-                "IDSCAN_VERIFY_URL",
-            )
-        )
         body = render_template(
             "admin_system.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "system"),
             db_path=escape(DB_PATH),
             backup_dir=escape(BACKUP_DIR),
-            runtime_config_rows=runtime_config_rows,
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
             feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )
         self.send_html(body)
-
-    def render_runtime_config_row(self, item: dict[str, str]) -> str:
-        return f"""
-        <tr>
-          <td><b>{escape(item["name"])}</b></td>
-          <td>{escape(item["status"])}</td>
-          <td>{escape(item["detail"])}</td>
-        </tr>
-        """
 
     def render_staff_create_card(self) -> str:
         return """

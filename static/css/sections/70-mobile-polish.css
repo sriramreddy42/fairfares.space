@@ -784,6 +784,19 @@
     min-width: 118px !important;
   }
 
+  .workspace-screen .admin-feed-social-row {
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+  }
+
+  .workspace-screen .admin-feed-social-row button {
+    border-radius: 999px !important;
+    min-height: 32px !important;
+    min-width: 0 !important;
+    padding: 6px 10px !important;
+  }
+
   .admin-chat-primary img {
     max-height: 38px !important;
     max-width: 96px !important;
