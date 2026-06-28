@@ -125,6 +125,54 @@ class InventoryReceiptTest(unittest.TestCase):
         self.assertEqual(app.drive_folder_id("roi"), folder_id)
         self.assertEqual(app.google_drive_config_status()["root_folder_id"], folder_id)
 
+    def test_existing_local_receipts_can_migrate_to_drive(self):
+        upload_dir = Path(os.environ["FAIRFARES_DB_PATH"]).parent / "uploads" / "vehicle-purchase-receipts"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        receipt_path = upload_dir / "old-receipt.pdf"
+        receipt_path.write_bytes(b"%PDF old receipt")
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO cars
+                (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+                 daily_price, total_price, badge, color, features, location, status, purchase_cost, purchase_receipt_url)
+                VALUES ('Toyota Corolla', 'Toyota', 'Corolla', 2026, 'Economy', 'Sedan', 'Gasoline',
+                        5, 2, 4, 'Automatic', 39.99, 279.93, 'Available', 'white',
+                        'AC', 'Denver', 'AVAILABLE', 12000, 'local://uploads/vehicle-purchase-receipts/old-receipt.pdf')
+                """
+            )
+            car_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        original_upload = app.upload_bytes_to_google_drive
+
+        def fake_upload(folder_key, filename, mime_type, payload):
+            return True, {
+                "id": "drive-file-123",
+                "name": filename,
+                "mimeType": mime_type,
+                "size": len(payload),
+                "webViewLink": "https://drive.google.com/file/d/drive-file-123/view",
+                "folder_id": "folder-123",
+            }
+
+        app.upload_bytes_to_google_drive = fake_upload
+        try:
+            summary = app.migrate_existing_uploads_to_drive(self.admin["id"])
+        finally:
+            app.upload_bytes_to_google_drive = original_upload
+
+        self.assertEqual(summary["uploaded"], 1)
+        with app.db() as con:
+            car = con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
+            drive_file = con.execute("SELECT * FROM drive_files WHERE drive_file_id = 'drive-file-123'").fetchone()
+        self.assertEqual(car["purchase_receipt_url"], "drive://drive-file-123")
+        self.assertIsNotNone(drive_file)
+
+    def test_system_page_has_existing_file_migration_action(self):
+        template = (Path(app.BASE_DIR) / "templates" / "admin_system.html").read_text(encoding="utf-8")
+
+        self.assertIn('action="/admin/drive/migrate"', template)
+        self.assertIn("Migrate Existing Files", template)
+
 
 if __name__ == "__main__":
     unittest.main()

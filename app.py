@@ -413,6 +413,200 @@ def save_file_payload_locally(
     return f"local://uploads/{folder_name}/{safe_name}"
 
 
+def local_upload_parts(value: str) -> tuple[str, str, bytes] | None:
+    if not value.startswith("local://uploads/"):
+        return None
+    relative = value.replace("local://uploads/", "", 1)
+    upload_root = (DB_PATH.parent / "uploads").resolve()
+    target = (upload_root / relative).resolve()
+    if not str(target).startswith(str(upload_root)) or not target.is_file():
+        return None
+    payload = target.read_bytes()
+    if not payload or len(payload) > MAX_DRIVE_UPLOAD_BYTES:
+        return None
+    filename = target.name
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return filename, mime_type, payload
+
+
+def upload_existing_reference_to_drive(
+    con: sqlite3.Connection,
+    *,
+    folder_key: str,
+    file_scope: str,
+    current_value: str,
+    fallback_name: str,
+    uploaded_by: int | str | None = None,
+    user_id: int | str | None = None,
+    booking_id: int | str | None = None,
+    car_id: int | str | None = None,
+    expense_id: int | str | None = None,
+) -> tuple[str, str]:
+    current_value = (current_value or "").strip()
+    if not current_value or current_value.startswith("drive://"):
+        return current_value, "skipped"
+    parts = data_url_upload_parts(current_value, fallback_name) if current_value.startswith("data:") else local_upload_parts(current_value)
+    if not parts:
+        return current_value, "unsupported"
+    filename, mime_type, payload = parts
+    ok, result = upload_bytes_to_google_drive(folder_key, filename, mime_type, payload)
+    if not ok or not isinstance(result, dict):
+        save_drive_upload_failure_record(
+            con,
+            folder_key=folder_key,
+            file_scope=file_scope,
+            error=result,
+            uploaded_by=uploaded_by,
+            user_id=user_id,
+            booking_id=booking_id,
+            car_id=car_id,
+            expense_id=expense_id,
+        )
+        return current_value, "failed"
+    save_drive_file_record(
+        con,
+        folder_key=folder_key,
+        file_scope=file_scope,
+        drive_file=result,
+        uploaded_by=uploaded_by,
+        user_id=user_id,
+        booking_id=booking_id,
+        car_id=car_id,
+        expense_id=expense_id,
+    )
+    return f"drive://{result.get('id')}", "uploaded"
+
+
+def migrate_existing_uploads_to_drive(uploaded_by: int | str | None = None, limit: int = 500) -> dict[str, int]:
+    summary = {"uploaded": 0, "failed": 0, "skipped": 0, "unsupported": 0}
+
+    def remember(status: str) -> None:
+        if status not in summary:
+            summary[status] = 0
+        summary[status] += 1
+
+    with db() as con:
+        processed = 0
+        for row in con.execute("SELECT * FROM driver_licenses ORDER BY id ASC").fetchall():
+            for column, scope, suffix in (
+                ("front_image_url", "driver_license_front", "dl-front"),
+                ("back_image_url", "driver_license_back", "dl-back"),
+            ):
+                if processed >= limit:
+                    break
+                new_value, status = upload_existing_reference_to_drive(
+                    con,
+                    folder_key="driver_license",
+                    file_scope=scope,
+                    current_value=row_value(row, column),
+                    fallback_name=f"driver-license-{row_value(row, 'id')}-{suffix}",
+                    uploaded_by=uploaded_by,
+                    user_id=row_value(row, "user_id"),
+                )
+                remember(status)
+                if status != "skipped":
+                    processed += 1
+                if status == "uploaded":
+                    con.execute(f"UPDATE driver_licenses SET {column} = ? WHERE id = ?", (new_value, row_value(row, "id")))
+
+        for row in con.execute(
+            """
+            SELECT insurances.*, bookings.user_id, bookings.booking_id AS public_booking_id
+            FROM insurances
+            LEFT JOIN bookings ON bookings.id = insurances.booking_id
+            ORDER BY insurances.id ASC
+            """
+        ).fetchall():
+            if processed >= limit:
+                break
+            new_value, status = upload_existing_reference_to_drive(
+                con,
+                folder_key="insurance",
+                file_scope="insurance_document",
+                current_value=row_value(row, "document_url"),
+                fallback_name=f"{row_value(row, 'public_booking_id') or row_value(row, 'booking_id')}-insurance",
+                uploaded_by=uploaded_by,
+                user_id=row_value(row, "user_id"),
+                booking_id=row_value(row, "booking_id"),
+            )
+            remember(status)
+            if status != "skipped":
+                processed += 1
+            if status == "uploaded":
+                con.execute("UPDATE insurances SET document_url = ? WHERE id = ?", (new_value, row_value(row, "id")))
+
+        booking_photo_fields = (
+            "pickup_front_image",
+            "pickup_back_image",
+            "pickup_left_image",
+            "pickup_right_image",
+            "return_front_image",
+            "return_back_image",
+            "return_left_image",
+            "return_right_image",
+        )
+        for row in con.execute("SELECT * FROM bookings ORDER BY id ASC").fetchall():
+            for column in booking_photo_fields:
+                if processed >= limit:
+                    break
+                new_value, status = upload_existing_reference_to_drive(
+                    con,
+                    folder_key="pickup_return",
+                    file_scope=column,
+                    current_value=row_value(row, column),
+                    fallback_name=f"{row_value(row, 'booking_id') or row_value(row, 'id')}-{column}",
+                    uploaded_by=uploaded_by,
+                    user_id=row_value(row, "user_id"),
+                    booking_id=row_value(row, "id"),
+                    car_id=row_value(row, "car_id"),
+                )
+                remember(status)
+                if status != "skipped":
+                    processed += 1
+                if status == "uploaded":
+                    con.execute(f"UPDATE bookings SET {column} = ? WHERE id = ?", (new_value, row_value(row, "id")))
+
+        for row in con.execute("SELECT * FROM cars ORDER BY id ASC").fetchall():
+            if processed >= limit:
+                break
+            new_value, status = upload_existing_reference_to_drive(
+                con,
+                folder_key="roi",
+                file_scope="vehicle_purchase_receipt",
+                current_value=row_value(row, "purchase_receipt_url"),
+                fallback_name=f"vehicle-{row_value(row, 'id')}-purchase-receipt",
+                uploaded_by=uploaded_by,
+                car_id=row_value(row, "id"),
+            )
+            remember(status)
+            if status != "skipped":
+                processed += 1
+            if status == "uploaded":
+                con.execute("UPDATE cars SET purchase_receipt_url = ? WHERE id = ?", (new_value, row_value(row, "id")))
+
+        for row in con.execute("SELECT * FROM car_service_costs ORDER BY id ASC").fetchall():
+            if processed >= limit:
+                break
+            new_value, status = upload_existing_reference_to_drive(
+                con,
+                folder_key="roi",
+                file_scope="vehicle_service_receipt",
+                current_value=row_value(row, "receipt_url"),
+                fallback_name=f"vehicle-{row_value(row, 'car_id')}-service-{row_value(row, 'id')}",
+                uploaded_by=uploaded_by,
+                car_id=row_value(row, "car_id"),
+                expense_id=row_value(row, "id"),
+            )
+            remember(status)
+            if status != "skipped":
+                processed += 1
+            if status == "uploaded":
+                con.execute("UPDATE car_service_costs SET receipt_url = ? WHERE id = ?", (new_value, row_value(row, "id")))
+
+        summary["processed"] = processed
+    return summary
+
+
 def load_env_file() -> None:
     env_file = BASE_DIR / ".env"
     if not env_file.exists():
@@ -8328,6 +8522,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/tickets/escalate": self.escalate_admin_ticket,
             "/admin/backups/create": self.create_admin_backup,
+            "/admin/drive/migrate": self.migrate_admin_drive_uploads,
         }
         handler = routes.get(parsed.path)
         if handler:
@@ -11181,6 +11376,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        drive_migration_notice = ""
+        if query.get("drive_migration"):
+            drive_migration_notice = (
+                '<div class="green-note"><b>Drive migration finished</b><br>'
+                f"Processed {escape(query.get('processed', ['0'])[0])}; "
+                f"uploaded {escape(query.get('uploaded', ['0'])[0])}; "
+                f"failed {escape(query.get('failed', ['0'])[0])}; "
+                f"unsupported {escape(query.get('unsupported', ['0'])[0])}; "
+                f"skipped {escape(query.get('skipped', ['0'])[0])}."
+                "</div>"
+            )
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
         drive_status = google_drive_config_status()
@@ -11224,6 +11432,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             drive_service_account_status="Configured" if drive_status["service_account"] else "Missing",
             drive_root_status="Configured" if drive_status["root_folder"] else "Missing",
             drive_root_folder_id=escape(masked_identifier(str(drive_status["root_folder_id"] or ""))),
+            drive_migration_notice=drive_migration_notice,
             drive_folder_rows=drive_folder_rows or '<tr><td colspan="4">No Drive folder env values configured.</td></tr>',
             drive_record_rows=drive_record_rows or '<tr><td colspan="4">No Drive upload attempts recorded yet.</td></tr>',
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
@@ -12452,6 +12661,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         create_db_backup("admin")
         self.redirect("/admin/system")
+
+    def migrate_admin_drive_uploads(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        summary = migrate_existing_uploads_to_drive(row_value(user, "id"))
+        message = (
+            f"processed={summary.get('processed', 0)}"
+            f"&uploaded={summary.get('uploaded', 0)}"
+            f"&failed={summary.get('failed', 0)}"
+            f"&unsupported={summary.get('unsupported', 0)}"
+            f"&skipped={summary.get('skipped', 0)}"
+        )
+        self.redirect(f"/admin/system?drive_migration=1&{message}")
 
     def download_admin_backup(self) -> None:
         user = self.require_owner_admin()

@@ -40,7 +40,11 @@
           <h2>Google Drive Storage</h2>
           <p>Private file uploads for licenses, insurance, pickup photos, receipts, and ROI files.</p>
         </div>
+        <form method="post" action="/admin/drive/migrate" class="inline-form">
+          <button type="submit">Migrate Existing Files</button>
+        </form>
       </div>
+      $drive_migration_notice
       <div class="backup-meta">
         <span><b>Service account</b>$drive_service_account_status</span>
         <span><b>Root folder</b>$drive_root_status · $drive_root_folder_id</span>
