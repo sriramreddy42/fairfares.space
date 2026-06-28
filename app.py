@@ -99,7 +99,7 @@ def normalize_drive_folder_id(value: str) -> str:
     value = (value or "").strip()
     if not value:
         return ""
-    match = re.search(r"/folders/([A-Za-z0-9_-]+)", value)
+    match = re.search(r"(?:^|/)folders/([A-Za-z0-9_-]+)", value)
     if match:
         return match.group(1)
     parsed = urllib.parse.urlparse(value)

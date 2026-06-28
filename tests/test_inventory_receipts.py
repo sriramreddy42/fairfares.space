@@ -125,6 +125,13 @@ class InventoryReceiptTest(unittest.TestCase):
         self.assertEqual(app.drive_folder_id("roi"), folder_id)
         self.assertEqual(app.google_drive_config_status()["root_folder_id"], folder_id)
 
+    def test_drive_folder_env_accepts_partial_google_folder_path(self):
+        folder_id = "1KfPVAPLHZncr1qHr25FnaumP7kdoF8WM"
+        os.environ[app.DRIVE_ROOT_ENV] = f"folders/{folder_id}?usp=sharing"
+
+        self.assertEqual(app.drive_folder_id("roi"), folder_id)
+        self.assertEqual(app.google_drive_config_status()["root_folder_id"], folder_id)
+
     def test_existing_local_receipts_can_migrate_to_drive(self):
         upload_dir = Path(os.environ["FAIRFARES_DB_PATH"]).parent / "uploads" / "vehicle-purchase-receipts"
         upload_dir.mkdir(parents=True, exist_ok=True)
