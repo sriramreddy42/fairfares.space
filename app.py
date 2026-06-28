@@ -95,18 +95,43 @@ def refresh_storage_paths() -> None:
     BACKUP_DIR = Path(os.environ.get("FAIRFARES_BACKUP_DIR", DB_PATH.parent / "backups"))
 
 
+def normalize_drive_folder_id(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    match = re.search(r"/folders/([A-Za-z0-9_-]+)", value)
+    if match:
+        return match.group(1)
+    parsed = urllib.parse.urlparse(value)
+    query = urllib.parse.parse_qs(parsed.query)
+    for key in ("id", "folderId"):
+        if query.get(key):
+            return query[key][0].strip()
+    if parsed.scheme and parsed.netloc:
+        return ""
+    return value
+
+
 def drive_folder_id(folder_key: str) -> str:
     env_name = DRIVE_FOLDER_ENVS.get(folder_key, DRIVE_ROOT_ENV)
-    return (os.environ.get(env_name) or os.environ.get(DRIVE_ROOT_ENV) or "").strip()
+    return normalize_drive_folder_id(os.environ.get(env_name) or os.environ.get(DRIVE_ROOT_ENV) or "")
 
 
 def google_drive_config_status() -> dict[str, object]:
     service_json = (os.environ.get(DRIVE_SERVICE_ACCOUNT_ENV) or "").strip()
-    folders = {key: bool((os.environ.get(env) or "").strip()) for key, env in DRIVE_FOLDER_ENVS.items()}
+    folders = {
+        key: {
+            "configured": bool((os.environ.get(env) or "").strip()),
+            "folder_id": drive_folder_id(key),
+            "env": env,
+        }
+        for key, env in DRIVE_FOLDER_ENVS.items()
+    }
     return {
-        "configured": bool(service_json and os.environ.get(DRIVE_ROOT_ENV)),
+        "configured": bool(service_json and drive_folder_id("root")),
         "service_account": bool(service_json),
-        "root_folder": bool((os.environ.get(DRIVE_ROOT_ENV) or "").strip()),
+        "root_folder": bool(drive_folder_id("root")),
+        "root_folder_id": drive_folder_id("root"),
         "folders": folders,
     }
 
@@ -147,7 +172,7 @@ def google_drive_access_token() -> tuple[bool, str]:
     try:
         credentials = service_account.Credentials.from_service_account_info(
             service_info,
-            scopes=["https://www.googleapis.com/auth/drive.file"],
+            scopes=["https://www.googleapis.com/auth/drive"],
         )
         credentials.refresh(Request())
     except Exception as exc:
@@ -178,7 +203,7 @@ def upload_bytes_to_google_drive(folder_key: str, filename: str, mime_type: str,
         )
     )
     request = urllib.request.Request(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink",
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,size,webViewLink,webContentLink",
         data=body,
         headers={
             "Authorization": f"Bearer {token_or_error}",
@@ -236,6 +261,41 @@ def save_drive_file_record(
     )
 
 
+def save_drive_upload_failure_record(
+    con: sqlite3.Connection,
+    *,
+    folder_key: str,
+    file_scope: str,
+    error: object,
+    uploaded_by: int | str | None = None,
+    user_id: int | str | None = None,
+    booking_id: int | str | None = None,
+    car_id: int | str | None = None,
+    expense_id: int | str | None = None,
+) -> None:
+    folder_id = drive_folder_id(folder_key)
+    safe_error = str(error or "Google Drive upload failed.")[:500]
+    con.execute(
+        """
+        INSERT INTO drive_files
+        (file_scope, folder_key, drive_file_id, drive_folder_id, drive_web_view_link,
+         original_filename, mime_type, size_bytes, uploaded_by, user_id, booking_id, car_id, expense_id)
+        VALUES (?, ?, 'UPLOAD_FAILED', ?, ?, '', '', 0, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_scope,
+            folder_key,
+            folder_id,
+            safe_error,
+            uploaded_by,
+            user_id,
+            booking_id,
+            car_id,
+            expense_id,
+        ),
+    )
+
+
 def upload_data_url_to_drive(
     con: sqlite3.Connection,
     *,
@@ -255,6 +315,17 @@ def upload_data_url_to_drive(
     filename, mime_type, payload = parts
     ok, result = upload_bytes_to_google_drive(folder_key, filename, mime_type, payload)
     if not ok or not isinstance(result, dict):
+        save_drive_upload_failure_record(
+            con,
+            folder_key=folder_key,
+            file_scope=file_scope,
+            error=result,
+            uploaded_by=uploaded_by,
+            user_id=user_id,
+            booking_id=booking_id,
+            car_id=car_id,
+            expense_id=expense_id,
+        )
         return data_url
     save_drive_file_record(
         con,
@@ -291,6 +362,17 @@ def upload_file_payload_to_drive(
     mime_type = str(file_data.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
     ok, result = upload_bytes_to_google_drive(folder_key, filename or "fairfares-file", mime_type, payload)
     if not ok or not isinstance(result, dict):
+        save_drive_upload_failure_record(
+            con,
+            folder_key=folder_key,
+            file_scope=file_scope,
+            error=result,
+            uploaded_by=uploaded_by,
+            user_id=user_id,
+            booking_id=booking_id,
+            car_id=car_id,
+            expense_id=expense_id,
+        )
         return ""
     save_drive_file_record(
         con,
@@ -779,6 +861,15 @@ def masked_env_status(env_name: str) -> dict[str, str]:
         "status": "Configured",
         "detail": f"Starts with {prefix}..., length {len(value)}",
     }
+
+
+def masked_identifier(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return "Missing"
+    if len(value) <= 10:
+        return f"{value[:3]}..."
+    return f"{value[:6]}...{value[-4:]}"
 
 
 def stripe_api_request(path: str, params: dict[str, object], idempotency_key: str = "") -> tuple[dict[str, object], str]:
@@ -11092,12 +11183,49 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
+        drive_status = google_drive_config_status()
+        drive_folder_rows = "\n".join(
+            f"""
+            <tr>
+              <td>{escape(folder['env'])}</td>
+              <td>{escape(key)}</td>
+              <td>{'Configured' if folder['configured'] else 'Using root fallback'}</td>
+              <td>{escape(masked_identifier(str(folder['folder_id'] or '')))}</td>
+            </tr>
+            """
+            for key, folder in drive_status["folders"].items()
+        )
+        with db() as con:
+            recent_drive_records = con.execute(
+                """
+                SELECT *
+                FROM drive_files
+                ORDER BY id DESC
+                LIMIT 12
+                """
+            ).fetchall()
+        drive_record_rows = "\n".join(
+            f"""
+            <tr>
+              <td>{escape(row_value(row, "created_at"))}</td>
+              <td>{escape(row_value(row, "folder_key"))}<span>{escape(row_value(row, "file_scope"))}</span></td>
+              <td>{escape("Failed" if row_value(row, "drive_file_id") == "UPLOAD_FAILED" else "Uploaded")}</td>
+              <td>{escape(row_value(row, "drive_web_view_link") or row_value(row, "drive_file_id"))}</td>
+            </tr>
+            """
+            for row in recent_drive_records
+        )
         body = render_template(
             "admin_system.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "system"),
             db_path=escape(DB_PATH),
             backup_dir=escape(BACKUP_DIR),
+            drive_service_account_status="Configured" if drive_status["service_account"] else "Missing",
+            drive_root_status="Configured" if drive_status["root_folder"] else "Missing",
+            drive_root_folder_id=escape(masked_identifier(str(drive_status["root_folder_id"] or ""))),
+            drive_folder_rows=drive_folder_rows or '<tr><td colspan="4">No Drive folder env values configured.</td></tr>',
+            drive_record_rows=drive_record_rows or '<tr><td colspan="4">No Drive upload attempts recorded yet.</td></tr>',
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
             feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
         )

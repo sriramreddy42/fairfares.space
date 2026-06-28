@@ -37,6 +37,30 @@
     <section class="admin-card">
       <div class="admin-card-head">
         <div>
+          <h2>Google Drive Storage</h2>
+          <p>Private file uploads for licenses, insurance, pickup photos, receipts, and ROI files.</p>
+        </div>
+      </div>
+      <div class="backup-meta">
+        <span><b>Service account</b>$drive_service_account_status</span>
+        <span><b>Root folder</b>$drive_root_status · $drive_root_folder_id</span>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Env</th><th>Folder</th><th>Status</th><th>Runtime ID</th></tr></thead>
+          <tbody>$drive_folder_rows</tbody>
+        </table>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Time</th><th>Scope</th><th>Status</th><th>Drive result / error</th></tr></thead>
+          <tbody>$drive_record_rows</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
           <h2>Database Backups</h2>
           <p>Automatic startup backups and admin-created backups are stored on the persistent disk.</p>
         </div>

@@ -106,6 +106,10 @@ class InventoryReceiptTest(unittest.TestCase):
         self.assertIsNotNone(car)
         self.assertGreater(float(car["purchase_cost"]), 0)
         self.assertTrue(car["purchase_receipt_url"].startswith("local://uploads/vehicle-purchase-receipts/"))
+        with app.db() as con:
+            drive_failure = con.execute("SELECT * FROM drive_files WHERE drive_file_id = 'UPLOAD_FAILED'").fetchone()
+        self.assertIsNotNone(drive_failure)
+        self.assertIn("Drive folder is not configured", drive_failure["drive_web_view_link"])
 
     def test_admin_inventory_form_requires_receipt_upload(self):
         template = (Path(app.BASE_DIR) / "templates" / "admin.html").read_text(encoding="utf-8")
@@ -113,6 +117,13 @@ class InventoryReceiptTest(unittest.TestCase):
         self.assertIn('enctype="multipart/form-data"', template)
         self.assertIn('name="purchase_receipt_file"', template)
         self.assertIn("required", template)
+
+    def test_drive_folder_env_accepts_full_google_folder_url(self):
+        folder_id = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+        os.environ[app.DRIVE_ROOT_ENV] = f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
+
+        self.assertEqual(app.drive_folder_id("roi"), folder_id)
+        self.assertEqual(app.google_drive_config_status()["root_folder_id"], folder_id)
 
 
 if __name__ == "__main__":
