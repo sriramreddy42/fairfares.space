@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import app
@@ -192,6 +192,33 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_EXPIRED"}), "Pending confirmation")
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_PAID"}), "FF123456789")
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "PAID"}), "FF123456789")
+
+    def test_paid_in_full_cancellation_requires_admin_review_before_cutoff(self):
+        booking = {
+            "payment_status": "PAID",
+            "pickup_date": "Jun 30, 2026",
+            "pickup_time": "10:00 AM",
+        }
+
+        self.assertTrue(app.cancellation_requires_admin_review(booking, now=datetime(2026, 6, 27, 10, 0)))
+
+    def test_hold_paid_cancellation_can_auto_cancel_before_cutoff(self):
+        booking = {
+            "payment_status": "HOLD_PAID",
+            "pickup_date": "Jun 30, 2026",
+            "pickup_time": "10:00 AM",
+        }
+
+        self.assertFalse(app.cancellation_requires_admin_review(booking, now=datetime(2026, 6, 27, 10, 0)))
+
+    def test_cancellation_inside_cutoff_requires_admin_review(self):
+        booking = {
+            "payment_status": "HOLD_PAID",
+            "pickup_date": "Jun 27, 2026",
+            "pickup_time": "11:00 AM",
+        }
+
+        self.assertTrue(app.cancellation_requires_admin_review(booking, now=datetime(2026, 6, 27, 10, 0)))
 
     def test_checkout_timer_frontend_hook_exists(self):
         js = Path("static/js/app.js").read_text()

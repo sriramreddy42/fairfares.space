@@ -6263,6 +6263,20 @@ def booking_refund_estimate(row: sqlite3.Row | dict[str, object] | None) -> tupl
     return 0.0, "No online payment has been recorded for this booking yet."
 
 
+def cancellation_requires_admin_review(
+    booking: sqlite3.Row | dict[str, object] | None,
+    now: datetime | None = None,
+) -> bool:
+    if not booking:
+        return True
+    if row_value(booking, "payment_status") == "PAID":
+        return True
+    pickup_at = booking_datetime_from_row(booking, "pickup_date", "pickup_time")
+    if not pickup_at:
+        return True
+    return pickup_at - (now or datetime.now()) < timedelta(hours=24)
+
+
 def booking_payment_record_summary(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
     transactions = booking_payment_records(int(row_value(row, "id") or 0))
     paid_transactions = [
@@ -9242,11 +9256,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         note = form.get("note", "")
         if note:
             reason = f"{reason}: {note}"
-        pickup_at = booking_datetime_from_row(booking, "pickup_date", "pickup_time")
-        auto_cancel = bool(pickup_at and pickup_at - datetime.now() >= timedelta(hours=24))
+        auto_cancel = not cancellation_requires_admin_review(booking)
         next_status = "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED"
         refund_message = ""
-        if auto_cancel and booking["payment_status"] in {"PAID", "HOLD_PAID"}:
+        if auto_cancel and booking["payment_status"] == "HOLD_PAID":
             next_payment_status, refund_message = auto_refund_booking_payments(int(booking["id"]))
         elif booking["payment_status"] in {"PAID", "HOLD_PAID"}:
             next_payment_status = "REFUND_REVIEW"
