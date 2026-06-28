@@ -3799,6 +3799,37 @@ def student_discount_code(name: str, email: str) -> str:
     return f"STUDENT_{(cleaned or 'VERIFIED')[:30]}_15"
 
 
+def student_email_matches_profile_name(profile_name: str, student_email: str) -> bool:
+    local_part = student_email.split("@", 1)[0].lower()
+    compact_local = re.sub(r"[^a-z0-9]", "", local_part)
+    name_tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", (profile_name or "").lower())
+        if len(token) >= 2
+    ]
+    if not compact_local or not name_tokens:
+        return False
+    meaningful_tokens = [token for token in name_tokens if len(token) >= 3]
+    if any(token in compact_local for token in meaningful_tokens):
+        return True
+    first = name_tokens[0]
+    last = name_tokens[-1]
+    patterns = {
+        f"{first[:1]}{last}",
+        f"{first}{last[:1]}",
+    }
+    return any(pattern and pattern in compact_local for pattern in patterns)
+
+
+def student_verification_delivery_message(delivery_status: str) -> str:
+    if delivery_status.startswith("sent"):
+        return "Verification email sent to your .edu inbox. Click the link there to activate the student discount."
+    if delivery_status == "not configured":
+        return "Student verification email is not configured on the server. Add RESEND_API_KEY and RESEND_FROM, then try again."
+    safe_status = re.sub(r"(re_[A-Za-z0-9_-]{12,}|sk_[A-Za-z0-9_-]+)", "[redacted]", delivery_status)
+    return f"Student verification email was not delivered. Email provider status: {safe_status[:240]}"
+
+
 def create_student_discount(user_id: int, name: str, student_email: str) -> str:
     code = student_discount_code(name, student_email)
     holder = name.strip() or student_email.strip().lower() or f"User {user_id}"
@@ -10295,6 +10326,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "checks_html": "<li>Student ID pending</li><li>University email pending</li><li>Discount pending <b>0% OFF</b></li>",
             }, 400)
             return
+        if not student_email_matches_profile_name(row_value(user, "name"), student_email):
+            self.send_json({
+                "ok": False,
+                "message": "Your profile name must match your school email. Update your FairFares profile name or use the .edu email issued to you.",
+                "verified": False,
+                "verified_label": "Student Verification Pending",
+                "discount_label": "Profile name must match school email",
+                "checks_html": "<li>Student ID saved</li><li>Profile name and school email must match</li><li>Discount pending <b>0% OFF</b></li>",
+            }, 400)
+            return
         with db() as con:
             con.execute(
                 """
@@ -10309,9 +10350,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         token = create_verification(user["id"], student_email, "STUDENT")
         link = self.student_verification_url(token)
         _outbox_file, delivery_status = send_student_verification_email(student_email, user["name"], link)
-        message = "Verification email sent to your .edu inbox. Click the link there to activate the student discount."
-        if not delivery_status.startswith("sent"):
-            message = "Your .edu verification link is ready, but the email provider did not deliver it. Check local outbox for the backup link."
+        message = student_verification_delivery_message(delivery_status)
         self.send_json({
             "ok": True,
             "message": message,
@@ -10346,6 +10385,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             if not verification["email"].lower().endswith(".edu"):
                 self.activation_message_page("School email required", "Only verified .edu inboxes can unlock student pricing.", "Open Dashboard", "/dashboard")
+                return
+            if not student_email_matches_profile_name(verification["name"], verification["email"]):
+                self.activation_message_page(
+                    "Profile name must match school email",
+                    "Update your FairFares profile name or request verification again with the .edu email issued to you.",
+                    "Open Dashboard",
+                    "/dashboard",
+                )
                 return
             con.execute(
                 """
