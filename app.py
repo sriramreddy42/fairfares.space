@@ -48,7 +48,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627tickets1"
+ASSET_VERSION = "20260627bookingdates1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -3135,6 +3135,61 @@ def rental_day_count(start: datetime | None, end: datetime | None, fallback: obj
         seconds = (end - start).total_seconds()
         return max(1, min(math.ceil(seconds / 86400), 366))
     return max(1, min(int(float(fallback or 1)), 366))
+
+
+def normalize_booking_window(
+    days: object = 10,
+    pickup_date: str = "",
+    return_date: str = "",
+    pickup_time: str = "10:00 AM",
+    return_time: str = "10:00 AM",
+    *,
+    strict: bool = True,
+) -> tuple[str, str, str, str, int, datetime, datetime]:
+    default_pickup, default_return = default_trip_dates()
+    pickup_date = (pickup_date or default_pickup).strip()
+    pickup_time = (pickup_time or "10:00 AM").strip()
+    return_time = (return_time or "10:00 AM").strip()
+    requested_start = parse_booking_datetime(pickup_date, pickup_time)
+    if not return_date:
+        try:
+            fallback_days = max(1, min(int(float(days or 10)), 366))
+        except (TypeError, ValueError):
+            fallback_days = 10
+        if requested_start:
+            return_date = (requested_start.date() + timedelta(days=fallback_days)).isoformat()
+        else:
+            return_date = default_return
+    return_date = return_date.strip()
+    requested_start = parse_booking_datetime(pickup_date, pickup_time)
+    requested_end = parse_booking_datetime(return_date, return_time)
+    if not requested_start or not requested_end:
+        if strict:
+            raise ValueError("Please select valid pickup and return dates.")
+        pickup_date, return_date = default_pickup, default_return
+        pickup_time, return_time = "10:00 AM", "10:00 AM"
+        requested_start = parse_booking_datetime(pickup_date, pickup_time)
+        requested_end = parse_booking_datetime(return_date, return_time)
+    if not requested_start or not requested_end:
+        raise ValueError("Please select valid pickup and return dates.")
+    if requested_start.date() < date.today():
+        if strict:
+            raise ValueError("Pickup date cannot be in the past.")
+        pickup_date, return_date = default_pickup, default_return
+        pickup_time, return_time = "10:00 AM", "10:00 AM"
+        requested_start = parse_booking_datetime(pickup_date, pickup_time)
+        requested_end = parse_booking_datetime(return_date, return_time)
+    if not requested_start or not requested_end or requested_end <= requested_start:
+        if strict:
+            raise ValueError("Return date and time must be after pickup date and time.")
+        pickup_date, return_date = default_pickup, default_return
+        pickup_time, return_time = "10:00 AM", "10:00 AM"
+        requested_start = parse_booking_datetime(pickup_date, pickup_time)
+        requested_end = parse_booking_datetime(return_date, return_time)
+    if not requested_start or not requested_end or requested_end <= requested_start:
+        raise ValueError("Return date and time must be after pickup date and time.")
+    rental_days = rental_day_count(requested_start, requested_end, days)
+    return requested_start.date().isoformat(), requested_end.date().isoformat(), pickup_time, return_time, rental_days, requested_start, requested_end
 
 
 def daily_price_range(price: object) -> tuple[int, int]:
@@ -6778,12 +6833,14 @@ def create_booking_for_user(
 ) -> sqlite3.Row:
     requested_car = get_car(car_id)
     default_pickup, default_return = default_trip_dates()
-    pickup_date = pickup_date or default_pickup
-    return_date = return_date or default_return
-    requested_start = parse_booking_datetime(pickup_date, pickup_time)
-    requested_end = parse_booking_datetime(return_date, return_time)
-    if requested_start and requested_end and requested_end <= requested_start:
-        raise ValueError("Return date and time must be after pickup date and time.")
+    pickup_date, return_date, pickup_time, return_time, rental_days, requested_start, requested_end = normalize_booking_window(
+        days,
+        pickup_date,
+        return_date,
+        pickup_time,
+        return_time,
+        strict=True,
+    )
     expire_stale_booking_holds()
     candidates = [requested_car] if requested_car else get_cars()
     car = None
@@ -6801,6 +6858,8 @@ def create_booking_for_user(
             if requested_car and candidate["id"] == requested_car["id"] and requested_start.date() == active_return.date():
                 pickup_date = active_return.strftime("%Y-%m-%d")
                 pickup_time = active_return.strftime("%I:%M %p").lstrip("0")
+                requested_start = parse_booking_datetime(pickup_date, pickup_time) or requested_start
+                rental_days = rental_day_count(requested_start, requested_end, rental_days)
                 car = candidate
                 break
             continue
@@ -6814,7 +6873,6 @@ def create_booking_for_user(
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
             booking_id = make_booking_id()
         discount = get_valid_discount(discount_code)
-        rental_days = max(1, min(int(days or 1), 366))
         subtotal = round(float(car["daily_price"]) * rental_days, 2)
         discount_amount = calculate_discount_amount(subtotal, discount)
         price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
@@ -6880,8 +6938,14 @@ def build_booking_preview(
     car = get_car(car_id)
     if not car:
         return None
-    default_pickup, default_return = default_trip_dates()
-    rental_days = max(1, min(int(days or 1), 366))
+    pickup_date, return_date, pickup_time, return_time, rental_days, _requested_start, _requested_end = normalize_booking_window(
+        days,
+        pickup_date,
+        return_date,
+        pickup_time,
+        return_time,
+        strict=False,
+    )
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
     discount_amount = calculate_discount_amount(subtotal, discount)
@@ -6892,10 +6956,10 @@ def build_booking_preview(
         "car_id": car["id"],
         "provider": "AVIS",
         "pickup_location": pickup_location or car["location"] or "Denver International Airport (DEN)",
-        "pickup_date": format_booking_date(pickup_date or default_pickup, "Upcoming pickup"),
+        "pickup_date": format_booking_date(pickup_date, "Upcoming pickup"),
         "pickup_time": pickup_time or "10:00 AM",
         "dropoff_location": return_location or pickup_location or car["location"] or "Denver International Airport (DEN)",
-        "dropoff_date": format_booking_date(return_date or default_return, "Upcoming return"),
+        "dropoff_date": format_booking_date(return_date, "Upcoming return"),
         "dropoff_time": return_time or "10:00 AM",
         "days": rental_days,
         "subtotal_price": subtotal,
@@ -6976,6 +7040,29 @@ def ensure_booking_for_user(
     if existing and not car_id:
         return existing
     if car_id:
+        if existing and row_value(existing, "booking_status") in {"PENDING_HOLD", "EXPIRED_HOLD"} and row_value(existing, "payment_status") in {"HOLD_PENDING", "HOLD_EXPIRED"}:
+            with db() as con:
+                con.execute(
+                    """
+                    UPDATE bookings
+                    SET booking_status = 'EXPIRED_HOLD',
+                        payment_status = 'HOLD_EXPIRED',
+                        status = 'EXPIRED_HOLD',
+                        hold_expires_at = datetime('now', '-1 minute')
+                    WHERE id = ?
+                    """,
+                    (row_value(existing, "id"),),
+                )
+                con.execute(
+                    """
+                    UPDATE cars
+                    SET status = 'AVAILABLE'
+                    WHERE id = ?
+                      AND UPPER(TRIM(status)) = 'HOLD'
+                    """,
+                    (row_value(existing, "car_id"),),
+                )
+            existing = None
         if (
             existing
             and int(row_value(existing, "car_id") or 0) == car_id

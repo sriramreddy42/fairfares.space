@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 import app
@@ -53,6 +54,65 @@ class BookingHoldTest(unittest.TestCase):
 
         held_car = app.get_car(car["id"])
         self.assertEqual(held_car["status"], "HOLD")
+
+    def test_booking_days_are_calculated_from_selected_dates(self):
+        car = app.get_cars()[0]
+        pickup = date.today() + timedelta(days=5)
+        return_date = pickup + timedelta(days=15)
+
+        booking = app.create_booking_for_user(
+            self.user_id,
+            car["id"],
+            days=10,
+            pickup_date=pickup.isoformat(),
+            return_date=return_date.isoformat(),
+            pickup_time="10:00 AM",
+            return_time="10:00 AM",
+        )
+
+        expected = app.rental_price_breakdown(car["daily_price"], 15, 0)
+        self.assertEqual(booking["days"], 15)
+        self.assertAlmostEqual(float(booking["subtotal_price"]), float(expected["base"]))
+        self.assertAlmostEqual(float(booking["total_price"]), float(expected["total"]))
+
+    def test_past_pickup_date_is_rejected(self):
+        car = app.get_cars()[0]
+        pickup = date.today() - timedelta(days=1)
+        return_date = date.today() + timedelta(days=3)
+
+        with self.assertRaises(ValueError):
+            app.create_booking_for_user(
+                self.user_id,
+                car["id"],
+                pickup_date=pickup.isoformat(),
+                return_date=return_date.isoformat(),
+            )
+
+    def test_reselecting_pending_hold_refreshes_dates_and_total(self):
+        car = app.get_cars()[0]
+        first_pickup = date.today() + timedelta(days=4)
+        first_return = first_pickup + timedelta(days=10)
+        next_pickup = date.today() + timedelta(days=20)
+        next_return = next_pickup + timedelta(days=15)
+
+        first = app.ensure_booking_for_user(
+            self.user_id,
+            car["id"],
+            days=10,
+            pickup_date=first_pickup.isoformat(),
+            return_date=first_return.isoformat(),
+        )
+        second = app.ensure_booking_for_user(
+            self.user_id,
+            car["id"],
+            days=10,
+            pickup_date=next_pickup.isoformat(),
+            return_date=next_return.isoformat(),
+        )
+
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(second["days"], 15)
+        self.assertEqual(second["pickup_date"], app.format_booking_date(next_pickup.isoformat(), ""))
 
     def test_expired_hold_releases_car(self):
         car = app.get_cars()[0]

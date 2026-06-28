@@ -655,6 +655,26 @@ const filterOptions = document.getElementById("filterOptions");
 const mobileQuery = window.matchMedia("(max-width: 760px)");
 const discountDataNode = document.getElementById("discountData");
 
+function todayInputDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function clampRentalDateInputs() {
+  if (!pickupDate || !returnDate) return;
+  const today = todayInputDate();
+  pickupDate.min = today;
+  returnDate.min = pickupDate.value && pickupDate.value > today ? pickupDate.value : today;
+  if (pickupDate.value && pickupDate.value < today) {
+    pickupDate.value = today;
+  }
+  if (returnDate.value && pickupDate.value && returnDate.value <= pickupDate.value) {
+    const next = new Date(`${pickupDate.value}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    returnDate.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+  }
+}
+
 function parseJsonData(node, fallback = []) {
   if (!node) return fallback;
   try {
@@ -956,6 +976,7 @@ function rentalLengthText(days) {
 }
 
 function updateRentalRanges() {
+  clampRentalDateInputs();
   const days = getRentalDays();
   if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
   if (quoteMatchLabel) {
@@ -1032,6 +1053,7 @@ pickupDate?.addEventListener("change", updateCars);
 pickupTime?.addEventListener("change", updateCars);
 returnDate?.addEventListener("change", updateCars);
 returnTime?.addEventListener("change", updateCars);
+clampRentalDateInputs();
 
 function clearCarFilters() {
   typeFilters.forEach((input) => {
