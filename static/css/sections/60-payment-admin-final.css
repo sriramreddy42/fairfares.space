@@ -22,8 +22,8 @@
   width: 100%;
 }
 
-.price-breakdown-summary span,
-.booking-hold-breakdown span {
+.price-breakdown-summary > span,
+.booking-hold-breakdown > span {
   background: #f5f7fb;
   border: 1px solid #d9deea;
   border-radius: 8px;
@@ -59,6 +59,14 @@
   transition: opacity 160ms ease, transform 160ms ease;
   visibility: hidden;
   z-index: 30;
+}
+
+.tax-fee-detail .tax-fee-label {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  display: inline !important;
+  padding: 0 !important;
 }
 
 .tax-fee-detail:hover .tax-fee-tooltip,
@@ -118,8 +126,8 @@
   padding-top: 8px;
 }
 
-.price-breakdown-summary b,
-.booking-hold-breakdown b {
+.price-breakdown-summary > span > b,
+.booking-hold-breakdown > span > b {
   color: #07143f;
   font-size: 0.95rem;
   line-height: 1;
@@ -1013,8 +1021,8 @@
   grid-template-columns: 1fr !important;
 }
 
-.manage-screen.manage-checkout-screen .booking-hold-breakdown span,
-.manage-screen.manage-checkout-screen .price-breakdown-summary span {
+.manage-screen.manage-checkout-screen .booking-hold-breakdown > span,
+.manage-screen.manage-checkout-screen .price-breakdown-summary > span {
   background: #fff !important;
   border-color: #e7e9ef !important;
   border-radius: 0 !important;
@@ -1026,6 +1034,10 @@
   background: #07143f !important;
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   border-radius: 8px !important;
+}
+
+.manage-screen.manage-checkout-screen .tax-fee-detail {
+  overflow: visible !important;
 }
 
 .manage-screen.manage-checkout-screen .tax-fee-tooltip span,
@@ -1288,7 +1300,7 @@
   gap: 3px !important;
 }
 
-.manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+.manage-screen.manage-checkout-screen .booking-hold-breakdown > span {
   padding: 7px 2px !important;
 }
 

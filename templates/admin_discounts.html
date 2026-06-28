@@ -53,8 +53,37 @@
           </table>
         </div>
       </article>
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Add Tax / Fee Rule</h2>
+            <p>Controls checkout tax and fee estimates for new bookings.</p>
+          </div>
+        </div>
+        <form class="admin-form" method="post" action="/admin/tax-fees">
+          <label><span>Label</span><input name="label" required placeholder="CO road safety fee"></label>
+          <label><span>Type</span><select name="rule_type"><option value="DAILY">Daily amount</option><option value="PERCENT">Percent of subtotal</option><option value="FLAT">Flat amount</option></select></label>
+          <label><span>Value</span><input name="value" type="number" min="0" step="0.01" value="0"></label>
+          <label><span>Sort Order</span><input name="sort_order" type="number" value="100"></label>
+          <label><span>Status</span><select name="status"><option>ACTIVE</option><option>INACTIVE</option></select></label>
+          <button type="submit">Save Tax / Fee</button>
+        </form>
+      </article>
+      <article class="admin-card">
+        <div class="admin-card-head">
+          <div>
+            <h2>Tax / Fee Rules</h2>
+            <p>Active rules appear in checkout and Stripe payment totals.</p>
+          </div>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Rule</th><th>Type</th><th>Value</th><th>Order</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>$tax_fee_rules</tbody>
+          </table>
+        </div>
+      </article>
     </section>
   </main>
 </body>
 </html>
-

@@ -86,6 +86,30 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("Sales tax", html)
         self.assertIn("Rental tax items", html)
 
+    def test_tax_fee_rules_are_loaded_from_database(self):
+        with app.db() as con:
+            con.execute("DELETE FROM tax_fee_rules")
+            con.executemany(
+                """
+                INSERT INTO tax_fee_rules (label, rule_type, value, status, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    ("Custom daily", "DAILY", 1.50, "ACTIVE", 1),
+                    ("Custom percent", "PERCENT", 10.00, "ACTIVE", 2),
+                    ("Custom flat", "FLAT", 5.00, "ACTIVE", 3),
+                    ("Inactive fee", "FLAT", 99.00, "INACTIVE", 4),
+                ],
+            )
+
+        breakdown = app.rental_price_breakdown(100, 2, 0)
+
+        self.assertEqual(
+            breakdown["tax_fee_lines"],
+            [("Custom daily", 3.0), ("Custom percent", 20.0), ("Custom flat", 5.0)],
+        )
+        self.assertAlmostEqual(float(breakdown["tax_fee_amount"]), 28.0)
+
     def test_percent_coupon_applies_to_full_checkout_estimate(self):
         car = app.get_cars()[0]
         with app.db() as con:

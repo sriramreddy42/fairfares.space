@@ -403,7 +403,7 @@
     display: none !important;
   }
 
-  .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span {
     align-items: start !important;
     display: flex !important;
     flex-direction: column !important;
@@ -411,7 +411,7 @@
     min-width: 0 !important;
   }
 
-  .manage-screen.manage-checkout-screen .booking-hold-breakdown b {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span > b {
     font-size: 0.98rem !important;
   }
 
@@ -481,24 +481,34 @@
     display: grid !important;
     gap: 6px !important;
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    overflow: hidden !important;
+    overflow: visible !important;
   }
 
-  .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span {
     border: 1px solid #e7e9ef !important;
     border-radius: 8px !important;
     padding: 8px !important;
   }
 
-  .manage-screen.manage-checkout-screen .booking-hold-breakdown b {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span > b {
     font-size: 0.94rem !important;
     line-height: 1.1 !important;
     overflow-wrap: anywhere !important;
   }
 
-  .manage-screen.manage-checkout-screen .booking-hold-breakdown span {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span {
     overflow: hidden !important;
     overflow-wrap: anywhere !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > .tax-fee-detail {
+    overflow: visible !important;
+  }
+
+  .manage-screen.manage-checkout-screen .tax-fee-tooltip {
+    left: 0 !important;
+    max-width: min(280px, calc(100vw - 34px)) !important;
+    min-width: min(260px, calc(100vw - 34px)) !important;
   }
 
   .manage-screen.manage-checkout-screen .checkout-savings-note {

@@ -2502,6 +2502,17 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS tax_fee_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                rule_type TEXT NOT NULL DEFAULT 'DAILY',
+                value REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(label, rule_type)
+            );
+
             CREATE TABLE IF NOT EXISTS commercials (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -2889,6 +2900,7 @@ def init_db() -> None:
         ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "discounts", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "tax_fee_rules", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
@@ -3140,6 +3152,23 @@ def init_db() -> None:
             """,
             ("REFER_DUDE143", "Default referral offer shown during booking"),
         )
+        tax_fee_rule_count = con.execute("SELECT COUNT(*) AS total FROM tax_fee_rules").fetchone()["total"]
+        if tax_fee_rule_count == 0:
+            con.executemany(
+                """
+                INSERT INTO tax_fee_rules
+                (label, rule_type, value, status, sort_order)
+                VALUES (?, ?, ?, 'ACTIVE', ?)
+                """,
+                [
+                    ("CO road safety fee", "DAILY", 2.44, 10),
+                    ("CO congestion impact fee", "DAILY", 3.13, 20),
+                    ("VLF recovery", "DAILY", 0.20, 30),
+                    ("Ownership tax", "PERCENT", 2.0, 40),
+                    ("Sales tax", "PERCENT", 4.0, 50),
+                    ("Rental tax items", "PERCENT", 7.25, 60),
+                ],
+            )
 
         service_count = con.execute("SELECT COUNT(*) AS total FROM services").fetchone()["total"]
         if service_count == 0:
@@ -3544,25 +3573,64 @@ BOOKING_HOLD_RATE = 0.10
 def full_payment_total(total: object) -> float:
     return round(max(0.0, float(total or 0) - FULL_PAYMENT_DISCOUNT_AMOUNT), 2)
 MARKET_COMPARISON_RATE = 0.12
-DAILY_FEE_LINES = (
-    ("CO road safety fee", 2.44),
-    ("CO congestion impact fee", 3.13),
-    ("VLF recovery", 0.20),
+DEFAULT_TAX_FEE_RULES = (
+    {"label": "CO road safety fee", "rule_type": "DAILY", "value": 2.44, "sort_order": 10},
+    {"label": "CO congestion impact fee", "rule_type": "DAILY", "value": 3.13, "sort_order": 20},
+    {"label": "VLF recovery", "rule_type": "DAILY", "value": 0.20, "sort_order": 30},
+    {"label": "Ownership tax", "rule_type": "PERCENT", "value": 2.0, "sort_order": 40},
+    {"label": "Sales tax", "rule_type": "PERCENT", "value": 4.0, "sort_order": 50},
+    {"label": "Rental tax items", "rule_type": "PERCENT", "value": 7.25, "sort_order": 60},
 )
-PERCENT_FEE_LINES = (
-    ("Ownership tax", 0.020),
-    ("Sales tax", 0.040),
-    ("Rental tax items", 0.0725),
-)
+
+
+def get_active_tax_fee_rules() -> list[sqlite3.Row] | list[dict[str, object]]:
+    try:
+        with db() as con:
+            con.execute("SELECT 1 FROM tax_fee_rules LIMIT 1").fetchone()
+            return con.execute(
+                """
+                SELECT * FROM tax_fee_rules
+                WHERE UPPER(TRIM(status)) = 'ACTIVE'
+                ORDER BY sort_order, label
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return list(DEFAULT_TAX_FEE_RULES)
+
+
+def get_all_tax_fee_rules() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM tax_fee_rules
+            ORDER BY sort_order, label
+            """
+        ).fetchall()
+
+
+def tax_fee_rule_value(rule: sqlite3.Row | dict[str, object], key: str, default: object = "") -> object:
+    if isinstance(rule, sqlite3.Row):
+        return rule[key] if key in rule.keys() and rule[key] is not None else default
+    return rule.get(key, default)
 
 
 def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
     rental_days = max(1, min(int(float(days or 1)), 366))
     daily = round(float(daily_price or 0), 2)
     base = round(daily * rental_days, 2)
-    daily_fees = [(label, round(amount * rental_days, 2)) for label, amount in DAILY_FEE_LINES]
-    percent_fees = [(label, round(base * rate, 2)) for label, rate in PERCENT_FEE_LINES]
-    tax_fee_lines = daily_fees + percent_fees
+    tax_fee_lines = []
+    for rule in get_active_tax_fee_rules():
+        label = str(tax_fee_rule_value(rule, "label", "Tax or fee")).strip() or "Tax or fee"
+        rule_type = str(tax_fee_rule_value(rule, "rule_type", "DAILY")).strip().upper()
+        value = max(0.0, float(tax_fee_rule_value(rule, "value", 0) or 0))
+        if rule_type == "PERCENT":
+            amount = round(base * (value / 100), 2)
+        elif rule_type == "FLAT":
+            amount = round(value, 2)
+        else:
+            amount = round(value * rental_days, 2)
+        if amount > 0:
+            tax_fee_lines.append((label, amount))
     tax_fee_amount = round(sum(amount for _, amount in tax_fee_lines), 2)
     discount = round(max(0.0, min(float(discount_amount or 0), base + tax_fee_amount)), 2)
     total = round(max(0.0, base + tax_fee_amount - discount), 2)
@@ -3587,7 +3655,7 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
     }
 
 
-def tax_fee_breakdown_html(breakdown: dict[str, object], label: str = "Taxes & fees estimate") -> str:
+def tax_fee_breakdown_html(breakdown: dict[str, object], label: str = "Taxes & fees") -> str:
     lines = breakdown.get("tax_fee_lines") or []
     line_items = "".join(
         f"<li><span>{escape(str(name))}</span><b>{escape(format_money(amount))}</b></li>"
@@ -3598,7 +3666,7 @@ def tax_fee_breakdown_html(breakdown: dict[str, object], label: str = "Taxes & f
     total = escape(format_money(breakdown.get("tax_fee_amount") or 0))
     return f"""
         <span class="tax-fee-detail" tabindex="0" aria-label="{escape(label)} breakdown">
-            <b>{total}</b>{escape(label)}
+            <b>{total}</b><span class="tax-fee-label">{escape(label)}</span>
             <span class="tax-fee-tooltip" role="tooltip">
                 <strong>Taxes & fees breakdown</strong>
                 <ul>{line_items}</ul>
@@ -8578,6 +8646,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/oncall/assign": self.assign_oncall_shift,
             "/admin/discounts": self.create_admin_discount,
             "/admin/discounts/delete": self.delete_admin_discount,
+            "/admin/tax-fees": self.create_admin_tax_fee_rule,
+            "/admin/tax-fees/delete": self.delete_admin_tax_fee_rule,
             "/admin/staff/request": self.create_staff_account_request,
             "/admin/staff/review": self.review_staff_account_request,
             "/admin/staff/password": self.reset_staff_account_password,
@@ -12101,11 +12171,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         discounts = "\n".join(self.render_discount_row(row) for row in get_all_discounts())
+        tax_fee_rules = "\n".join(self.render_tax_fee_rule_row(row) for row in get_all_tax_fee_rules())
         body = render_template(
             "admin_discounts.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "discounts"),
             discounts=discounts or '<tr><td colspan="7">No discount codes yet.</td></tr>',
+            tax_fee_rules=tax_fee_rules or '<tr><td colspan="6">No tax or fee rules yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -12618,6 +12690,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>
                 <form method="post" action="/admin/discounts/delete" class="inline-form">
                     <input type="hidden" name="discount_id" value="{row["id"]}">
+                    <button class="danger-button" type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_tax_fee_rule_row(self, row: sqlite3.Row) -> str:
+        rule_type = row["rule_type"]
+        value = f'{float(row["value"]):.2f}%' if rule_type == "PERCENT" else format_money(row["value"])
+        basis = {
+            "DAILY": "Per rental day",
+            "PERCENT": "Percent of rental subtotal",
+            "FLAT": "Per booking",
+        }.get(rule_type, "Per rental day")
+        return f"""
+        <tr>
+            <td><b>{escape(row["label"])}</b><span>{escape(basis)}</span></td>
+            <td>{escape(rule_type)}</td>
+            <td>{escape(value)}</td>
+            <td>{escape(str(row["sort_order"]))}</td>
+            <td>{escape(row["status"])}</td>
+            <td>
+                <form method="post" action="/admin/tax-fees/delete" class="inline-form">
+                    <input type="hidden" name="rule_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
                 </form>
             </td>
@@ -13396,6 +13492,56 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("DELETE FROM discounts WHERE id = ?", (form.get("discount_id"),))
         self.redirect("/admin/discounts")
 
+    def create_admin_tax_fee_rule(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        label = (form.get("label") or "").strip()
+        if not label:
+            self.redirect("/admin/discounts")
+            return
+        rule_type = (form.get("rule_type") or "DAILY").strip().upper()
+        if rule_type not in {"DAILY", "PERCENT", "FLAT"}:
+            rule_type = "DAILY"
+        value = max(0.0, float(form.get("value") or 0))
+        status = (form.get("status") or "ACTIVE").strip().upper()
+        if status not in {"ACTIVE", "INACTIVE"}:
+            status = "ACTIVE"
+        with db() as con:
+            existing = con.execute(
+                "SELECT id FROM tax_fee_rules WHERE LOWER(label) = LOWER(?) AND rule_type = ? ORDER BY id LIMIT 1",
+                (label, rule_type),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    """
+                    UPDATE tax_fee_rules
+                    SET label = ?, value = ?, status = ?, sort_order = ?
+                    WHERE id = ?
+                    """,
+                    (label, value, status, int(form.get("sort_order") or 0), existing["id"]),
+                )
+            else:
+                con.execute(
+                    """
+                    INSERT INTO tax_fee_rules
+                    (label, rule_type, value, status, sort_order)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (label, rule_type, value, status, int(form.get("sort_order") or 0)),
+                )
+        self.redirect("/admin/discounts")
+
+    def delete_admin_tax_fee_rule(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM tax_fee_rules WHERE id = ?", (form.get("rule_id"),))
+        self.redirect("/admin/discounts")
+
     def create_admin_wiki_article(self) -> None:
         user = self.require_owner_admin()
         if not user:
@@ -14133,7 +14279,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             price_breakdown_summary = f"""
               <div class="price-breakdown-summary">
                 <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
-                {tax_fee_breakdown_html(active_breakdown, "Taxes & fees")}
+                {tax_fee_breakdown_html(active_breakdown)}
                 <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% due now</span>
                 <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
               </div>
