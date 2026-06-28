@@ -187,6 +187,12 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(app.payment_status_label("HOLD_PENDING"), "Payment pending")
         self.assertEqual(app.payment_status_label("HOLD_PAID"), "10% paid")
 
+    def test_public_booking_id_hidden_until_payment_received(self):
+        self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_PENDING"}), "Pending confirmation")
+        self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_EXPIRED"}), "Pending confirmation")
+        self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_PAID"}), "FF123456789")
+        self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "PAID"}), "FF123456789")
+
     def test_checkout_timer_frontend_hook_exists(self):
         js = Path("static/js/app.js").read_text()
         self.assertIn("startBookingCountdown", js)

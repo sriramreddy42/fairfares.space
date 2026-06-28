@@ -153,7 +153,7 @@
             </div>
             <label><span>Optional Note</span><textarea id="cancelNote" rows="3" placeholder="Add details for support"></textarea></label>
             <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$cancel_refund_amount</strong><small id="refundTimeline" data-default-note="$cancel_refund_note">$cancel_refund_note</small></div>
-            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this sends booking $booking_id to admin for cancellation approval.</label>
+            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this sends the selected booking to admin for cancellation approval.</label>
             <div class="modify-actions">
               <button type="reset" class="light-button">Keep Booking</button>
               <button type="submit">Submit Request</button>
@@ -176,7 +176,7 @@
             </div>
             <div class="document-preview" id="documentPreview">
               <h3>Invoice / Receipt</h3>
-              <p>Booking $booking_id | $price_text total | $days days</p>
+              <p>$booking_id | $price_text total | $days days</p>
               <small>Generated documents load from admin booking records.</small>
             </div>
             <div class="modify-actions">

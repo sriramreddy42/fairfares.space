@@ -48,7 +48,7 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
-ASSET_VERSION = "20260627bookingdates1"
+ASSET_VERSION = "20260627bookinglabels1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -6101,7 +6101,7 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
         breakdown = booking_price_breakdown(booking)
         paid_amount = booking_paid_amount(booking)
         details = {
-            "bookingId": booking["booking_id"],
+            "bookingId": public_booking_id_label(booking),
             "car": booking["car_name"],
             "status": status,
             "statusText": status_text,
@@ -6292,6 +6292,14 @@ def booking_payment_record_summary(row: sqlite3.Row | dict[str, object]) -> dict
         "methods": methods,
         "count": len(transactions),
     }
+
+
+def public_booking_id_label(row: sqlite3.Row | dict[str, object] | None) -> str:
+    if not row:
+        return "No booking yet"
+    if row_value(row, "payment_status") in {"HOLD_PAID", "PAID"}:
+        return row_value(row, "booking_id") or "Confirmed booking"
+    return "Pending confirmation"
 
 
 def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
@@ -7984,7 +7992,7 @@ def get_user_document_sets(user_id: int | None, active_booking_id: int | None = 
         document_sets.append(
             {
                 "id": booking["id"],
-                "bookingId": row_value(booking, "booking_id"),
+                "bookingId": public_booking_id_label(booking),
                 "vehicle": row_value(booking, "car_name") or "Booked vehicle",
                 "dates": f"{row_value(booking, 'pickup_date')} - {row_value(booking, 'dropoff_date')}",
                 "status": status,
@@ -10119,7 +10127,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         reward = ensure_referral_reward(user_id, full_name, email, phone)
         self.send_json({
             "ok": True,
-            "booking_id": booking["booking_id"],
+            "booking_id": public_booking_id_label(booking),
             "message": result.get("message") or "Booking details saved. Create an account with this email to see this trip later.",
             "referral_code": reward["code"] if reward else referral_reward_code(full_name, email),
             "referral_status": reward["status"] if reward else "PENDING",
@@ -13928,9 +13936,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else "Provider contact details appear after a booking is selected."
         )
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
-        booking_id_label = "No booking yet"
-        if booking:
-            booking_id_label = "Pending confirmation" if row_value(booking, "booking_id") == "Pending details" else row_value(booking, "booking_id")
+        booking_id_label = public_booking_id_label(booking)
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "FairFares Member"),
