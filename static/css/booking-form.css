@@ -89,6 +89,22 @@
   font-weight: 600 !important;
 }
 
+.discount-helper {
+  color: #4b5563 !important;
+  display: inline-block !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  margin-top: 2px !important;
+}
+
+.discount-helper a {
+  color: #006da8 !important;
+  font-weight: 800 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
 .rental-estimate {
   gap: 6px !important;
   padding: 16px 18px !important;
@@ -151,6 +167,11 @@
 
   .split-input {
     grid-template-columns: minmax(138px, 1fr) minmax(108px, 38%) !important;
+  }
+
+  .discount-helper {
+    font-size: 0.76rem !important;
+    line-height: 1.22 !important;
   }
 }
 

@@ -21,8 +21,8 @@ class StudentVerificationTest(unittest.TestCase):
 
     def test_home_discount_box_suggests_student_verification_for_future_bookings(self):
         template = Path("templates/index.html").read_text()
-        self.assertIn("Verify your .edu email in Dashboard first", template)
-        self.assertIn("profile name must match your school email", template)
+        self.assertIn("Verify .edu for 15% off", template)
+        self.assertIn("15% off", template)
 
 
 if __name__ == "__main__":

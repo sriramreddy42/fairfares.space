@@ -168,3 +168,7 @@ The project includes `render.yaml` for Render hosting.
 5. Deploy the web service.
 
 Do not commit `.env`; keep production secrets in the hosting provider's environment variables.
+
+## Deferred TODO
+
+- Create a Google Cloud Storage bucket for private FairFares uploads, then move sensitive app files there instead of normal Google Drive service-account storage. This should cover driver licenses, insurance documents, rental agreements, pickup/return photos, invoices/receipts, ROI files, support attachments, purchase receipts, and maintenance/repair receipts.

@@ -686,6 +686,32 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(candidate, digest_hex)
 
 
+def normalize_email(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "")).lower()
+
+
+def normalized_email_sql(column: str = "email") -> str:
+    return f"LOWER(REPLACE(REPLACE(REPLACE(REPLACE({column}, ' ', ''), char(9), ''), char(10), ''), char(13), ''))"
+
+
+def find_user_by_email(con: sqlite3.Connection, email: object) -> sqlite3.Row | None:
+    clean_email = normalize_email(email)
+    if not clean_email:
+        return None
+    user = con.execute("SELECT * FROM users WHERE LOWER(email) = ? LIMIT 1", (clean_email,)).fetchone()
+    if user:
+        return user
+    return con.execute(
+        f"SELECT * FROM users WHERE {normalized_email_sql('email')} = ? LIMIT 1",
+        (clean_email,),
+    ).fetchone()
+
+
+def log_login_failure(email: str, reason: str) -> None:
+    safe_email = normalize_email(email)
+    print(f"Login failed: {reason} for {safe_email or 'blank-email'}")
+
+
 def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
@@ -693,14 +719,14 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
 
 
 def configured_admin_credentials() -> tuple[str, str]:
-    email = os.environ.get("FAIRFARES_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL).strip().lower()
+    email = normalize_email(os.environ.get("FAIRFARES_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL))
     password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
     return email, password
 
 
 def configured_email_set(env_name: str, default_value: str = "") -> set[str]:
     raw_value = os.environ.get(env_name, default_value)
-    return {email.strip().lower() for email in raw_value.split(",") if email.strip()}
+    return {normalize_email(email) for email in raw_value.split(",") if normalize_email(email)}
 
 
 def normalized_user_role(value: object) -> str:
@@ -714,10 +740,10 @@ def user_role_flags(role: str) -> tuple[int, str]:
 
 
 def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> None:
-    email = email.strip().lower()
+    email = normalize_email(email)
     if not email or not password:
         return
-    admin = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    admin = find_user_by_email(con, email)
     password_hash = hash_password(password)
     if not admin:
         con.execute(
@@ -757,6 +783,23 @@ def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> 
             """,
             (admin["id"],),
         )
+
+
+def repair_normalized_auth_emails(con: sqlite3.Connection) -> None:
+    for row in con.execute("SELECT id, email FROM users").fetchall():
+        clean_email = normalize_email(row["email"])
+        if not clean_email or clean_email == row["email"]:
+            continue
+        conflict = con.execute(
+            "SELECT id FROM users WHERE LOWER(email) = ? AND id != ? LIMIT 1",
+            (clean_email, row["id"]),
+        ).fetchone()
+        if not conflict:
+            con.execute("UPDATE users SET email = ? WHERE id = ?", (clean_email, row["id"]))
+    for row in con.execute("SELECT id, email FROM staff_account_requests").fetchall():
+        clean_email = normalize_email(row["email"])
+        if clean_email and clean_email != row["email"]:
+            con.execute("UPDATE staff_account_requests SET email = ? WHERE id = ?", (clean_email, row["id"]))
 
 
 def ensure_default_admin(con: sqlite3.Connection) -> None:
@@ -1576,6 +1619,7 @@ def send_activation_email(email: str, name: str, activation_link: str) -> tuple[
         message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
         message["To"] = email
         message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
         smtp_port = int(os.environ.get("SMTP_PORT", "587"))
         with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
             if os.environ.get("SMTP_TLS", "1") != "0":
@@ -2026,7 +2070,7 @@ def send_marketing_campaign(campaign_id: int, origin: str, test_email: str = "")
         test_user = {
             "id": 0,
             "name": "FairFares Test",
-            "email": test_email.strip().lower(),
+            "email": normalize_email(test_email),
             "marketing_token": "test",
         }
         outbox_file, delivery_status = send_marketing_campaign_email(campaign, test_user, origin)  # type: ignore[arg-type]
@@ -2078,7 +2122,7 @@ def save_booking_contact_and_send_confirmation(
     text_opt_in: bool | None = None,
 ) -> dict[str, str | bool]:
     full_name = " ".join(part for part in (first_name.strip(), last_name.strip()) if part).strip()
-    clean_email = email.strip().lower()
+    clean_email = normalize_email(email)
     clean_phone = phone.strip()
     if not full_name or "@" not in clean_email or len(clean_phone) < 7:
         return {"ok": False, "message": "Please enter your full name, valid email, and phone number."}
@@ -2913,6 +2957,7 @@ def init_db() -> None:
             )
 
         ensure_default_admin(con)
+        repair_normalized_auth_emails(con)
         normalize_user_roles(con)
         apply_staff_role_overrides(con)
         normalize_user_roles(con)
@@ -3411,6 +3456,13 @@ def calculate_discount_amount(total: float, discount: sqlite3.Row | None) -> flo
     return max(0.0, min(total, round(amount, 2)))
 
 
+def calculate_booking_discount_amount(daily_price: object, days: object, discount: sqlite3.Row | None) -> float:
+    if not discount:
+        return 0.0
+    pre_discount = rental_price_breakdown(daily_price, days, 0)
+    return calculate_discount_amount(float(pre_discount["total"]), discount)
+
+
 def format_money(value: object) -> str:
     return f"${float(value or 0):.2f}"
 
@@ -3533,6 +3585,27 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
         "market_total": market_total,
         "savings": savings,
     }
+
+
+def tax_fee_breakdown_html(breakdown: dict[str, object], label: str = "Taxes & fees estimate") -> str:
+    lines = breakdown.get("tax_fee_lines") or []
+    line_items = "".join(
+        f"<li><span>{escape(str(name))}</span><b>{escape(format_money(amount))}</b></li>"
+        for name, amount in lines  # type: ignore[assignment]
+    )
+    if not line_items:
+        line_items = "<li><span>No tax or fee lines</span><b>$0.00</b></li>"
+    total = escape(format_money(breakdown.get("tax_fee_amount") or 0))
+    return f"""
+        <span class="tax-fee-detail" tabindex="0" aria-label="{escape(label)} breakdown">
+            <b>{total}</b>{escape(label)}
+            <span class="tax-fee-tooltip" role="tooltip">
+                <strong>Taxes & fees breakdown</strong>
+                <ul>{line_items}</ul>
+                <span class="tax-fee-total"><span>Total</span><b>{total}</b></span>
+            </span>
+        </span>
+    """
 
 
 def expire_stale_booking_holds() -> None:
@@ -4062,8 +4135,9 @@ def referral_signup_discount_code(name: str, email: str = "") -> str:
 
 
 def create_referred_signup_discount(user_id: int, name: str, email: str) -> str:
-    code = referral_signup_discount_code(name, email)
-    holder = name.strip() or email.strip().lower() or f"User {user_id}"
+    clean_email = normalize_email(email)
+    code = referral_signup_discount_code(name, clean_email)
+    holder = name.strip() or clean_email or f"User {user_id}"
     with db() as con:
         con.execute(
             """
@@ -4078,14 +4152,14 @@ def create_referred_signup_discount(user_id: int, name: str, email: str) -> str:
 
 
 def student_discount_code(name: str, email: str) -> str:
-    base = email.split("@")[0] or name or "student"
+    base = normalize_email(email).split("@")[0] or name or "student"
     cleaned = "".join(char if char.isalnum() else "_" for char in base.upper())
     cleaned = "_".join(part for part in cleaned.split("_") if part)
     return f"STUDENT_{(cleaned or 'VERIFIED')[:30]}_15"
 
 
 def student_email_matches_profile_name(profile_name: str, student_email: str) -> bool:
-    local_part = student_email.split("@", 1)[0].lower()
+    local_part = normalize_email(student_email).split("@", 1)[0]
     compact_local = re.sub(r"[^a-z0-9]", "", local_part)
     name_tokens = [
         token
@@ -4116,8 +4190,9 @@ def student_verification_delivery_message(delivery_status: str) -> str:
 
 
 def create_student_discount(user_id: int, name: str, student_email: str) -> str:
-    code = student_discount_code(name, student_email)
-    holder = name.strip() or student_email.strip().lower() or f"User {user_id}"
+    clean_email = normalize_email(student_email)
+    code = student_discount_code(name, clean_email)
+    holder = name.strip() or clean_email or f"User {user_id}"
     with db() as con:
         con.execute(
             """
@@ -4132,7 +4207,7 @@ def create_student_discount(user_id: int, name: str, student_email: str) -> str:
 
 
 def ensure_referral_reward(user_id: int | None, name: str, email: str, phone: str = "") -> sqlite3.Row | None:
-    clean_email = email.strip().lower()
+    clean_email = normalize_email(email)
     clean_phone = phone.strip()
     if not clean_email and not clean_phone:
         return None
@@ -4174,7 +4249,7 @@ def ensure_referral_reward(user_id: int | None, name: str, email: str, phone: st
 
 
 def attach_referral_rewards_to_user(user_id: int, email: str, phone: str, name: str) -> None:
-    clean_email = email.strip().lower()
+    clean_email = normalize_email(email)
     clean_phone = phone.strip()
     with db() as con:
         con.execute(
@@ -4193,7 +4268,7 @@ def record_referral_signup(referral_code: str, referred_user_id: int, referred_e
     code = referral_code.strip().upper()
     if not code:
         return {"ok": False, "message": "No referral code supplied."}
-    clean_email = referred_email.strip().lower()
+    clean_email = normalize_email(referred_email)
     with db() as con:
         reward = con.execute("SELECT * FROM referral_rewards WHERE UPPER(code) = ?", (code,)).fetchone()
         if not reward:
@@ -7212,7 +7287,7 @@ def create_booking_for_user(
             booking_id = make_booking_id()
         discount = get_valid_discount(discount_code)
         subtotal = round(float(car["daily_price"]) * rental_days, 2)
-        discount_amount = calculate_discount_amount(subtotal, discount)
+        discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
         price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
         final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
@@ -7286,7 +7361,7 @@ def build_booking_preview(
     )
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
-    discount_amount = calculate_discount_amount(subtotal, discount)
+    discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
     price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
     return {
         "id": None,
@@ -7327,10 +7402,10 @@ def build_booking_preview(
 
 
 def find_or_create_guest_user(full_name: str, email: str, phone: str) -> int:
-    clean_email = email.strip().lower()
+    clean_email = normalize_email(email)
     clean_phone = phone.strip()
     with db() as con:
-        existing = con.execute("SELECT * FROM users WHERE email = ?", (clean_email,)).fetchone()
+        existing = find_user_by_email(con, clean_email)
         if existing and row_value(existing, "guest_account") not in {"1", "True", "true"}:
             raise ValueError("An account already exists for this email. Please sign in to add this booking.")
         if not existing and clean_phone:
@@ -9152,9 +9227,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def login(self) -> None:
         form = self.read_form()
+        email = normalize_email(form.get("email", ""))
         with db() as con:
-            user = con.execute("SELECT * FROM users WHERE email = ?", (form.get("email", "").lower().strip(),)).fetchone()
-        if not user or not verify_password(form.get("password", ""), user["password_hash"]):
+            user = find_user_by_email(con, email)
+        if not user:
+            log_login_failure(email, "user_not_found")
+            self.login_page("That email and password did not match.")
+            return
+        if not verify_password(form.get("password", ""), user["password_hash"]):
+            log_login_failure(email, "password_mismatch")
             self.login_page("That email and password did not match.")
             return
         if not user["is_verified"]:
@@ -9174,7 +9255,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def signup(self) -> None:
         form = self.read_form()
         name = form.get("name") or "FairFares Member"
-        email = form.get("email", "").lower().strip()
+        email = normalize_email(form.get("email", ""))
         phone = form.get("phone", "").strip()
         referral_code = form.get("referral_code", "").strip()
         password = form.get("password", "")
@@ -9183,20 +9264,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             with db() as con:
-                guest = con.execute(
-                    "SELECT * FROM users WHERE email = ? AND guest_account = 1 LIMIT 1",
-                    (email,),
-                ).fetchone()
+                existing_email_user = find_user_by_email(con, email)
+                if existing_email_user and not int(existing_email_user["guest_account"] or 0):
+                    raise sqlite3.IntegrityError
+                guest = existing_email_user if existing_email_user else None
                 if not guest and phone:
                     guest = con.execute(
                         "SELECT * FROM users WHERE phone = ? AND guest_account = 1 ORDER BY id DESC LIMIT 1",
                         (phone,),
                     ).fetchone()
                 if guest:
-                    email_owner = con.execute(
-                        "SELECT * FROM users WHERE email = ? AND id != ? LIMIT 1",
-                        (email, guest["id"]),
-                    ).fetchone()
+                    email_owner = find_user_by_email(con, email)
+                    if email_owner and email_owner["id"] == guest["id"]:
+                        email_owner = None
                     if email_owner:
                         raise sqlite3.IntegrityError
                     con.execute(
@@ -9278,7 +9358,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def forgot_password(self) -> None:
         form = self.read_form()
-        email = form.get("email", "").lower().strip()
+        email = normalize_email(form.get("email", ""))
 
         if not email or "@" not in email:
             self.send_html(
@@ -9290,7 +9370,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
 
         with db() as con:
-            user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            user = find_user_by_email(con, email)
 
         token = create_verification(user["id"] if user else 1, email, purpose="PASSWORD_RESET")
 
@@ -9456,8 +9536,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         car_id = requested_car["id"] if requested_car and requested_car["id"] != booking["car_id"] else booking["car_id"]
         next_days = rental_day_count(requested_start, requested_end, booking["days"])
         next_daily_price = float(row_value(requested_car, "daily_price") if requested_car else row_value(booking, "daily_price") or 0)
-        preliminary_breakdown = rental_price_breakdown(next_daily_price, next_days, 0)
-        discount_amount = calculate_discount_amount(float(preliminary_breakdown["base"]), get_valid_discount(booking["discount_code"]))
+        discount_amount = calculate_booking_discount_amount(next_daily_price, next_days, get_valid_discount(booking["discount_code"]))
         next_breakdown = rental_price_breakdown(next_daily_price, next_days, discount_amount)
         subtotal = float(next_breakdown["base"])
         total_price = float(next_breakdown["total"])
@@ -10062,7 +10141,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_id = int(form.get("booking_id", "0"))
         except ValueError:
             booking_id = 0
-        email = (form.get("email") or user["email"] or "").strip()
+        email = normalize_email(form.get("email") or user["email"] or "")
         with db() as con:
             booking = con.execute(
                 """
@@ -10412,7 +10491,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         first_name = form.get("first_name", "").strip()
         last_name = form.get("last_name", "").strip()
         full_name = " ".join(part for part in (first_name, last_name) if part).strip()
-        email = form.get("email", "").strip().lower()
+        email = normalize_email(form.get("email", ""))
         phone = form.get("phone", "").strip()
         if not full_name or "@" not in email or len(phone) < 7:
             self.send_json({"ok": False, "message": "Please enter your full name, valid email, and phone number."}, 400)
@@ -10600,7 +10679,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to update student verification."}, 401)
             return
         form = self.read_form()
-        student_email = form.get("student_email", "").strip().lower()
+        student_email = normalize_email(form.get("student_email", ""))
         student_id = form.get("student_id", "").strip()
         if "@" not in student_email or not student_email.endswith(".edu") or len(student_id) < 4:
             self.send_json({
@@ -10885,7 +10964,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feed_scope = row_value(selected_group, "name") if selected_group else "Company feed"
         workspace_slack_url = row_value(selected_group, "slack_url") if selected_group else ""
         if not workspace_slack_url:
-            workspace_slack_url = "https://slack.com/app_redirect?channel=general"
+            workspace_slack_url = "https://app.slack.com/client"
         visibility_controls = (
             """
             <label class="workspace-visibility-select">
@@ -11346,8 +11425,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "approved": "Staff account approved and activated. They can log in with the temporary password.",
             "password_reset": "Temporary password updated. The staff member can log in with the new password.",
             "rejected": "Staff request rejected.",
-            "missing_password": "New staff emails need a temporary password with at least 8 characters.",
+            "missing_password": "Staff requests need a temporary password with at least 8 characters.",
             "short_password": "Temporary password must be at least 8 characters.",
+            "auth_required": "Enter your admin password to change a staff password.",
+            "auth_failed": "Admin password confirmation failed. Staff password was not changed.",
             "pending": "That email already has a pending staff request. A different admin must approve it.",
             "active": "That email already belongs to an active staff account.",
             "invalid": "Enter a valid name, email, and role.",
@@ -11447,9 +11528,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <label><span>Email</span><input name="email" type="email" required></label>
           <label><span>Phone</span><input name="phone" autocomplete="tel"></label>
           <label><span>Role</span><select name="role"><option value="EMPLOYEE">Employee</option><option value="ADMIN">Admin</option></select></label>
-          <label><span>Temporary password</span><input name="password" type="password" minlength="8" placeholder="Required for new email"></label>
+          <label><span>Temporary password</span><input name="password" type="password" minlength="8" placeholder="Required" required></label>
           <button type="submit">Request Staff Account</button>
-          <small>Existing users are sent for role approval. New emails need a temporary password.</small>
+          <small>A different admin must approve this request. The temporary password is applied only after approval.</small>
         </form>
         """
 
@@ -11459,7 +11540,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         reset_form = f"""
           <form method="post" action="/admin/staff/password" class="inline-form staff-password-reset-form">
             <input type="hidden" name="user_id" value="{escape(row_value(row, "id"))}">
-            <input name="password" type="password" minlength="8" placeholder="New temp password" required>
+            <input name="admin_password" type="password" autocomplete="current-password" placeholder="Your admin password" required>
+            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="New temp password" required>
             <button type="submit">Set</button>
           </form>
         """
@@ -11513,17 +11595,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         name = (form.get("name") or "").strip()
-        email = (form.get("email") or "").strip().lower()
+        email = normalize_email(form.get("email"))
         phone = (form.get("phone") or "").strip()
         role = normalized_staff_role(form.get("role", "EMPLOYEE"))
         password = form.get("password", "")
         if not name or "@" not in email:
             self.redirect("/admin/requests?staff_status=invalid")
             return
+        if len(password) < 8:
+            self.redirect("/admin/requests?staff_status=missing_password")
+            return
+        password_hash = hash_password(password)
         with db() as con:
-            existing_user = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            existing_user = find_user_by_email(con, email)
             existing_request = con.execute(
-                "SELECT id FROM staff_account_requests WHERE email = ? AND status = 'PENDING'",
+                f"SELECT id FROM staff_account_requests WHERE {normalized_email_sql('email')} = ? AND status = 'PENDING'",
                 (email,),
             ).fetchone()
             if existing_user and not existing_request:
@@ -11541,21 +11627,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         email,
                         phone or row_value(existing_user, "phone") or "",
                         role,
-                        row_value(existing_user, "password_hash"),
+                        password_hash,
                         user["id"],
                         existing_user["id"],
                     ),
                 )
                 self.redirect("/admin/requests?staff_status=created")
                 return
-            elif not existing_user and not existing_request and len(password) >= 8:
+            elif not existing_user and not existing_request:
                 con.execute(
                     """
                     INSERT INTO staff_account_requests
                     (name, email, phone, role, password_hash, requested_by)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (name, email, phone, role, hash_password(password), user["id"]),
+                    (name, email, phone, role, password_hash, user["id"]),
                 )
                 self.redirect("/admin/requests?staff_status=created")
                 return
@@ -11606,6 +11692,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         UPDATE users
                         SET name = COALESCE(NULLIF(?, ''), name),
                             phone = COALESCE(NULLIF(?, ''), phone),
+                            password_hash = ?,
                             is_admin = ?,
                             role = ?,
                             is_verified = 1,
@@ -11613,7 +11700,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             guest_account = 0
                         WHERE id = ?
                         """,
-                        (request["name"], request["phone"], is_admin, role, target_user_id),
+                        (request["name"], request["phone"], request["password_hash"], is_admin, role, target_user_id),
                     )
                     con.execute(
                         """
@@ -11682,7 +11769,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             target_user_id = int(form.get("user_id") or 0)
         except ValueError:
             target_user_id = 0
+        admin_password = form.get("admin_password", "")
         password = form.get("password", "")
+        if not admin_password:
+            self.redirect("/admin/requests?staff_status=auth_required")
+            return
+        if not verify_password(admin_password, row_value(user, "password_hash")):
+            print(f"Staff password reset blocked: admin confirmation failed for admin_id={row_value(user, 'id')}")
+            self.redirect("/admin/requests?staff_status=auth_failed")
+            return
         if len(password) < 8:
             self.redirect("/admin/requests?staff_status=short_password")
             return
@@ -14038,7 +14133,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             price_breakdown_summary = f"""
               <div class="price-breakdown-summary">
                 <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
-                <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees</span>
+                {tax_fee_breakdown_html(active_breakdown, "Taxes & fees")}
                 <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% due now</span>
                 <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
               </div>
@@ -14239,7 +14334,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {hold_decision}
                     <div class="booking-hold-breakdown">
                         <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
-                        <span><b>{escape(format_money(active_breakdown["tax_fee_amount"]))}</b>Taxes & fees estimate</span>
+                        {tax_fee_breakdown_html(active_breakdown)}
                         {discount_summary}
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
                         <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>

@@ -75,6 +75,58 @@ class BookingHoldTest(unittest.TestCase):
         self.assertAlmostEqual(float(booking["subtotal_price"]), float(expected["base"]))
         self.assertAlmostEqual(float(booking["total_price"]), float(expected["total"]))
 
+    def test_tax_fee_breakdown_html_lists_calculated_lines(self):
+        breakdown = app.rental_price_breakdown(49.99, 4, 0)
+        html = app.tax_fee_breakdown_html(breakdown)
+
+        self.assertIn(app.format_money(breakdown["tax_fee_amount"]), html)
+        self.assertIn("CO road safety fee", html)
+        self.assertIn("CO congestion impact fee", html)
+        self.assertIn("Ownership tax", html)
+        self.assertIn("Sales tax", html)
+        self.assertIn("Rental tax items", html)
+
+    def test_percent_coupon_applies_to_full_checkout_estimate(self):
+        car = app.get_cars()[0]
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO discounts
+                (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+                VALUES ('SAVE20', '20 percent test', 'PERCENT', 20, '2099-12-31', 'ACTIVE', 0, 0)
+                """
+            )
+
+        booking = app.create_booking_for_user(self.user_id, car["id"], discount_code="SAVE20", days=3)
+        undiscounted = app.rental_price_breakdown(car["daily_price"], 3, 0)
+        expected_discount = round(float(undiscounted["total"]) * 0.20, 2)
+        expected = app.rental_price_breakdown(car["daily_price"], 3, expected_discount)
+
+        self.assertEqual(booking["discount_code"], "SAVE20")
+        self.assertAlmostEqual(float(booking["discount_amount"]), expected_discount)
+        self.assertAlmostEqual(float(booking["total_price"]), float(expected["total"]))
+        self.assertAlmostEqual(float(booking["booking_hold_amount"]), float(expected["booking_hold"]))
+        self.assertAlmostEqual(float(booking["due_at_pickup_amount"]), float(expected["due_at_pickup"]))
+
+    def test_amount_coupon_reduces_checkout_and_payment_totals(self):
+        car = app.get_cars()[0]
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO discounts
+                (code, description, discount_type, value, valid_through, status, max_uses, used_count)
+                VALUES ('TAKE50', '50 dollar test', 'AMOUNT', 50, '2099-12-31', 'ACTIVE', 0, 0)
+                """
+            )
+
+        booking = app.create_booking_for_user(self.user_id, car["id"], discount_code="TAKE50", days=2)
+        expected = app.rental_price_breakdown(car["daily_price"], 2, 50)
+
+        self.assertEqual(booking["discount_code"], "TAKE50")
+        self.assertAlmostEqual(float(booking["discount_amount"]), 50.0)
+        self.assertAlmostEqual(float(booking["total_price"]), float(expected["total"]))
+        self.assertAlmostEqual(float(booking["booking_hold_amount"]), float(expected["booking_hold"]))
+
     def test_past_pickup_date_is_rejected(self):
         car = app.get_cars()[0]
         pickup = date.today() - timedelta(days=1)

@@ -97,6 +97,56 @@ class AuthBootstrapTest(unittest.TestCase):
         self.assertEqual(configured_admin["is_verified"], 1)
         self.assertTrue(app.verify_password("OpsPassword123!", configured_admin["password_hash"]))
 
+    def test_email_lookup_accepts_accidental_spaces(self):
+        app.init_db()
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_verified)
+                VALUES (?, ?, ?, 1)
+                """,
+                ("Sriram Reddy", "sriramreddy42@gmail.com", app.hash_password("Password123!")),
+            )
+            user = app.find_user_by_email(con, "sriram reddy42@gmail.com")
+
+        self.assertIsNotNone(user)
+        self.assertEqual(user["email"], "sriramreddy42@gmail.com")
+
+    def test_startup_repairs_stored_email_whitespace(self):
+        app.init_db()
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_verified)
+                VALUES (?, ?, ?, 1)
+                """,
+                ("Sriram Reddy", " Sriram Reddy42@gmail.com ", app.hash_password("Password123!")),
+            )
+
+        app.init_db()
+
+        with app.db() as con:
+            repaired = con.execute("SELECT * FROM users WHERE email = ?", ("sriramreddy42@gmail.com",)).fetchone()
+            old = con.execute("SELECT * FROM users WHERE email = ?", (" Sriram Reddy42@gmail.com ",)).fetchone()
+
+        self.assertIsNotNone(repaired)
+        self.assertIsNone(old)
+
+    def test_staff_request_matches_existing_user_with_spaced_email(self):
+        app.init_db()
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_verified)
+                VALUES (?, ?, ?, 1)
+                """,
+                ("Gopal Siddhu", "mr.sidhugopal@gmail.com", app.hash_password("Password123!")),
+            )
+            existing = app.find_user_by_email(con, "mr.sidhu gopal@gmail.com")
+
+        self.assertIsNotNone(existing)
+        self.assertEqual(existing["name"], "Gopal Siddhu")
+
     def test_email_marketing_calendar_seeds_empty_planner_once(self):
         app.init_db()
 
@@ -190,8 +240,14 @@ class AuthBootstrapTest(unittest.TestCase):
         template = Path("templates/admin_requests.html").read_text()
         css = Path("static/css/sections/20-admin.css").read_text()
 
-        self.assertIn("New staff emails need a temporary password", py)
+        self.assertIn("Staff requests need a temporary password", py)
         self.assertIn("A different admin must approve", py)
+        self.assertIn("password_hash = ?", py)
+        self.assertIn("Login failed:", py)
+        self.assertIn("password_mismatch", py)
+        self.assertIn("admin_password", py)
+        self.assertIn("auth_failed", py)
+        self.assertIn("Your admin password", py)
         self.assertIn("staff_status=missing_password", py)
         self.assertIn("staff_status=pending", py)
         self.assertIn("/admin/staff/password", py)
