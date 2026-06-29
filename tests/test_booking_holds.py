@@ -87,6 +87,19 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("Sales tax", html)
         self.assertIn("Rental tax items", html)
 
+    def test_daily_price_range_is_centered_on_admin_price_and_ascending(self):
+        self.assertEqual(app.daily_price_range(47), (42, 52))
+        self.assertEqual(app.daily_price_range(68), (63, 73))
+        low, high = app.daily_price_range(200)
+        self.assertLessEqual(low, high)
+        self.assertEqual((low + high) / 2, 200)
+
+    def test_public_cars_are_sorted_by_admin_daily_price(self):
+        cars = app.get_cars()
+        prices = [float(car["daily_price"]) for car in cars]
+
+        self.assertEqual(prices, sorted(prices))
+
     def test_tax_fee_rules_are_loaded_from_database(self):
         with app.db() as con:
             con.execute("DELETE FROM tax_fee_rules")

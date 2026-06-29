@@ -3895,7 +3895,7 @@ def get_cars() -> list[sqlite3.Row]:
             ) active ON active.car_id = cars.id
                     AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
             WHERE UPPER(TRIM(cars.status)) NOT IN ('MAINTENANCE', 'DELETED')
-            ORDER BY sort_order, daily_price, id
+            ORDER BY daily_price ASC, sort_order, id
             """
         ).fetchall()
 
@@ -4056,11 +4056,10 @@ def normalize_booking_window(
 
 def daily_price_range(price: object) -> tuple[int, int]:
     daily = float(price or 0)
-    low = max(25, round(daily * 0.9))
-    high = max(low, round(daily * 1.08))
-    if high < low:
-        high = low
-    return low, high
+    average = round(daily)
+    low = max(25, average - 5)
+    high = max(low, average + 5)
+    return min(low, high), max(low, high)
 
 
 BOOKING_HOLD_RATE = 0.10
@@ -9893,7 +9892,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
-        daily_rate = round(float(row["daily_price"] or 0))
+        daily_low, daily_high = daily_price_range(row["daily_price"])
         is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
         save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
@@ -9914,7 +9913,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <ul>{features}</ul>
             </div>
             <div class="price-box">
-                <strong data-price-range>${daily_rate}</strong><span>/day</span>
+                <strong data-price-range>${daily_low}-{daily_high}</strong><span>/day</span>
                 <small class="availability-note" data-availability-note></small>
                 <em>Daily rate comes from FairFares inventory. Taxes, fees, 10% hold, and pickup balance are shown before confirmation.</em>
                 <div class="card-actions-row">
