@@ -3062,6 +3062,11 @@
 .pickup-prefill-panel small {
   grid-column: 1 / -1;
 }
+.pickup-payment-panel small a {
+  color: var(--navy);
+  font-weight: 900;
+  text-decoration: underline;
+}
 .pickup-form .pickup-prefill-panel button {
   background: var(--navy);
   grid-column: auto;

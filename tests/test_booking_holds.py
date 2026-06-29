@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import app
 
@@ -310,6 +311,73 @@ class BookingHoldTest(unittest.TestCase):
         }
 
         self.assertTrue(app.cancellation_requires_admin_review(booking, now=datetime(2026, 6, 27, 10, 0)))
+
+    def test_pickup_balance_payment_intent_requires_hold_paid_booking(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        admin = {"id": 99, "email": "admin@fairfares.com"}
+        payment_intent, status = app.create_pickup_balance_payment_intent(booking, admin)
+
+        self.assertEqual(payment_intent, {})
+        self.assertIn("10% hold", status)
+
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+        with app.db() as con:
+            hold_paid_booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        due = app.booking_price_breakdown(hold_paid_booking)["due_at_pickup"]
+
+        with patch("app.stripe_api_request") as stripe_request:
+            stripe_request.return_value = (
+                {"id": "pi_pickup_balance", "client_secret": "pi_secret", "amount": int(round(due * 100))},
+                "ok",
+            )
+            payment_intent, status = app.create_pickup_balance_payment_intent(hold_paid_booking, admin)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(payment_intent["id"], "pi_pickup_balance")
+        stripe_request.assert_called_once()
+        path, params = stripe_request.call_args.args[:2]
+        self.assertEqual(path, "payment_intents")
+        self.assertEqual(params["payment_method_types[]"], "card_present")
+        self.assertEqual(params["metadata[payment_option]"], "pickup_balance")
+        self.assertEqual(params["metadata[booking_id]"], str(booking["id"]))
+
+    def test_pickup_balance_payment_intent_webhook_marks_booking_paid(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=4)
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+        with app.db() as con:
+            hold_paid_booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        due = app.booking_price_breakdown(hold_paid_booking)["due_at_pickup"]
+
+        ok, message = app.confirm_pickup_balance_payment_intent(
+            {
+                "id": "pi_terminal_paid",
+                "amount_received": int(round(due * 100)),
+                "metadata": {
+                    "payment_option": "pickup_balance",
+                    "booking_id": str(booking["id"]),
+                    "public_booking_id": booking["booking_id"],
+                    "user_id": str(self.user_id),
+                },
+            },
+            "https://fairfares.example",
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "pi_terminal_paid")
+        with app.db() as con:
+            paid_booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            terminal_transaction = con.execute(
+                "SELECT * FROM transactions WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
+                (booking["id"],),
+            ).fetchone()
+        self.assertEqual(paid_booking["payment_status"], "PAID")
+        self.assertAlmostEqual(float(paid_booking["due_at_pickup_amount"]), 0.0)
+        self.assertEqual(terminal_transaction["payment_method"], "Stripe Terminal / Tap to Pay")
+        self.assertEqual(terminal_transaction["invoice_number"], "pi_terminal_paid")
 
     def test_checkout_timer_frontend_hook_exists(self):
         js = Path("static/js/app.js").read_text()

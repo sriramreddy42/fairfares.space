@@ -1167,6 +1167,14 @@ def stripe_api_get(path: str) -> tuple[dict[str, object], str]:
         return {}, f"Stripe request failed: {error}"
 
 
+def stripe_dashboard_payment_url(payment_intent_id: str) -> str:
+    payment_intent_id = (payment_intent_id or "").strip()
+    if not payment_intent_id:
+        return ""
+    live_prefix = "test/" if stripe_secret_key().startswith("sk_test_") else ""
+    return f"https://dashboard.stripe.com/{live_prefix}payments/{urllib.parse.quote(payment_intent_id)}"
+
+
 def normalize_identity_status(provider_status: str, last_error: str = "") -> str:
     status = (provider_status or "").upper().strip()
     if status == "VERIFIED":
@@ -4303,6 +4311,64 @@ def confirm_booking_hold_payment(
     )
     send_confirmed_booking_email_once(booking_id, origin)
     return True, invoice_number
+
+
+def create_pickup_balance_payment_intent(booking: sqlite3.Row, admin: sqlite3.Row) -> tuple[dict[str, object], str]:
+    if row_value(booking, "payment_status") != "HOLD_PAID":
+        return {}, "Pickup balance can only be collected after the 10% hold is paid."
+    if row_value(booking, "booking_status") in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}:
+        return {}, "This booking cannot accept pickup balance payment."
+    breakdown = booking_price_breakdown(booking)
+    pickup_balance = round(float(breakdown["due_at_pickup"] or 0), 2)
+    if pickup_balance <= 0:
+        return {}, "No pickup balance is due for this booking."
+    amount_cents = int(round(pickup_balance * 100))
+    public_booking_id = row_value(booking, "booking_id")
+    params = {
+        "amount": amount_cents,
+        "currency": "usd",
+        "payment_method_types[]": "card_present",
+        "capture_method": "automatic",
+        "description": f"FairFares pickup balance - {public_booking_id}",
+        "metadata[payment_option]": "pickup_balance",
+        "metadata[booking_id]": row_value(booking, "id"),
+        "metadata[public_booking_id]": public_booking_id,
+        "metadata[user_id]": row_value(booking, "user_id"),
+        "metadata[created_by_admin_id]": row_value(admin, "id"),
+        "metadata[created_by_admin_email]": row_value(admin, "email"),
+        "receipt_email": row_value(booking, "contact_email"),
+    }
+    payment_intent, status = stripe_api_request(
+        "payment_intents",
+        params,
+        idempotency_key=f"pickup-balance-{row_value(booking, 'id')}-{amount_cents}",
+    )
+    if status != "ok":
+        return {}, status
+    return payment_intent, "ok"
+
+
+def confirm_pickup_balance_payment_intent(data_object: dict[str, object], origin: str = "") -> tuple[bool, str]:
+    metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+    if metadata.get("payment_option") not in {"pickup_balance", "terminal_pickup_balance"}:
+        return False, "Not a FairFares pickup balance payment."
+    try:
+        booking_id = int(metadata.get("booking_id") or "0")
+    except (TypeError, ValueError):
+        booking_id = 0
+    if not booking_id:
+        return False, "Missing booking metadata."
+    paid_amount = float(data_object.get("amount_received") or data_object.get("amount") or 0) / 100
+    payment_reference = str(data_object.get("id") or "")
+    return confirm_booking_hold_payment(
+        booking_id,
+        paid_amount,
+        "Stripe Terminal / Tap to Pay",
+        "Stripe in-person customer",
+        payment_reference,
+        origin,
+        "full",
+    )
 
 
 def stripe_refund_payment_reference(
@@ -9273,6 +9339,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/send": self.send_email_campaign_now,
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
+            "/admin/payment/pickup-balance": self.create_admin_pickup_balance_payment,
             "/admin/agreement/customer": self.save_customer_agreement,
             "/admin/pickup/prefill": self.prefill_pickup_documents,
             "/admin/identity/idscan": self.run_admin_idscan_check,
@@ -10599,6 +10666,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         save_identity_verification_from_session(session, int(customer["id"]), int(booking["id"]))
         self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity for pickup verification."})
 
+    def create_admin_pickup_balance_payment(self) -> None:
+        admin = self.require_admin()
+        if not admin:
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id", "0") or 0)
+        except ValueError:
+            booking_id = 0
+        if not booking_id:
+            self.send_json({"ok": False, "message": "Missing booking."}, 400)
+            return
+        with db() as con:
+            booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not booking:
+            self.send_json({"ok": False, "message": "Booking not found."}, 404)
+            return
+        payment_intent, status = create_pickup_balance_payment_intent(booking, admin)
+        if status != "ok":
+            self.send_json({"ok": False, "message": status}, 400)
+            return
+        payment_intent_id = str(payment_intent.get("id") or "")
+        client_secret = str(payment_intent.get("client_secret") or "")
+        amount = float(payment_intent.get("amount") or 0) / 100
+        self.send_json(
+            {
+                "ok": True,
+                "message": (
+                    "In-person pickup balance payment created. Collect it with Stripe Terminal/Tap to Pay; "
+                    "FairFares updates this booking after Stripe confirms payment."
+                ),
+                "payment_intent_id": payment_intent_id,
+                "client_secret": client_secret,
+                "amount": format_money(amount),
+                "dashboard_url": stripe_dashboard_payment_url(payment_intent_id),
+            }
+        )
+
     def payment_success_page(self) -> None:
         user = self.current_user()
         if not user:
@@ -10688,6 +10793,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.public_origin(),
                     payment_option,
                 )
+        if event_type == "payment_intent.succeeded":
+            confirm_pickup_balance_payment_intent(data_object, self.public_origin())
         if event_type.startswith("identity.verification_session."):
             save_identity_verification_from_session(data_object)
         self.send_json({"received": True})
@@ -13131,6 +13238,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         billing_status = transaction["billing_verification_status"] if transaction and "billing_verification_status" in transaction.keys() else ""
         billing_note = transaction["billing_verification_notes"] if transaction and "billing_verification_notes" in transaction.keys() else ""
         payment_label, pickup_balance_label = admin_payment_summary(row)
+        payment_breakdown = booking_price_breakdown(row)
+        pickup_balance_due = round(float(payment_breakdown["due_at_pickup"] or 0), 2)
+        can_collect_pickup_balance = row_value(row, "payment_status") == "HOLD_PAID" and pickup_balance_due > 0
+        pickup_balance_panel = ""
+        if can_collect_pickup_balance:
+            pickup_balance_panel = f"""
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Pickup balance</b><span>{escape(format_money(pickup_balance_due))} due at pickup after the 10% hold.</span></div>
+                    </div>
+                    <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
+                        <div>
+                            <b>Collect with Stripe Terminal / Tap to Pay</b>
+                            <span>Create a booking-linked in-person payment, then collect it on the staff reader or Tap to Pay device.</span>
+                        </div>
+                        <button type="button" data-admin-pickup-payment-button>Create in-person payment</button>
+                        <small data-admin-pickup-payment-status>After Stripe confirms payment, FairFares marks this booking as full payment received.</small>
+                    </div>
+                </section>
+            """
         latest_transaction_label = transaction["transaction_status"] if transaction else ""
         billing_parts = []
         if latest_transaction_label:
@@ -13208,6 +13335,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <small data-admin-stripe-identity-status>{escape(identity_detail)}</small>
                     </div>
                 </section>
+                {pickup_balance_panel}
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
                         <div><b>Customer and driver license</b><span>Capture required renter identity details at pickup.</span></div>
