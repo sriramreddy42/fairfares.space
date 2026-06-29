@@ -53,6 +53,13 @@ SECURITY_DEPOSIT_RELEASE_COPY = (
     "Refundable security deposit authorization. Release after vehicle return review for damage, tickets, tolls, "
     "cleaning, fuel, keys, misuse, and other post-return charges."
 )
+POST_RETURN_FEE_RULES = (
+    ("Cleaning fee", "FLAT", 50.00, "Dirty vehicle return after staff review", 10),
+    ("Smoking fee", "FLAT", 200.00, "Smoke odor, ash, burns, or smoking evidence", 20),
+    ("Late payment / late return fee", "DAILY", 50.00, "Per day when applicable after review", 30),
+    ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
+    ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
+)
 ASSET_VERSION = "20260629pricerange1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
@@ -3104,6 +3111,18 @@ def init_db() -> None:
                 UNIQUE(label, rule_type)
             );
 
+            CREATE TABLE IF NOT EXISTS post_return_fee_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                rule_type TEXT NOT NULL DEFAULT 'FLAT',
+                value REAL NOT NULL DEFAULT 0,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(label, rule_type)
+            );
+
             CREATE TABLE IF NOT EXISTS commercials (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -3502,11 +3521,39 @@ def init_db() -> None:
         ensure_column(con, "bookings", "return_back_image", "return_back_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_left_image", "return_left_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_right_image", "return_right_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_odometer", "pickup_odometer INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "return_odometer", "return_odometer INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "pickup_fuel_level", "pickup_fuel_level TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_fuel_level", "return_fuel_level TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_condition_status", "pickup_condition_status TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_condition_status", "return_condition_status TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "new_damage_found", "new_damage_found TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_customer_signature", "pickup_customer_signature TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_staff_signature", "pickup_staff_signature TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_customer_signature", "return_customer_signature TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_staff_signature", "return_staff_signature TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_review_status", "return_review_status TEXT NOT NULL DEFAULT 'PENDING'")
+        ensure_column(con, "bookings", "security_deposit_status", "security_deposit_status TEXT NOT NULL DEFAULT 'NOT_AUTHORIZED'")
+        ensure_column(con, "bookings", "security_deposit_amount", "security_deposit_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "security_deposit_payment_intent_id", "security_deposit_payment_intent_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "post_return_charge_amount", "post_return_charge_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "post_return_charge_notes", "post_return_charge_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_odometer_image", "pickup_odometer_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_fuel_image", "pickup_fuel_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_interior_front_image", "pickup_interior_front_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_interior_rear_image", "pickup_interior_rear_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_odometer_image", "return_odometer_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_fuel_image", "return_fuel_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_interior_front_image", "return_interior_front_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_interior_rear_image", "return_interior_rear_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "damage_photo_image", "damage_photo_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "discounts", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "tax_fee_rules", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "post_return_fee_rules", "description", "description TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "post_return_fee_rules", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "is_live", "is_live INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "commercials", "duration_seconds", "duration_seconds INTEGER NOT NULL DEFAULT 12")
         ensure_column(con, "commercials", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
@@ -3774,6 +3821,16 @@ def init_db() -> None:
                     ("Sales tax", "PERCENT", 4.0, 50),
                     ("Rental tax items", "PERCENT", 7.25, 60),
                 ],
+            )
+        post_return_rule_count = con.execute("SELECT COUNT(*) AS total FROM post_return_fee_rules").fetchone()["total"]
+        if post_return_rule_count == 0:
+            con.executemany(
+                """
+                INSERT INTO post_return_fee_rules
+                (label, rule_type, value, description, status, sort_order)
+                VALUES (?, ?, ?, ?, 'ACTIVE', ?)
+                """,
+                POST_RETURN_FEE_RULES,
             )
 
         service_count = con.execute("SELECT COUNT(*) AS total FROM services").fetchone()["total"]
@@ -4214,10 +4271,57 @@ def get_all_tax_fee_rules() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_active_post_return_fee_rules() -> list[sqlite3.Row] | list[dict[str, object]]:
+    try:
+        with db() as con:
+            con.execute("SELECT 1 FROM post_return_fee_rules LIMIT 1").fetchone()
+            rules = con.execute(
+                """
+                SELECT * FROM post_return_fee_rules
+                WHERE UPPER(TRIM(status)) = 'ACTIVE'
+                ORDER BY sort_order, label
+                """
+            ).fetchall()
+            if rules:
+                return rules
+    except sqlite3.Error:
+        pass
+    return [
+        {"label": label, "rule_type": rule_type, "value": value, "description": description, "sort_order": sort_order}
+        for label, rule_type, value, description, sort_order in POST_RETURN_FEE_RULES
+    ]
+
+
+def get_all_post_return_fee_rules() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT * FROM post_return_fee_rules
+            ORDER BY sort_order, label
+            """
+        ).fetchall()
+
+
 def tax_fee_rule_value(rule: sqlite3.Row | dict[str, object], key: str, default: object = "") -> object:
     if isinstance(rule, sqlite3.Row):
         return rule[key] if key in rule.keys() and rule[key] is not None else default
     return rule.get(key, default)
+
+
+def post_return_fee_rule_summary() -> str:
+    parts = []
+    for rule in get_active_post_return_fee_rules():
+        label = str(tax_fee_rule_value(rule, "label", "Fee")).strip()
+        rule_type = str(tax_fee_rule_value(rule, "rule_type", "FLAT")).strip().upper()
+        value = float(tax_fee_rule_value(rule, "value", 0) or 0)
+        if rule_type == "PER_MILE":
+            amount = f"{format_money(value)}/mile"
+        elif rule_type == "DAILY":
+            amount = f"{format_money(value)}/day"
+        else:
+            amount = format_money(value)
+        parts.append(f"{label}: {amount}")
+    return "; ".join(parts)
 
 
 def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
@@ -4515,6 +4619,20 @@ def record_security_deposit_authorization(data_object: dict[str, object]) -> tup
             VALUES (?, 'Stripe Terminal / Tap to Pay deposit', 'Stripe in-person customer', ?, 'SECURITY_DEPOSIT_AUTHORIZED', 'MATCHED', ?, ?)
             """,
             (booking_id, round(amount, 2), SECURITY_DEPOSIT_RELEASE_COPY, payment_reference),
+        )
+        con.execute(
+            """
+            UPDATE bookings
+            SET security_deposit_status = 'AUTHORIZED',
+                security_deposit_amount = ?,
+                security_deposit_payment_intent_id = ?,
+                return_review_status = CASE
+                    WHEN return_review_status = '' OR return_review_status = 'PENDING' THEN 'PENDING'
+                    ELSE return_review_status
+                END
+            WHERE id = ?
+            """,
+            (round(amount, 2), payment_reference, booking_id),
         )
     return True, payment_reference
 
@@ -8882,6 +9000,20 @@ def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str
     price_match_discount = float(row_value(row, "price_match_discount_amount") or 0)
     price_match_original = float(row_value(row, "price_match_original_total") or row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
     late_fee = float(row_value(row, "late_fee_amount") or 0)
+    pickup_odometer = row_value(row, "pickup_odometer") or values.get("vehicle_mileage", "")
+    return_odometer = row_value(row, "return_odometer")
+    pickup_fuel = row_value(row, "pickup_fuel_level") or "Staff to record at pickup."
+    return_fuel = row_value(row, "return_fuel_level") or "Staff to record at return."
+    pickup_condition = row_value(row, "pickup_condition_status") or "Staff and Lessee must review pickup photos and visible condition before release."
+    return_condition = row_value(row, "return_condition_status") or "Pending return review."
+    new_damage = row_value(row, "new_damage_found") or "Pending return review."
+    deposit_status = row_value(row, "security_deposit_status") or "NOT_AUTHORIZED"
+    saved_deposit_amount = float(row_value(row, "security_deposit_amount") or 0)
+    deposit_amount = saved_deposit_amount if saved_deposit_amount > 0 else SECURITY_DEPOSIT_AMOUNT
+    return_review_status = row_value(row, "return_review_status") or "PENDING"
+    post_return_charge_amount = float(row_value(row, "post_return_charge_amount") or 0)
+    post_return_charge_notes = row_value(row, "post_return_charge_notes")
+    post_return_fee_line = post_return_fee_rule_summary() or "Configured FairFares post-return fee rules apply."
     price_match_line = (
         f"Price match: {price_match_agency} quote matched at {format_money(price_match_amount)}; additional 10% FairFares discount {format_money(price_match_discount)}; original FairFares total before match {format_money(price_match_original)}."
         if price_match_agency and price_match_amount
@@ -8946,16 +9078,23 @@ How FairFares saved you money: {savings_or_price_promise}
 Lessee authorizes FairFares and its payment processors, including Stripe where applicable, to charge amounts due under this Agreement, including rental charges, balances, deposits, late fees, damage, tolls, tickets, cleaning, fuel, keys, towing, roadside charges, and other post-return charges permitted by this Agreement.
 
 9. SECURITY DEPOSIT AUTHORIZATION.
-Security Deposit/Authorization: {format_money(SECURITY_DEPOSIT_AMOUNT)}
+Security Deposit/Authorization: {format_money(deposit_amount)}
+Deposit Status: {deposit_status}
+Return Review Status: {return_review_status}
+Post-return Charge Review: {format_money(post_return_charge_amount)}{f" - {post_return_charge_notes}" if post_return_charge_notes else ""}
 FairFares may authorize a refundable security deposit at pickup. The deposit is not rental revenue. FairFares may release the authorization after the Vehicle is returned and reviewed for tickets, tolls, damage, cleaning, fuel, keys, misuse, late return charges, and other post-return charges. FairFares may capture or apply all or part of the deposit only for amounts permitted by this Agreement, payment processor rules, and applicable law. Deposit release does not waive later claims discovered after return.
 
 10. VEHICLE DESCRIPTION.
 Vehicle: {vehicle_identity}
 VIN: {row_value(row, 'vin_number')}
 License Plate: {row_value(row, 'license_plate')}
-Starting Mileage: {values.get('vehicle_mileage', '')}
-Fuel Level Out: Staff to record at pickup.
-Vehicle Condition Out: Staff and Lessee must review pickup photos and visible condition before release.
+Starting Mileage: {pickup_odometer}
+Return Mileage: {return_odometer or 'Pending return record.'}
+Fuel Level Out: {pickup_fuel}
+Fuel Level In: {return_fuel}
+Vehicle Condition Out: {pickup_condition}
+Vehicle Condition In: {return_condition}
+New Damage Found at Return: {new_damage}
 
 11. RENTAL PERIOD AND LOCATIONS.
 Scheduled Pickup: {pickup_datetime}
@@ -8972,7 +9111,7 @@ Before release, FairFares may require payment confirmation, Stripe Identity or o
 Lessee must return the Vehicle at the agreed return location, date, and time unless FairFares approves a modification. Vehicle must be returned with the same fuel level, in substantially similar condition except ordinary wear, clean, with keys/accessories, and ready for inspection. Late, dirty, damaged, incomplete, or unauthorized returns may create additional charges.
 
 14. VEHICLE CONDITION REPORT.
-Pickup and return photos, uploaded damage photos, inspection forms, mileage, fuel readings, staff notes, and customer notes are part of this Agreement. Lessee accepts responsibility for damage, loss, missing items, or abnormal wear occurring during the Rental Period, subject to insurance and applicable law.
+Pickup and return photos, uploaded damage photos, inspection forms, odometer readings, fuel readings, staff notes, customer notes, and signatures are part of this Agreement. Minimum inspection photos should include front, rear, driver side, passenger side, dashboard/odometer, fuel gauge, front seats, rear seats/cargo, and any damage closeups. Lessee accepts responsibility for damage, loss, missing items, or abnormal wear occurring during the Rental Period, subject to insurance and applicable law.
 
 15. MILEAGE POLICY.
 Mileage Allowance: {values.get('mileage_allowed', '')} miles per month or as otherwise stated in booking terms.
@@ -9006,6 +9145,7 @@ Lessee must safeguard keys, lock the Vehicle, use proper fuel/charging, obey law
 
 24. FEES AND CHARGES.
 Possible charges include rental balance, late return, extra mileage, fuel/recharge, cleaning, smoking, pet cleaning, tolls, tickets, impound, towing, storage, key replacement, damage, loss, deductible, unauthorized driver/use, chargeback, payment failure, administrative processing, and provider-imposed charges.
+Current post-return fee defaults: {post_return_fee_line}. Staff must document evidence and notes before applying any deposit capture or post-return charge.
 
 25. TOLLS AND TICKETS.
 Lessee is responsible for tolls, parking tickets, traffic citations, camera violations, impound charges, and related administrative fees during the Rental Period, even if FairFares receives notice after return.
@@ -9050,10 +9190,10 @@ This Agreement is governed by the laws of the State of Colorado, without regard 
 Lessee agrees that electronic records, typed signatures, checkbox consent, uploaded documents, Stripe records, payment records, and saved agreement text may be used as enforceable records and signatures to the extent allowed by law.
 
 39. PICKUP CHECKLIST.
-Staff/Lessee must confirm before release: identity verification, valid license, insurance proof, payment/authorization, pickup photos, mileage/fuel, visible condition, keys/accessories, agreement signature, emergency/support contacts, and any special restrictions.
+Staff/Lessee must confirm before release: identity verification, valid license, insurance proof, rental payment, refundable security deposit authorization where required, pickup photos, odometer/fuel, visible condition, keys/accessories, customer/staff signatures, emergency/support contacts, and any special restrictions.
 
 40. RETURN CHECKLIST.
-Staff/Lessee should confirm at return: return time/location, mileage/fuel, cleanliness, keys/accessories, new damage, photos, toll/ticket notes, late fees, remaining balance, support issues, and final closeout status.
+Staff/Lessee should confirm at return: return time/location, odometer/fuel, cleanliness, keys/accessories, new damage, return photos, damage closeups, toll/ticket notes, late fees, remaining balance, support issues, deposit release/capture decision, and final closeout status.
 
 41. EMERGENCY CONTACTS.
 Emergency services: 911 when urgent.
@@ -9497,6 +9637,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/discounts/delete": self.delete_admin_discount,
             "/admin/tax-fees": self.create_admin_tax_fee_rule,
             "/admin/tax-fees/delete": self.delete_admin_tax_fee_rule,
+            "/admin/post-return-fees": self.create_admin_post_return_fee_rule,
+            "/admin/post-return-fees/delete": self.delete_admin_post_return_fee_rule,
             "/admin/staff/request": self.create_staff_account_request,
             "/admin/staff/review": self.review_staff_account_request,
             "/admin/staff/password": self.reset_staff_account_password,
@@ -13104,12 +13246,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         discounts = "\n".join(self.render_discount_row(row) for row in get_all_discounts())
         tax_fee_rules = "\n".join(self.render_tax_fee_rule_row(row) for row in get_all_tax_fee_rules())
+        post_return_fee_rules = "\n".join(self.render_post_return_fee_rule_row(row) for row in get_all_post_return_fee_rules())
         body = render_template(
             "admin_discounts.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "discounts"),
             discounts=discounts or '<tr><td colspan="7">No discount codes yet.</td></tr>',
             tax_fee_rules=tax_fee_rules or '<tr><td colspan="6">No tax or fee rules yet.</td></tr>',
+            post_return_fee_rules=post_return_fee_rules or '<tr><td colspan="6">No post-return fee rules yet.</td></tr>',
         )
         self.send_html(body)
 
@@ -13438,6 +13582,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         actual_return_date = row["actual_return_date"] or display_date_to_input(row["dropoff_date"], "")
         actual_pickup_time = row["actual_pickup_time"] or row["pickup_time"]
         actual_return_time = row["actual_return_time"] or row["dropoff_time"]
+        pickup_odometer = row_value(row, "pickup_odometer")
+        return_odometer = row_value(row, "return_odometer")
+        pickup_fuel_level = row_value(row, "pickup_fuel_level")
+        return_fuel_level = row_value(row, "return_fuel_level")
+        pickup_condition_status = row_value(row, "pickup_condition_status") or "ACCEPTABLE"
+        return_condition_status = row_value(row, "return_condition_status") or "PENDING"
+        new_damage_found = row_value(row, "new_damage_found") or "NO"
+        return_review_status = row_value(row, "return_review_status") or "PENDING"
+        security_deposit_status = row_value(row, "security_deposit_status") or "NOT_AUTHORIZED"
+        security_deposit_amount = float(row_value(row, "security_deposit_amount") or 0)
+        post_return_charge_amount = float(row_value(row, "post_return_charge_amount") or 0)
+        fee_rule_copy = post_return_fee_rule_summary()
+        fuel_options = ("Full", "3/4", "1/2", "1/4", "Empty", "Electric 100%", "Electric 75%", "Electric 50%", "Electric 25%")
+        condition_options = ("ACCEPTABLE", "ISSUES_NOTED", "DAMAGE_NOTED", "PENDING")
+        damage_options = ("NO", "YES", "PENDING")
+        review_options = ("PENDING", "CLEAR_TO_RELEASE", "CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW", "RELEASED", "CLOSED")
+        deposit_status_options = ("NOT_AUTHORIZED", "AUTHORIZED", "RELEASE_READY", "RELEASED", "PARTIALLY_CAPTURED", "CAPTURED", "EXPIRED", "FAILED")
+
+        def compact_select_options(options: tuple[str, ...], selected: str) -> str:
+            return "".join(
+                f'<option value="{escape(option)}" {"selected" if option == selected else ""}>{escape(option.replace("_", " ").title())}</option>'
+                for option in options
+            )
         status_summary = booking_status_label(row["booking_status"], row["payment_status"])
         dl_status = license_row["verification_status"] if license_row else "Not captured"
         dl_note = (license_row["verification_notes"] if license_row and "verification_notes" in license_row.keys() else "") or ""
@@ -13475,6 +13642,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"Authorize {format_money(SECURITY_DEPOSIT_AMOUNT)} at pickup. Release it after return review if there are no tickets, damage, tolls, cleaning, fuel, key, or other charges."
             if can_authorize_deposit
             else f"{format_money(SECURITY_DEPOSIT_AMOUNT)} refundable security deposit becomes available after the 10% hold or full payment is recorded."
+        )
+        deposit_status_copy = (
+            f"{security_deposit_status.replace('_', ' ').title()} · {format_money(security_deposit_amount or SECURITY_DEPOSIT_AMOUNT)}"
+            if security_deposit_status != "NOT_AUTHORIZED"
+            else "Not authorized"
         )
         pickup_balance_panel = f"""
             <section class="pickup-form-section wide-field">
@@ -13539,16 +13711,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         vehicle_photo_fields = "".join(
             (
-                capture_field("pickup_front_image", "Pickup Front", row["pickup_front_image"]),
-                capture_field("pickup_back_image", "Pickup Back", row["pickup_back_image"]),
-                capture_field("pickup_left_image", "Pickup Left", row["pickup_left_image"]),
-                capture_field("pickup_right_image", "Pickup Right", row["pickup_right_image"]),
-                capture_field("return_front_image", "Return Front", row["return_front_image"]),
-                capture_field("return_back_image", "Return Back", row["return_back_image"]),
-                capture_field("return_left_image", "Return Left", row["return_left_image"]),
-                capture_field("return_right_image", "Return Right", row["return_right_image"]),
+                capture_field("pickup_front_image", "Pickup Front", row_value(row, "pickup_front_image")),
+                capture_field("pickup_back_image", "Pickup Rear", row_value(row, "pickup_back_image")),
+                capture_field("pickup_left_image", "Pickup Driver Side", row_value(row, "pickup_left_image")),
+                capture_field("pickup_right_image", "Pickup Passenger Side", row_value(row, "pickup_right_image")),
+                capture_field("pickup_odometer_image", "Pickup Odometer", row_value(row, "pickup_odometer_image")),
+                capture_field("pickup_fuel_image", "Pickup Fuel", row_value(row, "pickup_fuel_image")),
+                capture_field("pickup_interior_front_image", "Pickup Front Seats", row_value(row, "pickup_interior_front_image")),
+                capture_field("pickup_interior_rear_image", "Pickup Rear/Cargo", row_value(row, "pickup_interior_rear_image")),
+                capture_field("return_front_image", "Return Front", row_value(row, "return_front_image")),
+                capture_field("return_back_image", "Return Rear", row_value(row, "return_back_image")),
+                capture_field("return_left_image", "Return Driver Side", row_value(row, "return_left_image")),
+                capture_field("return_right_image", "Return Passenger Side", row_value(row, "return_right_image")),
+                capture_field("return_odometer_image", "Return Odometer", row_value(row, "return_odometer_image")),
+                capture_field("return_fuel_image", "Return Fuel", row_value(row, "return_fuel_image")),
+                capture_field("return_interior_front_image", "Return Front Seats", row_value(row, "return_interior_front_image")),
+                capture_field("return_interior_rear_image", "Return Rear/Cargo", row_value(row, "return_interior_rear_image")),
+                capture_field("damage_photo_image", "Damage Closeup", row_value(row, "damage_photo_image")),
             )
         )
+        return_review_copy = return_review_status.replace("_", " ").title()
+        if post_return_charge_amount:
+            return_review_copy = f"{return_review_copy} · {format_money(post_return_charge_amount)}"
 
         return f"""
         <details class="pickup-record" data-search="{escape((row["booking_id"] + " " + row["user_name"] + " " + row["user_email"] + " " + row["car_name"]).lower())}">
@@ -13568,6 +13752,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <span><b>Discount</b>{escape((row["discount_code"] or "None") + (" · -" + format_money(row["discount_amount"]) if row["discount_amount"] else ""))}</span>
                 <span><b>Total</b>{escape(format_money(row["total_price"]))}</span>
                 <span><b>Late fee</b>{escape(format_money(row["late_fee_amount"])) if row["late_fee_amount"] else "None"}</span>
+                <span><b>Deposit</b>{escape(deposit_status_copy)}<small>{escape(SECURITY_DEPOSIT_RELEASE_COPY)}</small></span>
+                <span><b>Return review</b>{escape(return_review_copy)}</span>
                 <span><b>Agreement</b>{escape("Signed" if agreement and agreement["signature_text"] else "Pending")}</span>
             </div>
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
@@ -13628,7 +13814,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </section>
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
-                        <div><b>Vehicle photos</b><span>Upload all car photos in one line: pickup front/back/left/right and return front/back/left/right.</span></div>
+                        <div><b>Inspection and return review</b><span>Record odometer, fuel, condition, signatures, and strict deposit release/capture status.</span></div>
+                    </div>
+                    <div class="pickup-form-grid">
+                        <label><span>Pickup Odometer</span><input name="pickup_odometer" type="number" min="0" value="{escape(pickup_odometer)}"></label>
+                        <label><span>Return Odometer</span><input name="return_odometer" type="number" min="0" value="{escape(return_odometer)}"></label>
+                        <label><span>Pickup Fuel Level</span><select name="pickup_fuel_level"><option value="">Select fuel</option>{compact_select_options(fuel_options, pickup_fuel_level)}</select></label>
+                        <label><span>Return Fuel Level</span><select name="return_fuel_level"><option value="">Select fuel</option>{compact_select_options(fuel_options, return_fuel_level)}</select></label>
+                        <label><span>Pickup Condition</span><select name="pickup_condition_status">{compact_select_options(condition_options, pickup_condition_status)}</select></label>
+                        <label><span>Return Condition</span><select name="return_condition_status">{compact_select_options(condition_options, return_condition_status)}</select></label>
+                        <label><span>New Damage Found</span><select name="new_damage_found">{compact_select_options(damage_options, new_damage_found)}</select></label>
+                        <label><span>Return Review Status</span><select name="return_review_status">{compact_select_options(review_options, return_review_status)}</select></label>
+                        <label><span>Deposit Status</span><select name="security_deposit_status">{compact_select_options(deposit_status_options, security_deposit_status)}</select></label>
+                        <label><span>Post-return Charges</span><input name="post_return_charge_amount" type="number" step="0.01" min="0" value="{escape(f'{post_return_charge_amount:.2f}' if post_return_charge_amount else '')}" placeholder="0.00"></label>
+                        <label><span>Pickup Customer Signature</span><input name="pickup_customer_signature" value="{escape(row_value(row, "pickup_customer_signature"))}" placeholder="Typed at pickup"></label>
+                        <label><span>Pickup Staff Signature</span><input name="pickup_staff_signature" value="{escape(row_value(row, "pickup_staff_signature"))}" placeholder="Staff initials/name"></label>
+                        <label><span>Return Customer Signature</span><input name="return_customer_signature" value="{escape(row_value(row, "return_customer_signature"))}" placeholder="Typed at return"></label>
+                        <label><span>Return Staff Signature</span><input name="return_staff_signature" value="{escape(row_value(row, "return_staff_signature"))}" placeholder="Staff initials/name"></label>
+                        <label class="wide-field"><span>Charge / Release Notes</span><textarea name="post_return_charge_notes" rows="3" placeholder="Required before any deposit capture. Note tickets, tolls, damage, fuel, mileage, cleaning, keys, or release reason.">{escape(row_value(row, "post_return_charge_notes"))}</textarea></label>
+                    </div>
+                    <div class="pickup-prefill-panel pickup-return-review-panel">
+                        <div>
+                            <b>Strict deposit rule</b>
+                            <span>Do not capture any deposit until return review has evidence and notes. Active fee defaults: {escape(fee_rule_copy)}</span>
+                        </div>
+                        <small>Release when review is clear; capture only documented tickets, tolls, damage, cleaning, fuel, keys, mileage, service, smoking, or allowed agreement charges.</small>
+                    </div>
+                </section>
+                <section class="pickup-form-section wide-field">
+                    <div class="pickup-section-head">
+                        <div><b>Vehicle photos</b><span>Minimum inspection set: exterior, odometer, fuel, interior/cargo, and damage closeups when needed.</span></div>
                     </div>
                     <div class="pickup-photo-row pickup-vehicle-row">{vehicle_photo_fields}</div>
                 </section>
@@ -13693,6 +13908,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["status"])}</td>
             <td>
                 <form method="post" action="/admin/tax-fees/delete" class="inline-form">
+                    <input type="hidden" name="rule_id" value="{row["id"]}">
+                    <button class="danger-button" type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    def render_post_return_fee_rule_row(self, row: sqlite3.Row) -> str:
+        rule_type = row["rule_type"]
+        if rule_type == "PER_MILE":
+            value = f'{format_money(row["value"])}/mile'
+            basis = "Per extra mile"
+        elif rule_type == "DAILY":
+            value = f'{format_money(row["value"])}/day'
+            basis = "Per day"
+        else:
+            value = format_money(row["value"])
+            basis = "Per reviewed incident"
+        return f"""
+        <tr>
+            <td><b>{escape(row["label"])}</b><span>{escape(row["description"] or basis)}</span></td>
+            <td>{escape(rule_type)}</td>
+            <td>{escape(value)}</td>
+            <td>{escape(str(row["sort_order"]))}</td>
+            <td>{escape(row["status"])}</td>
+            <td>
+                <form method="post" action="/admin/post-return-fees/delete" class="inline-form">
                     <input type="hidden" name="rule_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
                 </form>
@@ -14522,6 +14764,56 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("DELETE FROM tax_fee_rules WHERE id = ?", (form.get("rule_id"),))
         self.redirect("/admin/discounts")
 
+    def create_admin_post_return_fee_rule(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        label = (form.get("label") or "").strip()
+        if not label:
+            self.redirect("/admin/discounts")
+            return
+        rule_type = (form.get("rule_type") or "FLAT").strip().upper()
+        if rule_type not in {"FLAT", "DAILY", "PER_MILE"}:
+            rule_type = "FLAT"
+        value = max(0.0, float(form.get("value") or 0))
+        status = (form.get("status") or "ACTIVE").strip().upper()
+        if status not in {"ACTIVE", "INACTIVE"}:
+            status = "ACTIVE"
+        with db() as con:
+            existing = con.execute(
+                "SELECT id FROM post_return_fee_rules WHERE LOWER(label) = LOWER(?) AND rule_type = ? ORDER BY id LIMIT 1",
+                (label, rule_type),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    """
+                    UPDATE post_return_fee_rules
+                    SET label = ?, value = ?, description = ?, status = ?, sort_order = ?
+                    WHERE id = ?
+                    """,
+                    (label, value, form.get("description", ""), status, int(form.get("sort_order") or 0), existing["id"]),
+                )
+            else:
+                con.execute(
+                    """
+                    INSERT INTO post_return_fee_rules
+                    (label, rule_type, value, description, status, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (label, rule_type, value, form.get("description", ""), status, int(form.get("sort_order") or 0)),
+                )
+        self.redirect("/admin/discounts")
+
+    def delete_admin_post_return_fee_rule(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        form = self.read_form()
+        with db() as con:
+            con.execute("DELETE FROM post_return_fee_rules WHERE id = ?", (form.get("rule_id"),))
+        self.redirect("/admin/discounts")
+
     def create_admin_wiki_article(self) -> None:
         user = self.require_owner_admin()
         if not user:
@@ -14759,6 +15051,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_id = form.get("booking_id")
         user_id = form.get("user_id")
         pricing_update_booking_id = 0
+        def safe_int_field(name: str) -> int:
+            try:
+                return max(0, int(float(form.get(name, "") or 0)))
+            except (TypeError, ValueError):
+                return 0
+
+        def safe_money_field(name: str) -> float:
+            try:
+                return max(0.0, round(float(form.get(name, "") or 0), 2))
+            except (TypeError, ValueError):
+                return 0.0
+
         with db() as con:
             booking_public_id = ""
             booking_for_drive = con.execute("SELECT booking_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
@@ -14805,6 +15109,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "return_back_image",
                 "return_left_image",
                 "return_right_image",
+                "pickup_odometer_image",
+                "pickup_fuel_image",
+                "pickup_interior_front_image",
+                "pickup_interior_rear_image",
+                "return_odometer_image",
+                "return_fuel_image",
+                "return_interior_front_image",
+                "return_interior_rear_image",
+                "damage_photo_image",
             ):
                 drive_field_values[photo_field] = upload_data_url_to_drive(
                     con,
@@ -14919,6 +15232,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     pricing_update_booking_id = int(booking_id or 0)
                 except (TypeError, ValueError):
                     pricing_update_booking_id = 0
+            allowed_return_reviews = {
+                "PENDING",
+                "CLEAR_TO_RELEASE",
+                "CHARGES_PENDING",
+                "PARTIAL_CAPTURE_REVIEW",
+                "CAPTURE_REVIEW",
+                "RELEASED",
+                "CLOSED",
+            }
+            allowed_deposit_statuses = {
+                "NOT_AUTHORIZED",
+                "AUTHORIZED",
+                "RELEASE_READY",
+                "RELEASED",
+                "PARTIALLY_CAPTURED",
+                "CAPTURED",
+                "EXPIRED",
+                "FAILED",
+            }
+            return_review_status = (form.get("return_review_status") or "PENDING").strip().upper()
+            if return_review_status not in allowed_return_reviews:
+                return_review_status = "PENDING"
+            security_deposit_status = (form.get("security_deposit_status") or "NOT_AUTHORIZED").strip().upper()
+            if security_deposit_status not in allowed_deposit_statuses:
+                security_deposit_status = "NOT_AUTHORIZED"
             con.execute(
                 """
                 UPDATE bookings
@@ -14933,14 +15271,38 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     price_match_discount_amount = ?,
                     price_match_original_total = ?,
                     total_price = ?,
+                    pickup_odometer = ?,
+                    return_odometer = ?,
+                    pickup_fuel_level = ?,
+                    return_fuel_level = ?,
+                    pickup_condition_status = ?,
+                    return_condition_status = ?,
+                    new_damage_found = ?,
+                    pickup_customer_signature = ?,
+                    pickup_staff_signature = ?,
+                    return_customer_signature = ?,
+                    return_staff_signature = ?,
+                    return_review_status = ?,
+                    security_deposit_status = ?,
+                    post_return_charge_amount = ?,
+                    post_return_charge_notes = ?,
                     pickup_front_image = ?,
                     pickup_back_image = ?,
                     pickup_left_image = ?,
                     pickup_right_image = ?,
+                    pickup_odometer_image = ?,
+                    pickup_fuel_image = ?,
+                    pickup_interior_front_image = ?,
+                    pickup_interior_rear_image = ?,
                     return_front_image = ?,
                     return_back_image = ?,
                     return_left_image = ?,
-                    return_right_image = ?
+                    return_right_image = ?,
+                    return_odometer_image = ?,
+                    return_fuel_image = ?,
+                    return_interior_front_image = ?,
+                    return_interior_rear_image = ?,
+                    damage_photo_image = ?
                 WHERE id = ?
                 """,
                 (
@@ -14955,14 +15317,38 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     price_match_discount,
                     original_total,
                     revised_total,
+                    safe_int_field("pickup_odometer"),
+                    safe_int_field("return_odometer"),
+                    form.get("pickup_fuel_level", ""),
+                    form.get("return_fuel_level", ""),
+                    form.get("pickup_condition_status", "ACCEPTABLE"),
+                    form.get("return_condition_status", "PENDING"),
+                    form.get("new_damage_found", "NO"),
+                    form.get("pickup_customer_signature", ""),
+                    form.get("pickup_staff_signature", ""),
+                    form.get("return_customer_signature", ""),
+                    form.get("return_staff_signature", ""),
+                    return_review_status,
+                    security_deposit_status,
+                    safe_money_field("post_return_charge_amount"),
+                    form.get("post_return_charge_notes", ""),
                     drive_field_values.get("pickup_front_image", form.get("pickup_front_image", "")),
                     drive_field_values.get("pickup_back_image", form.get("pickup_back_image", "")),
                     drive_field_values.get("pickup_left_image", form.get("pickup_left_image", "")),
                     drive_field_values.get("pickup_right_image", form.get("pickup_right_image", "")),
+                    drive_field_values.get("pickup_odometer_image", form.get("pickup_odometer_image", "")),
+                    drive_field_values.get("pickup_fuel_image", form.get("pickup_fuel_image", "")),
+                    drive_field_values.get("pickup_interior_front_image", form.get("pickup_interior_front_image", "")),
+                    drive_field_values.get("pickup_interior_rear_image", form.get("pickup_interior_rear_image", "")),
                     drive_field_values.get("return_front_image", form.get("return_front_image", "")),
                     drive_field_values.get("return_back_image", form.get("return_back_image", "")),
                     drive_field_values.get("return_left_image", form.get("return_left_image", "")),
                     drive_field_values.get("return_right_image", form.get("return_right_image", "")),
+                    drive_field_values.get("return_odometer_image", form.get("return_odometer_image", "")),
+                    drive_field_values.get("return_fuel_image", form.get("return_fuel_image", "")),
+                    drive_field_values.get("return_interior_front_image", form.get("return_interior_front_image", "")),
+                    drive_field_values.get("return_interior_rear_image", form.get("return_interior_rear_image", "")),
+                    drive_field_values.get("damage_photo_image", form.get("damage_photo_image", "")),
                     booking_id,
                 ),
             )

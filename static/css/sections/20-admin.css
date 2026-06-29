@@ -3088,7 +3088,10 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .pickup-vehicle-row {
-  grid-template-columns: repeat(8, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+}
+.pickup-return-review-panel {
+  margin-top: 2px;
 }
 .dl-capture-field {
   background: #f7f9fc;
