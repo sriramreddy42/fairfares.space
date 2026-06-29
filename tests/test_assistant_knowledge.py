@@ -25,8 +25,14 @@ class AssistantKnowledgeTest(unittest.TestCase):
             os.environ.pop("FAIRFARES_SEED_DEFAULTS", None)
         else:
             os.environ["FAIRFARES_SEED_DEFAULTS"] = self.old_seed
+        self.clear_mcp_env()
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
+
+    def clear_mcp_env(self):
+        os.environ.pop("OPENAI_AGENT_MCP_SERVERS", None)
+        os.environ.pop("OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED", None)
+        os.environ.pop("OPENAI_DOCS_MCP_TOKEN", None)
 
     def assertTopArticle(self, query, expected_title):
         articles = app.search_wiki_articles(query, include_internal=False)
@@ -55,6 +61,35 @@ class AssistantKnowledgeTest(unittest.TestCase):
         context = app.assistant_database_context("cancel my booking", None, include_internal=False)
         actions = app.assistant_actions("cancel my booking", context)
         self.assertIn("/manage-booking?agent=cancel#cancel", [action["href"] for action in actions])
+
+    def test_openai_assistant_payload_omits_mcp_without_config(self):
+        self.clear_mcp_env()
+        payload = app.build_openai_assistant_payload("refund policy", {"role": "guest"})
+        self.assertNotIn("tools", payload)
+
+    def test_openai_assistant_mcp_requires_allowed_tools_by_default(self):
+        self.clear_mcp_env()
+        os.environ["OPENAI_AGENT_MCP_SERVERS"] = '[{"server_label":"docs","server_url":"https://example.com/mcp"}]'
+        self.assertEqual(app.parse_openai_agent_mcp_servers(), [])
+
+    def test_openai_assistant_payload_allows_mcp_tool_allowlist(self):
+        self.clear_mcp_env()
+        os.environ["OPENAI_DOCS_MCP_TOKEN"] = "secret-token"
+        os.environ["OPENAI_AGENT_MCP_SERVERS"] = """
+        [
+          {
+            "server_label": "openai_docs",
+            "server_url": "https://developers.openai.com/mcp",
+            "allowed_tools": ["search_openai_docs", "fetch_openai_doc"],
+            "bearer_token_env": "OPENAI_DOCS_MCP_TOKEN"
+          }
+        ]
+        """
+        payload = app.build_openai_assistant_payload("OpenAI docs", {"role": "guest"})
+        self.assertEqual(payload["tools"][0]["type"], "mcp")
+        self.assertEqual(payload["tools"][0]["server_label"], "openai_docs")
+        self.assertEqual(payload["tools"][0]["allowed_tools"], ["search_openai_docs", "fetch_openai_doc"])
+        self.assertEqual(payload["tools"][0]["headers"]["Authorization"], "Bearer secret-token")
 
 
 if __name__ == "__main__":

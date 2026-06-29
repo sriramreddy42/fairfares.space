@@ -50,6 +50,8 @@ BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
 ASSET_VERSION = "20260627bookinglabels1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
+OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
+OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
 DRIVE_FOLDER_ENVS = {
@@ -6908,18 +6910,88 @@ def local_assistant_answer(question: str, context: dict[str, object]) -> str:
     )
 
 
-def openai_assistant_answer(question: str, context: dict[str, object]) -> str | None:
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return None
-    payload = {
+def truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def slugify_mcp_label(value: object, fallback: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
+    return (label or fallback)[:64]
+
+
+def parse_openai_agent_mcp_servers() -> list[dict[str, object]]:
+    raw = os.environ.get(OPENAI_AGENT_MCP_SERVERS_ENV, "").strip()
+    if not raw:
+        return []
+    servers: list[object]
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        servers = [item.strip() for item in raw.split(",") if item.strip()]
+    else:
+        if isinstance(parsed, dict):
+            servers = parsed.get("servers", []) if isinstance(parsed.get("servers"), list) else [parsed]
+        elif isinstance(parsed, list):
+            servers = parsed
+        else:
+            servers = []
+
+    allow_unrestricted = truthy_env(os.environ.get(OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV))
+    tools: list[dict[str, object]] = []
+    for index, server in enumerate(servers, start=1):
+        config: dict[str, object]
+        if isinstance(server, str):
+            config = {"server_url": server}
+        elif isinstance(server, dict):
+            config = dict(server)
+        else:
+            continue
+
+        server_url = str(config.get("server_url") or config.get("url") or "").strip()
+        if not server_url.startswith(("https://", "http://")):
+            continue
+
+        allowed_tools = config.get("allowed_tools")
+        if isinstance(allowed_tools, str):
+            allowed_tools = [item.strip() for item in allowed_tools.split(",") if item.strip()]
+        if allowed_tools is not None and not isinstance(allowed_tools, list):
+            allowed_tools = None
+        if not allowed_tools and not allow_unrestricted:
+            continue
+
+        tool: dict[str, object] = {
+            "type": "mcp",
+            "server_label": slugify_mcp_label(
+                config.get("server_label") or config.get("label") or config.get("name"),
+                f"mcp_{index}",
+            ),
+            "server_url": server_url,
+            "require_approval": str(config.get("require_approval") or "never"),
+        }
+        if allowed_tools:
+            tool["allowed_tools"] = [str(item) for item in allowed_tools if str(item).strip()]
+
+        headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
+        bearer_env = str(config.get("bearer_token_env") or "").strip()
+        bearer_token = os.environ.get(bearer_env, "").strip() if bearer_env else ""
+        if bearer_token:
+            headers = {**headers, "Authorization": f"Bearer {bearer_token}"}
+        if headers:
+            tool["headers"] = {str(key): str(value) for key, value in headers.items()}
+        tools.append(tool)
+    return tools[:5]
+
+
+def build_openai_assistant_payload(question: str, context: dict[str, object]) -> dict[str, object]:
+    payload: dict[str, object] = {
         "model": os.environ.get("OPENAI_AGENT_MODEL", "gpt-4o-mini"),
         "input": [
             {
                 "role": "system",
                 "content": (
-                    "You are FairFares Assistant. Answer using only the provided context. "
-                    "Respect role permissions. Do not claim you completed booking, cancellation, or payment; "
+                    "You are FairFares Assistant. Answer using only the provided FairFares context and configured MCP tools. "
+                    "Respect role permissions. Use MCP tools only for relevant read-only lookups. "
+                    "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
                     "tell the user which action button to use for those steps. Keep answers concise."
                 ),
             },
@@ -6928,8 +7000,19 @@ def openai_assistant_answer(question: str, context: dict[str, object]) -> str | 
                 "content": json.dumps({"question": question, "context": context}, default=str),
             },
         ],
-        "max_output_tokens": 260,
+        "max_output_tokens": 360,
     }
+    mcp_tools = parse_openai_agent_mcp_servers()
+    if mcp_tools:
+        payload["tools"] = mcp_tools
+    return payload
+
+
+def openai_assistant_answer(question: str, context: dict[str, object]) -> str | None:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    payload = build_openai_assistant_payload(question, context)
     request = urllib.request.Request(
         "https://api.openai.com/v1/responses",
         data=json.dumps(payload).encode("utf-8"),

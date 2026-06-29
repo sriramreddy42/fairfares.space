@@ -33,3 +33,7 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_AGENT_MCP_SERVERS
+        sync: false
+      - key: OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED
+        value: "0"
