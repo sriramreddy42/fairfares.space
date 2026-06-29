@@ -8974,7 +8974,8 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = template.safe_substitute(safe_context)
     html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
     html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
-    html_text = inject_google_tag(html_text)
+    if should_track_google_analytics(template_name):
+        html_text = inject_google_tag(html_text)
     html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
     return html_text.encode("utf-8")
 
@@ -8997,6 +8998,10 @@ def inject_google_tag(html_text: str) -> str:
     if GOOGLE_TAG_ID in html_text or "googletagmanager.com/gtag/js" in html_text:
         return html_text
     return re.sub(r"(<head\b[^>]*>)", r"\1\n" + GOOGLE_TAG_HTML, html_text, count=1)
+
+
+def should_track_google_analytics(template_name: str) -> bool:
+    return not template_name.startswith("admin")
 
 
 def render_site_loader() -> str:
@@ -13313,7 +13318,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 </body>
 </html>
         """.strip()
-        body = inject_google_tag(body)
         self.send_html(body.encode("utf-8"))
 
     def save_customer_agreement(self) -> None:
