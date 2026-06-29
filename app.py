@@ -4075,13 +4075,14 @@ def get_active_tax_fee_rules() -> list[sqlite3.Row] | list[dict[str, object]]:
     try:
         with db() as con:
             con.execute("SELECT 1 FROM tax_fee_rules LIMIT 1").fetchone()
-            return con.execute(
+            rules = con.execute(
                 """
                 SELECT * FROM tax_fee_rules
                 WHERE UPPER(TRIM(status)) = 'ACTIVE'
                 ORDER BY sort_order, label
                 """
             ).fetchall()
+            return rules or list(DEFAULT_TAX_FEE_RULES)
     except sqlite3.Error:
         return list(DEFAULT_TAX_FEE_RULES)
 

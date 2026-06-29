@@ -110,6 +110,21 @@ class BookingHoldTest(unittest.TestCase):
         )
         self.assertAlmostEqual(float(breakdown["tax_fee_amount"]), 28.0)
 
+    def test_default_tax_fee_rules_apply_when_database_has_no_active_rules(self):
+        with app.db() as con:
+            con.execute("DELETE FROM tax_fee_rules")
+            con.execute(
+                """
+                INSERT INTO tax_fee_rules (label, rule_type, value, status, sort_order)
+                VALUES ('Disabled fee', 'FLAT', 99.00, 'INACTIVE', 1)
+                """
+            )
+
+        breakdown = app.rental_price_breakdown(100, 2, 0)
+
+        self.assertGreater(float(breakdown["tax_fee_amount"]), 0)
+        self.assertIn("CO road safety fee", [label for label, _amount in breakdown["tax_fee_lines"]])
+
     def test_percent_coupon_applies_to_full_checkout_estimate(self):
         car = app.get_cars()[0]
         with app.db() as con:
