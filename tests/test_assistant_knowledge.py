@@ -72,24 +72,40 @@ class AssistantKnowledgeTest(unittest.TestCase):
         os.environ["OPENAI_AGENT_MCP_SERVERS"] = '[{"server_label":"docs","server_url":"https://example.com/mcp"}]'
         self.assertEqual(app.parse_openai_agent_mcp_servers(), [])
 
-    def test_openai_assistant_payload_allows_mcp_tool_allowlist(self):
+    def test_openai_assistant_payload_allows_custom_mcp_tool_allowlist(self):
         self.clear_mcp_env()
         os.environ["OPENAI_DOCS_MCP_TOKEN"] = "secret-token"
         os.environ["OPENAI_AGENT_MCP_SERVERS"] = """
         [
           {
-            "server_label": "openai_docs",
-            "server_url": "https://developers.openai.com/mcp",
-            "allowed_tools": ["search_openai_docs", "fetch_openai_doc"],
+            "server_label": "custom_docs",
+            "server_url": "https://example.com/mcp",
+            "allowed_tools": ["search_docs", "fetch_doc"],
             "bearer_token_env": "OPENAI_DOCS_MCP_TOKEN"
           }
         ]
         """
         payload = app.build_openai_assistant_payload("OpenAI docs", {"role": "guest"})
         self.assertEqual(payload["tools"][0]["type"], "mcp")
+        self.assertEqual(payload["tools"][0]["server_label"], "custom_docs")
+        self.assertEqual(payload["tools"][0]["allowed_tools"], ["search_docs", "fetch_doc"])
+        self.assertEqual(payload["tools"][0]["authorization"], "Bearer secret-token")
+
+    def test_openai_docs_mcp_is_allowed_as_known_readonly_server_without_fragile_allowlist(self):
+        self.clear_mcp_env()
+        os.environ["OPENAI_AGENT_MCP_SERVERS"] = """
+        [
+          {
+            "server_label": "openai_docs",
+            "server_url": "https://developers.openai.com/mcp",
+            "allowed_tools": ["search_openai_docs", "fetch_openai_doc"]
+          }
+        ]
+        """
+        payload = app.build_openai_assistant_payload("OpenAI docs", {"role": "guest"})
+        self.assertEqual(payload["tools"][0]["type"], "mcp")
         self.assertEqual(payload["tools"][0]["server_label"], "openai_docs")
-        self.assertEqual(payload["tools"][0]["allowed_tools"], ["search_openai_docs", "fetch_openai_doc"])
-        self.assertEqual(payload["tools"][0]["headers"]["Authorization"], "Bearer secret-token")
+        self.assertNotIn("allowed_tools", payload["tools"][0])
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ ASSET_VERSION = "20260627bookinglabels1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
+OPENAI_READONLY_MCP_SERVER_URLS = {"https://developers.openai.com/mcp"}
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
 DRIVE_FOLDER_ENVS = {
@@ -6951,12 +6952,16 @@ def parse_openai_agent_mcp_servers() -> list[dict[str, object]]:
         if not server_url.startswith(("https://", "http://")):
             continue
 
+        normalized_server_url = server_url.rstrip("/")
+        known_readonly_mcp = normalized_server_url in OPENAI_READONLY_MCP_SERVER_URLS
         allowed_tools = config.get("allowed_tools")
         if isinstance(allowed_tools, str):
             allowed_tools = [item.strip() for item in allowed_tools.split(",") if item.strip()]
         if allowed_tools is not None and not isinstance(allowed_tools, list):
             allowed_tools = None
-        if not allowed_tools and not allow_unrestricted:
+        if known_readonly_mcp and not truthy_env(str(config.get("force_allowed_tools") or "")):
+            allowed_tools = None
+        if not allowed_tools and not allow_unrestricted and not known_readonly_mcp:
             continue
 
         tool: dict[str, object] = {
@@ -6971,13 +6976,16 @@ def parse_openai_agent_mcp_servers() -> list[dict[str, object]]:
         if allowed_tools:
             tool["allowed_tools"] = [str(item) for item in allowed_tools if str(item).strip()]
 
-        headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
+        authorization = str(config.get("authorization") or "").strip()
+        authorization_env = str(config.get("authorization_env") or "").strip()
         bearer_env = str(config.get("bearer_token_env") or "").strip()
+        if authorization_env:
+            authorization = os.environ.get(authorization_env, "").strip()
         bearer_token = os.environ.get(bearer_env, "").strip() if bearer_env else ""
         if bearer_token:
-            headers = {**headers, "Authorization": f"Bearer {bearer_token}"}
-        if headers:
-            tool["headers"] = {str(key): str(value) for key, value in headers.items()}
+            authorization = f"Bearer {bearer_token}"
+        if authorization:
+            tool["authorization"] = authorization
         tools.append(tool)
     return tools[:5]
 
@@ -7025,7 +7033,15 @@ def openai_assistant_answer(question: str, context: dict[str, object]) -> str | 
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")[:1000]
+        except Exception:
+            error_body = ""
+        print(f"FairFares assistant OpenAI error {exc.code}: {error_body}", flush=True)
+        return None
     except Exception:
+        print("FairFares assistant OpenAI request failed.", flush=True)
         return None
     output_text = data.get("output_text")
     if output_text:
