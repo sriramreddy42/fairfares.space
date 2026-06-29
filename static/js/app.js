@@ -1107,6 +1107,30 @@ function validateDiscount() {
 
 discountCode?.addEventListener("input", validateDiscount);
 
+document.getElementById("launchDealForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById("launchDealStatus");
+  if (status) {
+    status.textContent = "Saving your launch deal email...";
+    status.classList.remove("is-error");
+  }
+  fetch("/launch-deals", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (status) status.textContent = payload.message || "You're on the FairFares launch deals list.";
+      form.reset();
+    })
+    .catch((payload) => {
+      if (!status) return;
+      status.textContent = payload?.message || "Enter a valid email for launch-day deals.";
+      status.classList.add("is-error");
+    });
+});
+
 document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").forEach((button) => {
   button.addEventListener("click", (event) => {
     event.preventDefault();
@@ -3166,7 +3190,7 @@ function showBookingReferralModal(form, payload = {}) {
   const code = payload.referral_code || `${referralNameSlug(form)}_REFER_COUPON`;
   const signupUrl = new URL("/signup", window.location.origin);
   signupUrl.searchParams.set("referral_code", code);
-  const message = `FairFares gives students fair car rental pricing with no hidden-fee surprises. Use my referral link to create your account and get 10% off your first booking. After three friends sign up, FairFares also sends me a thank-you coupon. ${signupUrl.toString()}`;
+  const message = `FairFares gives renters cheap car rental pricing with no hidden-fee surprises. Use my referral link to create your account and get 10% off your first booking. After three friends sign up, FairFares also sends me a thank-you coupon. ${signupUrl.toString()}`;
   const codeTarget = document.getElementById("bookingReferralCode");
   const whatsapp = document.getElementById("shareReferralWhatsapp");
   const email = document.getElementById("shareReferralEmail");

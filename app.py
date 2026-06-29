@@ -2062,7 +2062,7 @@ def send_automated_lifecycle_email(
           <div style="max-width:680px;margin:auto;background:#fff;border:1px solid #d9deea;border-radius:12px;overflow:hidden">
             <div style="background:#07143f;color:#fff;padding:22px 24px">
               <h1 style="margin:0;font-size:26px">FairFares</h1>
-              <p style="margin:6px 0 0">Fair prices. Better rides. For students.</p>
+              <p style="margin:6px 0 0">Cheap car rentals. Fair prices. Better rides.</p>
             </div>
             <div style="padding:24px">
               <h2 style="font-size:28px;margin:0 0 12px">{html.escape(headline)}</h2>
@@ -2222,7 +2222,7 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
           <div style="max-width:680px;margin:auto;background:#fff;border:1px solid #d9deea;border-radius:12px;overflow:hidden">
             <div style="background:#07143f;color:#fff;padding:22px 24px">
               <h1 style="margin:0;font-size:26px">FairFares</h1>
-              <p style="margin:6px 0 0">Fair prices. Better rides. For students.</p>
+              <p style="margin:6px 0 0">Cheap car rentals. Fair prices. Better rides.</p>
             </div>
             <div style="padding:24px">
               <p style="font-size:14px;color:#5d6474;text-transform:uppercase;font-weight:700">{html.escape(campaign['campaign_type'])}</p>
@@ -2776,7 +2776,7 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
                 elif inactive_days >= 60:
                     reengagement = (60, "A FairFares offer is waiting for your next ride", "Come back with a cleaner deal.")
                 elif inactive_days >= 30:
-                    reengagement = (30, "We miss you: student-ready rentals are waiting", "Your next FairFares trip can still cost less.")
+                    reengagement = (30, "We miss you: cheap rentals are waiting", "Your next FairFares trip can still cost less.")
                 if reengagement:
                     day_count, subject, headline = reengagement
                     results.append(
@@ -2859,6 +2859,15 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 used_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS launch_deal_signups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL DEFAULT 'book_page',
+                offer TEXT NOT NULL DEFAULT 'launch_day_deals',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS staff_account_requests (
@@ -3645,7 +3654,7 @@ def init_db() -> None:
             ),
             (
                 "Cheapest cars and best value",
-                "How to find low daily rates, compact cars, and student-ready deals.",
+                "How to find low daily rates, compact cars, and cheap rental deals.",
                 "To find the cheapest cars, sort results by Price (Low to High), compare compact and economy vehicles first, and check the savings note on each car card. FairFares also highlights fuel-efficient and electric options when they can reduce trip costs beyond the daily rate.",
                 "cheapest cars, low price, economy, compact, deals, student savings",
                 "PUBLIC",
@@ -3781,15 +3790,15 @@ def init_db() -> None:
 
         defaults = {
             "brand": "FairFares",
-            "hero_title": "Fair prices. Better rides. For students.",
+            "hero_title": "Cheap car rentals. Fair prices.",
             "hero_kicker": "Smart travel booking",
-            "hero_body": "Affordable car rentals made for students. Wherever you go, we've got you covered.",
+            "hero_body": "Affordable car rentals for everyday trips. Wherever you go, we've got you covered.",
             "primary_cta": "Search Cars",
             "secondary_cta": "View Details",
             "poster_image": "/static/img/fairfares-poster.svg",
             "poster_caption": "Poster artwork can be replaced with your supplied campaign design.",
             "offer_title": "123 cars available",
-            "offer_body": "Filter student-ready rentals by vehicle type, fuel savings, mileage, and daily price.",
+            "offer_body": "Filter cheap rentals by vehicle type, fuel savings, mileage, and daily price.",
             "contact_email": "hello@fairfares.com",
         }
         for key, value in defaults.items():
@@ -3973,9 +3982,9 @@ def init_db() -> None:
 def get_content() -> dict[str, str]:
     defaults = {
         "brand": "FairFares",
-        "hero_title": "Fair prices. Better rides. For students.",
+        "hero_title": "Cheap car rentals. Fair prices.",
         "hero_kicker": "Smart travel booking",
-        "hero_body": "Affordable car rentals made for students. Wherever you go, we've got you covered.",
+        "hero_body": "Affordable car rentals for everyday trips. Wherever you go, we've got you covered.",
         "primary_cta": "Search Cars",
         "secondary_cta": "View Details",
         "poster_image": "/static/img/fairfares-poster.svg",
@@ -8581,14 +8590,14 @@ EMAIL_MARKETING_DRAFTS = [
         "audience": "Completed trips",
         "subject": "How was your FairFares experience?",
         "headline": "Tell us how we did.",
-        "body": "Your feedback helps us keep prices transparent and service reliable for students and travelers.",
+        "body": "Your feedback helps us keep prices transparent and service reliable for renters and travelers.",
         "cta": "Leave Feedback",
     },
     {
         "type": "Re-engagement",
         "timing": "30 days inactive",
         "audience": "Inactive users",
-        "subject": "We miss you: student-ready rentals are waiting",
+        "subject": "We miss you: cheap rentals are waiting",
         "headline": "Your next FairFares trip can still cost less.",
         "body": "Need a ride again? Search FairFares and bring us a lower quote from a major rental company. We will match it and add 10% off after review.",
         "cta": "Search Cars",
@@ -9611,6 +9620,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
+            "/launch-deals": self.submit_launch_deal_signup,
             "/wiki/ask": self.ask_wiki_agent,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
@@ -11769,6 +11779,38 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (user["id"] if user else None, rating, message, page, user_agent),
             )
         self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
+
+    def submit_launch_deal_signup(self) -> None:
+        form = self.read_form()
+        email = normalize_email(form.get("email", ""))
+        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+            self.send_json({"ok": False, "message": "Enter a valid email for launch-day deals."}, 400)
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO launch_deal_signups (email, source, offer)
+                VALUES (?, 'book_page', 'one_day_rent_free')
+                ON CONFLICT(email) DO UPDATE SET
+                    source = excluded.source,
+                    offer = excluded.offer,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (email,),
+            )
+            existing_user = find_user_by_email(con, email)
+            if existing_user:
+                con.execute(
+                    """
+                    UPDATE users
+                    SET promo_email_opt_in = 1,
+                        marketing_unsubscribed_at = NULL,
+                        marketing_token = COALESCE(NULLIF(marketing_token, ''), ?)
+                    WHERE id = ?
+                    """,
+                    (secrets.token_urlsafe(24), existing_user["id"]),
+                )
+        self.send_json({"ok": True, "message": "You're on the FairFares launch deals list."})
 
     def ask_wiki_agent(self) -> None:
         user = self.current_user()
@@ -15635,7 +15677,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         sidebar_primary_body = (
             "Confirm your contact details to continue this reservation."
             if is_guest_checkout
-            else ("Select a vehicle to begin booking." if show_signed_out_empty else ("Search available student deals and create your first booking." if is_first_time_user else "Review and manage your active reservations."))
+            else ("Select a vehicle to begin booking." if show_signed_out_empty else ("Search available cheap rental deals and create your first booking." if is_first_time_user else "Review and manage your active reservations."))
         )
         booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
@@ -15792,7 +15834,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <div class="first-booking-promo-body">
                     <div>
                         <p class="eyebrow">First trip offer</p>
-                        <h2>Start with a Denver student deal.</h2>
+                        <h2>Start with a Denver cheap rental deal.</h2>
                         <p>{"Login to save this deal and keep your documents under your real email." if show_signed_out_empty else "No booking yet. Use the referral code when you search and your trip details will appear here after checkout."}</p>
                     </div>
                     <div class="promo-code-box">
