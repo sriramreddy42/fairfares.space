@@ -13240,24 +13240,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payment_label, pickup_balance_label = admin_payment_summary(row)
         payment_breakdown = booking_price_breakdown(row)
         pickup_balance_due = round(float(payment_breakdown["due_at_pickup"] or 0), 2)
+        payment_status = row_value(row, "payment_status")
+        booking_status = row_value(row, "booking_status")
         can_collect_pickup_balance = row_value(row, "payment_status") == "HOLD_PAID" and pickup_balance_due > 0
-        pickup_balance_panel = ""
-        if can_collect_pickup_balance:
-            pickup_balance_panel = f"""
-                <section class="pickup-form-section wide-field">
-                    <div class="pickup-section-head">
-                        <div><b>Pickup balance</b><span>{escape(format_money(pickup_balance_due))} due at pickup after the 10% hold.</span></div>
+        if payment_status == "PAID":
+            pickup_balance_action_copy = "Full payment received. Pickup balance is $0.00."
+        elif payment_status == "HOLD_PAID" and pickup_balance_due > 0:
+            pickup_balance_action_copy = "Create a booking-linked in-person payment, then collect it on the staff reader or Tap to Pay device."
+        elif payment_status == "HOLD_PAID":
+            pickup_balance_action_copy = "10% hold is recorded and no pickup balance is currently due."
+        elif booking_status in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}:
+            pickup_balance_action_copy = "This booking is not eligible for pickup balance collection."
+        else:
+            pickup_balance_action_copy = "Collect the 10% hold first; then this section can create the pickup balance payment."
+        pickup_balance_button_attrs = "" if can_collect_pickup_balance else " disabled"
+        pickup_balance_button_label = "Create in-person payment" if can_collect_pickup_balance else "Not eligible yet"
+        pickup_balance_panel = f"""
+            <section class="pickup-form-section wide-field">
+                <div class="pickup-section-head">
+                    <div><b>Pickup balance</b><span>{escape(format_money(pickup_balance_due))} due at pickup after online payments.</span></div>
+                </div>
+                <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
+                    <div>
+                        <b>{escape(payment_label)}</b>
+                        <span>{escape(pickup_balance_action_copy)}</span>
                     </div>
-                    <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
-                        <div>
-                            <b>Collect with Stripe Terminal / Tap to Pay</b>
-                            <span>Create a booking-linked in-person payment, then collect it on the staff reader or Tap to Pay device.</span>
-                        </div>
-                        <button type="button" data-admin-pickup-payment-button>Create in-person payment</button>
-                        <small data-admin-pickup-payment-status>After Stripe confirms payment, FairFares marks this booking as full payment received.</small>
-                    </div>
-                </section>
-            """
+                    <button type="button" data-admin-pickup-payment-button{pickup_balance_button_attrs}>{escape(pickup_balance_button_label)}</button>
+                    <small data-admin-pickup-payment-status>{escape(pickup_balance_label)}. After Stripe confirms payment, FairFares marks this booking as full payment received.</small>
+                </div>
+            </section>
+        """
         latest_transaction_label = transaction["transaction_status"] if transaction else ""
         billing_parts = []
         if latest_transaction_label:
