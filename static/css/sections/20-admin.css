@@ -510,6 +510,14 @@
 .admin-hero .admin-subnav a {
   min-height: 38px !important;
 }
+.admin-alert {
+  background: #fff8dc;
+  border: 1px solid #f1cf78;
+  border-radius: 8px;
+  color: var(--navy);
+  font-weight: 900;
+  padding: 12px 14px;
+}
 .admin-metrics,
 .admin-grid,
 .admin-modules,

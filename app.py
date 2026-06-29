@@ -917,6 +917,11 @@ def send_with_resend(email: str, subject: str, text_body: str, html_body: str) -
         return f"Resend request failed: {error}"
 
 
+def email_delivery_succeeded(status: str) -> bool:
+    normalized = (status or "").lower()
+    return normalized.startswith("sent through ") or "test capture" in normalized
+
+
 SLACK_WEBHOOK_ENV = {
     "bookings": "SLACK_WEBHOOK_BOOKINGS",
     "pickups": "SLACK_WEBHOOK_PICKUPS",
@@ -1901,6 +1906,75 @@ def send_booking_documents_email(email: str, name: str, booking: sqlite3.Row, do
     return outbox_file, delivery_status
 
 
+def send_automated_lifecycle_email(
+    email: str,
+    name: str,
+    subject: str,
+    headline: str,
+    body: str,
+    cta_label: str,
+    cta_path: str,
+    origin: str,
+    poster_path: str = "/static/img/booking-confirmation-promise.png",
+) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    clean_origin = origin.rstrip("/")
+    cta_url = f"{clean_origin}{cta_path}"
+    poster_url = f"{clean_origin}{poster_path}" if clean_origin else poster_path
+    text_body = (
+        f"Hi {name},\n\n"
+        f"{headline}\n\n"
+        f"{body}\n\n"
+        f"Poster: {poster_url}\n\n"
+        f"{cta_label}: {cta_url}\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.5;background:#f5f7fb;padding:24px">
+          <div style="max-width:680px;margin:auto;background:#fff;border:1px solid #d9deea;border-radius:12px;overflow:hidden">
+            <div style="background:#07143f;color:#fff;padding:22px 24px">
+              <h1 style="margin:0;font-size:26px">FairFares</h1>
+              <p style="margin:6px 0 0">Fair prices. Better rides. For students.</p>
+            </div>
+            <div style="padding:24px">
+              <h2 style="font-size:28px;margin:0 0 12px">{html.escape(headline)}</h2>
+              {render_email_poster(poster_url)}
+              <p style="font-size:16px">{html.escape(body)}</p>
+              <p style="margin:24px 0"><a href="{html.escape(cta_url)}" style="background:#ec0016;color:#fff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:800">{html.escape(cta_label)}</a></p>
+            </div>
+          </div>
+        </div>
+    """
+    outbox_file = OUTBOX_DIR / f"automation-{secrets.token_hex(10)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        try:
+            message = EmailMessage()
+            message["Subject"] = subject
+            message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+            message["To"] = email
+            message.set_content(text_body)
+            message.add_alternative(html_body, subtype="html")
+            smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+                if os.environ.get("SMTP_TLS", "1") != "0":
+                    smtp.starttls()
+                smtp_user = os.environ.get("SMTP_USER")
+                smtp_password = os.environ.get("SMTP_PASSWORD")
+                if smtp_user and smtp_password:
+                    smtp.login(smtp_user, smtp_password)
+                smtp.send_message(message)
+            delivery_status = "sent through SMTP"
+        except Exception as exc:
+            delivery_status = f"SMTP failed: {exc}"
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
+        encoding="utf-8",
+    )
+    return outbox_file, delivery_status
+
+
 def send_password_reset_email(email: str, name: str, reset_link: str) -> tuple[Path, str]:
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
@@ -2038,22 +2112,25 @@ def send_marketing_campaign_email(campaign: sqlite3.Row, user: sqlite3.Row, orig
     delivery_status = send_with_resend(user["email"], subject, text_body, html_body)
     smtp_host = os.environ.get("SMTP_HOST")
     if delivery_status == "not configured" and smtp_host:
-        message = EmailMessage()
-        message["Subject"] = subject
-        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
-        message["To"] = user["email"]
-        message.set_content(text_body)
-        message.add_alternative(html_body, subtype="html")
-        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
-            if os.environ.get("SMTP_TLS", "1") != "0":
-                smtp.starttls()
-            smtp_user = os.environ.get("SMTP_USER")
-            smtp_password = os.environ.get("SMTP_PASSWORD")
-            if smtp_user and smtp_password:
-                smtp.login(smtp_user, smtp_password)
-            smtp.send_message(message)
-        delivery_status = "sent through SMTP"
+        try:
+            message = EmailMessage()
+            message["Subject"] = subject
+            message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+            message["To"] = user["email"]
+            message.set_content(text_body)
+            message.add_alternative(html_body, subtype="html")
+            smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+                if os.environ.get("SMTP_TLS", "1") != "0":
+                    smtp.starttls()
+                smtp_user = os.environ.get("SMTP_USER")
+                smtp_password = os.environ.get("SMTP_PASSWORD")
+                if smtp_user and smtp_password:
+                    smtp.login(smtp_user, smtp_password)
+                smtp.send_message(message)
+            delivery_status = "sent through SMTP"
+        except Exception as exc:
+            delivery_status = f"SMTP failed: {exc}"
     outbox_file.write_text(
         f"To: {user['email']}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\nUnsubscribe: {unsubscribe_url}\n\n{text_body}",
         encoding="utf-8",
@@ -2065,50 +2142,72 @@ def send_marketing_campaign(campaign_id: int, origin: str, test_email: str = "")
     with db() as con:
         campaign = con.execute("SELECT * FROM email_campaigns WHERE id = ?", (campaign_id,)).fetchone()
     if not campaign:
-        return {"ok": False, "message": "Campaign not found.", "sent": 0}
+        return {"ok": False, "message": "Campaign not found.", "sent": 0, "attempted": 0, "failed": 0}
     if test_email:
+        clean_test_email = normalize_email(test_email)
+        if "@" not in clean_test_email:
+            return {"ok": False, "message": "Enter a valid test email.", "sent": 0, "attempted": 0, "failed": 0}
         test_user = {
             "id": 0,
             "name": "FairFares Test",
-            "email": normalize_email(test_email),
+            "email": clean_test_email,
             "marketing_token": "test",
         }
         outbox_file, delivery_status = send_marketing_campaign_email(campaign, test_user, origin)  # type: ignore[arg-type]
+        delivered = 1 if email_delivery_succeeded(delivery_status) else 0
         return {
-            "ok": True,
-            "message": f"Test marketing email prepared for {test_email}.",
-            "sent": 1,
+            "ok": bool(delivered),
+            "message": f"Test marketing email {'sent' if delivered else 'failed'} for {clean_test_email}.",
+            "sent": delivered,
+            "attempted": 1,
+            "failed": 0 if delivered else 1,
             "delivery_status": delivery_status,
             "outbox_file": str(outbox_file),
         }
     recipients = get_marketing_recipients(campaign["audience"])
-    sent = 0
+    deliveries = []
+    delivered = 0
     last_status = "no opted-in recipients"
+    for user in recipients:
+        outbox_file, delivery_status = send_marketing_campaign_email(campaign, user, origin)
+        is_delivered = email_delivery_succeeded(delivery_status)
+        delivered += 1 if is_delivered else 0
+        last_status = delivery_status
+        deliveries.append((user["id"], user["email"], delivery_status, str(outbox_file)))
+    attempted = len(deliveries)
+    failed = attempted - delivered
     with db() as con:
-        for user in recipients:
-            outbox_file, delivery_status = send_marketing_campaign_email(campaign, user, origin)
-            sent += 1
-            last_status = delivery_status
-            con.execute(
-                """
-                INSERT INTO marketing_email_sends
-                (campaign_id, user_id, email, delivery_status, outbox_file)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (campaign_id, user["id"], user["email"], delivery_status, str(outbox_file)),
-            )
+        con.executemany(
+            """
+            INSERT INTO marketing_email_sends
+            (campaign_id, user_id, email, delivery_status, outbox_file)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [(campaign_id, user_id, email, status, outbox_file) for user_id, email, status, outbox_file in deliveries],
+        )
         con.execute(
             """
             UPDATE email_campaigns
-            SET status = CASE WHEN ? > 0 THEN 'SENT' ELSE status END,
+            SET status = CASE WHEN ? > 0 THEN 'SENT' WHEN ? > 0 THEN 'FAILED' ELSE status END,
                 sent_at = CASE WHEN ? > 0 THEN CURRENT_TIMESTAMP ELSE sent_at END,
                 sent_count = sent_count + ?,
                 last_delivery_status = ?
             WHERE id = ?
             """,
-            (sent, sent, sent, last_status, campaign_id),
+            (delivered, attempted, delivered, delivered, last_status, campaign_id),
         )
-    return {"ok": True, "message": f"Marketing campaign sent to {sent} subscribed user(s).", "sent": sent, "delivery_status": last_status}
+    if attempted == 0:
+        message = "No opted-in, verified customer subscribers found."
+    else:
+        message = f"Marketing campaign delivered to {delivered}/{attempted} subscribed user(s)."
+    return {
+        "ok": delivered > 0,
+        "message": message,
+        "sent": delivered,
+        "attempted": attempted,
+        "failed": failed,
+        "delivery_status": last_status,
+    }
 
 
 def save_booking_contact_and_send_confirmation(
@@ -2215,6 +2314,374 @@ def send_confirmed_booking_email_once(booking_id: int, origin: str) -> tuple[Pat
             (booking_id,),
         )
     return outbox_file, delivery_status
+
+
+def automation_event_already_reserved(
+    con: sqlite3.Connection,
+    event_key: str,
+    booking_id: int | None,
+    user_id: int | None,
+    email: str,
+    subject: str,
+) -> bool:
+    booking_id = int(booking_id or 0)
+    user_id = int(user_id or 0)
+    try:
+        con.execute(
+            """
+            INSERT INTO email_automation_sends (event_key, booking_id, user_id, email, subject, delivery_status)
+            VALUES (?, ?, ?, ?, ?, 'reserved')
+            """,
+            (event_key, booking_id, user_id, email, subject),
+        )
+        return False
+    except sqlite3.IntegrityError:
+        return True
+
+
+def update_automation_delivery(
+    event_key: str,
+    booking_id: int | None,
+    user_id: int | None,
+    email: str,
+    delivery_status: str,
+    outbox_file: Path | None,
+) -> None:
+    booking_id = int(booking_id or 0)
+    user_id = int(user_id or 0)
+    with db() as con:
+        con.execute(
+            """
+            UPDATE email_automation_sends
+            SET delivery_status = ?,
+                outbox_file = ?
+            WHERE event_key = ?
+              AND COALESCE(booking_id, 0) = ?
+              AND COALESCE(user_id, 0) = ?
+              AND email = ?
+            """,
+            (delivery_status, str(outbox_file or ""), event_key, booking_id, user_id, email),
+        )
+
+
+def reserve_and_send_automation(
+    event_key: str,
+    booking_id: int | None,
+    user_id: int | None,
+    email: str,
+    name: str,
+    subject: str,
+    headline: str,
+    body: str,
+    cta_label: str,
+    cta_path: str,
+    origin: str,
+) -> dict[str, object]:
+    clean_email = normalize_email(email)
+    if "@" not in clean_email:
+        return {"event": event_key, "sent": False, "status": "missing email"}
+    with db() as con:
+        if automation_event_already_reserved(con, event_key, booking_id, user_id, clean_email, subject):
+            return {"event": event_key, "sent": False, "status": "already sent"}
+    outbox_file, delivery_status = send_automated_lifecycle_email(
+        clean_email,
+        name or "FairFares customer",
+        subject,
+        headline,
+        body,
+        cta_label,
+        cta_path,
+        origin,
+    )
+    update_automation_delivery(event_key, booking_id, user_id, clean_email, delivery_status, outbox_file)
+    return {
+        "event": event_key,
+        "sent": email_delivery_succeeded(delivery_status),
+        "status": delivery_status,
+        "outbox_file": str(outbox_file),
+    }
+
+
+def booking_email_context(row: sqlite3.Row) -> dict[str, str]:
+    booking_id = row_value(row, "booking_id")
+    car_name = row_value(row, "car_name") or "your FairFares car"
+    pickup = f"{row_value(row, 'pickup_date')} at {row_value(row, 'pickup_time')}".strip()
+    dropoff = f"{row_value(row, 'dropoff_date')} at {row_value(row, 'dropoff_time')}".strip()
+    pickup_location = row_value(row, "pickup_location") or "your pickup location"
+    return {
+        "booking_id": booking_id,
+        "car_name": car_name,
+        "pickup": pickup,
+        "dropoff": dropoff,
+        "pickup_location": pickup_location,
+        "manage_path": "/manage-booking",
+        "dashboard_path": "/dashboard",
+    }
+
+
+def automated_booking_email(
+    event_key: str,
+    booking: sqlite3.Row,
+    origin: str,
+    subject: str,
+    headline: str,
+    body: str,
+    cta_label: str = "Manage Booking",
+    cta_path: str = "/manage-booking",
+) -> dict[str, object]:
+    return reserve_and_send_automation(
+        event_key,
+        int(row_value(booking, "id") or 0),
+        int(row_value(booking, "user_id") or 0),
+        row_value(booking, "contact_email") or row_value(booking, "user_email"),
+        row_value(booking, "contact_name") or row_value(booking, "user_name") or "FairFares customer",
+        subject,
+        headline,
+        body,
+        cta_label,
+        cta_path,
+        origin,
+    )
+
+
+def active_customer_bookings() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.promo_email_opt_in,
+                   cars.name AS car_name, cars.category, cars.daily_price
+            FROM bookings
+            JOIN users ON users.id = bookings.user_id
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'PICKED_UP', 'RETURNED', 'PENDING_HOLD', 'EXPIRED_HOLD')
+              AND COALESCE(bookings.payment_status, '') NOT IN ('REFUNDED')
+            ORDER BY bookings.id DESC
+            LIMIT 2000
+            """
+        ).fetchall()
+
+
+def opted_in_customer_users() -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM users
+            WHERE role = 'CUSTOMER'
+              AND is_verified = 1
+              AND promo_email_opt_in = 1
+              AND marketing_unsubscribed_at IS NULL
+            ORDER BY id DESC
+            LIMIT 2000
+            """
+        ).fetchall()
+
+
+def user_has_active_booking(user_id: int) -> bool:
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT 1
+            FROM bookings
+            WHERE user_id = ?
+              AND booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'PICKED_UP', 'CANCELLATION_REQUESTED')
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    return bool(row)
+
+
+def latest_customer_trip_end(user_id: int) -> datetime | None:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT dropoff_date, dropoff_time
+            FROM bookings
+            WHERE user_id = ?
+              AND booking_status IN ('RETURNED', 'CANCELLED', 'EXPIRED_HOLD')
+            ORDER BY id DESC
+            LIMIT 20
+            """,
+            (user_id,),
+        ).fetchall()
+    for row in rows:
+        trip_end = parse_booking_datetime(row_value(row, "dropoff_date"), row_value(row, "dropoff_time"))
+        if trip_end:
+            return trip_end
+    return None
+
+
+def run_email_automations(origin: str, now: datetime | None = None) -> dict[str, object]:
+    now = now or datetime.now()
+    expire_stale_booking_holds()
+    results: list[dict[str, object]] = []
+    for booking in active_customer_bookings():
+        ctx = booking_email_context(booking)
+        pickup_at = parse_booking_datetime(row_value(booking, "pickup_date"), row_value(booking, "pickup_time"))
+        return_at = parse_booking_datetime(
+            row_value(booking, "actual_return_date") or row_value(booking, "dropoff_date"),
+            row_value(booking, "actual_return_time") or row_value(booking, "dropoff_time"),
+        )
+        booking_status = row_value(booking, "booking_status")
+        payment_status = row_value(booking, "payment_status")
+        if booking_status in {"PENDING_HOLD", "EXPIRED_HOLD"} and payment_status in {"HOLD_PENDING", "HOLD_EXPIRED"}:
+            hold_expired = booking_status == "EXPIRED_HOLD"
+            hold_expires_at = row_value(booking, "hold_expires_at")
+            if hold_expires_at:
+                try:
+                    hold_expired = hold_expired or datetime.fromisoformat(hold_expires_at) <= now
+                except ValueError:
+                    hold_expired = hold_expired or True
+            if hold_expired:
+                results.append(
+                    automated_booking_email(
+                        "abandoned_booking",
+                        booking,
+                        origin,
+                        f"Complete your FairFares booking: {ctx['booking_id']}",
+                        "Your car is still waiting.",
+                        f"Complete payment to confirm {ctx['car_name']} for pickup at {ctx['pickup_location']}. If plans changed, you can choose another car or date.",
+                        "Complete Booking",
+                    )
+                )
+        if pickup_at and booking_status in {"CONFIRMED", "MODIFIED"} and payment_status in {"HOLD_PAID", "PAID", "PAY_AT_PICKUP"}:
+            until_pickup = pickup_at - now
+            if timedelta(hours=2) < until_pickup <= timedelta(hours=24):
+                results.append(
+                    automated_booking_email(
+                        "pickup_24h",
+                        booking,
+                        origin,
+                        f"Your FairFares trip starts tomorrow: {ctx['booking_id']}",
+                        "Pickup is almost here.",
+                        f"Your {ctx['car_name']} is scheduled for {ctx['pickup']}. Bring your driver license, insurance details, payment method, and any lower quote you want FairFares to review.",
+                        "View Trip",
+                    )
+                )
+            if timedelta(0) < until_pickup <= timedelta(hours=2):
+                results.append(
+                    automated_booking_email(
+                        "pickup_2h",
+                        booking,
+                        origin,
+                        f"Final FairFares pickup reminder: {ctx['booking_id']}",
+                        "Your pickup starts soon.",
+                        f"Your {ctx['car_name']} pickup window is at {ctx['pickup_location']} today. Open Manage Booking for status, documents, or support.",
+                        "Open Live Status",
+                    )
+                )
+        if booking_status == "RETURNED":
+            results.append(
+                automated_booking_email(
+                    "trip_completed",
+                    booking,
+                    origin,
+                    f"Thanks for choosing FairFares: {ctx['booking_id']}",
+                    "Your trip is complete.",
+                    f"Thank you for renting {ctx['car_name']} with FairFares. Your invoice, receipt, and rental documents stay available in your portal.",
+                    "Open Documents",
+                    "/dashboard#documents",
+                )
+            )
+            if return_at and now - return_at >= timedelta(hours=24):
+                results.append(
+                    automated_booking_email(
+                        "review_24h",
+                        booking,
+                        origin,
+                        f"How was your FairFares trip? {ctx['booking_id']}",
+                        "Tell us how we did.",
+                        "Your feedback helps FairFares keep pricing transparent, pickup clean, and support responsive for the next renter.",
+                        "Leave Feedback",
+                        "/manage-booking#support",
+                    )
+                )
+            if return_at and now - return_at >= timedelta(days=7):
+                results.append(
+                    automated_booking_email(
+                        "repeat_customer_7d",
+                        booking,
+                        origin,
+                        "Welcome back to FairFares",
+                        "Your next ride should feel simple too.",
+                        "Your profile and trip documents are ready when you need another FairFares booking.",
+                        "Book Again",
+                        "/",
+                    )
+                )
+    for user in opted_in_customer_users():
+        user_id = int(row_value(user, "id") or 0)
+        user_email = row_value(user, "email")
+        user_name = row_value(user, "name") or "FairFares customer"
+        if row_value(user, "date_of_birth"):
+            try:
+                birthday = datetime.strptime(row_value(user, "date_of_birth"), "%Y-%m-%d").date()
+                if birthday.month == now.month and birthday.day == now.day:
+                    results.append(
+                        reserve_and_send_automation(
+                            f"birthday_{now.year}",
+                            None,
+                            user_id,
+                            user_email,
+                            user_name,
+                            "A birthday ride from FairFares",
+                            "Celebrate with a fairer trip.",
+                            "Happy birthday from FairFares. Open your dashboard to check current offers and book when you are ready.",
+                            "Open Dashboard",
+                            "/dashboard",
+                            origin,
+                        )
+                    )
+            except ValueError:
+                pass
+        if not user_has_active_booking(user_id):
+            last_trip_end = latest_customer_trip_end(user_id)
+            if last_trip_end:
+                inactive_days = (now - last_trip_end).days
+                reengagement = None
+                if inactive_days >= 90:
+                    reengagement = (90, "Ready for another fair ride?", "Come back and save.")
+                elif inactive_days >= 60:
+                    reengagement = (60, "A FairFares offer is waiting for your next ride", "Come back with a cleaner deal.")
+                elif inactive_days >= 30:
+                    reengagement = (30, "We miss you: student-ready rentals are waiting", "Your next FairFares trip can still cost less.")
+                if reengagement:
+                    day_count, subject, headline = reengagement
+                    results.append(
+                        reserve_and_send_automation(
+                            f"reengagement_{day_count}d",
+                            None,
+                            user_id,
+                            user_email,
+                            user_name,
+                            subject,
+                            headline,
+                            "Search FairFares and bring us a lower quote from a major rental company. We will review eligible matches and show your savings before booking.",
+                            "Search Cars",
+                            "/",
+                            origin,
+                        )
+                    )
+        results.append(
+            reserve_and_send_automation(
+                f"location_monthly_{now:%Y_%m}",
+                None,
+                user_id,
+                user_email,
+                user_name,
+                "Popular FairFares routes near you",
+                "Find a nearby ride and a memory worth keeping.",
+                "See current FairFares cars, local pickup options, and Explorer ideas for your next trip.",
+                "Explore Nearby",
+                "/explorer",
+                origin,
+            )
+        )
+    sent = sum(1 for result in results if result.get("sent"))
+    skipped = sum(1 for result in results if result.get("status") == "already sent")
+    failed = len(results) - sent - skipped
+    return {"ok": True, "attempted": len(results), "sent": sent, "skipped": skipped, "failed": failed, "results": results[:50]}
 
 
 def init_db() -> None:
@@ -2732,6 +3199,21 @@ def init_db() -> None:
                 outbox_file TEXT NOT NULL DEFAULT '',
                 sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(campaign_id) REFERENCES email_campaigns(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS email_automation_sends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_key TEXT NOT NULL,
+                booking_id INTEGER,
+                user_id INTEGER,
+                email TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                delivery_status TEXT NOT NULL DEFAULT '',
+                outbox_file TEXT NOT NULL DEFAULT '',
+                sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(event_key, booking_id, user_id, email),
+                FOREIGN KEY(booking_id) REFERENCES bookings(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
@@ -8578,6 +9060,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/wiki": self.admin_wiki_page,
             "/admin/commercials": self.admin_commercials_page,
             "/admin/email-marketing": self.admin_email_marketing_page,
+            "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/admin/pickup": self.admin_pickup_page,
             "/admin/agreement/customer": self.admin_customer_agreement_page,
             "/admin/system": self.admin_system_page,
@@ -12228,6 +12711,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
+        parsed = urllib.parse.urlparse(self.path)
+        notice = urllib.parse.parse_qs(parsed.query).get("notice", [""])[0].strip()
+        notice_html = f'<div class="admin-alert">{escape(notice)}</div>' if notice else ""
         ensure_email_marketing_calendar_plans()
         draft_cards = "\n".join(self.render_email_draft_card(draft) for draft in EMAIL_MARKETING_DRAFTS)
         seasonal_rows = "\n".join(
@@ -12245,6 +12731,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             campaign_rows=campaign_rows or '<tr><td colspan="7">No planned campaigns yet.</td></tr>',
             today=escape(today),
             subscriber_count=escape(str(get_marketing_subscriber_count())),
+            notice=notice_html,
         )
         self.send_html(body)
 
@@ -13694,8 +14181,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             campaign_id = int(form.get("campaign_id", "0"))
         except ValueError:
             campaign_id = 0
-        send_marketing_campaign(campaign_id, self.public_origin())
-        self.redirect("/admin/email-marketing")
+        result = send_marketing_campaign(campaign_id, self.public_origin())
+        notice = f"{result.get('message', 'Marketing send finished.')} Provider: {result.get('delivery_status', 'not attempted')}"
+        self.redirect(f"/admin/email-marketing?notice={urllib.parse.quote(str(notice)[:420])}")
 
     def send_email_campaign_test(self) -> None:
         user = self.require_owner_admin()
@@ -13706,8 +14194,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             campaign_id = int(form.get("campaign_id", "0"))
         except ValueError:
             campaign_id = 0
-        send_marketing_campaign(campaign_id, self.public_origin(), form.get("test_email", ""))
-        self.redirect("/admin/email-marketing")
+        result = send_marketing_campaign(campaign_id, self.public_origin(), form.get("test_email", ""))
+        notice = f"{result.get('message', 'Marketing test finished.')} Provider: {result.get('delivery_status', 'not attempted')}"
+        self.redirect(f"/admin/email-marketing?notice={urllib.parse.quote(str(notice)[:420])}")
+
+    def run_email_automation_endpoint(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        configured_token = os.environ.get("EMAIL_AUTOMATION_TOKEN", "").strip() or os.environ.get("FAIRFARES_CRON_TOKEN", "").strip()
+        supplied_token = query.get("token", [""])[0].strip()
+        if configured_token:
+            if not hmac.compare_digest(configured_token, supplied_token):
+                self.send_json({"ok": False, "message": "Invalid automation token."}, 403)
+                return
+        else:
+            user = self.require_owner_admin("/admin/email-marketing")
+            if not user:
+                return
+        result = run_email_automations(self.public_origin())
+        self.send_json(result)
 
     def unsubscribe_marketing(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
