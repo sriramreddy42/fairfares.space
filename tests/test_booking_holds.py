@@ -100,6 +100,17 @@ class BookingHoldTest(unittest.TestCase):
 
         self.assertEqual(prices, sorted(prices))
 
+    def test_car_card_exposes_server_price_range_for_frontend(self):
+        handler = object.__new__(app.FairFaresHandler)
+        car = app.get_cars()[0]
+        low, high = app.daily_price_range(car["daily_price"])
+
+        html = handler.render_car_card(car)
+
+        self.assertIn(f'data-price-low="{low}"', html)
+        self.assertIn(f'data-price-high="{high}"', html)
+        self.assertIn(f'<strong data-price-range>${low}-{high}</strong>', html)
+
     def test_tax_fee_rules_are_loaded_from_database(self):
         with app.db() as con:
             con.execute("DELETE FROM tax_fee_rules")

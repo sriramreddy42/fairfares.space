@@ -985,8 +985,12 @@ function updateRentalRanges() {
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);
     const average = Math.round(daily);
-    const dailyLow = Math.max(25, average - 5);
-    const dailyHigh = Math.max(dailyLow, average + 5);
+    const serverLow = Number(card.dataset.priceLow || 0);
+    const serverHigh = Number(card.dataset.priceHigh || 0);
+    const fallbackLow = Math.max(25, average - 5);
+    const fallbackHigh = Math.max(fallbackLow, average + 5);
+    const dailyLow = serverLow > 0 ? serverLow : fallbackLow;
+    const dailyHigh = serverHigh > 0 ? Math.max(dailyLow, serverHigh) : fallbackHigh;
     const dailyTarget = card.querySelector("[data-price-range]");
     if (dailyTarget) dailyTarget.textContent = moneyRange(dailyLow, dailyHigh);
   });
