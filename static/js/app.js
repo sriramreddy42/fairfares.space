@@ -3047,6 +3047,50 @@ document.querySelectorAll("[data-admin-pickup-payment-button]").forEach((button)
   });
 });
 
+document.querySelectorAll("[data-admin-security-deposit-button]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const form = button.closest(".pickup-form");
+    const panel = button.closest("[data-admin-security-deposit]");
+    const status = panel?.querySelector("[data-admin-security-deposit-status]");
+    const bookingInput = form?.querySelector('input[name="booking_id"]');
+    if (!(bookingInput instanceof HTMLInputElement)) return;
+    const originalLabel = button.textContent;
+    const payload = new URLSearchParams();
+    payload.set("booking_id", bookingInput.value);
+    button.disabled = true;
+    button.textContent = "Creating deposit...";
+    if (status) status.textContent = "Creating refundable security deposit authorization...";
+    try {
+      const response = await fetch("/admin/payment/security-deposit", {
+        method: "POST",
+        body: payload,
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "fetch",
+        },
+      });
+      const result = await response.json();
+      if (!response.ok || result.ok === false) throw new Error(result.message || "Could not create deposit authorization.");
+      if (status) {
+        status.textContent = `${result.amount || "Deposit"} authorization created: ${result.payment_intent_id || "Stripe PaymentIntent"}. Collect with Terminal/Tap to Pay, then release after return review if clear.`;
+        if (result.dashboard_url) {
+          const link = document.createElement("a");
+          link.href = result.dashboard_url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = " Open in Stripe";
+          status.appendChild(link);
+        }
+      }
+      button.textContent = "Deposit created";
+    } catch (error) {
+      if (status) status.textContent = error.message || "Could not create deposit authorization.";
+      button.disabled = false;
+      button.textContent = originalLabel || "Create deposit authorization";
+    }
+  });
+});
+
 document.getElementById("continueHoldButton")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
   const status = document.getElementById("paymentHoldStatus");

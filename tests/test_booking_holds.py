@@ -403,6 +403,68 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(terminal_transaction["payment_method"], "Stripe Terminal / Tap to Pay")
         self.assertEqual(terminal_transaction["invoice_number"], "pi_terminal_paid")
 
+    def test_security_deposit_payment_intent_requires_paid_hold_and_manual_capture(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        admin = {"id": 99, "email": "admin@fairfares.com"}
+        payment_intent, status = app.create_security_deposit_payment_intent(booking, admin)
+
+        self.assertEqual(payment_intent, {})
+        self.assertIn("10% hold", status)
+
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+        with app.db() as con:
+            hold_paid_booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+
+        with patch("app.stripe_api_request") as stripe_request:
+            stripe_request.return_value = (
+                {"id": "pi_security_deposit", "client_secret": "pi_secret", "amount": 25000},
+                "ok",
+            )
+            payment_intent, status = app.create_security_deposit_payment_intent(hold_paid_booking, admin)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(payment_intent["id"], "pi_security_deposit")
+        path, params = stripe_request.call_args.args[:2]
+        self.assertEqual(path, "payment_intents")
+        self.assertEqual(params["payment_method_types[]"], "card_present")
+        self.assertEqual(params["capture_method"], "manual")
+        self.assertEqual(params["amount"], 25000)
+        self.assertEqual(params["metadata[payment_option]"], "security_deposit")
+
+    def test_security_deposit_webhook_records_authorization_without_marking_booking_paid(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+
+        ok, message = app.record_security_deposit_authorization(
+            {
+                "id": "pi_deposit_auth",
+                "amount_capturable": 25000,
+                "metadata": {
+                    "payment_option": "security_deposit",
+                    "booking_id": str(booking["id"]),
+                    "public_booking_id": booking["booking_id"],
+                    "user_id": str(self.user_id),
+                },
+            }
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "pi_deposit_auth")
+        with app.db() as con:
+            refreshed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            deposit_transaction = con.execute(
+                "SELECT * FROM transactions WHERE invoice_number = ?",
+                ("pi_deposit_auth",),
+            ).fetchone()
+        self.assertEqual(refreshed["payment_status"], "HOLD_PAID")
+        self.assertEqual(deposit_transaction["transaction_status"], "SECURITY_DEPOSIT_AUTHORIZED")
+        self.assertAlmostEqual(float(deposit_transaction["amount"]), app.SECURITY_DEPOSIT_AMOUNT)
+        self.assertIn("Release after vehicle return review", deposit_transaction["billing_verification_notes"])
+
     def test_checkout_timer_frontend_hook_exists(self):
         js = Path("static/js/app.js").read_text()
         self.assertIn("startBookingCountdown", js)

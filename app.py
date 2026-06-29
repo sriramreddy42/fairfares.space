@@ -48,6 +48,11 @@ ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
+SECURITY_DEPOSIT_AMOUNT = 250.00
+SECURITY_DEPOSIT_RELEASE_COPY = (
+    "Refundable security deposit authorization. Release after vehicle return review for damage, tickets, tolls, "
+    "cleaning, fuel, keys, misuse, and other post-return charges."
+)
 ASSET_VERSION = "20260629pricerange1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
@@ -1777,6 +1782,8 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
         f"FairFares total: {format_money(breakdown['total'])}\n"
         f"{price_match_summary}"
         f"{payment_lines}"
+        f"Refundable security deposit authorization at pickup: {format_money(SECURITY_DEPOSIT_AMOUNT)}\n"
+        f"Deposit release: {SECURITY_DEPOSIT_RELEASE_COPY}\n"
         f"Payment: {payment_status_label(booking['payment_status'])}\n"
         f"Questions: {support_phone}\n"
     )
@@ -1804,6 +1811,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
             <tr><td><b>{'Paid today' if paid_in_full else '10% booking hold'}</b></td><td>{html.escape(format_money(breakdown['total'] if paid_in_full else breakdown['booking_hold']))}</td></tr>
             <tr><td><b>Due at pickup</b></td><td>{html.escape('$0.00' if paid_in_full else format_money(breakdown['due_at_pickup']))}</td></tr>
+            <tr><td><b>Security deposit</b></td><td>{html.escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable authorization at pickup. {html.escape(SECURITY_DEPOSIT_RELEASE_COPY)}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_status_label(booking['payment_status']))}</td></tr>
           </table>
           <p><b>{'FairFares savings' if float(row_value(booking, 'discount_amount') or 0) > 0 else 'Price match promise'}:</b> {html.escape(savings_or_price_promise)}</p>
@@ -1897,6 +1905,8 @@ def send_booking_pricing_update_email(email: str, name: str, booking: sqlite3.Ro
         f"FairFares total: {format_money(breakdown['total'])}\n"
         f"Payment: {payment_label}\n"
         f"{pickup_label}\n\n"
+        f"Refundable security deposit authorization at pickup: {format_money(SECURITY_DEPOSIT_AMOUNT)}\n"
+        f"Deposit release: {SECURITY_DEPOSIT_RELEASE_COPY}\n\n"
         f"Booking poster: {poster_url}\n\n"
         "Thank you for choosing FairFares.\n"
     )
@@ -1914,6 +1924,7 @@ def send_booking_pricing_update_email(email: str, name: str, booking: sqlite3.Ro
             <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
             <tr><td><b>Payment</b></td><td>{html.escape(payment_label)}</td></tr>
             <tr><td><b>Pickup balance</b></td><td>{html.escape(pickup_label)}</td></tr>
+            <tr><td><b>Security deposit</b></td><td>{html.escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable authorization at pickup. {html.escape(SECURITY_DEPOSIT_RELEASE_COPY)}</td></tr>
           </table>
         </div>
     """
@@ -4444,6 +4455,68 @@ def create_pickup_balance_payment_intent(booking: sqlite3.Row, admin: sqlite3.Ro
     if status != "ok":
         return {}, status
     return payment_intent, "ok"
+
+
+def create_security_deposit_payment_intent(booking: sqlite3.Row, admin: sqlite3.Row) -> tuple[dict[str, object], str]:
+    if row_value(booking, "payment_status") not in {"HOLD_PAID", "PAID"}:
+        return {}, "Security deposit can be authorized after the 10% hold or full payment is recorded."
+    if row_value(booking, "booking_status") in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}:
+        return {}, "This booking cannot accept a security deposit authorization."
+    amount_cents = int(round(SECURITY_DEPOSIT_AMOUNT * 100))
+    public_booking_id = row_value(booking, "booking_id")
+    params = {
+        "amount": amount_cents,
+        "currency": "usd",
+        "payment_method_types[]": "card_present",
+        "capture_method": "manual",
+        "description": f"FairFares refundable security deposit - {public_booking_id}",
+        "metadata[payment_option]": "security_deposit",
+        "metadata[booking_id]": row_value(booking, "id"),
+        "metadata[public_booking_id]": public_booking_id,
+        "metadata[user_id]": row_value(booking, "user_id"),
+        "metadata[created_by_admin_id]": row_value(admin, "id"),
+        "metadata[created_by_admin_email]": row_value(admin, "email"),
+        "metadata[deposit_release_policy]": "release_after_return_review",
+        "receipt_email": row_value(booking, "contact_email"),
+    }
+    payment_intent, status = stripe_api_request(
+        "payment_intents",
+        params,
+        idempotency_key=f"security-deposit-{row_value(booking, 'id')}-{amount_cents}",
+    )
+    if status != "ok":
+        return {}, status
+    return payment_intent, "ok"
+
+
+def record_security_deposit_authorization(data_object: dict[str, object]) -> tuple[bool, str]:
+    metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+    if metadata.get("payment_option") != "security_deposit":
+        return False, "Not a FairFares security deposit authorization."
+    try:
+        booking_id = int(metadata.get("booking_id") or "0")
+    except (TypeError, ValueError):
+        booking_id = 0
+    if not booking_id:
+        return False, "Missing booking metadata."
+    payment_reference = str(data_object.get("id") or "")
+    if not payment_reference:
+        return False, "Missing Stripe payment reference."
+    amount = float(data_object.get("amount_capturable") or data_object.get("amount") or 0) / 100
+    if amount <= 0:
+        amount = SECURITY_DEPOSIT_AMOUNT
+    with db() as con:
+        if con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (payment_reference,)).fetchone():
+            return True, "Security deposit authorization already recorded."
+        con.execute(
+            """
+            INSERT INTO transactions
+            (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+            VALUES (?, 'Stripe Terminal / Tap to Pay deposit', 'Stripe in-person customer', ?, 'SECURITY_DEPOSIT_AUTHORIZED', 'MATCHED', ?, ?)
+            """,
+            (booking_id, round(amount, 2), SECURITY_DEPOSIT_RELEASE_COPY, payment_reference),
+        )
+    return True, payment_reference
 
 
 def confirm_pickup_balance_payment_intent(data_object: dict[str, object], origin: str = "") -> tuple[bool, str]:
@@ -8873,8 +8946,8 @@ How FairFares saved you money: {savings_or_price_promise}
 Lessee authorizes FairFares and its payment processors, including Stripe where applicable, to charge amounts due under this Agreement, including rental charges, balances, deposits, late fees, damage, tolls, tickets, cleaning, fuel, keys, towing, roadside charges, and other post-return charges permitted by this Agreement.
 
 9. SECURITY DEPOSIT AUTHORIZATION.
-Security Deposit/Authorization: ${values.get('security_deposit', '250.00')}
-FairFares may hold, charge, apply, or release a security deposit or payment authorization according to booking terms, payment processor rules, damage review, toll/ticket processing, and bank timing. Deposit release does not waive later claims discovered after return.
+Security Deposit/Authorization: {format_money(SECURITY_DEPOSIT_AMOUNT)}
+FairFares may authorize a refundable security deposit at pickup. The deposit is not rental revenue. FairFares may release the authorization after the Vehicle is returned and reviewed for tickets, tolls, damage, cleaning, fuel, keys, misuse, late return charges, and other post-return charges. FairFares may capture or apply all or part of the deposit only for amounts permitted by this Agreement, payment processor rules, and applicable law. Deposit release does not waive later claims discovered after return.
 
 10. VEHICLE DESCRIPTION.
 Vehicle: {vehicle_identity}
@@ -9438,6 +9511,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/email-marketing/test": self.send_email_campaign_test,
             "/admin/pickup-documents": self.save_pickup_documents,
             "/admin/payment/pickup-balance": self.create_admin_pickup_balance_payment,
+            "/admin/payment/security-deposit": self.create_admin_security_deposit_payment,
             "/admin/agreement/customer": self.save_customer_agreement,
             "/admin/pickup/prefill": self.prefill_pickup_documents,
             "/admin/identity/idscan": self.run_admin_idscan_check,
@@ -10802,6 +10876,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def create_admin_security_deposit_payment(self) -> None:
+        admin = self.require_admin()
+        if not admin:
+            return
+        form = self.read_form()
+        try:
+            booking_id = int(form.get("booking_id", "0") or 0)
+        except ValueError:
+            booking_id = 0
+        if not booking_id:
+            self.send_json({"ok": False, "message": "Missing booking."}, 400)
+            return
+        with db() as con:
+            booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not booking:
+            self.send_json({"ok": False, "message": "Booking not found."}, 404)
+            return
+        payment_intent, status = create_security_deposit_payment_intent(booking, admin)
+        if status != "ok":
+            self.send_json({"ok": False, "message": status}, 400)
+            return
+        payment_intent_id = str(payment_intent.get("id") or "")
+        client_secret = str(payment_intent.get("client_secret") or "")
+        amount = float(payment_intent.get("amount") or 0) / 100
+        self.send_json(
+            {
+                "ok": True,
+                "message": (
+                    "Refundable security deposit authorization created. Collect it with Stripe Terminal/Tap to Pay; "
+                    "release it after return review if there are no tickets, damage, tolls, cleaning, fuel, or other charges."
+                ),
+                "payment_intent_id": payment_intent_id,
+                "client_secret": client_secret,
+                "amount": format_money(amount),
+                "dashboard_url": stripe_dashboard_payment_url(payment_intent_id),
+            }
+        )
+
     def payment_success_page(self) -> None:
         user = self.current_user()
         if not user:
@@ -10893,6 +11005,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
         if event_type == "payment_intent.succeeded":
             confirm_pickup_balance_payment_intent(data_object, self.public_origin())
+            record_security_deposit_authorization(data_object)
+        if event_type == "payment_intent.amount_capturable_updated":
+            record_security_deposit_authorization(data_object)
         if event_type.startswith("identity.verification_session."):
             save_identity_verification_from_session(data_object)
         self.send_json({"received": True})
@@ -13353,18 +13468,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             pickup_balance_action_copy = "Collect the 10% hold first; then this section can create the pickup balance payment."
         pickup_balance_button_attrs = "" if can_collect_pickup_balance else " disabled"
         pickup_balance_button_label = "Create in-person payment" if can_collect_pickup_balance else "Not eligible yet"
+        can_authorize_deposit = payment_status in {"HOLD_PAID", "PAID"} and booking_status not in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}
+        deposit_button_attrs = "" if can_authorize_deposit else " disabled"
+        deposit_button_label = "Create deposit authorization" if can_authorize_deposit else "Available after payment"
+        deposit_action_copy = (
+            f"Authorize {format_money(SECURITY_DEPOSIT_AMOUNT)} at pickup. Release it after return review if there are no tickets, damage, tolls, cleaning, fuel, key, or other charges."
+            if can_authorize_deposit
+            else f"{format_money(SECURITY_DEPOSIT_AMOUNT)} refundable security deposit becomes available after the 10% hold or full payment is recorded."
+        )
         pickup_balance_panel = f"""
             <section class="pickup-form-section wide-field">
                 <div class="pickup-section-head">
-                    <div><b>Payment, insurance, and price match</b><span>{escape(format_money(pickup_balance_due))} pickup balance, coverage, payment method, and matched quote.</span></div>
+                    <div><b>Payment, deposit, insurance, and price match</b><span>{escape(format_money(pickup_balance_due))} pickup balance plus {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable security deposit authorization.</span></div>
                 </div>
                 <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
                     <div>
-                        <b>{escape(payment_label)}</b>
+                        <b>Rental pickup balance - {escape(payment_label)}</b>
                         <span>{escape(pickup_balance_action_copy)}</span>
                     </div>
                     <button type="button" data-admin-pickup-payment-button{pickup_balance_button_attrs}>{escape(pickup_balance_button_label)}</button>
                     <small data-admin-pickup-payment-status>{escape(pickup_balance_label)}. After Stripe confirms payment, FairFares marks this booking as full payment received.</small>
+                </div>
+                <div class="pickup-prefill-panel pickup-payment-panel pickup-deposit-panel" data-admin-security-deposit>
+                    <div>
+                        <b>Refundable security deposit - {escape(format_money(SECURITY_DEPOSIT_AMOUNT))}</b>
+                        <span>{escape(deposit_action_copy)}</span>
+                    </div>
+                    <button type="button" data-admin-security-deposit-button{deposit_button_attrs}>{escape(deposit_button_label)}</button>
+                    <small data-admin-security-deposit-status>{escape(SECURITY_DEPOSIT_RELEASE_COPY)}</small>
                 </div>
                 <div class="pickup-form-grid pickup-money-grid">
                     <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>

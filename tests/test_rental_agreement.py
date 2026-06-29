@@ -62,6 +62,8 @@ class RentalAgreementTest(unittest.TestCase):
         self.assertIn("PICKUP CHECKLIST", text)
         self.assertIn("RETURN CHECKLIST", text)
         self.assertIn("valid auto insurance policy that extends coverage to rental vehicles", text)
+        self.assertIn("Security Deposit/Authorization: $250.00", text)
+        self.assertIn("release the authorization after the Vehicle is returned and reviewed", text)
         self.assertNotIn("laws of Texas", text)
 
     def test_agreement_customer_flow_routes_and_split_fields_exist(self):

@@ -191,8 +191,11 @@ class EmailMarketingTest(unittest.TestCase):
             self.assertIn("Matched quote total: $300.00", message["text"])
             self.assertIn("Additional 10% price-match discount: $30.00", message["text"])
             self.assertIn("Original FairFares total: $420.00", message["text"])
+            self.assertIn("Refundable security deposit authorization at pickup: $250.00", message["text"])
+            self.assertIn("Deposit release:", message["text"])
             self.assertIn("Updated", message["text"])
             self.assertIn("Additional 10% price-match discount", message["html"])
+            self.assertIn("Security deposit", message["html"])
 
     def test_pickup_reminder_automation_sends_once(self):
         car = app.get_cars()[0]
