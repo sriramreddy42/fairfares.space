@@ -8974,8 +8974,29 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = template.safe_substitute(safe_context)
     html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
     html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
+    html_text = inject_google_tag(html_text)
     html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
     return html_text.encode("utf-8")
+
+
+GOOGLE_TAG_ID = "G-T1Z9NDENEQ"
+GOOGLE_TAG_HTML = f"""
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id={GOOGLE_TAG_ID}"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){{dataLayer.push(arguments);}}
+    gtag('js', new Date());
+
+    gtag('config', '{GOOGLE_TAG_ID}');
+  </script>
+""".rstrip()
+
+
+def inject_google_tag(html_text: str) -> str:
+    if GOOGLE_TAG_ID in html_text or "googletagmanager.com/gtag/js" in html_text:
+        return html_text
+    return re.sub(r"(<head\b[^>]*>)", r"\1\n" + GOOGLE_TAG_HTML, html_text, count=1)
 
 
 def render_site_loader() -> str:
@@ -13292,6 +13313,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 </body>
 </html>
         """.strip()
+        body = inject_google_tag(body)
         self.send_html(body.encode("utf-8"))
 
     def save_customer_agreement(self) -> None:
@@ -14239,8 +14261,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if updated
             else "This unsubscribe link is invalid or already expired."
         )
-        self.send_html(
-            f"""
+        body = f"""
             <!doctype html>
             <html lang="en">
             <head>
@@ -14260,7 +14281,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </body>
             </html>
             """
-        )
+        self.send_html(inject_google_tag(body).encode("utf-8"))
 
     def save_pickup_documents(self) -> None:
         user = self.require_admin()
