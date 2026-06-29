@@ -163,6 +163,37 @@ class EmailMarketingTest(unittest.TestCase):
         self.assertIn("/static/img/download-documents-poster.png", self.sent_messages[5]["html"])
         self.assertIn("documents poster", self.sent_messages[5]["text"].lower())
 
+    def test_booking_emails_include_price_match_and_additional_discount(self):
+        car = app.get_cars()[0]
+        user_id = self.create_marketing_user("price-match@example.com")
+        booking = app.create_booking_for_user(user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET price_match_agency = 'Avis',
+                    price_match_amount = 300,
+                    price_match_discount_amount = 30,
+                    price_match_original_total = 420,
+                    total_price = 270
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+        updated = app.get_booking_by_id(int(booking["id"]))
+
+        app.send_booking_confirmation_email("price-match@example.com", "Price Match User", updated, "https://fairfares.test")
+        app.send_booking_pricing_update_email("price-match@example.com", "Price Match User", updated, "https://fairfares.test")
+
+        self.assertEqual(len(self.sent_messages), 2)
+        for message in self.sent_messages:
+            self.assertIn("Avis", message["text"])
+            self.assertIn("Matched quote total: $300.00", message["text"])
+            self.assertIn("Additional 10% price-match discount: $30.00", message["text"])
+            self.assertIn("Original FairFares total: $420.00", message["text"])
+            self.assertIn("Updated", message["text"])
+            self.assertIn("Additional 10% price-match discount", message["html"])
+
     def test_pickup_reminder_automation_sends_once(self):
         car = app.get_cars()[0]
         user_id = self.create_marketing_user("reminder@example.com")

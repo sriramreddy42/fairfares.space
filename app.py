@@ -1757,6 +1757,8 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
     savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
     breakdown = booking_price_breakdown(booking)
+    price_match_summary = booking_price_match_summary(booking, multiline=True)
+    price_match_html = booking_price_match_summary(booking)
     paid_in_full = row_value(booking, "payment_status") == "PAID"
     payment_lines = (
         f"Paid today: {format_money(breakdown['total'])}\n"
@@ -1773,6 +1775,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
         f"Rental subtotal: {format_money(breakdown['base'])}\n"
         f"Taxes and fees estimate: {format_money(breakdown['tax_fee_amount'])}\n"
         f"FairFares total: {format_money(breakdown['total'])}\n"
+        f"{price_match_summary}"
         f"{payment_lines}"
         f"Payment: {payment_status_label(booking['payment_status'])}\n"
         f"Questions: {support_phone}\n"
@@ -1797,6 +1800,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
             <tr><td><b>Drop-off</b></td><td>{html.escape(booking['dropoff_location'])}<br>{html.escape(booking['dropoff_date'])} at {html.escape(booking['dropoff_time'])}</td></tr>
             <tr><td><b>Rental subtotal</b></td><td>{html.escape(format_money(breakdown['base']))}</td></tr>
             <tr><td><b>Taxes and fees</b></td><td>{html.escape(format_money(breakdown['tax_fee_amount']))}</td></tr>
+            <tr><td><b>Price match</b></td><td>{html.escape(price_match_html or 'None')}</td></tr>
             <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
             <tr><td><b>{'Paid today' if paid_in_full else '10% booking hold'}</b></td><td>{html.escape(format_money(breakdown['total'] if paid_in_full else breakdown['booking_hold']))}</td></tr>
             <tr><td><b>Due at pickup</b></td><td>{html.escape('$0.00' if paid_in_full else format_money(breakdown['due_at_pickup']))}</td></tr>
@@ -1842,6 +1846,101 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
         encoding="utf-8",
     )
 
+    return outbox_file, delivery_status
+
+
+def booking_price_match_summary(booking: sqlite3.Row | dict[str, object], *, multiline: bool = False) -> str:
+    agency = row_value(booking, "price_match_agency").strip()
+    matched_total = float(row_value(booking, "price_match_amount") or 0)
+    discount = float(row_value(booking, "price_match_discount_amount") or 0)
+    original_total = float(
+        row_value(booking, "price_match_original_total")
+        or row_value(booking, "subtotal_price")
+        or row_value(booking, "total_price")
+        or 0
+    )
+    if not agency or matched_total <= 0:
+        return ""
+    if multiline:
+        return (
+            f"Price match agency: {agency}\n"
+            f"Original FairFares total: {format_money(original_total)}\n"
+            f"Matched quote total: {format_money(matched_total)}\n"
+            f"Additional 10% price-match discount: {format_money(discount)}\n"
+            f"Updated FairFares total: {format_money(row_value(booking, 'total_price'))}\n"
+        )
+    return (
+        f"{agency} quote matched at {format_money(matched_total)}. "
+        f"Additional 10% price-match discount: {format_money(discount)}. "
+        f"Original FairFares total: {format_money(original_total)}. "
+        f"Updated total: {format_money(row_value(booking, 'total_price'))}."
+    )
+
+
+def send_booking_pricing_update_email(email: str, name: str, booking: sqlite3.Row, origin: str) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = f"FairFares pricing updated: {booking['booking_id']}"
+    poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
+    breakdown = booking_price_breakdown(booking)
+    price_match_text = booking_price_match_summary(booking, multiline=True)
+    price_match_html = booking_price_match_summary(booking)
+    payment_label, pickup_label = admin_payment_summary(booking)
+    text_body = (
+        f"Dear {name},\n\n"
+        "Your FairFares booking pricing was updated.\n\n"
+        f"Booking ID: {booking['booking_id']}\n"
+        f"Vehicle: {booking['category']} | {booking['car_name']} or similar\n"
+        f"Rental subtotal: {format_money(breakdown['base'])}\n"
+        f"Taxes and fees estimate: {format_money(breakdown['tax_fee_amount'])}\n"
+        f"{price_match_text}"
+        f"FairFares total: {format_money(breakdown['total'])}\n"
+        f"Payment: {payment_label}\n"
+        f"{pickup_label}\n\n"
+        f"Booking poster: {poster_url}\n\n"
+        "Thank you for choosing FairFares.\n"
+    )
+    html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#07143f;line-height:1.45">
+          <h2>Your FairFares pricing was updated.</h2>
+          <p>Dear {html.escape(name)}, your booking now includes the approved pricing changes below.</p>
+          <img src="{html.escape(poster_url)}" alt="FairFares price match promise" style="max-width:100%;border-radius:10px;margin:12px 0">
+          <table style="border-collapse:collapse;width:100%;max-width:680px">
+            <tr><td><b>Booking ID</b></td><td>{html.escape(booking['booking_id'])}</td></tr>
+            <tr><td><b>Vehicle</b></td><td>{html.escape(booking['category'])} | {html.escape(booking['car_name'])} or similar</td></tr>
+            <tr><td><b>Rental subtotal</b></td><td>{html.escape(format_money(breakdown['base']))}</td></tr>
+            <tr><td><b>Taxes and fees</b></td><td>{html.escape(format_money(breakdown['tax_fee_amount']))}</td></tr>
+            <tr><td><b>Price match</b></td><td>{html.escape(price_match_html or 'None')}</td></tr>
+            <tr><td><b>FairFares total</b></td><td>{html.escape(format_money(breakdown['total']))}</td></tr>
+            <tr><td><b>Payment</b></td><td>{html.escape(payment_label)}</td></tr>
+            <tr><td><b>Pickup balance</b></td><td>{html.escape(pickup_label)}</td></tr>
+          </table>
+        </div>
+    """
+    outbox_file = OUTBOX_DIR / f"pricing-update-{booking['booking_id'].lower()}-{secrets.token_hex(6)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\nPoster: {poster_url}\n\n{text_body}",
+        encoding="utf-8",
+    )
     return outbox_file, delivery_status
 
 
@@ -13257,7 +13356,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         pickup_balance_panel = f"""
             <section class="pickup-form-section wide-field">
                 <div class="pickup-section-head">
-                    <div><b>Pickup balance</b><span>{escape(format_money(pickup_balance_due))} due at pickup after online payments.</span></div>
+                    <div><b>Payment, insurance, and price match</b><span>{escape(format_money(pickup_balance_due))} pickup balance, coverage, payment method, and matched quote.</span></div>
                 </div>
                 <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
                     <div>
@@ -13266,6 +13365,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <button type="button" data-admin-pickup-payment-button{pickup_balance_button_attrs}>{escape(pickup_balance_button_label)}</button>
                     <small data-admin-pickup-payment-status>{escape(pickup_balance_label)}. After Stripe confirms payment, FairFares marks this booking as full payment received.</small>
+                </div>
+                <div class="pickup-form-grid pickup-money-grid">
+                    <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
+                    <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
+                    <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
+                    <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
+                    <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
+                    <label><span>Cardholder Name</span><input name="cardholder_name" value="{escape(transaction["cardholder_name"] if transaction and "cardholder_name" in transaction.keys() else "")}" placeholder="Required for card payments"></label>
+                    <label><span>Price Match Agency</span><input name="price_match_agency" value="{escape(row["price_match_agency"])}" placeholder="Avis, Enterprise, Hertz"></label>
+                    <label><span>Matched Quote Total</span><input name="price_match_amount" type="number" step="0.01" value="{escape(row["price_match_amount"] or "")}" placeholder="Lower quote total"></label>
                 </div>
             </section>
         """
@@ -13377,28 +13486,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </section>
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
-                        <div><b>Insurance and payment</b><span>Verify proof, coverage, payment method, and pickup balance.</span></div>
-                    </div>
-                    <div class="pickup-form-grid">
-                        <label><span>Insurance Provider</span><input name="insurance_provider" value="{escape(insurance["insurance_provider"] if insurance else "")}"></label>
-                        <label><span>Insurance Type</span><input name="insurance_type" value="{escape(insurance["insurance_type"] if insurance else "Rental coverage")}"></label>
-                        <label><span>Coverage Amount</span><input name="coverage_amount" type="number" step="0.01" value="{escape(insurance["coverage_amount"] if insurance else "0")}"></label>
-                        <label><span>Insurance Price</span><input name="insurance_price" type="number" step="0.01" value="{escape(insurance["price"] if insurance else "0")}"></label>
-                        <label><span>Payment Method</span><input name="payment_method" value="{escape(transaction["payment_method"] if transaction else "")}" placeholder="Card / Cash / Online"></label>
-                        <label><span>Cardholder Name</span><input name="cardholder_name" value="{escape(transaction["cardholder_name"] if transaction and "cardholder_name" in transaction.keys() else "")}" placeholder="Required for card payments"></label>
-                    </div>
-                </section>
-                <section class="pickup-form-section wide-field">
-                    <div class="pickup-section-head">
-                        <div><b>Trip timing and price match</b><span>Record actual pickup/return timing and any eligible matched quote.</span></div>
+                        <div><b>Trip timing</b><span>Record actual pickup and return timing.</span></div>
                     </div>
                     <div class="pickup-form-grid">
                         <label><span>Actual Pickup Date</span><input name="actual_pickup_date" type="date" value="{escape(actual_pickup_date)}"></label>
                         <label><span>Actual Pickup Time</span><select name="actual_pickup_time">{time_select_options(actual_pickup_time)}</select></label>
                         <label><span>Actual Return Date</span><input name="actual_return_date" type="date" value="{escape(actual_return_date)}"></label>
                         <label><span>Actual Return Time</span><select name="actual_return_time">{time_select_options(actual_return_time)}</select></label>
-                        <label><span>Price Match Agency</span><input name="price_match_agency" value="{escape(row["price_match_agency"])}" placeholder="Avis, Enterprise, Hertz"></label>
-                        <label><span>Matched Quote Total</span><input name="price_match_amount" type="number" step="0.01" value="{escape(row["price_match_amount"] or "")}" placeholder="Lower quote total"></label>
                     </div>
                 </section>
                 <section class="pickup-form-section wide-field">
@@ -14533,6 +14627,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking_id = form.get("booking_id")
         user_id = form.get("user_id")
+        pricing_update_booking_id = 0
         with db() as con:
             booking_public_id = ""
             booking_for_drive = con.execute("SELECT booking_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
@@ -14662,6 +14757,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (booking_id,),
             ).fetchone()
+            previous_price_match_state = (
+                row_value(booking_for_fees, "price_match_agency"),
+                float(row_value(booking_for_fees, "price_match_amount") or 0),
+                float(row_value(booking_for_fees, "price_match_discount_amount") or 0),
+                float(row_value(booking_for_fees, "total_price") or 0),
+            ) if booking_for_fees else ("", 0.0, 0.0, 0.0)
             late_fee_amount, late_fee_note = calculate_late_fee(
                 booking_for_fees,
                 form.get("actual_return_date", ""),
@@ -14676,6 +14777,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 original_total = max(0.0, float(booking_for_fees["total_price"] or 0) - float(booking_for_fees["late_fee_amount"] or 0))
             price_match_discount = round(matched_total * 0.10, 2) if matched_total else 0.0
             revised_total = round((matched_total - price_match_discount if matched_total else original_total) + late_fee_amount, 2)
+            next_price_match_state = (
+                form.get("price_match_agency", ""),
+                matched_total,
+                price_match_discount,
+                revised_total,
+            )
+            if matched_total and previous_price_match_state != next_price_match_state:
+                try:
+                    pricing_update_booking_id = int(booking_id or 0)
+                except (TypeError, ValueError):
+                    pricing_update_booking_id = 0
             con.execute(
                 """
                 UPDATE bookings
@@ -14792,6 +14904,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         form.get("signature_text", ""),
                     ),
                 )
+        if pricing_update_booking_id:
+            updated_booking = get_booking_by_id(pricing_update_booking_id)
+            if updated_booking:
+                email = row_value(updated_booking, "contact_email")
+                if email and "@" in email:
+                    send_booking_pricing_update_email(
+                        email,
+                        row_value(updated_booking, "contact_name") or "FairFares customer",
+                        updated_booking,
+                        self.public_origin(),
+                    )
         self.redirect("/admin/pickup")
 
     def prefill_pickup_documents(self) -> None:

@@ -3067,6 +3067,9 @@
   font-weight: 900;
   text-decoration: underline;
 }
+.pickup-money-grid {
+  margin-top: 10px;
+}
 .pickup-form .pickup-prefill-panel button {
   background: var(--navy);
   grid-column: auto;
