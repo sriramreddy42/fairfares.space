@@ -223,9 +223,48 @@ class EmailMarketingTest(unittest.TestCase):
                 (booking["id"],),
             )
         expired = app.run_email_automations("https://fairfares.test", now=datetime.now())
+        self.assertEqual(expired["sent"], 0)
 
-        self.assertEqual(expired["sent"], 1)
+        app.save_booking_contact_and_send_confirmation(
+            user_id,
+            "Abandoned",
+            "Customer",
+            "abandoned@example.com",
+            "5551234567",
+            "https://fairfares.test",
+            False,
+            False,
+        )
+        saved_expired = app.run_email_automations("https://fairfares.test", now=datetime.now())
+
+        self.assertEqual(saved_expired["sent"], 1)
         self.assertIn("Complete your FairFares booking", self.sent_messages[-1]["subject"])
+
+    def test_abandoned_booking_skips_expired_unsaved_pending_record(self):
+        car = app.get_cars()[0]
+        user_id = self.create_marketing_user("unsaved@example.com")
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_email_opt_in = 0 WHERE id = ?", (user_id,))
+        booking = app.create_booking_for_user(user_id, car["id"], days=2)
+        with app.db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'EXPIRED_HOLD',
+                    payment_status = 'HOLD_EXPIRED',
+                    hold_expires_at = datetime('now', '-5 minutes'),
+                    saved_by_user = 0
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+
+        result = app.run_email_automations("https://fairfares.test", now=datetime.now())
+
+        self.assertEqual(result["sent"], 0)
+        with app.db() as con:
+            row = con.execute("SELECT * FROM email_automation_sends WHERE event_key = 'abandoned_booking'").fetchone()
+        self.assertIsNone(row)
 
     def test_reengagement_automation_sends_highest_due_interval_once(self):
         car = app.get_cars()[0]

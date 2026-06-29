@@ -2254,7 +2254,8 @@ def save_booking_contact_and_send_confirmation(
                 UPDATE bookings
                 SET contact_name = ?,
                     contact_email = ?,
-                    contact_phone = ?
+                    contact_phone = ?,
+                    saved_by_user = 1
                 WHERE id = ? AND user_id = ?
                 """,
                 (full_name, clean_email, clean_phone, booking["id"], user_id),
@@ -2528,12 +2529,14 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
         if booking_status in {"PENDING_HOLD", "EXPIRED_HOLD"} and payment_status in {"HOLD_PENDING", "HOLD_EXPIRED"}:
             hold_expired = booking_status == "EXPIRED_HOLD"
             hold_expires_at = row_value(booking, "hold_expires_at")
+            hold_started_at = row_value(booking, "hold_started_at")
+            customer_saved_checkout = row_value(booking, "saved_by_user") == "1"
             if hold_expires_at:
                 try:
                     hold_expired = hold_expired or datetime.fromisoformat(hold_expires_at) <= now
                 except ValueError:
                     hold_expired = hold_expired or True
-            if hold_expired:
+            if hold_expired and hold_started_at and hold_expires_at and customer_saved_checkout:
                 results.append(
                     automated_booking_email(
                         "abandoned_booking",
