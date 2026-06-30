@@ -980,7 +980,7 @@ function updateRentalRanges() {
   const days = getRentalDays();
   if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
   if (quoteMatchLabel) {
-    quoteMatchLabel.textContent = "Found a lower comparable price elsewhere? FairFares will match it and give you an additional 10% off after review.";
+    quoteMatchLabel.textContent = "Found a lower comparable price for rental cars in Denver or Colorado? FairFares will match it and add 10% off after review.";
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);

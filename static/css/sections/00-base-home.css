@@ -439,6 +439,14 @@ input, select, textarea, button {
   grid-column: 1 / -1;
   margin: 0 0 6px;
 }
+.seo-intro {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  grid-column: 1 / -1;
+  line-height: 1.4;
+  margin: -8px 0 0;
+}
 .search-panel label, .auth-card label {
   display: grid;
   gap: 8px;
