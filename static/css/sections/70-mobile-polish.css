@@ -83,6 +83,11 @@
     width: auto !important;
   }
 
+  .price-match-track::before {
+    animation-duration: 14s !important;
+    width: min(302%, 300px) !important;
+  }
+
   .main-nav,
   .manage-nav {
     min-height: 54px !important;
