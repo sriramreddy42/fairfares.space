@@ -79,7 +79,8 @@
 
   .price-match-track img {
     animation-duration: 14s !important;
-    width: min(78vw, 360px) !important;
+    height: min(88%, 96px) !important;
+    width: auto !important;
   }
 
   .main-nav,
