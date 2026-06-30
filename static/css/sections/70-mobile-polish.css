@@ -77,10 +77,6 @@
     display: none !important;
   }
 
-  .price-match-scroll {
-    height: calc(100% + 54px) !important;
-  }
-
   .price-match-track img {
     animation-duration: 14s !important;
     width: min(78vw, 360px) !important;

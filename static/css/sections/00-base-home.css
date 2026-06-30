@@ -159,7 +159,7 @@ input, select, textarea, button {
 .price-match-scroll {
   background: transparent;
   grid-column: 1 / -1;
-  height: calc(100% + 78px);
+  height: 100%;
   left: 0;
   overflow: hidden;
   pointer-events: none;
@@ -184,14 +184,14 @@ input, select, textarea, button {
   position: absolute;
   left: 0;
   top: 50%;
-  transform: translate3d(-110vw, -50%, 0);
+  transform: translate3d(-120vw, -50%, 0);
   will-change: transform;
   width: clamp(360px, 42vw, 760px);
 }
 
 @keyframes priceMatchPass {
   0% {
-    transform: translate3d(-110vw, -50%, 0);
+    transform: translate3d(-120vw, -50%, 0);
   }
   37.5% {
     transform: translate3d(calc(50vw - 50%), -50%, 0);
@@ -200,7 +200,7 @@ input, select, textarea, button {
     transform: translate3d(calc(50vw - 50%), -50%, 0);
   }
   100% {
-    transform: translate3d(105vw, -50%, 0);
+    transform: translate3d(120vw, -50%, 0);
   }
 }
 
