@@ -177,7 +177,7 @@ input, select, textarea, button {
 .price-match-track img {
   animation: priceMatchPass 14s linear 0s 1 both;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
-  height: min(116%, 238px);
+  height: 100%;
   max-width: none;
   object-fit: contain;
   opacity: 0.96;
