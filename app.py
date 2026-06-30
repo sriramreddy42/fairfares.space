@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630posterfit1"
+ASSET_VERSION = "20260630favicon1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9443,12 +9443,22 @@ def get_user_document_sets(user_id: int | None, active_booking_id: int | None = 
 
 def render_template(template_name: str, **context: object) -> bytes:
     template = Template((TEMPLATE_DIR / template_name).read_text(encoding="utf-8"))
+    favicon_links = "\n".join(
+        (
+            f'  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png?v={ASSET_VERSION}">',
+            f'  <link rel="icon" type="image/png" sizes="512x512" href="/static/img/favicon-512.png?v={ASSET_VERSION}">',
+            f'  <link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png?v={ASSET_VERSION}">',
+        )
+    )
     stylesheet_urls = [*BASE_STYLESHEETS, *PAGE_STYLESHEETS.get(template_name, []), *SHARED_STYLESHEETS]
     stylesheet_links = "\n".join(
         f'  <link rel="stylesheet" href="{escape(url)}">' for url in stylesheet_urls
     )
     safe_context = {"stylesheet_links": stylesheet_links, "asset_version": ASSET_VERSION, **context}
     html_text = template.safe_substitute(safe_context)
+    html_text = html_text.replace("$favicon_links", favicon_links)
+    if favicon_links not in html_text:
+        html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
     html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
     html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
     if should_track_google_analytics(template_name):
