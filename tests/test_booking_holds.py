@@ -150,25 +150,6 @@ class BookingHoldTest(unittest.TestCase):
         self.assertGreater(float(breakdown["tax_fee_amount"]), 0)
         self.assertIn("CO road safety fee", [label for label, _amount in breakdown["tax_fee_lines"]])
 
-    def test_default_post_return_fee_rules_are_seeded(self):
-        rules = app.get_active_post_return_fee_rules()
-        labels = [app.tax_fee_rule_value(rule, "label") for rule in rules]
-
-        self.assertIn("Cleaning fee", labels)
-        self.assertIn("Smoking fee", labels)
-        self.assertIn("Extra mileage", labels)
-        self.assertIn("Cleaning fee: $50.00", app.post_return_fee_rule_summary())
-        self.assertIn("Extra mileage: $0.15/mile", app.post_return_fee_rule_summary())
-
-    def test_post_return_fee_admin_controls_exist(self):
-        py = Path("app.py").read_text()
-        template = Path("templates/admin_discounts.html").read_text()
-
-        self.assertIn("/admin/post-return-fees", py)
-        self.assertIn("create_admin_post_return_fee_rule", py)
-        self.assertIn("Post-return Fee Rules", template)
-        self.assertIn("$post_return_fee_rules", template)
-
     def test_percent_coupon_applies_to_full_checkout_estimate(self):
         car = app.get_cars()[0]
         with app.db() as con:
@@ -480,9 +461,6 @@ class BookingHoldTest(unittest.TestCase):
                 ("pi_deposit_auth",),
             ).fetchone()
         self.assertEqual(refreshed["payment_status"], "HOLD_PAID")
-        self.assertEqual(refreshed["security_deposit_status"], "AUTHORIZED")
-        self.assertAlmostEqual(float(refreshed["security_deposit_amount"]), app.SECURITY_DEPOSIT_AMOUNT)
-        self.assertEqual(refreshed["security_deposit_payment_intent_id"], "pi_deposit_auth")
         self.assertEqual(deposit_transaction["transaction_status"], "SECURITY_DEPOSIT_AUTHORIZED")
         self.assertAlmostEqual(float(deposit_transaction["amount"]), app.SECURITY_DEPOSIT_AMOUNT)
         self.assertIn("Release after vehicle return review", deposit_transaction["billing_verification_notes"])

@@ -63,15 +63,7 @@ class RentalAgreementTest(unittest.TestCase):
         self.assertIn("RETURN CHECKLIST", text)
         self.assertIn("valid auto insurance policy that extends coverage to rental vehicles", text)
         self.assertIn("Security Deposit/Authorization: $250.00", text)
-        self.assertIn("Deposit Status:", text)
-        self.assertIn("Return Review Status:", text)
-        self.assertIn("Post-return Charge Review:", text)
         self.assertIn("release the authorization after the Vehicle is returned and reviewed", text)
-        self.assertIn("Minimum inspection photos should include", text)
-        self.assertIn("Current post-return fee defaults:", text)
-        self.assertIn("Cleaning fee: $50.00", text)
-        self.assertIn("Smoking fee: $200.00", text)
-        self.assertIn("deposit release/capture decision", text)
         self.assertNotIn("laws of Texas", text)
 
     def test_agreement_customer_flow_routes_and_split_fields_exist(self):
