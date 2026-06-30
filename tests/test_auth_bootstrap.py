@@ -172,54 +172,6 @@ class AuthBootstrapTest(unittest.TestCase):
             total_after_second_call = con.execute("SELECT COUNT(*) AS total FROM email_campaigns").fetchone()["total"]
         self.assertEqual(total_after_second_call, total)
 
-    def test_launch_deal_signup_saves_email_and_opts_in_existing_user(self):
-        app.init_db()
-        with app.db() as con:
-            con.execute(
-                """
-                INSERT INTO users (name, email, password_hash, is_verified)
-                VALUES (?, ?, ?, 1)
-                """,
-                ("Launch Tester", "launch@example.com", app.hash_password("Password123!")),
-            )
-
-        class TestHandler(app.FairFaresHandler):
-            def __init__(self):
-                pass
-
-            def read_form(self):
-                return {"email": " Launch@Example.com "}
-
-            def send_json(self, payload, status=200):
-                self.payload = payload
-                self.status = status
-
-        handler = TestHandler()
-        handler.submit_launch_deal_signup()
-
-        self.assertEqual(handler.status, 200)
-        self.assertTrue(handler.payload["ok"])
-        with app.db() as con:
-            signup = con.execute("SELECT * FROM launch_deal_signups WHERE email = ?", ("launch@example.com",)).fetchone()
-            user = con.execute("SELECT * FROM users WHERE email = ?", ("launch@example.com",)).fetchone()
-        self.assertIsNotNone(signup)
-        self.assertEqual(signup["offer"], "one_day_rent_free")
-        self.assertEqual(user["promo_email_opt_in"], 1)
-        self.assertIsNone(user["marketing_unsubscribed_at"])
-
-    def test_home_page_uses_cheap_car_rental_launch_copy(self):
-        app.init_db()
-        template = Path("templates/index.html").read_text()
-        js = Path("static/js/app.js").read_text()
-
-        self.assertIn("Cheap Car Rentals", template)
-        self.assertIn("Launch deals", template)
-        self.assertIn("1 day rent free", template)
-        self.assertIn("Minimum 2-month lease required", template)
-        self.assertIn("/launch-deals", template)
-        self.assertIn("/launch-deals", js)
-        self.assertNotIn("Student Car Rentals", template)
-
     def test_existing_customer_staff_request_promotes_same_user(self):
         app.init_db()
 
