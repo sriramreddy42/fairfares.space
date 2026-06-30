@@ -79,13 +79,14 @@
 
   .price-match-track img {
     animation-duration: 14s !important;
-    height: 100% !important;
+    height: clamp(82px, 126%, 118px) !important;
     width: auto !important;
   }
 
   .price-match-track::before {
     animation-duration: 14s !important;
-    width: min(302%, 300px) !important;
+    height: 112% !important;
+    width: min(302%, 360px) !important;
   }
 
   .main-nav,

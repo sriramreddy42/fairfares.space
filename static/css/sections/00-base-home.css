@@ -110,7 +110,7 @@ input, select, textarea, button {
   gap: 32px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 122px;
-  overflow: visible;
+  overflow: hidden;
   padding: 18px 38px;
   position: relative;
   z-index: 10;
@@ -159,17 +159,18 @@ input, select, textarea, button {
 .price-match-scroll {
   background: transparent;
   grid-column: 1 / -1;
-  height: 100%;
   left: 0;
   overflow: hidden;
   pointer-events: none;
   position: absolute;
   right: 0;
+  bottom: 0;
   top: 0;
   z-index: 8;
 }
 
 .price-match-track {
+  height: 100%;
   inset: 0;
   position: absolute;
 }
@@ -180,19 +181,19 @@ input, select, textarea, button {
   border-radius: 18px;
   box-shadow: 0 0 34px 30px rgba(3, 21, 51, 0.46);
   content: "";
-  height: 100%;
+  height: 112%;
   left: 0;
   position: absolute;
   top: 50%;
   transform: translate3d(-120vw, -50%, 0);
-  width: min(302%, 470px);
+  width: min(302%, 620px);
   will-change: transform;
 }
 
 .price-match-track img {
   animation: priceMatchPass 14s linear 0s 1 both;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
-  height: 100%;
+  height: clamp(128px, 118%, 188px);
   max-width: none;
   object-fit: contain;
   opacity: 0.96;

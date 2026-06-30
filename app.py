@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630posterblur1"
+ASSET_VERSION = "20260630posterfit1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9447,7 +9447,7 @@ def render_template(template_name: str, **context: object) -> bytes:
     stylesheet_links = "\n".join(
         f'  <link rel="stylesheet" href="{escape(url)}">' for url in stylesheet_urls
     )
-    safe_context = {"stylesheet_links": stylesheet_links, **context}
+    safe_context = {"stylesheet_links": stylesheet_links, "asset_version": ASSET_VERSION, **context}
     html_text = template.safe_substitute(safe_context)
     html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
     html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
