@@ -259,6 +259,20 @@
     line-height: 1.3 !important;
   }
 
+  .homepage-faq {
+    gap: 12px !important;
+    margin: 0 var(--mobile-page-pad) 14px !important;
+    padding: var(--mobile-card-pad) !important;
+  }
+
+  .homepage-faq-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .homepage-faq article {
+    padding: 12px !important;
+  }
+
   .hero-poster {
     display: none !important;
   }

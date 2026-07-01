@@ -180,10 +180,75 @@
       </section>
     </section>
 
+    <section class="homepage-faq" aria-labelledby="homepageFaqTitle">
+      <div>
+        <p class="eyebrow">FairFares FAQ</p>
+        <h2 id="homepageFaqTitle">Quick answers before you book.</h2>
+      </div>
+      <div class="homepage-faq-grid">
+        <article>
+          <h3>Do you offer airport pickup?</h3>
+          <p>Yes, FairFares offers convenient airport pickup for eligible rentals.</p>
+        </article>
+        <article>
+          <h3>Do you match competitor prices?</h3>
+          <p>Yes. If you find a qualifying lower publicly available price from a major rental company, we'll match it and provide an additional 10% discount according to our terms.</p>
+        </article>
+        <article>
+          <h3>What documents are required?</h3>
+          <p>A valid driver's license, proof of insurance when applicable, and a valid payment method.</p>
+        </article>
+        <article>
+          <h3>Can students rent?</h3>
+          <p>Yes, eligible students can rent with FairFares if they meet our rental requirements.</p>
+        </article>
+      </div>
+    </section>
+
     $internal_links
   </main>
   $guest_offer_modal
   $referral_claim_modal
   <script type="application/json" id="discountData">$discounts_json</script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Do you offer airport pickup?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, FairFares offers convenient airport pickup for eligible rentals."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do you match competitor prices?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. If you find a qualifying lower publicly available price from a major rental company, FairFares will match it and provide an additional 10% discount according to our terms."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What documents are required?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A valid driver's license, proof of insurance when applicable, and a valid payment method."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can students rent?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, eligible students can rent with FairFares if they meet our rental requirements."
+        }
+      }
+    ]
+  }
+  </script>
 </body>
 </html>

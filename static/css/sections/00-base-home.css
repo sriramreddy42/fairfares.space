@@ -585,6 +585,47 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
   line-height: 1.35;
 }
+.homepage-faq {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 18px;
+  margin: 0 30px 22px;
+  padding: 22px;
+}
+.homepage-faq h2 {
+  color: var(--navy);
+  font-size: clamp(1.35rem, 2.6vw, 2rem);
+  line-height: 1.08;
+  margin: 0;
+}
+.homepage-faq-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.homepage-faq article {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+.homepage-faq h3 {
+  color: var(--navy);
+  font-size: 1rem;
+  line-height: 1.18;
+  margin: 0;
+}
+.homepage-faq p {
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+}
 .compact-top {
   padding-bottom: 18px;
 }
