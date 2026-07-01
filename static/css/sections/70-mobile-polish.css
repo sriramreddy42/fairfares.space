@@ -214,8 +214,14 @@
     gap: 5px !important;
   }
 
+  .search-panel .booking-options-row {
+    gap: 8px !important;
+    grid-template-columns: 1fr !important;
+  }
+
   .search-panel .discount-helper {
     grid-column: 1 / -1 !important;
+    grid-row: auto !important;
     margin-top: -4px !important;
   }
 

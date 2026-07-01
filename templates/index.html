@@ -64,16 +64,18 @@
           <span>Return date & time</span>
           <div class="split-input"><input id="returnDate" type="date" value="$default_return_date"><select id="returnTime">$return_time_options</select></div>
         </label>
-        <label>
-          <span>Renter age</span>
-          <select id="renterAge"><option>21-24</option><option>25+</option></select>
-        </label>
-        <label>
-          <span>Discount code <em>(Optional)</em></span>
-          <input id="discountCode" placeholder="Enter code">
-          <small class="discount-message" id="discountMessage" aria-live="polite"></small>
-        </label>
-        <small class="discount-helper"><a href="/dashboard#student">Student discount:</a> verify your .edu email for 15% off.</small>
+        <div class="booking-options-row">
+          <label>
+            <span>Renter age</span>
+            <select id="renterAge"><option>21-24</option><option>25+</option></select>
+          </label>
+          <label class="discount-field">
+            <span>Discount code <em>(Optional)</em></span>
+            <input id="discountCode" placeholder="Enter code">
+            <small class="discount-message" id="discountMessage" aria-live="polite"></small>
+          </label>
+          <small class="discount-helper"><a href="/dashboard#student">Student discount:</a> verify your .edu email for 15% off.</small>
+        </div>
         <div class="rental-estimate" aria-live="polite">
           <span>Rental length</span>
           <b id="rentalLengthLabel">10 days</b>

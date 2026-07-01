@@ -457,6 +457,16 @@ input, select, textarea, button {
   text-transform: uppercase;
 }
 .wide-field { grid-column: 1 / -1; }
+.booking-options-row {
+  align-items: start;
+  display: grid;
+  gap: 8px 24px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.booking-options-row label {
+  align-content: start;
+}
 .check-field {
   align-items: center;
   display: flex !important;
@@ -495,7 +505,10 @@ input:focus, select:focus, textarea:focus {
   color: #0e7d2c;
   font-size: 0.875rem;
   font-weight: 700;
-  min-height: 18px;
+  min-height: 0;
+}
+.discount-message:empty {
+  display: none;
 }
 .discount-message.is-error {
   color: var(--red);
@@ -508,9 +521,10 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
   gap: 4px;
   grid-column: 2;
+  grid-row: 2;
   justify-content: flex-start;
   line-height: 1.25;
-  margin-top: -14px;
+  margin-top: -2px;
   max-width: 100%;
 }
 .discount-helper a {
