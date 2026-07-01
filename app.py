@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630blogmedia1"
+ASSET_VERSION = "20260630longtail1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -242,6 +242,90 @@ SEO_LANDING_PAGES = {
             ("Transparent totals", "Review subtotal, taxes, discounts, hold payment, and pickup balance before payment."),
         ],
         "links": [("Search monthly rentals", "/#results"), ("Manage booking", "/manage-booking"), ("Student discounts", "/dashboard#student")],
+    },
+    "/cheap-car-rental-denver-airport": {
+        "title": "Cheap Car Rental Near Denver Airport | FairFares",
+        "description": "Find cheap car rental near Denver Airport with FairFares. Compare affordable airport pickup rentals, clear checkout, and price match savings.",
+        "kicker": "Near Denver Airport",
+        "h1": "Cheap car rental near Denver Airport without surprise math",
+        "intro": "FairFares helps travelers compare affordable rentals near Denver Airport with pickup timing, discounts, and payment status in one flow.",
+        "body": "When you search for cheap car rental near Denver Airport, the real question is total trip cost. FairFares shows daily inventory rates, estimated taxes and fees, online hold amount, pickup balance, and eligible savings before confirmation.",
+        "features": [
+            ("Airport pickup timing", "Choose pickup and return times that fit flight arrival, baggage, and return plans."),
+            ("Clear checkout", "Review due-now hold, full payment, discounts, and pickup balance before paying."),
+            ("Colorado trip ready", "Use Explorer after booking to plan routes from Denver Airport into Colorado."),
+        ],
+        "links": [("Search airport rentals", "/#results"), ("Denver Airport guide", "/denver-airport-car-rental"), ("Pickup checklist", "/blog/denver-airport-car-rental-pickup-checklist")],
+    },
+    "/cheap-car-rental-downtown-denver": {
+        "title": "Cheap Car Rental Downtown Denver | FairFares",
+        "description": "Compare cheap car rental downtown Denver options with FairFares. Find affordable sedans, SUVs, student deals, and clear pickup costs.",
+        "kicker": "Downtown Denver",
+        "h1": "Cheap car rental downtown Denver for city and campus plans",
+        "intro": "FairFares gives downtown Denver renters a simpler way to compare cars, pickup details, discounts, and final booking costs.",
+        "body": "Downtown Denver rentals are useful for campus visits, errands, weekend trips, internships, and temporary transportation. FairFares keeps the rental length, vehicle class, daily rate, discounts, and pickup balance visible before checkout.",
+        "features": [
+            ("City-friendly vehicles", "Compare sedan rental Denver options for efficient local driving."),
+            ("Student-friendly flow", "Use .edu verification and referral deals when eligible."),
+            ("Weekend ready", "Book shorter rentals for errands, local travel, and Colorado weekend plans."),
+        ],
+        "links": [("Search Denver rentals", "/#results"), ("Student rentals", "/student-car-rental"), ("Weekend rentals", "/weekend-car-rental-colorado")],
+    },
+    "/student-car-rental-colorado": {
+        "title": "Student Car Rental Colorado | FairFares",
+        "description": "FairFares offers student car rental Colorado options with .edu verification, referral deals, airport pickup, receipts, and clear checkout.",
+        "kicker": "Colorado students",
+        "h1": "Student car rental Colorado options for school, work, and trips",
+        "intro": "FairFares helps students rent cars for Colorado campuses, airport pickup, internships, move-in weekends, and road trips.",
+        "body": "Student car rental Colorado searches should make discounts, documents, insurance proof, pickup details, and payment status easy to manage. FairFares keeps those pieces tied to the booking so students and staff can review them later.",
+        "features": [
+            ("Student verification", "Verify your .edu email in the dashboard before using eligible student codes."),
+            ("Documents together", "Keep receipts, agreement details, and pickup records connected to your booking."),
+            ("Flexible vehicle classes", "Choose sedan, SUV, fuel-efficient, or electric options based on the trip."),
+        ],
+        "links": [("Search student cars", "/#results"), ("Student rental guide", "/blog/student-car-rental-denver-colorado"), ("Verify student profile", "/dashboard#student")],
+    },
+    "/affordable-suv-rental-denver": {
+        "title": "Affordable SUV Rental Denver | FairFares",
+        "description": "Compare affordable SUV rental Denver options with FairFares for airport pickup, mountain routes, group travel, and Colorado weekends.",
+        "kicker": "Denver SUVs",
+        "h1": "Affordable SUV rental Denver options for bigger Colorado trips",
+        "intro": "Need more room for people, bags, or mountain gear? FairFares helps compare Denver SUV rentals with clear pickup costs.",
+        "body": "Affordable SUV rental Denver searches work best when seats, bags, daily price, rental length, taxes, hold amount, and pickup balance are visible together. FairFares keeps those details readable before payment.",
+        "features": [
+            ("Space for groups", "Use SUVs for airport pickup, campus moves, mountain routes, and family visits."),
+            ("Transparent pricing", "See rental subtotal, taxes, discounts, and pickup balance before confirmation."),
+            ("Price match review", "Submit comparable lower SUV quotes before pickup for eligible review."),
+        ],
+        "links": [("Browse SUV rentals", "/#results"), ("SUV rental Colorado", "/suv-rental"), ("Colorado route ideas", "/explorer")],
+    },
+    "/colorado-road-trip-rental": {
+        "title": "Colorado Road Trip Rental | FairFares",
+        "description": "Plan a Colorado road trip rental with FairFares. Compare Denver rental cars, SUVs, airport pickup, weekend trips, and Explorer routes.",
+        "kicker": "Road trip rentals",
+        "h1": "Colorado road trip rental planning with cars, routes, and savings",
+        "intro": "FairFares connects rental car booking with Explorer route planning for Denver drives, mountain stops, and weekend escapes.",
+        "body": "A Colorado road trip rental needs the right vehicle, pickup time, rental length, and route plan. FairFares helps compare sedans, SUVs, and fuel-efficient cars, then Explorer helps turn the drive into a plan.",
+        "features": [
+            ("Route-ready booking", "Choose a vehicle that fits the route, passengers, bags, and trip length."),
+            ("Explorer planning", "Use Explorer for Denver drives, mountain routes, stops, photos, and memories."),
+            ("Clear travel costs", "Review daily rate, taxes, discounts, hold amount, and pickup balance before checkout."),
+        ],
+        "links": [("Search road trip cars", "/#results"), ("Open Explorer", "/explorer"), ("Weekend rentals", "/weekend-car-rental-colorado")],
+    },
+    "/weekend-car-rental-colorado": {
+        "title": "Weekend Car Rental Colorado | FairFares",
+        "description": "Book weekend car rental Colorado options with FairFares for Denver, airport pickup, mountain drives, student trips, and short rentals.",
+        "kicker": "Weekend rentals",
+        "h1": "Weekend car rental Colorado options for short, useful trips",
+        "intro": "FairFares helps drivers compare weekend rentals for Denver errands, airport pickup, campus visits, and Colorado getaways.",
+        "body": "Weekend car rental Colorado planning should be fast and clear. Pick your dates, compare available vehicles, review discounts and payment status, and use Explorer if you want route ideas for the trip.",
+        "features": [
+            ("Short-trip friendly", "Good for errands, campus visits, mountain drives, and quick airport pickup."),
+            ("Vehicle choice", "Compare sedans for efficiency or SUVs for space and gear."),
+            ("Easy next step", "Book online, manage documents, and review pickup details from your dashboard."),
+        ],
+        "links": [("Search weekend rentals", "/#results"), ("Denver rentals", "/car-rental-denver"), ("Road trip rental", "/colorado-road-trip-rental")],
     },
 }
 BLOG_POST_BY_SLUG = {post["slug"]: post for post in BLOG_POSTS}
@@ -9728,17 +9812,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/blog/"):
             self.blog_post_page(parsed.path.rsplit("/", 1)[-1])
             return
+        if parsed.path in SEO_LANDING_PAGES:
+            self.seo_landing_page()
+            return
         routes = {
             "/": self.home,
             "/blog": self.blog_index_page,
+            "/robots.txt": self.robots_txt,
+            "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
-            "/car-rental-denver": self.seo_landing_page,
-            "/denver-airport-car-rental": self.seo_landing_page,
-            "/cheap-car-rental-colorado": self.seo_landing_page,
-            "/student-car-rental": self.seo_landing_page,
-            "/suv-rental": self.seo_landing_page,
-            "/monthly-car-rental": self.seo_landing_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/activate": self.activate_account,
@@ -9973,6 +10056,58 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_text(self, body_text: str, content_type: str = "text/plain; charset=utf-8", status: int = 200) -> None:
+        body = body_text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def robots_txt(self) -> None:
+        self.send_text(
+            "\n".join(
+                (
+                    "User-agent: *",
+                    "Allow: /",
+                    "Disallow: /admin",
+                    "Disallow: /api/",
+                    "Disallow: /payment/",
+                    "Disallow: /stripe/",
+                    "Sitemap: https://www.fairfare.space/sitemap.xml",
+                    "",
+                )
+            )
+        )
+
+    def sitemap_xml(self) -> None:
+        static_urls = [
+            "/",
+            "/blog",
+            "/deals",
+            "/explorer",
+        ]
+        urls = [*static_urls, *SEO_LANDING_PAGES.keys(), *(f"/blog/{post['slug']}" for post in BLOG_POSTS)]
+        today = date.today().isoformat()
+        entries = "\n".join(
+            f"""  <url>
+    <loc>https://www.fairfare.space{escape(path)}</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>{"weekly" if path.startswith("/blog") else "daily"}</changefreq>
+    <priority>{"1.0" if path == "/" else "0.8"}</priority>
+  </url>"""
+            for path in urls
+        )
+        self.send_text(
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{entries}
+</urlset>
+""",
+            "application/xml; charset=utf-8",
+        )
 
     def set_session(self, user_id: int) -> None:
         token = secrets.token_urlsafe(32)
