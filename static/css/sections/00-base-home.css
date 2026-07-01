@@ -955,6 +955,59 @@ input:focus, select:focus, textarea:focus {
   border-radius: 8px;
   padding: 10px 12px;
 }
+.internal-link-network {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(7, 19, 56, 0.08);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  padding: 18px 20px;
+}
+.internal-link-network h2 {
+  color: var(--navy);
+  font-size: 1.2rem;
+  line-height: 1.2;
+  margin: 4px 0 0;
+}
+.internal-link-network nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.internal-link-network a {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 800;
+  padding: 9px 12px;
+}
+.internal-link-network a:focus,
+.internal-link-network a:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+@media (max-width: 760px) {
+  .internal-link-network {
+    gap: 12px;
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+  .internal-link-network h2 {
+    font-size: 1.05rem;
+  }
+  .internal-link-network nav {
+    gap: 8px;
+  }
+  .internal-link-network a {
+    font-size: 0.86rem;
+    padding: 8px 10px;
+  }
+}
 .blog-page,
 .blog-post-page {
   display: grid;

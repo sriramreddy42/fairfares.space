@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630imageseo2"
+ASSET_VERSION = "20260630internallinks1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -329,6 +329,16 @@ SEO_LANDING_PAGES = {
     },
 }
 BLOG_POST_BY_SLUG = {post["slug"]: post for post in BLOG_POSTS}
+INTERNAL_SITE_LINKS = (
+    ("Book cheap Denver rentals", "/"),
+    ("Denver Airport car rental", "/denver-airport-car-rental"),
+    ("Student rentals", "/student-car-rental-colorado"),
+    ("SUV rentals", "/suv-rental"),
+    ("Explorer road trips", "/explorer"),
+    ("Deals and price match", "/deals"),
+    ("FairFares FAQ", "/wiki"),
+    ("Rental guides", "/blog"),
+)
 OPENAI_READONLY_MCP_SERVER_URLS = {"https://developers.openai.com/mcp"}
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -9733,7 +9743,12 @@ def render_template(template_name: str, **context: object) -> bytes:
     stylesheet_links = "\n".join(
         f'  <link rel="stylesheet" href="{escape(url)}">' for url in stylesheet_urls
     )
-    safe_context = {"stylesheet_links": stylesheet_links, "asset_version": ASSET_VERSION, **context}
+    safe_context = {
+        "stylesheet_links": stylesheet_links,
+        "asset_version": ASSET_VERSION,
+        "internal_links": render_internal_links(),
+        **context,
+    }
     html_text = template.safe_substitute(safe_context)
     html_text = html_text.replace("$favicon_links", favicon_links)
     if favicon_links not in html_text:
@@ -9744,6 +9759,22 @@ def render_template(template_name: str, **context: object) -> bytes:
         html_text = inject_google_tag(html_text)
     html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
     return html_text.encode("utf-8")
+
+
+def render_internal_links() -> str:
+    links = "\n".join(
+        f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
+        for label, url in INTERNAL_SITE_LINKS
+    )
+    return f"""
+    <section class="internal-link-network" aria-label="Explore FairFares">
+      <div>
+        <span class="ad-kicker">Explore FairFares</span>
+        <h2>More ways to rent, save, and plan your Colorado trip.</h2>
+      </div>
+      <nav>{links}</nav>
+    </section>
+    """.strip()
 
 
 GOOGLE_TAG_ID = "G-T1Z9NDENEQ"
