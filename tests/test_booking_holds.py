@@ -109,7 +109,7 @@ class BookingHoldTest(unittest.TestCase):
 
         self.assertIn(f'data-price-low="{low}"', html)
         self.assertIn(f'data-price-high="{high}"', html)
-        self.assertIn(f'<strong data-price-range>${low}-{high}</strong>', html)
+        self.assertIn(f'<span class="price-range" data-price-range>${low}-{high}</span>', html)
 
     def test_tax_fee_rules_are_loaded_from_database(self):
         with app.db() as con:

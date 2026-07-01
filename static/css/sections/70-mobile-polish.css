@@ -250,7 +250,7 @@
     padding: 10px 12px !important;
   }
 
-  .rental-estimate b {
+  .rental-estimate .rental-length-value {
     font-size: 1.05rem !important;
   }
 
@@ -361,6 +361,7 @@
     text-align: left !important;
   }
 
+  .price-box .price-range,
   .price-box strong {
     font-size: 1.45rem !important;
   }

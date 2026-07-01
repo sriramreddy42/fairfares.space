@@ -78,7 +78,7 @@
         </div>
         <div class="rental-estimate" aria-live="polite">
           <span>Rental length</span>
-          <b id="rentalLengthLabel">10 days</b>
+          <span class="rental-length-value" id="rentalLengthLabel">10 days</span>
           <small id="quoteMatchLabel">Found a lower comparable price for rental cars in Denver or Colorado? FairFares will match it and add 10% off after review.</small>
         </div>
         <button type="submit">Search Cars</button>
@@ -99,7 +99,7 @@
         <div class="filters">
           <div class="filter-head">
             <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterOptions">
-              <b aria-hidden="true"><i></i><i></i><i></i></b>
+              <span class="filter-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
               <span>Apply filter</span>
             </button>
             <button id="clearFilters" type="button">Clear All</button>
@@ -125,21 +125,21 @@
           <p>Plan Denver drives, mountain routes, airport pickup rentals, and weekend escapes with notes, photos, and places worth remembering.</p>
           <div class="promo-proof-grid" aria-label="Explorer memories">
             <article>
-              <b>Life moments</b>
+              <span class="promo-proof-title">Life moments</span>
               <span>Keep photos, stops, and stories together.</span>
             </article>
             <article>
-              <b>Hidden paths</b>
+              <span class="promo-proof-title">Hidden paths</span>
               <span>Find places that feel like they found you.</span>
             </article>
             <article>
-              <b>Memory book</b>
+              <span class="promo-proof-title">Memory book</span>
               <span>Let every city leave a page behind.</span>
             </article>
           </div>
           <a class="promo-cta" href="/explorer">
             <span>Open Explorer</span>
-            <b aria-hidden="true">&rarr;</b>
+            <span aria-hidden="true">&rarr;</span>
           </a>
         </section>
 
@@ -173,7 +173,7 @@
         </div>
         <div class="car-list" id="carList">$cars</div>
         <div class="no-results is-hidden" id="noCarResults">
-          <b>No cars match your search right now.</b>
+          <span class="no-results-title">No cars match your search right now.</span>
           <span>Clear filters or choose All available locations to see the full feed.</span>
           <button type="button" id="resetCarFilters">Reset Filters</button>
         </div>

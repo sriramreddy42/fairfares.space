@@ -440,7 +440,7 @@
   padding: 12px !important;
 }
 
-.promo-proof-grid b {
+.promo-proof-grid .promo-proof-title {
   font-size: 1rem !important;
 }
 
@@ -1549,4 +1549,3 @@
     display: none !important;
   }
 }
-

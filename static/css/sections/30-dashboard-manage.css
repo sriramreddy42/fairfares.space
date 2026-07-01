@@ -1721,6 +1721,7 @@
     text-align: left;
   }
 
+  .price-box .price-range,
   .price-box strong {
     font-size: 1.7rem;
   }
@@ -2778,7 +2779,7 @@
     font-size: 0.9rem;
   }
 
-  .filter-toggle b {
+  .filter-toggle .filter-toggle-icon {
     display: grid;
     gap: 3px;
     justify-items: center;
@@ -2786,7 +2787,7 @@
     width: 20px;
   }
 
-  .filter-toggle b i {
+  .filter-toggle .filter-toggle-icon i {
     background: var(--navy);
     display: block;
     height: 2px;
@@ -3277,6 +3278,7 @@
     padding: 10px 12px !important;
   }
 
+  .price-box .price-range,
   .price-box strong {
     font-size: 1.35rem !important;
   }

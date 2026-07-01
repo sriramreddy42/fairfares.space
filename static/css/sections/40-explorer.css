@@ -5800,6 +5800,7 @@ body.modal-open {
     width: 100% !important;
   }
 
+  .price-box .price-range,
   .price-box strong {
     font-size: 1.45rem !important;
   }
@@ -7442,4 +7443,3 @@ body.modal-open {
     width: calc(100vw - 28px) !important;
   }
 }
-
