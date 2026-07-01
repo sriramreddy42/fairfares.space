@@ -214,6 +214,11 @@
     gap: 5px !important;
   }
 
+  .search-panel .discount-helper {
+    grid-column: 1 / -1 !important;
+    margin-top: -4px !important;
+  }
+
   .search-panel label > span,
   .search-panel legend,
   .search-panel .rental-estimate span {
