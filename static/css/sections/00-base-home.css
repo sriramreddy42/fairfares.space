@@ -169,6 +169,12 @@ input, select, textarea, button {
   z-index: 8;
 }
 
+@media (min-width: 861px) {
+  .top-brand .price-match-scroll {
+    display: none;
+  }
+}
+
 .price-match-track {
   height: 100%;
   inset: 0;
