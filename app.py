@@ -60,10 +60,72 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630landing1"
+ASSET_VERSION = "20260630blog1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
+BLOG_POSTS = [
+    {
+        "slug": "cheap-car-rental-denver-guide",
+        "title": "Cheap Car Rental Denver: How to Compare Real Trip Costs",
+        "description": "Learn how to compare cheap car rental Denver options by daily rate, taxes, fees, pickup balance, discounts, and price match savings.",
+        "date": "2026-06-30",
+        "category": "Denver rentals",
+        "hero": "Cheap car rental Denver",
+        "intro": "A low daily rate is only one part of a rental. The better question is what the full Denver trip costs before you pick up the keys.",
+        "sections": [
+            ("Start with the full trip window", "Compare rentals using the exact pickup date, return date, and pickup time. A ten-day rental and a fifteen-day rental should never be treated the same, because taxes, fees, and pickup balance change with the rental length."),
+            ("Look past the daily rate", "A cheap car rental Denver search should show the rental subtotal, taxes and fees, due-now hold, discount savings, and due-at-pickup balance before payment. FairFares keeps those pieces visible so you can compare the real cost."),
+            ("Use price match when it matters", "If you find a comparable lower quote from a major rental provider, save the details. FairFares can review eligible lower quotes and apply the Price Match Guarantee plus an additional 10% off after approval."),
+        ],
+        "cta": ("Search Denver rentals", "/car-rental-denver"),
+    },
+    {
+        "slug": "denver-airport-car-rental-pickup-checklist",
+        "title": "Denver Airport Car Rental Pickup Checklist",
+        "description": "Use this Denver Airport car rental checklist for pickup timing, insurance proof, driver license review, payments, and road trip planning.",
+        "date": "2026-06-30",
+        "category": "Airport pickup",
+        "hero": "Denver Airport car rental",
+        "intro": "Airport pickups are smoother when payment, license, insurance, and timing details are handled before the counter rush.",
+        "sections": [
+            ("Confirm arrival and pickup time", "Choose a pickup time that gives you room for baggage, rideshare movement, and airport delays. For Denver Airport car rental, a realistic pickup time protects both the customer and the rental team."),
+            ("Bring license and insurance proof", "FairFares pickup flow expects driver license and insurance information before release. If rental coverage is needed, staff can record that separately from the base vehicle price."),
+            ("Plan the first drive", "Once the booking is ready, use Explorer to map a Colorado road trip car rental route, food stop, campus visit, or mountain drive after airport pickup."),
+        ],
+        "cta": ("Book airport pickup", "/denver-airport-car-rental"),
+    },
+    {
+        "slug": "student-car-rental-denver-colorado",
+        "title": "Student Car Rental in Denver and Colorado",
+        "description": "A student car rental guide for Denver and Colorado: .edu verification, referral deals, insurance proof, pickup timing, and receipts.",
+        "date": "2026-06-30",
+        "category": "Student rentals",
+        "hero": "Student car rental",
+        "intro": "Students need rental cars for more than vacations: internships, moves, airport pickups, campus visits, and weekend routes all count.",
+        "sections": [
+            ("Verify before the next booking", "Student discounts work best when the profile name and school email are ready before checkout. Verify the .edu email in the dashboard, then use eligible student codes on future bookings."),
+            ("Keep documents in one place", "A strong student car rental flow should keep receipts, agreement details, insurance proof, pickup records, and payment status easy to find."),
+            ("Choose the right vehicle class", "A sedan rental Denver option may be enough for one student and two bags. SUV rental Colorado options make more sense for group travel, mountain drives, or move-in weekends."),
+        ],
+        "cta": ("Open student rentals", "/student-car-rental"),
+    },
+    {
+        "slug": "monthly-car-rental-colorado-guide",
+        "title": "Monthly and Long-Term Car Rental Colorado Guide",
+        "description": "Compare monthly car rental and long-term car rental Colorado options for internships, school terms, temporary work, and extended stays.",
+        "date": "2026-06-30",
+        "category": "Long-term rentals",
+        "hero": "Long-term car rental Colorado",
+        "intro": "Longer rentals need clearer math because a small daily difference can become meaningful over several weeks.",
+        "sections": [
+            ("Use exact rental dates", "Monthly car rental pricing depends on the full pickup and return range. Always compare vehicles using the actual dates instead of estimating from a daily rate alone."),
+            ("Review pickup balance and payment status", "For long-term car rental Colorado bookings, review the hold amount, pickup balance, payment status, insurance coverage, and any refundable deposit authorization before release."),
+            ("Match the car to the month", "Sedans can be efficient for school or work commutes. SUVs may be better for gear, mountain trips, family visits, or temporary housing moves."),
+        ],
+        "cta": ("Compare monthly rentals", "/monthly-car-rental"),
+    },
+]
 SEO_LANDING_PAGES = {
     "/car-rental-denver": {
         "title": "Car Rental Denver | FairFares",
@@ -150,6 +212,7 @@ SEO_LANDING_PAGES = {
         "links": [("Search monthly rentals", "/#results"), ("Manage booking", "/manage-booking"), ("Student discounts", "/dashboard#student")],
     },
 }
+BLOG_POST_BY_SLUG = {post["slug"]: post for post in BLOG_POSTS}
 OPENAI_READONLY_MCP_SERVER_URLS = {"https://developers.openai.com/mcp"}
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -9630,8 +9693,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
             return
+        if parsed.path.startswith("/blog/"):
+            self.blog_post_page(parsed.path.rsplit("/", 1)[-1])
+            return
         routes = {
             "/": self.home,
+            "/blog": self.blog_index_page,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/car-rental-denver": self.seo_landing_page,
@@ -10057,6 +10124,64 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feature_cards=feature_cards,
             action_links=action_links,
             related_links=related_links,
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def blog_index_page(self) -> None:
+        user = self.current_user()
+        post_cards = "\n".join(
+            f"""
+            <article class="blog-card">
+              <span>{escape(post["category"])} · {escape(post["date"])}</span>
+              <h2><a href="/blog/{escape(post["slug"])}">{escape(post["title"])}</a></h2>
+              <p>{escape(post["description"])}</p>
+              <a class="light-button" href="/blog/{escape(post["slug"])}">Read guide</a>
+            </article>
+            """
+            for post in BLOG_POSTS
+        )
+        body = render_template(
+            "blog_index.html",
+            post_cards=post_cards,
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def blog_post_page(self, slug: str) -> None:
+        post = BLOG_POST_BY_SLUG.get(slug)
+        if not post:
+            self.not_found()
+            return
+        user = self.current_user()
+        sections = "\n".join(
+            f"""
+            <section>
+              <h2>{escape(title)}</h2>
+              <p>{escape(copy)}</p>
+            </section>
+            """
+            for title, copy in post["sections"]
+        )
+        related_posts = "\n".join(
+            f'<a href="/blog/{escape(other["slug"])}">{escape(other["title"])}</a>'
+            for other in BLOG_POSTS
+            if other["slug"] != slug
+        )
+        cta_label, cta_url = post["cta"]
+        body = render_template(
+            "blog_post.html",
+            title=escape(post["title"]),
+            description=escape(post["description"]),
+            canonical_url=escape(f"https://www.fairfare.space/blog/{slug}"),
+            category=escape(post["category"]),
+            date=escape(post["date"]),
+            hero=escape(post["hero"]),
+            intro=escape(post["intro"]),
+            sections=sections,
+            cta_label=escape(cta_label),
+            cta_url=escape(cta_url),
+            related_posts=related_posts,
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)

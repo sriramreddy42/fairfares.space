@@ -936,6 +936,131 @@ input:focus, select:focus, textarea:focus {
   border-radius: 8px;
   padding: 10px 12px;
 }
+.blog-page,
+.blog-post-page {
+  display: grid;
+  gap: 18px;
+  padding: 24px 30px 54px;
+}
+.blog-hero,
+.blog-card,
+.blog-post,
+.blog-related {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(7, 19, 56, 0.08);
+}
+.blog-hero {
+  padding: 28px;
+}
+.blog-hero h1,
+.blog-post h1 {
+  color: var(--navy);
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  line-height: 1;
+  margin: 0 0 12px;
+}
+.blog-hero p:not(.eyebrow),
+.blog-card p,
+.blog-post header p:not(.eyebrow),
+.blog-post-body p,
+.blog-related a {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.55;
+}
+.blog-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.blog-card {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+.blog-card span {
+  color: var(--red);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.blog-card h2,
+.blog-post-body h2,
+.blog-related h2 {
+  color: var(--navy);
+  font-size: 1.35rem;
+  margin: 0;
+}
+.blog-card p {
+  margin: 0;
+}
+.blog-card .light-button {
+  justify-self: start;
+}
+.blog-post-page {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+}
+.blog-post {
+  overflow: hidden;
+}
+.blog-post header,
+.blog-post-body,
+.blog-post-cta {
+  padding: 24px;
+}
+.blog-post figure {
+  margin: 0;
+}
+.blog-post figure img {
+  display: block;
+  height: 320px;
+  object-fit: cover;
+  width: 100%;
+}
+.blog-post figcaption {
+  background: #f7f9fc;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+  padding: 10px 24px;
+}
+.blog-post-body {
+  display: grid;
+  gap: 20px;
+}
+.blog-post-body section {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding-top: 18px;
+}
+.blog-post-body p {
+  margin: 0;
+}
+.blog-post-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.blog-related {
+  align-self: start;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+.blog-related div {
+  display: grid;
+  gap: 10px;
+}
+.blog-related a {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
 .filters, .car-card, .auth-card {
   background: #fff;
   border: 1px solid var(--line);
