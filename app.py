@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630imageseo1"
+ASSET_VERSION = "20260630imageseo2"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -145,8 +145,8 @@ BLOG_POSTS = [
         "video_title": "Planning longer Colorado rentals with FairFares",
         "video_summary": "See how longer trips connect date selection, pickup balance, documents, and Colorado routes.",
         "gallery": [
-            ("/static/img/honda-civic-denver-rental.png", "Honda Civic sedan rental available in Denver, Colorado"),
-            ("/static/img/hyundai-kona-denver-suv-rental.png", "Hyundai Kona SUV rental available in Denver, Colorado"),
+            ("/static/img/honda-civic-sedan-denver-rental.png", "Honda Civic sedan rental available in Denver, Colorado"),
+            ("/static/img/hyundai-kona-electric-suv-denver-rental.png", "Hyundai Kona electric SUV rental available in Denver, Colorado"),
             ("/static/img/hero-road.png", "Colorado long-term route planning"),
         ],
         "intro": "Longer rentals need clearer math because a small daily difference can become meaningful over several weeks.",
@@ -4129,16 +4129,16 @@ def init_db() -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-denver-rental.png", "AVAILABLE", 1),
-                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-denver-rental.png", "AVAILABLE", 2),
-                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-denver-suv-rental.png", "AVAILABLE", 3),
-                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-denver-rental.png", "AVAILABLE", 4),
+                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-sedan-denver-rental.png", "AVAILABLE", 1),
+                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-sedan-denver-rental.png", "AVAILABLE", 2),
+                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-electric-suv-denver-rental.png", "AVAILABLE", 3),
+                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-sedan-denver-rental.png", "AVAILABLE", 4),
                 ],
             )
-        con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-denver-rental.png' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-denver-rental.png' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/hyundai-kona-denver-suv-rental.png' WHERE name = 'Hyundai Kona' AND image_url IN ('', '/static/img/car-hyundai-kona.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/honda-civic-denver-rental.png' WHERE name = 'Honda Civic' AND image_url IN ('', '/static/img/car-honda-civic.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-sedan-denver-rental.png' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png', '/static/img/toyota-corolla-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-sedan-denver-rental.png' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png', '/static/img/nissan-sentra-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/hyundai-kona-electric-suv-denver-rental.png' WHERE name = 'Hyundai Kona' AND image_url IN ('', '/static/img/car-hyundai-kona.png', '/static/img/hyundai-kona-denver-suv-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/honda-civic-sedan-denver-rental.png' WHERE name = 'Honda Civic' AND image_url IN ('', '/static/img/car-honda-civic.png', '/static/img/honda-civic-denver-rental.png')")
         con.executescript(
             """
             UPDATE cars SET brand = 'Toyota', model = 'Corolla', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
