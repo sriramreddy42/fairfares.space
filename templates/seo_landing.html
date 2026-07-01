@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title</title>
+  <meta name="description" content="$description">
+  <link rel="canonical" href="$canonical_url">
+  <meta property="og:title" content="$title">
+  <meta property="og:description" content="$description">
+  <meta property="og:url" content="$canonical_url">
+  <meta name="twitter:title" content="$title">
+  <meta name="twitter:description" content="$description">
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body>
+  <header class="top-brand compact-top">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-glow-logo.png" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">car</span><strong>Hybrid cars</strong><span>Sedans & SUVs</span></div>
+      <div class="benefit-pill"><span class="circle-icon">fuel</span><strong>Fuel-efficient</strong><span>Lower-cost rentals</span></div>
+      <div class="benefit-pill"><span class="circle-icon">bolt</span><strong>Electric</strong><span>Vehicle options</span></div>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Book</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="/deals">Deals</a>
+      <a href="/explorer">Explorer</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="seo-landing-page">
+    <section class="seo-landing-hero">
+      <div>
+        <p class="eyebrow">$kicker</p>
+        <h1>$heading</h1>
+        <p>$intro</p>
+        <div class="seo-landing-actions">$action_links</div>
+      </div>
+      <img src="/static/img/hero-road.png?v=$asset_version" alt="FairFares rental car driving near Denver and Colorado">
+    </section>
+
+    <section class="seo-landing-copy">
+      <p>$body_copy</p>
+    </section>
+
+    <section class="seo-feature-grid">
+      $feature_cards
+    </section>
+
+    <section class="seo-related-links" aria-label="Related FairFares rental pages">
+      <h2>More FairFares rental options</h2>
+      <div>$related_links</div>
+    </section>
+  </main>
+</body>
+</html>

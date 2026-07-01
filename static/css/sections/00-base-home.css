@@ -847,6 +847,95 @@ input:focus, select:focus, textarea:focus {
   display: block;
   padding: 12px;
 }
+.seo-landing-page {
+  display: grid;
+  gap: 18px;
+  padding: 24px 30px 54px;
+}
+.seo-landing-hero,
+.seo-landing-copy,
+.seo-feature-grid article,
+.seo-related-links {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(7, 19, 56, 0.08);
+}
+.seo-landing-hero {
+  align-items: center;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 46%);
+  overflow: hidden;
+  padding: 26px;
+}
+.seo-landing-hero h1 {
+  color: var(--navy);
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  line-height: 1;
+  margin: 0 0 12px;
+}
+.seo-landing-hero p:not(.eyebrow),
+.seo-landing-copy p,
+.seo-feature-grid p,
+.seo-related-links a {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.5;
+}
+.seo-landing-hero img {
+  border-radius: 8px;
+  height: min(360px, 42vw);
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+}
+.seo-landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.seo-landing-actions a {
+  min-width: 180px;
+}
+.seo-landing-copy {
+  padding: 22px 24px;
+}
+.seo-landing-copy p,
+.seo-feature-grid p {
+  margin: 0;
+}
+.seo-feature-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.seo-feature-grid article {
+  padding: 20px;
+}
+.seo-feature-grid h2,
+.seo-related-links h2 {
+  color: var(--navy);
+  font-size: 1.2rem;
+  margin: 0 0 8px;
+}
+.seo-related-links {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+.seo-related-links div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.seo-related-links a {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
 .filters, .car-card, .auth-card {
   background: #fff;
   border: 1px solid var(--line);

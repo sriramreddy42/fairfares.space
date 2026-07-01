@@ -94,6 +94,40 @@
     min-height: 54px !important;
   }
 
+  .seo-landing-page {
+    gap: 12px !important;
+    padding: 12px !important;
+  }
+
+  .seo-landing-hero {
+    gap: 14px !important;
+    grid-template-columns: 1fr !important;
+    padding: 14px !important;
+  }
+
+  .seo-landing-hero h1 {
+    font-size: clamp(1.7rem, 9vw, 2.4rem) !important;
+  }
+
+  .seo-landing-hero img {
+    height: 180px !important;
+  }
+
+  .seo-landing-actions a {
+    flex: 1 1 150px;
+    min-width: 0 !important;
+  }
+
+  .seo-feature-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .seo-landing-copy,
+  .seo-feature-grid article,
+  .seo-related-links {
+    padding: 14px !important;
+  }
+
   .mobile-menu {
     border-radius: 10px !important;
     box-shadow: 0 18px 42px rgba(7, 20, 63, 0.14);
