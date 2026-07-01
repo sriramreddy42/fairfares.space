@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701faq1"
+ASSET_VERSION = "20260701schema1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9745,6 +9745,7 @@ def render_template(template_name: str, **context: object) -> bytes:
         html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
     html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
     html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
+    html_text = inject_structured_data(html_text, template_name)
     if should_track_google_analytics(template_name):
         html_text = inject_google_tag(html_text)
     html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
@@ -9840,6 +9841,231 @@ def inject_google_tag(html_text: str) -> str:
 
 def should_track_google_analytics(template_name: str) -> bool:
     return not template_name.startswith("admin")
+
+
+PUBLIC_SCHEMA_TEMPLATES = {
+    "index.html",
+    "seo_landing.html",
+    "blog_index.html",
+    "blog_post.html",
+    "deals.html",
+    "buy_cars.html",
+    "explorer.html",
+    "wiki.html",
+}
+
+
+def should_include_structured_data(template_name: str) -> bool:
+    return template_name in PUBLIC_SCHEMA_TEMPLATES
+
+
+def schema_origin() -> str:
+    return os.environ.get("PUBLIC_BASE_URL", "https://www.fairfare.space").rstrip("/")
+
+
+def html_meta_content(html_text: str, name: str, default: str = "") -> str:
+    pattern = rf'<meta\s+name="{re.escape(name)}"\s+content="([^"]*)"'
+    match = re.search(pattern, html_text, flags=re.IGNORECASE)
+    return html.unescape(match.group(1)).strip() if match else default
+
+
+def html_title(html_text: str, default: str = "FairFares") -> str:
+    match = re.search(r"<title>(.*?)</title>", html_text, flags=re.IGNORECASE | re.DOTALL)
+    return html.unescape(re.sub(r"\s+", " ", match.group(1)).strip()) if match else default
+
+
+def canonical_url_from_html(html_text: str) -> str:
+    match = re.search(r'<link\s+rel="canonical"\s+href="([^"]+)"', html_text, flags=re.IGNORECASE)
+    if match:
+        return html.unescape(match.group(1)).strip()
+    return f"{schema_origin()}/"
+
+
+def schema_page_name(title: str) -> str:
+    return title.split("|", 1)[0].strip() or "FairFares"
+
+
+def schema_breadcrumb_items(canonical_url: str, title: str) -> list[dict[str, object]]:
+    origin = schema_origin()
+    parsed = urllib.parse.urlparse(canonical_url)
+    path = parsed.path.strip("/")
+    items: list[dict[str, object]] = [
+        {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "FairFares",
+            "item": f"{origin}/",
+        }
+    ]
+    if path:
+        items.append(
+            {
+                "@type": "ListItem",
+                "position": 2,
+                "name": schema_page_name(title),
+                "item": canonical_url,
+            }
+        )
+    return items
+
+
+def schema_feedback_summary() -> dict[str, object]:
+    try:
+        with get_db() as con:
+            summary = con.execute(
+                """
+                SELECT COUNT(*) AS review_count, AVG(rating) AS rating_value
+                FROM app_feedback
+                WHERE rating BETWEEN 1 AND 5
+                """
+            ).fetchone()
+            latest = con.execute(
+                """
+                SELECT rating, message, created_at
+                FROM app_feedback
+                WHERE rating BETWEEN 1 AND 5 AND TRIM(message) != ''
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+    except Exception:
+        return {}
+    count = int(row_value(summary, "review_count", 0) or 0)
+    rating_raw = row_lookup(summary, "rating_value", None)
+    if count <= 0 or rating_raw is None:
+        return {}
+    data: dict[str, object] = {
+        "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": round(float(rating_raw), 1),
+            "reviewCount": count,
+            "bestRating": 5,
+            "worstRating": 1,
+        }
+    }
+    message = row_value(latest, "message")
+    if latest is not None and message:
+        data["review"] = {
+            "@type": "Review",
+            "reviewRating": {
+                "@type": "Rating",
+                "ratingValue": int(row_value(latest, "rating", 5) or 5),
+                "bestRating": 5,
+                "worstRating": 1,
+            },
+            "author": {
+                "@type": "Person",
+                "name": "FairFares customer",
+            },
+            "datePublished": row_value(latest, "created_at"),
+            "reviewBody": message[:500],
+        }
+    return data
+
+
+def render_structured_data(template_name: str, html_text: str) -> str:
+    if not should_include_structured_data(template_name):
+        return ""
+    origin = schema_origin()
+    canonical = canonical_url_from_html(html_text)
+    title = html_title(html_text)
+    description = html_meta_content(
+        html_text,
+        "description",
+        "Affordable car rentals in Denver and Colorado with airport pickup, student savings, and price match review.",
+    )
+    logo_url = f"{origin}/static/img/fairfares-glow-logo.png"
+    business_id = f"{origin}/#fairfares"
+    review_data = schema_feedback_summary()
+    business: dict[str, object] = {
+        "@type": ["LocalBusiness", "AutoRental"],
+        "@id": business_id,
+        "name": "FairFares",
+        "url": origin,
+        "image": logo_url,
+        "logo": logo_url,
+        "description": description,
+        "areaServed": [
+            {"@type": "State", "name": "Colorado"},
+            {"@type": "City", "name": "Denver"},
+            {"@type": "Airport", "name": "Denver International Airport"},
+        ],
+        "address": {
+            "@type": "PostalAddress",
+            "addressLocality": "Denver",
+            "addressRegion": "CO",
+            "addressCountry": "US",
+        },
+        "priceRange": "$$",
+        "sameAs": [
+            origin,
+        ],
+    }
+    business.update(review_data)
+    graph: list[dict[str, object]] = [
+        business,
+        {
+            "@type": "WebSite",
+            "@id": f"{origin}/#website",
+            "name": "FairFares",
+            "url": origin,
+            "publisher": {"@id": business_id},
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": f"{origin}/?q={{search_term_string}}",
+                "query-input": "required name=search_term_string",
+            },
+        },
+        {
+            "@type": "WebPage",
+            "@id": canonical,
+            "name": schema_page_name(title),
+            "url": canonical,
+            "description": description,
+            "isPartOf": {"@id": f"{origin}/#website"},
+            "about": {"@id": business_id},
+        },
+        {
+            "@type": "BreadcrumbList",
+            "itemListElement": schema_breadcrumb_items(canonical, title),
+        },
+    ]
+    if template_name == "index.html" and "FAQPage" not in html_text:
+        graph.append(
+            {
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": "Do you offer airport pickup?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Yes, FairFares offers convenient airport pickup for eligible rentals.",
+                        },
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Do you match competitor prices?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Yes. If you find a qualifying lower publicly available price from a major rental company, FairFares will match it and provide an additional 10% discount according to our terms.",
+                        },
+                    },
+                ],
+            }
+        )
+    schema = {"@context": "https://schema.org", "@graph": graph}
+    return f'  <script type="application/ld+json">{json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}</script>'
+
+
+def inject_structured_data(html_text: str, template_name: str) -> str:
+    if "fairfares-schema-graph" in html_text:
+        return html_text
+    schema_script = render_structured_data(template_name, html_text)
+    if not schema_script:
+        return html_text
+    schema_script = schema_script.replace("<script ", '<script id="fairfares-schema-graph" ', 1)
+    return re.sub(r"(</head>)", schema_script + "\n\\1", html_text, count=1, flags=re.IGNORECASE)
 
 
 def render_site_loader() -> str:
