@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630internallinks1"
+ASSET_VERSION = "20260701internalfooter1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -329,16 +329,6 @@ SEO_LANDING_PAGES = {
     },
 }
 BLOG_POST_BY_SLUG = {post["slug"]: post for post in BLOG_POSTS}
-INTERNAL_SITE_LINKS = (
-    ("Book cheap Denver rentals", "/"),
-    ("Denver Airport car rental", "/denver-airport-car-rental"),
-    ("Student rentals", "/student-car-rental-colorado"),
-    ("SUV rentals", "/suv-rental"),
-    ("Explorer road trips", "/explorer"),
-    ("Deals and price match", "/deals"),
-    ("FairFares FAQ", "/wiki"),
-    ("Rental guides", "/blog"),
-)
 OPENAI_READONLY_MCP_SERVER_URLS = {"https://developers.openai.com/mcp"}
 DRIVE_ROOT_ENV = "GOOGLE_DRIVE_ROOT_FOLDER_ID"
 DRIVE_SERVICE_ACCOUNT_ENV = "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
@@ -9762,17 +9752,68 @@ def render_template(template_name: str, **context: object) -> bytes:
 
 
 def render_internal_links() -> str:
-    links = "\n".join(
+    city_links = (
+        ("Denver, CO car rentals", "/car-rental-denver"),
+        ("Downtown Denver rentals", "/cheap-car-rental-downtown-denver"),
+        ("Colorado Springs rentals", "/cheap-car-rental-colorado"),
+        ("Student car rental Colorado", "/student-car-rental-colorado"),
+        ("SUV rental Denver", "/affordable-suv-rental-denver"),
+        ("Weekend car rental Colorado", "/weekend-car-rental-colorado"),
+        ("Colorado road trip rentals", "/colorado-road-trip-rental"),
+        ("Monthly car rental Colorado", "/monthly-car-rental"),
+    )
+    airport_links = (
+        ("Denver Airport car rental", "/denver-airport-car-rental"),
+        ("Cheap rentals near Denver Airport", "/cheap-car-rental-near-denver-airport"),
+        ("Airport pickup rental", "/denver-airport-car-rental"),
+        ("Rental cars Denver", "/car-rental-denver"),
+        ("Affordable car rental Colorado", "/cheap-car-rental-colorado"),
+        ("Explorer trip planner", "/explorer"),
+        ("Deals and price match", "/deals"),
+        ("Rental guides", "/blog"),
+    )
+    utility_links = (
+        ("Book", "/"),
+        ("Manage Booking", "/manage-booking"),
+        ("FAQ", "/wiki"),
+        ("Support", "/manage-booking#support"),
+        ("Explorer", "/explorer"),
+    )
+    city_html = "\n".join(
         f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
-        for label, url in INTERNAL_SITE_LINKS
+        for label, url in city_links
+    )
+    airport_html = "\n".join(
+        f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
+        for label, url in airport_links
+    )
+    utility_html = "\n".join(
+        f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
+        for label, url in utility_links
     )
     return f"""
     <section class="internal-link-network" aria-label="Explore FairFares">
-      <div>
-        <span class="ad-kicker">Explore FairFares</span>
-        <h2>More ways to rent, save, and plan your Colorado trip.</h2>
+      <div class="internal-link-main">
+        <div class="internal-link-heading">
+          <span>Explore FairFares</span>
+          <h2>Popular car rental locations</h2>
+        </div>
+        <div class="internal-link-directory">
+          <div class="internal-link-tabs" aria-label="Popular rental categories">
+            <span>Cities</span>
+            <span>Airports</span>
+          </div>
+          <div class="internal-link-columns">
+            <nav aria-label="Popular city rental links">{city_html}</nav>
+            <nav aria-label="Popular airport and travel rental links">{airport_html}</nav>
+          </div>
+        </div>
       </div>
-      <nav>{links}</nav>
+      <div class="internal-link-utility">
+        <strong>FairFares</strong>
+        <nav aria-label="FairFares quick links">{utility_html}</nav>
+        <span>Price Match Guarantee + 10% off eligible lower quotes.</span>
+      </div>
     </section>
     """.strip()
 
