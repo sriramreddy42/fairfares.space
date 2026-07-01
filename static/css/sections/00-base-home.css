@@ -1056,9 +1056,13 @@ input:focus, select:focus, textarea:focus {
   margin-left: auto;
 }
 .login-screen > .internal-link-network,
-.auth-page .internal-link-network {
+.auth-page .internal-link-network,
+.manage-screen > .internal-link-network {
   margin: 18px auto;
   max-width: min(1120px, calc(100% - 32px));
+}
+.manage-screen > .internal-link-network {
+  margin-top: 36px;
 }
 @media (max-width: 760px) {
   .internal-link-network {
