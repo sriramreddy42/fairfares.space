@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630longtail1"
+ASSET_VERSION = "20260630imageseo1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -145,8 +145,8 @@ BLOG_POSTS = [
         "video_title": "Planning longer Colorado rentals with FairFares",
         "video_summary": "See how longer trips connect date selection, pickup balance, documents, and Colorado routes.",
         "gallery": [
-            ("/static/img/car-honda-civic.png", "Sedan rental option"),
-            ("/static/img/car-hyundai-kona.png", "Efficient Colorado rental option"),
+            ("/static/img/honda-civic-denver-rental.png", "Honda Civic sedan rental available in Denver, Colorado"),
+            ("/static/img/hyundai-kona-denver-suv-rental.png", "Hyundai Kona SUV rental available in Denver, Colorado"),
             ("/static/img/hero-road.png", "Colorado long-term route planning"),
         ],
         "intro": "Longer rentals need clearer math because a small daily difference can become meaningful over several weeks.",
@@ -4129,16 +4129,16 @@ def init_db() -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/car-toyota-corolla.png", "AVAILABLE", 1),
-                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/car-nissan-sentra.png", "AVAILABLE", 2),
-                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/car-hyundai-kona.png", "AVAILABLE", 3),
-                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/car-honda-civic.png", "AVAILABLE", 4),
+                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-denver-rental.png", "AVAILABLE", 1),
+                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-denver-rental.png", "AVAILABLE", 2),
+                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-denver-suv-rental.png", "AVAILABLE", 3),
+                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-denver-rental.png", "AVAILABLE", 4),
                 ],
             )
-        con.execute("UPDATE cars SET image_url = '/static/img/car-toyota-corolla.png' WHERE name = 'Toyota Corolla' AND image_url = ''")
-        con.execute("UPDATE cars SET image_url = '/static/img/car-nissan-sentra.png' WHERE name = 'Nissan Sentra' AND image_url = ''")
-        con.execute("UPDATE cars SET image_url = '/static/img/car-hyundai-kona.png' WHERE name = 'Hyundai Kona' AND image_url = ''")
-        con.execute("UPDATE cars SET image_url = '/static/img/car-honda-civic.png' WHERE name = 'Honda Civic' AND image_url = ''")
+        con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-denver-rental.png' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-denver-rental.png' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/hyundai-kona-denver-suv-rental.png' WHERE name = 'Hyundai Kona' AND image_url IN ('', '/static/img/car-hyundai-kona.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/honda-civic-denver-rental.png' WHERE name = 'Honda Civic' AND image_url IN ('', '/static/img/car-honda-civic.png')")
         con.executescript(
             """
             UPDATE cars SET brand = 'Toyota', model = 'Corolla', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
@@ -7780,10 +7780,17 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
             "price": f"{format_money(breakdown['total'])} total",
         }
         details_json = escape(json.dumps(details))
+        image_alt = vehicle_image_alt(
+            {
+                "car_name": booking["car_name"],
+                "category": row_value(booking, "category"),
+                "pickup_location": booking["pickup_location"],
+            }
+        )
         rows.append(
             f"""
             <button class="mini-trip" type="button" data-trip-type="{escape(trip_type)}" data-trip-details="{details_json}">
-              {'<img src="' + escape(details["image"]) + '" alt="' + escape(booking["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
+              {'<img src="' + escape(details["image"]) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(booking["car_name"])}<br><small>{escape(booking["pickup_date"])} - {escape(booking["dropoff_date"])} · {escape(status)}</small></span>
               <b>{escape(status_text)}</b>
             </button>
@@ -7804,10 +7811,17 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
             "price": f"${low}-${high}/day est.",
         }
         details_json = escape(json.dumps(details))
+        image_alt = vehicle_image_alt(
+            {
+                "car_name": saved["car_name"],
+                "category": row_value(saved, "category"),
+                "location": saved["pickup_location"] or saved["location"],
+            }
+        )
         rows.append(
             f"""
             <div class="mini-trip saved-mini-trip" role="button" tabindex="0" data-trip-type="favorites" data-trip-details="{details_json}">
-              {'<img src="' + escape(details["image"]) + '" alt="' + escape(saved["car_name"]) + '">' if details["image"] else '<div class="mini-car"></div>'}
+              {'<img src="' + escape(details["image"]) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(saved["car_name"])}<br><small>{escape(details["pickup"])} · Saved car</small></span>
               <button class="light-button mini-trip-remove" type="button" data-unsave-car-id="{saved["car_id"]}">Remove saved</button>
             </div>
@@ -9771,6 +9785,35 @@ def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def row_lookup(row: sqlite3.Row | dict[str, object] | None, key: str, default: object = "") -> object:
+    if row is None:
+        return default
+    if hasattr(row, "keys") and key in row.keys():
+        value = row[key]
+        return default if value is None else value
+    if isinstance(row, dict):
+        value = row.get(key, default)
+        return default if value is None else value
+    return default
+
+
+def vehicle_image_alt(row: sqlite3.Row | dict[str, object] | None) -> str:
+    name = str(row_lookup(row, "name") or row_lookup(row, "car_name") or "FairFares rental car").strip()
+    category = str(row_lookup(row, "category") or row_lookup(row, "type") or "").strip()
+    location = str(row_lookup(row, "location") or row_lookup(row, "pickup_location") or "").strip()
+    location_lower = location.lower()
+    if "denver" in location_lower or "(den)" in location_lower:
+        market = "Denver, Colorado"
+    elif "colorado" in location_lower:
+        market = location
+    else:
+        market = "Colorado"
+    descriptor = f"{name} rental"
+    if category and category.lower() not in name.lower():
+        descriptor = f"{name} {category.lower()} rental"
+    return f"{descriptor} available in {market}"
+
+
 def guest_offer_modal() -> str:
     return """
   <section class="guest-offer-backdrop" id="guestOfferModal" hidden>
@@ -10650,8 +10693,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_car_card(self, row: sqlite3.Row, saved_car_ids: set[int] | None = None) -> str:
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
+        image_alt = vehicle_image_alt(row)
         car_visual = (
-            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(row["name"])}">'
+            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(image_alt)}">'
             if row["image_url"]
             else '<div class="car-shape"></div>'
         )
@@ -12744,6 +12788,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_name=escape(row_value(car, "name")),
             car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
             car_image=escape(row_value(car, "image_url") or "/static/img/booking-confirmation-promise.png"),
+            car_image_alt=escape(vehicle_image_alt(car)),
             purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
             purchase_receipt=self.render_receipt_link(car),
             booking_count=escape(str(detail["booking_count"])),
