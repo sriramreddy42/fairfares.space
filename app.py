@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701seo-audit1"
+ASSET_VERSION = "20260701perf1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -10072,7 +10072,7 @@ def render_site_loader() -> str:
     return """
   <div class="site-loader" id="siteLoader" aria-hidden="true">
     <div class="site-loader-mark">
-      <img src="/static/img/fairfares-glow-logo.png" alt="FairFares">
+      <img src="/static/img/fairfares-glow-logo.png" alt="FairFares" width="653" height="193" decoding="async">
       <span></span>
     </div>
   </div>
@@ -10679,7 +10679,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         gallery_items = "\n".join(
             f"""
             <figure>
-              <img src="{escape(src)}?v={ASSET_VERSION}" alt="{escape(alt)}">
+              <img src="{escape(src)}?v={ASSET_VERSION}" alt="{escape(alt)}" loading="lazy" decoding="async">
               <figcaption>{escape(alt)}</figcaption>
             </figure>
             """
@@ -10993,7 +10993,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         image_alt = vehicle_image_alt(row)
         car_visual = (
-            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(image_alt)}">'
+            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(image_alt)}" width="520" height="320" loading="lazy" decoding="async">'
             if row["image_url"]
             else '<div class="car-shape"></div>'
         )
