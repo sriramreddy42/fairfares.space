@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260630blog1"
+ASSET_VERSION = "20260630blogmedia1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -72,6 +72,14 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Denver rentals",
         "hero": "Cheap car rental Denver",
+        "image": "/static/img/price-match-guarantee-poster.png",
+        "video_title": "How FairFares shows price match savings before pickup",
+        "video_summary": "A short FairFares overview for comparing Denver rental costs, price match savings, and booking confidence.",
+        "gallery": [
+            ("/static/img/hero-road.png", "Denver rental car route preview"),
+            ("/static/img/referral-deals-denver.jpeg", "Denver FairFares referral deal"),
+            ("/static/img/download-documents-poster.png", "Booking documents and receipts"),
+        ],
         "intro": "A low daily rate is only one part of a rental. The better question is what the full Denver trip costs before you pick up the keys.",
         "sections": [
             ("Start with the full trip window", "Compare rentals using the exact pickup date, return date, and pickup time. A ten-day rental and a fifteen-day rental should never be treated the same, because taxes, fees, and pickup balance change with the rental length."),
@@ -87,6 +95,14 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Airport pickup",
         "hero": "Denver Airport car rental",
+        "image": "/static/img/hero-road.png",
+        "video_title": "Airport pickup rental planning with FairFares",
+        "video_summary": "Watch how FairFares helps customers move from online booking to pickup-ready rental details.",
+        "gallery": [
+            ("/static/img/checkout-denver-bg.png", "Denver checkout and pickup view"),
+            ("/static/img/booking-confirmation-promise.png", "Booking confirmation promise"),
+            ("/static/img/policy-family-car.png", "Pickup and rental policy reminder"),
+        ],
         "intro": "Airport pickups are smoother when payment, license, insurance, and timing details are handled before the counter rush.",
         "sections": [
             ("Confirm arrival and pickup time", "Choose a pickup time that gives you room for baggage, rideshare movement, and airport delays. For Denver Airport car rental, a realistic pickup time protects both the customer and the rental team."),
@@ -102,6 +118,14 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Student rentals",
         "hero": "Student car rental",
+        "image": "/static/img/referral-follow-offer.png",
+        "video_title": "FairFares student rental and deal flow",
+        "video_summary": "A quick visual guide to student deals, referral savings, and rental documents.",
+        "gallery": [
+            ("/static/img/referral-deals-denver.jpeg", "Student referral deal"),
+            ("/static/img/fairfares-glow-logo.png", "FairFares student rental brand"),
+            ("/static/img/download-documents-poster.png", "Student rental documents"),
+        ],
         "intro": "Students need rental cars for more than vacations: internships, moves, airport pickups, campus visits, and weekend routes all count.",
         "sections": [
             ("Verify before the next booking", "Student discounts work best when the profile name and school email are ready before checkout. Verify the .edu email in the dashboard, then use eligible student codes on future bookings."),
@@ -117,6 +141,14 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Long-term rentals",
         "hero": "Long-term car rental Colorado",
+        "image": "/static/img/hero-road.png",
+        "video_title": "Planning longer Colorado rentals with FairFares",
+        "video_summary": "See how longer trips connect date selection, pickup balance, documents, and Colorado routes.",
+        "gallery": [
+            ("/static/img/car-honda-civic.png", "Sedan rental option"),
+            ("/static/img/car-hyundai-kona.png", "Efficient Colorado rental option"),
+            ("/static/img/hero-road.png", "Colorado long-term route planning"),
+        ],
         "intro": "Longer rentals need clearer math because a small daily difference can become meaningful over several weeks.",
         "sections": [
             ("Use exact rental dates", "Monthly car rental pricing depends on the full pickup and return range. Always compare vehicles using the actual dates instead of estimating from a daily rate alone."),
@@ -10168,6 +10200,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for other in BLOG_POSTS
             if other["slug"] != slug
         )
+        gallery_items = "\n".join(
+            f"""
+            <figure>
+              <img src="{escape(src)}?v={ASSET_VERSION}" alt="{escape(alt)}">
+              <figcaption>{escape(alt)}</figcaption>
+            </figure>
+            """
+            for src, alt in post.get("gallery", [])
+        )
+        commercial = get_active_commercial()
+        video_embed_url = row_value(commercial, "embed_url") or "https://www.youtube.com/embed/vMG_P78gAOE?rel=0&modestbranding=1"
         cta_label, cta_url = post["cta"]
         body = render_template(
             "blog_post.html",
@@ -10177,8 +10220,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             category=escape(post["category"]),
             date=escape(post["date"]),
             hero=escape(post["hero"]),
+            hero_image=escape(post.get("image") or "/static/img/hero-road.png"),
             intro=escape(post["intro"]),
             sections=sections,
+            video_title=escape(post.get("video_title") or "Related FairFares video"),
+            video_summary=escape(post.get("video_summary") or "Watch the FairFares booking flow and rental savings story."),
+            video_embed_url=escape(video_embed_url),
+            gallery_items=gallery_items,
             cta_label=escape(cta_label),
             cta_url=escape(cta_url),
             related_posts=related_posts,

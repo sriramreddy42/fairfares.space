@@ -161,6 +161,24 @@
     padding: 9px 14px !important;
   }
 
+  .blog-video-block {
+    gap: 12px !important;
+    grid-template-columns: 1fr !important;
+    padding: 14px !important;
+  }
+
+  .blog-gallery {
+    padding: 14px !important;
+  }
+
+  .blog-gallery div {
+    grid-template-columns: 1fr !important;
+  }
+
+  .blog-gallery img {
+    height: 170px !important;
+  }
+
   .blog-post-cta a {
     flex: 1 1 150px;
   }

@@ -47,13 +47,27 @@
       </header>
 
       <figure>
-        <img src="/static/img/hero-road.png?v=$asset_version" alt="$hero">
+        <img src="$hero_image?v=$asset_version" alt="$hero">
         <figcaption>$hero</figcaption>
       </figure>
+
+      <section class="blog-video-block">
+        <div>
+          <p class="eyebrow">Related video</p>
+          <h2>$video_title</h2>
+          <p>$video_summary</p>
+        </div>
+        <iframe src="$video_embed_url" title="$video_title" loading="lazy" allow="accelerometer; autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+      </section>
 
       <div class="blog-post-body">
         $sections
       </div>
+
+      <section class="blog-gallery" aria-label="Related FairFares pictures">
+        <h2>Related pictures</h2>
+        <div>$gallery_items</div>
+      </section>
 
       <div class="blog-post-cta">
         <a class="select-button" href="$cta_url">$cta_label</a>
