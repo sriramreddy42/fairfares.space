@@ -991,6 +991,11 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--red);
   color: var(--red);
 }
+.login-screen > .internal-link-network,
+.auth-page .internal-link-network {
+  margin: 18px auto;
+  max-width: min(1120px, calc(100% - 32px));
+}
 @media (max-width: 760px) {
   .internal-link-network {
     gap: 12px;
