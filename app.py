@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260702ledger2"
+ASSET_VERSION = "20260702ratesnav1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -4537,8 +4537,8 @@ def daily_price_range(price: object) -> tuple[int, int]:
 
 BOOKING_HOLD_RATE = 0.10
 DURATION_DISCOUNT_TIERS = (
-    (30, 0.25, "Monthly rate"),
-    (7, 0.12, "Weekly rate"),
+    (30, 0.30, "Monthly rate"),
+    (7, 0.15, "Weekly rate"),
 )
 
 

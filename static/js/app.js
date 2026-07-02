@@ -930,8 +930,8 @@ function moneyRange(low, high) {
 }
 
 function durationRateTier(days) {
-  if (days >= 30) return { rate: 0.25, label: "Monthly rate" };
-  if (days >= 7) return { rate: 0.12, label: "Weekly rate" };
+  if (days >= 30) return { rate: 0.30, label: "Monthly rate" };
+  if (days >= 7) return { rate: 0.15, label: "Weekly rate" };
   return { rate: 0, label: "Standard rate" };
 }
 

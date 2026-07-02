@@ -79,29 +79,38 @@
 
   body.public-header-compact .main-nav .nav-links,
   body.public-header-compact .main-nav .nav-actions {
-    gap: clamp(12px, 1.2vw, 20px) !important;
+    gap: clamp(8px, 0.85vw, 15px) !important;
   }
 
   body.public-header-compact .main-nav .nav-links a {
-    font-size: 0.9rem !important;
+    font-size: clamp(0.76rem, 0.92vw, 0.88rem) !important;
     line-height: 1 !important;
     white-space: nowrap !important;
   }
 
-  body.public-header-compact .main-nav .nav-links a[href="/blog"],
-  body.public-header-compact .main-nav .nav-links a[href="/wiki"],
-  body.public-header-compact .main-nav .nav-links a[href="/about"],
-  body.public-header-compact .main-nav .nav-links a[href="/contact"] {
-    display: none !important;
-  }
-
   body.public-header-compact .main-nav .nav-actions {
-    font-size: 0.9rem !important;
+    font-size: 0.82rem !important;
     white-space: nowrap !important;
   }
 
   body.public-header-compact .main-nav .nav-actions .user-chip {
-    max-width: 240px !important;
+    background: transparent !important;
+    border: 0 !important;
+    display: inline-flex !important;
+    max-width: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    width: 42px !important;
+  }
+
+  body.public-header-compact .main-nav .nav-actions .user-chip b,
+  body.public-header-compact .main-nav .nav-actions .user-chip small {
+    display: none !important;
+  }
+
+  body.public-header-compact .main-nav .nav-actions .user-chip span {
+    height: 34px !important;
+    width: 34px !important;
   }
 
   body.public-header-compact .main-nav .nav-links a,

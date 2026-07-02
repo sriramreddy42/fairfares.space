@@ -80,19 +80,19 @@ class BookingHoldTest(unittest.TestCase):
         breakdown = app.rental_price_breakdown(100, 7, 0)
 
         self.assertAlmostEqual(float(breakdown["standard_base"]), 700.0)
-        self.assertAlmostEqual(float(breakdown["duration_discount_amount"]), 84.0)
-        self.assertAlmostEqual(float(breakdown["base"]), 616.0)
+        self.assertAlmostEqual(float(breakdown["duration_discount_amount"]), 105.0)
+        self.assertAlmostEqual(float(breakdown["base"]), 595.0)
         self.assertEqual(breakdown["duration_discount_label"], "Weekly rate")
-        self.assertAlmostEqual(float(breakdown["effective_daily"]), 88.0)
+        self.assertAlmostEqual(float(breakdown["effective_daily"]), 85.0)
 
     def test_monthly_duration_rate_lowers_effective_daily_price(self):
         breakdown = app.rental_price_breakdown(100, 30, 0)
 
         self.assertAlmostEqual(float(breakdown["standard_base"]), 3000.0)
-        self.assertAlmostEqual(float(breakdown["duration_discount_amount"]), 750.0)
-        self.assertAlmostEqual(float(breakdown["base"]), 2250.0)
+        self.assertAlmostEqual(float(breakdown["duration_discount_amount"]), 900.0)
+        self.assertAlmostEqual(float(breakdown["base"]), 2100.0)
         self.assertEqual(breakdown["duration_discount_label"], "Monthly rate")
-        self.assertAlmostEqual(float(breakdown["effective_daily"]), 75.0)
+        self.assertAlmostEqual(float(breakdown["effective_daily"]), 70.0)
 
     def test_tax_fee_breakdown_html_lists_calculated_lines(self):
         breakdown = app.rental_price_breakdown(49.99, 4, 0)
