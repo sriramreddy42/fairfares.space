@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260702compactheader2"
+ASSET_VERSION = "20260702ledger2"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -4734,8 +4734,8 @@ def duration_discount_breakdown_html(breakdown: dict[str, object]) -> str:
     label = str(breakdown.get("duration_discount_label") or "Duration rate")
     rate = float(breakdown.get("duration_discount_rate") or 0)
     return (
-        f'<span class="is-discount"><b>-{escape(format_money(amount))}</b>'
-        f'{escape(label)} savings ({rate:.0%} lower effective daily rate)</span>'
+        f'<span class="is-discount duration-discount-row"><b>-{escape(format_money(amount))}</b>'
+        f'<span>{escape(label)} savings<small>{rate:.0%} lower effective daily rate</small></span></span>'
     )
 
 
@@ -4746,7 +4746,7 @@ def rental_subtotal_breakdown_html(breakdown: dict[str, object]) -> str:
     return (
         f'<span><b>{escape(format_money(breakdown["standard_base"]))}</b>Standard rental subtotal</span>'
         f'{duration_line}'
-        f'<span><b>{escape(format_money(breakdown["base"]))}</b>Rental subtotal after duration rate</span>'
+        f'<span class="duration-subtotal-row"><b>{escape(format_money(breakdown["base"]))}</b><span>Discounted rental subtotal</span></span>'
     )
 
 

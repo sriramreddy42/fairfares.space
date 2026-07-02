@@ -1803,4 +1803,31 @@
     overflow-wrap: normal !important;
     white-space: nowrap !important;
   }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > .duration-discount-row,
+  .manage-screen.manage-checkout-screen .price-breakdown-summary > .duration-discount-row,
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > .duration-subtotal-row,
+  .manage-screen.manage-checkout-screen .price-breakdown-summary > .duration-subtotal-row {
+    align-items: center !important;
+    display: grid !important;
+    gap: 14px !important;
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+  }
+
+  .manage-screen.manage-checkout-screen .duration-discount-row > span,
+  .manage-screen.manage-checkout-screen .duration-subtotal-row > span {
+    display: grid !important;
+    gap: 2px !important;
+    line-height: 1.15 !important;
+    min-width: 0 !important;
+    text-align: right !important;
+  }
+
+  .manage-screen.manage-checkout-screen .duration-discount-row small {
+    color: #5f6675 !important;
+    display: block !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    line-height: 1.15 !important;
+  }
 }
