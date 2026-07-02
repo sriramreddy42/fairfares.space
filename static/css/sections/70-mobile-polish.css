@@ -1695,3 +1695,29 @@
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
+
+@media (max-width: 860px) {
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown,
+  .manage-screen.manage-checkout-screen .price-breakdown-summary {
+    grid-template-columns: 1fr !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span,
+  .manage-screen.manage-checkout-screen .price-breakdown-summary > span {
+    align-items: start !important;
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    overflow: visible !important;
+    overflow-wrap: normal !important;
+    padding: 8px 6px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .booking-hold-breakdown > span > b,
+  .manage-screen.manage-checkout-screen .price-breakdown-summary > span > b {
+    font-size: 0.94rem !important;
+    line-height: 1.15 !important;
+    overflow-wrap: normal !important;
+    white-space: nowrap !important;
+  }
+}
