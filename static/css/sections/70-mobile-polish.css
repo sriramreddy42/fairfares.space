@@ -122,13 +122,13 @@
     grid-template-columns: 1fr !important;
   }
 
-  .about-value-strip {
+  .value-strip {
     gap: 28px !important;
     grid-template-columns: 1fr !important;
     padding: 32px 16px !important;
   }
 
-  .about-value-icon {
+  .value-strip-icon {
     height: 46px !important;
     width: 46px !important;
   }

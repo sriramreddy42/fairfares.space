@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701aboutvalues1"
+ASSET_VERSION = "20260701valuestrip1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9860,6 +9860,42 @@ def render_internal_links() -> str:
     """.strip()
 
 
+VALUE_STRIP_ICONS = {
+    "pin": '<svg viewBox="0 0 24 24" role="img"><path d="M12 21s7-6.1 7-12A7 7 0 0 0 5 9c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+    "calendar": '<svg viewBox="0 0 24 24" role="img"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h2M12 14h2M16 14h2M8 17h2M12 17h2"/></svg>',
+    "thumb": '<svg viewBox="0 0 24 24" role="img"><path d="M7 21H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3v11ZM7 11l4.5-7.5A2 2 0 0 1 15.2 5v4h3.7a2 2 0 0 1 2 2.4l-1.4 7A3 3 0 0 1 16.6 21H7V11Z"/></svg>',
+    "car": '<svg viewBox="0 0 24 24" role="img"><path d="M5 16h14l-1.6-5.2A3 3 0 0 0 14.5 9h-5a3 3 0 0 0-2.9 1.8L5 16Z"/><path d="M4 16v3M20 16v3M7 19h.01M17 19h.01M7 13h10"/></svg>',
+    "route": '<svg viewBox="0 0 24 24" role="img"><path d="M5 19c3-7 11-7 14-14"/><path d="M6 5h.01M18 19h.01"/><path d="M8 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM20 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"/></svg>',
+    "student": '<svg viewBox="0 0 24 24" role="img"><path d="M3 8 12 4l9 4-9 4-9-4Z"/><path d="M7 10v5c2.7 2 7.3 2 10 0v-5M21 8v6"/></svg>',
+    "shield": '<svg viewBox="0 0 24 24" role="img"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg>',
+    "document": '<svg viewBox="0 0 24 24" role="img"><path d="M7 3h7l4 4v14H7V3Z"/><path d="M14 3v5h5M9 12h6M9 16h6"/></svg>',
+}
+
+
+def value_strip_icon_key(title: str) -> str:
+    label = title.lower()
+    if any(word in label for word in ("airport", "pickup", "denver", "local", "coverage")):
+        return "pin"
+    if any(word in label for word in ("timing", "window", "reserve", "longer", "monthly", "weekend")):
+        return "calendar"
+    if any(word in label for word in ("price", "match", "discount", "saving", "rate", "clear", "transparent")):
+        return "thumb"
+    if any(word in label for word in ("student", "school", ".edu")):
+        return "student"
+    if any(word in label for word in ("document", "checkout", "secure", "hold")):
+        return "document"
+    if any(word in label for word in ("road", "trip", "route", "explorer", "colorado")):
+        return "route"
+    if any(word in label for word in ("support", "review", "guarantee")):
+        return "shield"
+    return "car"
+
+
+def render_value_strip_icon(title: str) -> str:
+    icon = VALUE_STRIP_ICONS.get(value_strip_icon_key(title), VALUE_STRIP_ICONS["car"])
+    return f'<span class="value-strip-icon" aria-hidden="true">{icon}</span>'
+
+
 GOOGLE_TAG_ID = "G-T1Z9NDENEQ"
 GOOGLE_TAG_HTML = f"""
   <!-- Google tag (gtag.js) -->
@@ -10650,6 +10686,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         feature_cards = "\n".join(
             f"""
             <article>
+              {render_value_strip_icon(title)}
               <h2>{escape(title)}</h2>
               <p>{escape(copy)}</p>
             </article>
