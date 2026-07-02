@@ -1011,7 +1011,7 @@ function updateRentalRanges() {
         const savings = daily * days * durationTier.rate;
         durationNote.textContent = `${durationTier.label}: save about $${savings.toFixed(2)} vs daily pricing.`;
       } else {
-        durationNote.textContent = "Standard daily rate";
+        durationNote.textContent = "";
       }
     }
   });
