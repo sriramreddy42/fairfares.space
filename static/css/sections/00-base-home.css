@@ -1012,6 +1012,51 @@ input:focus, select:focus, textarea:focus {
   font-size: 1.2rem;
   margin: 0 0 8px;
 }
+.about-value-strip {
+  background: #fff;
+  display: grid;
+  gap: clamp(24px, 4vw, 56px);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: clamp(40px, 6vw, 76px) clamp(20px, 4vw, 56px);
+}
+.about-value-strip article {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  text-align: center;
+}
+.about-value-icon {
+  align-items: center;
+  color: #1d3154;
+  display: inline-flex;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+.about-value-icon svg {
+  display: block;
+  fill: none;
+  height: 100%;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  width: 100%;
+}
+.about-value-strip h2 {
+  color: #1d3154;
+  font-size: clamp(1.35rem, 2.4vw, 2rem);
+  line-height: 1.12;
+  margin: 0;
+}
+.about-value-strip p {
+  color: #6f7176;
+  font-size: clamp(1rem, 1.3vw, 1.16rem);
+  font-weight: 500;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 360px;
+}
 .contact-map-card {
   display: grid;
   gap: 16px;

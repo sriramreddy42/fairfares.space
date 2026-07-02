@@ -122,6 +122,17 @@
     grid-template-columns: 1fr !important;
   }
 
+  .about-value-strip {
+    gap: 28px !important;
+    grid-template-columns: 1fr !important;
+    padding: 32px 16px !important;
+  }
+
+  .about-value-icon {
+    height: 46px !important;
+    width: 46px !important;
+  }
+
   .seo-landing-copy,
   .seo-feature-grid article,
   .contact-map-card,
