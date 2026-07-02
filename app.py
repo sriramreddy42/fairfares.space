@@ -16798,7 +16798,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
             full_paid = bool(row_value(booking, "payment_status") == "PAID")
             hold_remaining = booking_hold_remaining_label(booking)
-            full_payment_due_now = float(active_breakdown["total"]) if full_paid else full_payment_total(active_breakdown["total"])
             active_discount_amount = float(active_breakdown["discount_amount"] or 0)
             active_discount_code = row_value(booking, "discount_code") if booking else ""
             discount_summary = (
@@ -16848,8 +16847,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>
                         <span><b id="holdAmountLabel">{escape(format_money(active_breakdown["booking_hold"]))}</b>Due now</span>
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
-                        <span class="is-discount"><b>-{escape(format_money(FULL_PAYMENT_DISCOUNT_AMOUNT))}</b>Pay-in-full savings</span>
-                        <span><b>{escape(format_money(full_payment_due_now))}</b>Pay in full today</span>
                     </div>
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
                     {'<p class="payment-hold-paid">10% hold received. Your pickup balance is updated.</p>' if hold_paid else ''}
