@@ -126,6 +126,14 @@
   line-height: 1.42 !important;
 }
 
+.rental-estimate .whatsapp-deals-link span {
+  color: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
 @media (max-width: 900px) {
   .search-panel {
     gap: 16px !important;

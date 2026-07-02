@@ -626,6 +626,33 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
   line-height: 1.35;
 }
+.whatsapp-deals-link {
+  align-items: center;
+  color: #0b6f35;
+  display: inline-flex;
+  font-size: 0.92rem;
+  font-weight: 800;
+  gap: 8px;
+  margin-top: 4px;
+  text-decoration: none;
+  width: fit-content;
+}
+.whatsapp-deals-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.whatsapp-deals-link img {
+  display: block;
+  height: 22px;
+  width: 22px;
+}
+.rental-estimate .whatsapp-deals-link span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+}
 .homepage-faq {
   background: #fff;
   border: 1px solid var(--line);
