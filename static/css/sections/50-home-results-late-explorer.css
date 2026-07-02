@@ -408,19 +408,26 @@
 }
 
 .promo-brand-row {
-  gap: 16px !important;
-  grid-template-columns: 128px minmax(0, 1fr) !important;
+  align-items: center !important;
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: 1fr !important;
+  justify-items: center !important;
+  text-align: center !important;
 }
 
 .promo-brand-row img {
-  filter: drop-shadow(0 14px 22px rgba(7, 19, 56, 0.22)) !important;
-  width: 128px !important;
+  filter: drop-shadow(0 12px 22px rgba(7, 19, 56, 0.2)) !important;
+  height: auto !important;
+  max-width: 230px !important;
+  width: min(82%, 230px) !important;
 }
 
 .promo-brand-row span {
   color: #ed001c !important;
-  font-size: 0.84rem !important;
-  letter-spacing: 0.1em !important;
+  font-size: 0.78rem !important;
+  letter-spacing: 0.16em !important;
+  line-height: 1.25 !important;
 }
 
 .results-promo h2 {
@@ -463,11 +470,12 @@
 
 @media (max-width: 760px) {
   .promo-brand-row {
-    grid-template-columns: 112px minmax(0, 1fr) !important;
+    grid-template-columns: 1fr !important;
   }
 
   .promo-brand-row img {
-    width: 112px !important;
+    max-width: 210px !important;
+    width: min(76%, 210px) !important;
   }
 
   .results-promo h2 {
