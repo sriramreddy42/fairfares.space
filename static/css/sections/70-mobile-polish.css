@@ -36,11 +36,11 @@
 
   body.public-header-compact .top-brand {
     background: transparent !important;
-    grid-template-columns: 270px !important;
+    grid-template-columns: 210px !important;
     height: 58px !important;
     min-height: 58px !important;
     overflow: visible !important;
-    padding: 0 30px !important;
+    padding: 0 20px !important;
     pointer-events: none !important;
     z-index: 901 !important;
   }
@@ -51,12 +51,12 @@
     height: 58px !important;
     justify-content: flex-start !important;
     pointer-events: auto !important;
-    width: 250px !important;
+    width: 190px !important;
   }
 
   body.public-header-compact .top-brand .logo-lockup img {
-    max-height: 46px !important;
-    max-width: 230px !important;
+    max-height: 42px !important;
+    max-width: 180px !important;
   }
 
   body.public-header-compact .top-brand .top-benefits,
@@ -71,9 +71,37 @@
     border-bottom: 0 !important;
     color: #fff !important;
     min-height: 58px !important;
-    padding-left: 300px !important;
+    padding-left: 222px !important;
+    padding-right: 18px !important;
     top: 0 !important;
     z-index: 900 !important;
+  }
+
+  body.public-header-compact .main-nav .nav-links,
+  body.public-header-compact .main-nav .nav-actions {
+    gap: clamp(12px, 1.2vw, 20px) !important;
+  }
+
+  body.public-header-compact .main-nav .nav-links a {
+    font-size: 0.9rem !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+  }
+
+  body.public-header-compact .main-nav .nav-links a[href="/blog"],
+  body.public-header-compact .main-nav .nav-links a[href="/wiki"],
+  body.public-header-compact .main-nav .nav-links a[href="/about"],
+  body.public-header-compact .main-nav .nav-links a[href="/contact"] {
+    display: none !important;
+  }
+
+  body.public-header-compact .main-nav .nav-actions {
+    font-size: 0.9rem !important;
+    white-space: nowrap !important;
+  }
+
+  body.public-header-compact .main-nav .nav-actions .user-chip {
+    max-width: 240px !important;
   }
 
   body.public-header-compact .main-nav .nav-links a,
