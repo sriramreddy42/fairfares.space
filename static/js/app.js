@@ -1029,7 +1029,8 @@ function updateCars() {
     const typeMatch = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
     const fuelMatch = selectedFuel.length === 0 || selectedFuel.includes(card.dataset.fuel);
     const cardLocations = cardLocationValues(card);
-    const locationMatch = !selectedLocation || cardLocations.includes(selectedLocation);
+    const selectedLocationKey = normalizeLocationKey(selectedLocation);
+    const locationMatch = !selectedLocationKey || cardLocations.some((location) => normalizeLocationKey(location) === selectedLocationKey);
     const availableAfter = parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime);
     const availabilityNote = card.querySelector("[data-availability-note]");
     const selectButton = card.querySelector(".select-button");
@@ -1075,6 +1076,15 @@ function cardLocationValues(card) {
     .split("|")
     .map((location) => location.trim())
     .filter(Boolean);
+}
+
+function normalizeLocationKey(location) {
+  return String(location || "")
+    .toLowerCase()
+    .replace(/&amp;/g, "&")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function selectedOrCardLocation(card) {

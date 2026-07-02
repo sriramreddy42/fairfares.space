@@ -1,4 +1,26 @@
 /* Final mobile system pass. Keep this file last so small-screen surfaces stay compact. */
+@media (min-width: 861px) {
+  body {
+    padding-top: 190px !important;
+  }
+
+  .top-brand {
+    left: 0 !important;
+    position: fixed !important;
+    right: 0 !important;
+    top: 0 !important;
+    z-index: 900 !important;
+  }
+
+  .main-nav {
+    left: 0 !important;
+    position: fixed !important;
+    right: 0 !important;
+    top: 122px !important;
+    z-index: 899 !important;
+  }
+}
+
 @media (max-width: 860px) {
   :root {
     --mobile-page-pad: 12px;

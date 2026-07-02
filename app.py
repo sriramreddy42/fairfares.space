@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701duration1"
+ASSET_VERSION = "20260702navlocations1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -11177,7 +11177,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <span class="price-range" data-price-range>${daily_low}-{daily_high}</span><span>/day</span>
                 <small class="duration-rate-note" data-duration-savings-note></small>
                 <small class="availability-note" data-availability-note></small>
-                <em>Daily rate comes from FairFares inventory. Taxes, fees, 10% hold, and pickup balance are shown before confirmation.</em>
                 <div class="card-actions-row">
                     <button class="light-button save-search-trip" type="button" data-car-id="{row["id"]}" data-save-car="{escape(row["name"])}" data-saved="{str(is_saved).lower()}">{save_label}</button>
                     <a class="select-button" href="/manage-booking?car_id={row["id"]}" rel="nofollow"><span>Select</span><span class="visually-hidden"> {escape(row["name"])}</span></a>
