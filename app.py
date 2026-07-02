@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701navicons1"
+ASSET_VERSION = "20260701duration1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -4536,10 +4536,35 @@ def daily_price_range(price: object) -> tuple[int, int]:
 
 
 BOOKING_HOLD_RATE = 0.10
+DURATION_DISCOUNT_TIERS = (
+    (30, 0.25, "Monthly rate"),
+    (7, 0.12, "Weekly rate"),
+)
 
 
 def full_payment_total(total: object) -> float:
     return round(max(0.0, float(total or 0) - FULL_PAYMENT_DISCOUNT_AMOUNT), 2)
+
+
+def duration_discount_for_days(days: object) -> dict[str, object]:
+    rental_days = max(1, min(int(float(days or 1)), 366))
+    for minimum_days, rate, label in DURATION_DISCOUNT_TIERS:
+        if rental_days >= minimum_days:
+            return {"rate": rate, "label": label, "days": rental_days}
+    return {"rate": 0.0, "label": "Standard rate", "days": rental_days}
+
+
+def duration_savings_label(daily_price: object, days: object) -> str:
+    tier = duration_discount_for_days(days)
+    rate = float(tier["rate"] or 0)
+    rental_days = int(tier["days"] or 1)
+    if rate <= 0:
+        return "Daily rate applies for 1-6 day rentals."
+    standard_base = round(float(daily_price or 0) * rental_days, 2)
+    savings = round(standard_base * rate, 2)
+    return f"{tier['label']} applied: save {format_money(savings)} vs standard daily pricing."
+
+
 MARKET_COMPARISON_RATE = 0.12
 DEFAULT_TAX_FEE_RULES = (
     {"label": "CO road safety fee", "rule_type": "DAILY", "value": 2.44, "sort_order": 10},
@@ -4633,7 +4658,12 @@ def post_return_fee_rule_summary() -> str:
 def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
     rental_days = max(1, min(int(float(days or 1)), 366))
     daily = round(float(daily_price or 0), 2)
-    base = round(daily * rental_days, 2)
+    standard_base = round(daily * rental_days, 2)
+    duration_tier = duration_discount_for_days(rental_days)
+    duration_discount_rate = float(duration_tier["rate"] or 0)
+    duration_discount_amount = round(standard_base * duration_discount_rate, 2)
+    base = round(max(0.0, standard_base - duration_discount_amount), 2)
+    effective_daily = round(base / rental_days, 2) if rental_days else daily
     tax_fee_lines = []
     for rule in get_active_tax_fee_rules():
         label = str(tax_fee_rule_value(rule, "label", "Tax or fee")).strip() or "Tax or fee"
@@ -4656,10 +4686,15 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
     savings = round(max(0.0, market_total - total + discount), 2)
     return {
         "daily": daily,
+        "effective_daily": effective_daily,
         "days": rental_days,
         "weeks": rental_days // 7,
         "extra_days": rental_days % 7,
+        "standard_base": standard_base,
         "base": base,
+        "duration_discount_rate": duration_discount_rate,
+        "duration_discount_label": duration_tier["label"],
+        "duration_discount_amount": duration_discount_amount,
         "tax_fee_amount": tax_fee_amount,
         "tax_fee_lines": tax_fee_lines,
         "discount_amount": discount,
@@ -4690,6 +4725,29 @@ def tax_fee_breakdown_html(breakdown: dict[str, object], label: str = "Taxes & f
             </span>
         </span>
     """
+
+
+def duration_discount_breakdown_html(breakdown: dict[str, object]) -> str:
+    amount = float(breakdown.get("duration_discount_amount") or 0)
+    if amount <= 0:
+        return ""
+    label = str(breakdown.get("duration_discount_label") or "Duration rate")
+    rate = float(breakdown.get("duration_discount_rate") or 0)
+    return (
+        f'<span class="is-discount"><b>-{escape(format_money(amount))}</b>'
+        f'{escape(label)} savings ({rate:.0%} lower effective daily rate)</span>'
+    )
+
+
+def rental_subtotal_breakdown_html(breakdown: dict[str, object]) -> str:
+    duration_line = duration_discount_breakdown_html(breakdown)
+    if not duration_line:
+        return f'<span><b>{escape(format_money(breakdown["base"]))}</b>Rental subtotal</span>'
+    return (
+        f'<span><b>{escape(format_money(breakdown["standard_base"]))}</b>Standard rental subtotal</span>'
+        f'{duration_line}'
+        f'<span><b>{escape(format_money(breakdown["base"]))}</b>Rental subtotal after duration rate</span>'
+    )
 
 
 def expire_stale_booking_holds() -> None:
@@ -8614,9 +8672,9 @@ def create_booking_for_user(
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
             booking_id = make_booking_id()
         discount = get_valid_discount(discount_code)
-        subtotal = round(float(car["daily_price"]) * rental_days, 2)
         discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
         price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+        subtotal = float(price_breakdown["base"])
         final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
         default_location = primary_inventory_location(car["location"])
@@ -9225,6 +9283,9 @@ def booking_savings_label(row: sqlite3.Row | dict[str, object] | None) -> str:
     if discount_amount > 0:
         code = row_value(row, "discount_code")
         return f"FairFares saved you {format_money(discount_amount)}{f' with {code}' if code else ''}."
+    duration_discount = float(breakdown.get("duration_discount_amount") or 0)
+    if duration_discount > 0:
+        return f"{breakdown['duration_discount_label']} saved you {format_money(duration_discount)} vs standard daily pricing."
     savings = float(breakdown["savings"] or 0)
     return f"Estimated FairFares savings: {format_money(savings)} (typically 10-25% vs major rental totals)."
 
@@ -11114,6 +11175,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </div>
             <div class="price-box">
                 <span class="price-range" data-price-range>${daily_low}-{daily_high}</span><span>/day</span>
+                <small class="duration-rate-note" data-duration-savings-note></small>
                 <small class="availability-note" data-availability-note></small>
                 <em>Daily rate comes from FairFares inventory. Taxes, fees, 10% hold, and pickup balance are shown before confirmation.</em>
                 <div class="card-actions-row">
@@ -16576,7 +16638,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking:
             price_breakdown_summary = f"""
               <div class="price-breakdown-summary">
-                <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
+                {rental_subtotal_breakdown_html(active_breakdown)}
                 {tax_fee_breakdown_html(active_breakdown)}
                 <span><b>{escape(format_money(active_breakdown["booking_hold"]))}</b>10% due now</span>
                 <span><b>{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
@@ -16777,7 +16839,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">
-                        <span><b>{escape(format_money(active_breakdown["base"]))}</b>Rental subtotal</span>
+                        {rental_subtotal_breakdown_html(active_breakdown)}
                         {tax_fee_breakdown_html(active_breakdown)}
                         {discount_summary}
                         <span><b>{escape(format_money(active_breakdown["total"]))}</b>Total estimate</span>

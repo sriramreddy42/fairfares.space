@@ -929,6 +929,12 @@ function moneyRange(low, high) {
   return `$${Math.round(low)}-${Math.round(high)}`;
 }
 
+function durationRateTier(days) {
+  if (days >= 30) return { rate: 0.25, label: "Monthly rate" };
+  if (days >= 7) return { rate: 0.12, label: "Weekly rate" };
+  return { rate: 0, label: "Standard rate" };
+}
+
 function getRentalDays() {
   if (!pickupDate?.value || !returnDate?.value) return 10;
   const pickup = new Date(`${pickupDate.value}T00:00:00`);
@@ -978,21 +984,36 @@ function rentalLengthText(days) {
 function updateRentalRanges() {
   clampRentalDateInputs();
   const days = getRentalDays();
+  const durationTier = durationRateTier(days);
   if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
   if (quoteMatchLabel) {
-    quoteMatchLabel.textContent = "Found a lower comparable price for rental cars in Denver or Colorado? FairFares will match it and add 10% off after review.";
+    if (durationTier.rate > 0) {
+      quoteMatchLabel.textContent = `${durationTier.label} selected. Each car shows estimated savings versus standard daily pricing.`;
+    } else {
+      quoteMatchLabel.textContent = "Found a lower comparable price for rental cars in Denver or Colorado? FairFares will match it and add 10% off after review.";
+    }
   }
   document.querySelectorAll(".car-card").forEach((card) => {
     const daily = Number(card.dataset.price || 0);
-    const average = Math.round(daily);
+    const effectiveDaily = daily * (1 - durationTier.rate);
+    const average = Math.round(effectiveDaily);
     const serverLow = Number(card.dataset.priceLow || 0);
     const serverHigh = Number(card.dataset.priceHigh || 0);
     const fallbackLow = Math.max(25, average - 5);
     const fallbackHigh = Math.max(fallbackLow, average + 5);
-    const dailyLow = serverLow > 0 ? serverLow : fallbackLow;
-    const dailyHigh = serverHigh > 0 ? Math.max(dailyLow, serverHigh) : fallbackHigh;
+    const dailyLow = serverLow > 0 ? Math.max(25, Math.round(serverLow * (1 - durationTier.rate))) : fallbackLow;
+    const dailyHigh = serverHigh > 0 ? Math.max(dailyLow, Math.round(serverHigh * (1 - durationTier.rate))) : fallbackHigh;
     const dailyTarget = card.querySelector("[data-price-range]");
     if (dailyTarget) dailyTarget.textContent = moneyRange(dailyLow, dailyHigh);
+    const durationNote = card.querySelector("[data-duration-savings-note]");
+    if (durationNote) {
+      if (durationTier.rate > 0 && days > 0) {
+        const savings = daily * days * durationTier.rate;
+        durationNote.textContent = `${durationTier.label}: save about $${savings.toFixed(2)} vs daily pricing.`;
+      } else {
+        durationNote.textContent = "Standard daily rate";
+      }
+    }
   });
 }
 

@@ -126,6 +126,28 @@ input, select, textarea, button {
   position: relative;
   z-index: 10;
 }
+@media (min-width: 861px) {
+  body {
+    padding-top: 190px;
+  }
+
+  .top-brand {
+    left: 0;
+    min-height: 122px;
+    position: fixed;
+    right: 0;
+    top: 0;
+    z-index: 80;
+  }
+
+  .main-nav {
+    left: 0;
+    position: fixed;
+    right: 0;
+    top: 122px;
+    z-index: 79;
+  }
+}
 .top-brand .logo-lockup,
 .top-brand .top-benefits {
   position: relative;
@@ -1614,6 +1636,13 @@ legend { font-size: 0.86rem; font-weight: 700; text-transform: uppercase; }
 }
 .price-box .price-range { color: var(--red); font-size: 1.9rem; font-weight: 800; }
 .price-box small { color: #111; }
+.price-box .duration-rate-note {
+  color: #0b6f35;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.25;
+  max-width: 240px;
+}
 .price-box .availability-note {
   color: #0b6f35;
   font-weight: 700;
