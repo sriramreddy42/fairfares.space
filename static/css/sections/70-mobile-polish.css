@@ -1840,3 +1840,51 @@
     line-height: 1.15 !important;
   }
 }
+
+.booking-hold-breakdown > .price-line,
+.price-breakdown-summary > .price-line {
+  align-items: center !important;
+  display: grid !important;
+  gap: 16px !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+}
+
+.booking-hold-breakdown > .price-line .price-line-amount,
+.price-breakdown-summary > .price-line .price-line-amount {
+  color: #07143f !important;
+  font-size: 0.95rem !important;
+  font-weight: 850 !important;
+  line-height: 1.1 !important;
+  white-space: nowrap !important;
+}
+
+.booking-hold-breakdown > .price-line.is-discount .price-line-amount,
+.price-breakdown-summary > .price-line.is-discount .price-line-amount {
+  color: #167a3a !important;
+}
+
+.booking-hold-breakdown > .price-line .price-line-label,
+.price-breakdown-summary > .price-line .price-line-label {
+  display: grid !important;
+  gap: 2px !important;
+  line-height: 1.15 !important;
+  min-width: 0 !important;
+  text-align: right !important;
+}
+
+.booking-hold-breakdown > .price-line .price-line-label small,
+.price-breakdown-summary > .price-line .price-line-label small {
+  color: #5f6675 !important;
+  display: block !important;
+  font-size: 0.72rem !important;
+  font-weight: 800 !important;
+  line-height: 1.15 !important;
+}
+
+@media (max-width: 860px) {
+  .booking-hold-breakdown > .price-line,
+  .price-breakdown-summary > .price-line {
+    gap: 14px !important;
+    padding: 8px 6px !important;
+  }
+}
