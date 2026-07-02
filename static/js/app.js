@@ -1007,10 +1007,7 @@ function updateCars() {
   cards.forEach((card) => {
     const typeMatch = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
     const fuelMatch = selectedFuel.length === 0 || selectedFuel.includes(card.dataset.fuel);
-    const cardLocations = (card.dataset.locations || card.dataset.location || "")
-      .split("|")
-      .map((location) => location.trim())
-      .filter(Boolean);
+    const cardLocations = cardLocationValues(card);
     const locationMatch = !selectedLocation || cardLocations.includes(selectedLocation);
     const availableAfter = parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime);
     const availabilityNote = card.querySelector("[data-availability-note]");
@@ -1050,6 +1047,17 @@ function updateCars() {
         : "No cars are currently available in inventory. Please check back soon or contact support.";
     }
   }
+}
+
+function cardLocationValues(card) {
+  return (card?.dataset.locations || card?.dataset.location || "")
+    .split("|")
+    .map((location) => location.trim())
+    .filter(Boolean);
+}
+
+function selectedOrCardLocation(card) {
+  return locationSelect?.value || cardLocationValues(card)[0] || "";
 }
 
 typeFilters.forEach((input) => input.addEventListener("change", updateCars));
@@ -1129,8 +1137,9 @@ document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").for
       ? card.dataset.bookedUntilTime
       : pickupTime?.value;
     url.searchParams.set("days", String(getRentalDays()));
-    if (locationSelect?.value) url.searchParams.set("pickup_location", locationSelect.value);
-    if (locationSelect?.value) url.searchParams.set("return_location", locationSelect.value);
+    const selectedLocation = selectedOrCardLocation(card);
+    if (selectedLocation) url.searchParams.set("pickup_location", selectedLocation);
+    if (selectedLocation) url.searchParams.set("return_location", selectedLocation);
     if (pickupDate?.value) url.searchParams.set("pickup_date", pickupDate.value);
     if (returnDate?.value) url.searchParams.set("return_date", returnDate.value);
     if (adjustedPickupTime) url.searchParams.set("pickup_time", adjustedPickupTime);
@@ -2725,7 +2734,7 @@ document.addEventListener("click", (event) => {
   const card = saveButton.closest(".car-card");
   const payload = new URLSearchParams();
   payload.set("car_id", saveButton.dataset.carId || "");
-  payload.set("pickup_location", locationSelect?.value || card?.dataset.location || "");
+  payload.set("pickup_location", selectedOrCardLocation(card));
   payload.set("pickup_date", pickupDate?.value || "");
   payload.set("pickup_time", pickupTime?.value || "");
   payload.set("return_date", returnDate?.value || "");

@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701valuestrip1"
+ASSET_VERSION = "20260701locations1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -4334,7 +4334,15 @@ def get_cars() -> list[sqlite3.Row]:
 
 def split_inventory_locations(value: object) -> list[str]:
     raw = str(value or "")
-    parts = [part.strip() for part in re.split(r"[\n,;|]+", raw) if part.strip()]
+    primary_parts = [part.strip() for part in re.split(r"[\n;|]+", raw) if part.strip()]
+    parts: list[str] = []
+    for part in primary_parts:
+        comma_parts = [piece.strip() for piece in part.split(",") if piece.strip()]
+        has_address_comma = any(re.fullmatch(r"[A-Z]{2}", piece) for piece in comma_parts[1:])
+        if len(comma_parts) > 1 and not has_address_comma:
+            parts.extend(comma_parts)
+        else:
+            parts.append(part)
     locations: list[str] = []
     seen: set[str] = set()
     for part in parts:
@@ -4348,7 +4356,7 @@ def split_inventory_locations(value: object) -> list[str]:
 
 def normalize_inventory_locations(value: object, fallback: str = "Denver International Airport (DEN)") -> str:
     locations = split_inventory_locations(value)
-    return ", ".join(locations) if locations else fallback
+    return "\n".join(locations) if locations else fallback
 
 
 def primary_inventory_location(value: object, fallback: str = "Denver International Airport (DEN)") -> str:
@@ -9812,15 +9820,6 @@ def render_internal_links() -> str:
         ("Deals and price match", "/deals"),
         ("Rental guides", "/blog"),
     )
-    utility_links = (
-        ("Book", "/"),
-        ("Manage Booking", "/manage-booking"),
-        ("FAQ", "/wiki"),
-        ("About", "/about"),
-        ("Contact", "/contact"),
-        ("Support", "/manage-booking#support"),
-        ("Explorer", "/explorer"),
-    )
     city_html = "\n".join(
         f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
         for label, url in city_links
@@ -9828,10 +9827,6 @@ def render_internal_links() -> str:
     airport_html = "\n".join(
         f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
         for label, url in airport_links
-    )
-    utility_html = "\n".join(
-        f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
-        for label, url in utility_links
     )
     return f"""
     <section class="internal-link-network" aria-label="Explore FairFares">
@@ -9852,8 +9847,7 @@ def render_internal_links() -> str:
         </div>
       </div>
       <div class="internal-link-utility">
-        <strong>FairFares</strong>
-        <nav aria-label="FairFares quick links">{utility_html}</nav>
+        <strong>© FairFares LLC. All Rights Reserved.</strong>
         <span>Price Match Guarantee + 10% off eligible lower quotes.</span>
       </div>
     </section>
@@ -14304,7 +14298,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["fuel_type"])}</td>
             <td><input form="car-update-{row["id"]}" name="purchase_cost" type="number" min="0.01" step="0.01" value="{float(row_value(row, "purchase_cost") or 0):.2f}" aria-label="Purchase cost"></td>
             <td>{self.render_receipt_link(row)}</td>
-            <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle locations" title="Separate multiple locations with commas or new lines"></td>
+            <td><textarea form="car-update-{row["id"]}" name="location" rows="2" aria-label="Vehicle locations" title="Use one location per line. Address commas are preserved.">{escape(row["location"])}</textarea></td>
             <td><input form="car-update-{row["id"]}" name="daily_price" type="number" step="0.01" value="{row["daily_price"]:.2f}" aria-label="Daily price"></td>
             <td>
                 <form id="car-update-{row["id"]}" method="post" action="/admin/cars/status" class="inline-form">

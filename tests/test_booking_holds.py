@@ -124,6 +124,13 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("Downtown Denver", locations)
         self.assertIn("Colorado Springs", locations)
 
+    def test_inventory_locations_preserve_address_commas(self):
+        location = "1665 Logan St, Denver, CO\nDenver International Airport (DEN)"
+
+        locations = app.split_inventory_locations(location)
+
+        self.assertEqual(locations, ["1665 Logan St, Denver, CO", "Denver International Airport (DEN)"])
+
     def test_car_card_exposes_multiple_locations_for_frontend_filter(self):
         handler = object.__new__(app.FairFaresHandler)
         car = dict(app.get_cars()[0])
