@@ -259,7 +259,7 @@ input, select, textarea, button {
 .nav-links, .nav-actions {
   align-items: center;
   display: flex;
-  gap: 42px;
+  gap: clamp(14px, 1.8vw, 32px);
   font-size: 1.05rem;
   font-weight: 800;
   min-width: 0;

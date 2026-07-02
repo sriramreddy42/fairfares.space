@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701nav1"
+ASSET_VERSION = "20260701publicnav1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9816,6 +9816,8 @@ def render_internal_links() -> str:
         ("Book", "/"),
         ("Manage Booking", "/manage-booking"),
         ("FAQ", "/wiki"),
+        ("About", "/about"),
+        ("Contact", "/contact"),
         ("Support", "/manage-booking#support"),
         ("Explorer", "/explorer"),
     )
@@ -10198,6 +10200,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/": self.home,
             "/blog": self.blog_index_page,
+            "/about": self.about_page,
+            "/contact": self.contact_page,
             "/robots.txt": self.robots_txt,
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
@@ -10466,6 +10470,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         static_urls = [
             "/",
             "/blog",
+            "/about",
+            "/contact",
             "/deals",
             "/explorer",
         ]
@@ -10671,6 +10677,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feature_cards=feature_cards,
             action_links=action_links,
             related_links=related_links,
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def about_page(self) -> None:
+        user = self.current_user()
+        body = render_template(
+            "about.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def contact_page(self) -> None:
+        user = self.current_user()
+        body = render_template(
+            "contact.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
