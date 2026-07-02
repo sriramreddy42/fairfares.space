@@ -3707,3 +3707,18 @@ function openManageTabFromAgentQuery() {
 }
 
 openManageTabFromAgentQuery();
+
+function initPublicHeaderCompactMode() {
+  const topBrand = document.querySelector(".top-brand");
+  const mainNav = document.querySelector(".main-nav");
+  if (!topBrand || !mainNav) return;
+
+  const update = () => {
+    document.body.classList.toggle("public-header-compact", window.scrollY > 72);
+  };
+
+  update();
+  window.addEventListener("scroll", update, { passive: true });
+}
+
+initPublicHeaderCompactMode();
