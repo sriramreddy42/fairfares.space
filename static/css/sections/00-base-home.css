@@ -251,27 +251,33 @@ input, select, textarea, button {
   border-bottom: 3px solid var(--red);
   display: flex;
   justify-content: space-between;
-  min-height: 78px;
-  padding: 0 34px;
-  position: relative;
-  z-index: 4;
+  min-height: 68px;
+  padding: 0 30px;
+  position: sticky;
+  top: 0;
+  z-index: 60;
 }
 .nav-links, .nav-actions {
   align-items: center;
   display: flex;
-  gap: clamp(14px, 1.8vw, 32px);
-  font-size: 1.05rem;
+  gap: clamp(12px, 1.45vw, 26px);
+  font-size: 0.98rem;
   font-weight: 800;
   min-width: 0;
 }
-.nav-links a { padding: 29px 0 24px; position: relative; }
+.nav-links a {
+  align-items: center;
+  display: inline-flex;
+  padding: 23px 0 20px;
+  position: relative;
+}
 .nav-links .active { color: var(--red); }
 .nav-links .active::after {
   background: var(--red);
   border-radius: 999px;
-  bottom: 6px;
+  bottom: 5px;
   content: "";
-  height: 6px;
+  height: 5px;
   left: 0;
   position: absolute;
   right: 0;
@@ -1029,19 +1035,27 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   color: #1d3154;
   display: inline-flex;
+  flex: 0 0 auto;
   height: 56px;
   justify-content: center;
+  overflow: hidden;
   width: 56px;
 }
 .value-strip-icon svg {
   display: block;
-  fill: none;
+  fill: none !important;
   height: 100%;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
+  max-height: 100%;
+  max-width: 100%;
+  stroke: currentColor !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  stroke-width: 1.7 !important;
   width: 100%;
+}
+.value-strip-icon svg * {
+  fill: none !important;
+  stroke: currentColor !important;
 }
 .value-strip h2 {
   color: #1d3154;

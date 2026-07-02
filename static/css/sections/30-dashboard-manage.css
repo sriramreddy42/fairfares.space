@@ -86,7 +86,6 @@
 .manage-nav .nav-links .active::after {
   bottom: 4px;
   height: 4px;
-  width: 118px;
 }
 .manage-nav .nav-links a {
   align-items: center;
