@@ -274,7 +274,7 @@ input, select, textarea, button {
   height: 6px;
   left: 0;
   position: absolute;
-  width: 62px;
+  right: 0;
 }
 .menu-button {
   background: none;
