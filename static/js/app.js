@@ -1007,7 +1007,11 @@ function updateCars() {
   cards.forEach((card) => {
     const typeMatch = selectedTypes.length === 0 || selectedTypes.includes(card.dataset.category);
     const fuelMatch = selectedFuel.length === 0 || selectedFuel.includes(card.dataset.fuel);
-    const locationMatch = !selectedLocation || card.dataset.location === selectedLocation;
+    const cardLocations = (card.dataset.locations || card.dataset.location || "")
+      .split("|")
+      .map((location) => location.trim())
+      .filter(Boolean);
+    const locationMatch = !selectedLocation || cardLocations.includes(selectedLocation);
     const availableAfter = parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime);
     const availabilityNote = card.querySelector("[data-availability-note]");
     const selectButton = card.querySelector(".select-button");

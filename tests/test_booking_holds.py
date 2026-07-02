@@ -111,6 +111,28 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn(f'data-price-high="{high}"', html)
         self.assertIn(f'<span class="price-range" data-price-range>${low}-{high}</span>', html)
 
+    def test_inventory_locations_split_multiple_car_locations(self):
+        with app.db() as con:
+            con.execute(
+                "UPDATE cars SET location = ? WHERE id = (SELECT id FROM cars ORDER BY id LIMIT 1)",
+                ("Denver International Airport (DEN), Downtown Denver\nColorado Springs",),
+            )
+
+        locations = app.get_inventory_locations()
+
+        self.assertIn("Denver International Airport (DEN)", locations)
+        self.assertIn("Downtown Denver", locations)
+        self.assertIn("Colorado Springs", locations)
+
+    def test_car_card_exposes_multiple_locations_for_frontend_filter(self):
+        handler = object.__new__(app.FairFaresHandler)
+        car = dict(app.get_cars()[0])
+        car["location"] = "Denver International Airport (DEN), Downtown Denver"
+
+        html = handler.render_car_card(car)
+
+        self.assertIn('data-locations="Denver International Airport (DEN)|Downtown Denver"', html)
+
     def test_tax_fee_rules_are_loaded_from_database(self):
         with app.db() as con:
             con.execute("DELETE FROM tax_fee_rules")

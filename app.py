@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260701promo1"
+ASSET_VERSION = "20260701locations1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -4332,6 +4332,30 @@ def get_cars() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def split_inventory_locations(value: object) -> list[str]:
+    raw = str(value or "")
+    parts = [part.strip() for part in re.split(r"[\n,;|]+", raw) if part.strip()]
+    locations: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        key = part.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        locations.append(part)
+    return locations
+
+
+def normalize_inventory_locations(value: object, fallback: str = "Denver International Airport (DEN)") -> str:
+    locations = split_inventory_locations(value)
+    return ", ".join(locations) if locations else fallback
+
+
+def primary_inventory_location(value: object, fallback: str = "Denver International Airport (DEN)") -> str:
+    locations = split_inventory_locations(value)
+    return locations[0] if locations else fallback
+
+
 def get_inventory_locations() -> list[str]:
     with db() as con:
         rows = con.execute(
@@ -4342,7 +4366,16 @@ def get_inventory_locations() -> list[str]:
             ORDER BY location
             """
         ).fetchall()
-    return [row["location"] for row in rows]
+    locations: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for location in split_inventory_locations(row["location"]):
+            key = location.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            locations.append(location)
+    return sorted(locations, key=str.casefold)
 
 
 def get_filter_counts() -> dict[str, list[sqlite3.Row]]:
@@ -8578,6 +8611,9 @@ def create_booking_for_user(
         price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
         final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
+        default_location = primary_inventory_location(car["location"])
+        selected_pickup_location = pickup_location or default_location
+        selected_return_location = return_location or selected_pickup_location
         con.execute(
             """
             INSERT INTO bookings
@@ -8592,10 +8628,10 @@ def create_booking_for_user(
                 user_id,
                 car["id"],
                 "AVIS",
-                pickup_location or car["location"] or "Denver International Airport (DEN)",
+                selected_pickup_location,
                 format_booking_date(pickup_date, format_booking_date(default_pickup, "Upcoming pickup")),
                 pickup_time or "10:00 AM",
-                return_location or pickup_location or car["location"] or "Denver International Airport (DEN)",
+                selected_return_location,
                 format_booking_date(return_date, format_booking_date(default_return, "Upcoming return")),
                 return_time or "10:00 AM",
                 rental_days,
@@ -8650,15 +8686,18 @@ def build_booking_preview(
     discount = get_valid_discount(discount_code)
     discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
     price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+    default_location = primary_inventory_location(car["location"])
+    selected_pickup_location = pickup_location or default_location
+    selected_return_location = return_location or selected_pickup_location
     return {
         "id": None,
         "booking_id": "Pending details",
         "car_id": car["id"],
         "provider": "AVIS",
-        "pickup_location": pickup_location or car["location"] or "Denver International Airport (DEN)",
+        "pickup_location": selected_pickup_location,
         "pickup_date": format_booking_date(pickup_date, "Upcoming pickup"),
         "pickup_time": pickup_time or "10:00 AM",
-        "dropoff_location": return_location or pickup_location or car["location"] or "Denver International Airport (DEN)",
+        "dropoff_location": selected_return_location,
         "dropoff_date": format_booking_date(return_date, "Upcoming return"),
         "dropoff_time": return_time or "10:00 AM",
         "days": rental_days,
@@ -11000,10 +11039,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
         daily_low, daily_high = daily_price_range(row["daily_price"])
+        location_list = "|".join(split_inventory_locations(row["location"]))
         is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
         save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
-        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-price="{row["daily_price"]}" data-price-low="{daily_low}" data-price-high="{daily_high}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
+        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-locations="{escape(location_list)}" data-price="{row["daily_price"]}" data-price-low="{daily_low}" data-price-high="{daily_high}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
             <div class="car-art car-{escape(row["color"])}">
                 <span class="deal-badge">{escape(row["badge"])}</span>
                 {car_visual}
@@ -14205,7 +14245,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td>{escape(row["fuel_type"])}</td>
             <td><input form="car-update-{row["id"]}" name="purchase_cost" type="number" min="0.01" step="0.01" value="{float(row_value(row, "purchase_cost") or 0):.2f}" aria-label="Purchase cost"></td>
             <td>{self.render_receipt_link(row)}</td>
-            <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle location"></td>
+            <td><input form="car-update-{row["id"]}" name="location" value="{escape(row["location"])}" aria-label="Vehicle locations" title="Separate multiple locations with commas or new lines"></td>
             <td><input form="car-update-{row["id"]}" name="daily_price" type="number" step="0.01" value="{row["daily_price"]:.2f}" aria-label="Daily price"></td>
             <td>
                 <form id="car-update-{row["id"]}" method="post" action="/admin/cars/status" class="inline-form">
@@ -14952,7 +14992,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("badge") or "Available",
                     form.get("color") or "white",
                     form.get("features") or "Free Cancellation|Unlimited Mileage|24/7 Support",
-                    form.get("location") or "Denver International Airport (DEN)",
+                    normalize_inventory_locations(form.get("location")),
                     form.get("image_url") or "",
                     form.get("status") or "AVAILABLE",
                     form.get("license_plate") or "",
@@ -15004,7 +15044,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return int(form.get(name) or fallback)
             except ValueError:
                 return fallback
-        location = form.get("location", "").strip()
+        location = normalize_inventory_locations(form.get("location", ""))
         with db() as con:
             current = con.execute("SELECT * FROM cars WHERE id = ?", (form.get("car_id"),)).fetchone()
             try:
@@ -15059,7 +15099,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("badge", row_value(current, "badge")) or "Available",
                     form.get("color", row_value(current, "color")) or "white",
                     form.get("features", row_value(current, "features")) or "Free Cancellation|Unlimited Mileage|24/7 Support",
-                    location or row_value(current, "location") or "Denver International Airport (DEN)",
+                    location or normalize_inventory_locations(row_value(current, "location")),
                     form.get("image_url", row_value(current, "image_url")),
                     status,
                     form.get("license_plate", row_value(current, "license_plate")),
