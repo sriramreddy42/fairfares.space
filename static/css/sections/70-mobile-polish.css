@@ -4,6 +4,10 @@
     padding-top: 180px !important;
   }
 
+  .main-nav .nav-links a {
+    white-space: nowrap !important;
+  }
+
   .top-brand {
     height: 122px !important;
     left: 0 !important;
@@ -77,7 +81,10 @@
     z-index: 900 !important;
   }
 
-  body.public-header-compact .main-nav .nav-links,
+  body.public-header-compact .main-nav .nav-links {
+    gap: clamp(18px, 1.55vw, 30px) !important;
+  }
+
   body.public-header-compact .main-nav .nav-actions {
     gap: clamp(8px, 0.85vw, 15px) !important;
   }
@@ -124,6 +131,19 @@
 
   body.public-header-compact .main-nav .nav-links .active::after {
     background: var(--red) !important;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 1240px) {
+  .main-nav {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+
+  .main-nav .nav-links,
+  .main-nav .nav-actions {
+    gap: clamp(18px, 2.2vw, 28px) !important;
+    font-size: clamp(0.82rem, 1.15vw, 0.94rem) !important;
   }
 }
 
