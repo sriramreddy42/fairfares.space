@@ -10323,6 +10323,22 @@ def guest_offer_modal() -> str:
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
 
+    def do_HEAD(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/robots.txt":
+            self.send_text(self.robots_txt_body(), head_only=True)
+            return
+        if parsed.path == "/llms.txt":
+            self.send_text(self.llms_txt_body(), content_type="text/plain; charset=utf-8", head_only=True)
+            return
+        if parsed.path == "/sitemap.xml":
+            self.send_text(self.sitemap_xml_body(), content_type="application/xml; charset=utf-8", head_only=True)
+            return
+        if parsed.path.startswith("/static/"):
+            self.serve_static(parsed.path)
+            return
+        self.not_found()
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/static/"):
@@ -10588,64 +10604,73 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_text(self, body_text: str, content_type: str = "text/plain; charset=utf-8", status: int = 200) -> None:
+    def send_text(
+        self,
+        body_text: str,
+        content_type: str = "text/plain; charset=utf-8",
+        status: int = 200,
+        head_only: bool = False,
+    ) -> None:
         body = body_text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "public, max-age=3600")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        if head_only:
+            return
         self.wfile.write(body)
 
+    def robots_txt_body(self) -> str:
+        return "\n".join(
+            (
+                "User-agent: *",
+                "Allow: /",
+                "Disallow: /admin/",
+                "Disallow: /api/",
+                "Disallow: /payment/",
+                "Disallow: /stripe/",
+                "Disallow: /logout",
+                "",
+                "Sitemap: https://www.fairfare.space/sitemap.xml",
+                "",
+            )
+        )
+
     def robots_txt(self) -> None:
-        self.send_text(
-            "\n".join(
-                (
-                    "User-agent: *",
-                    "Allow: /",
-                    "Disallow: /admin/",
-                    "Disallow: /api/",
-                    "Disallow: /payment/",
-                    "Disallow: /stripe/",
-                    "Disallow: /logout",
-                    "",
-                    "Sitemap: https://www.fairfare.space/sitemap.xml",
-                    "",
-                )
+        self.send_text(self.robots_txt_body())
+
+    def llms_txt_body(self) -> str:
+        return "\n".join(
+            (
+                "# FairFares",
+                "",
+                "> FairFares offers affordable car rentals in Denver and Colorado with airport pickup support, student savings, secure payments, Explorer trip planning, and price match review.",
+                "",
+                "## Public pages",
+                "- Homepage: https://www.fairfare.space/",
+                "- Manage Booking: https://www.fairfare.space/manage-booking",
+                "- Deals: https://www.fairfare.space/deals",
+                "- FAQ: https://www.fairfare.space/wiki",
+                "- Blog: https://www.fairfare.space/blog",
+                "- Explorer: https://www.fairfare.space/explorer",
+                "- Contact: https://www.fairfare.space/contact",
+                "",
+                "## Search topics",
+                "- Cheap car rental Denver",
+                "- Affordable car rental Colorado",
+                "- Denver Airport car rental",
+                "- Student car rental Colorado",
+                "- SUV rental Denver",
+                "- Colorado road trip rental",
+                "",
             )
         )
 
     def llms_txt(self) -> None:
-        self.send_text(
-            "\n".join(
-                (
-                    "# FairFares",
-                    "",
-                    "> FairFares offers affordable car rentals in Denver and Colorado with airport pickup support, student savings, secure payments, Explorer trip planning, and price match review.",
-                    "",
-                    "## Public pages",
-                    "- Homepage: https://www.fairfare.space/",
-                    "- Manage Booking: https://www.fairfare.space/manage-booking",
-                    "- Deals: https://www.fairfare.space/deals",
-                    "- FAQ: https://www.fairfare.space/wiki",
-                    "- Blog: https://www.fairfare.space/blog",
-                    "- Explorer: https://www.fairfare.space/explorer",
-                    "- Contact: https://www.fairfare.space/contact",
-                    "",
-                    "## Search topics",
-                    "- Cheap car rental Denver",
-                    "- Affordable car rental Colorado",
-                    "- Denver Airport car rental",
-                    "- Student car rental Colorado",
-                    "- SUV rental Denver",
-                    "- Colorado road trip rental",
-                    "",
-                )
-            ),
-            content_type="text/plain; charset=utf-8",
-        )
+        self.send_text(self.llms_txt_body(), content_type="text/plain; charset=utf-8")
 
-    def sitemap_xml(self) -> None:
+    def sitemap_xml_body(self) -> str:
         static_urls = [
             "/",
             "/blog",
@@ -10665,14 +10690,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
   </url>"""
             for path in urls
         )
-        self.send_text(
-            f"""<?xml version="1.0" encoding="UTF-8"?>
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 {entries}
 </urlset>
-""",
-            "application/xml; charset=utf-8",
-        )
+"""
+
+    def sitemap_xml(self) -> None:
+        self.send_text(self.sitemap_xml_body(), "application/xml; charset=utf-8")
 
     def set_session(self, user_id: int) -> None:
         token = secrets.token_urlsafe(32)
