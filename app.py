@@ -1814,18 +1814,6 @@ def slack_link(origin: str, path: str, label: str) -> str:
     return f"<{origin}{path}|{label}>"
 
 
-def notify_slack_booking_hold(booking: sqlite3.Row, origin: str = "") -> None:
-    text = (
-        f"New FairFares booking hold {row_value(booking, 'booking_id')}\n"
-        f"Customer: {row_value(booking, 'contact_name') or 'Guest'}\n"
-        f"Vehicle: {row_value(booking, 'car_name')}\n"
-        f"Pickup: {row_value(booking, 'pickup_location')} - {row_value(booking, 'pickup_date')} {row_value(booking, 'pickup_time')}\n"
-        f"Total: {format_money(row_value(booking, 'total_price'))}\n"
-        f"{slack_link(origin, '/admin/bookings', 'Open bookings')}"
-    )
-    send_slack_notification("bookings", text)
-
-
 def notify_slack_payment(booking: sqlite3.Row, message: str, origin: str = "") -> None:
     text = (
         f"FairFares payment update\n"
@@ -2919,28 +2907,6 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
         )
         booking_status = row_value(booking, "booking_status")
         payment_status = row_value(booking, "payment_status")
-        if booking_status in {"PENDING_HOLD", "EXPIRED_HOLD"} and payment_status in {"HOLD_PENDING", "HOLD_EXPIRED"}:
-            hold_expired = booking_status == "EXPIRED_HOLD"
-            hold_expires_at = row_value(booking, "hold_expires_at")
-            hold_started_at = row_value(booking, "hold_started_at")
-            customer_saved_checkout = row_value(booking, "saved_by_user") == "1"
-            if hold_expires_at:
-                try:
-                    hold_expired = hold_expired or datetime.fromisoformat(hold_expires_at) <= now
-                except ValueError:
-                    hold_expired = hold_expired or True
-            if hold_expired and hold_started_at and hold_expires_at and customer_saved_checkout:
-                results.append(
-                    automated_booking_email(
-                        "abandoned_booking",
-                        booking,
-                        origin,
-                        f"Complete your FairFares booking: {ctx['booking_id']}",
-                        "Your car is still waiting.",
-                        f"Complete payment to confirm {ctx['car_name']} for pickup at {ctx['pickup_location']}. If plans changed, you can choose another car or date.",
-                        "Complete Booking",
-                    )
-                )
         if pickup_at and booking_status in {"CONFIRMED", "MODIFIED"} and payment_status in {"HOLD_PAID", "PAID", "PAY_AT_PICKUP"}:
             until_pickup = pickup_at - now
             if timedelta(hours=2) < until_pickup <= timedelta(hours=24):
@@ -8726,7 +8692,6 @@ def create_booking_for_user(
     booking = get_booking_for_user(user_id)
     if not booking:
         raise RuntimeError("Booking creation failed")
-    notify_slack_booking_hold(booking)
     return booking
 
 

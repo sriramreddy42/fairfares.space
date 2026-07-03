@@ -237,7 +237,7 @@ class EmailMarketingTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("sent through test capture", rows[0]["delivery_status"])
 
-    def test_abandoned_booking_waits_for_expired_hold(self):
+    def test_unpaid_hold_does_not_send_customer_email(self):
         car = app.get_cars()[0]
         user_id = self.create_marketing_user("abandoned@example.com")
         with app.db() as con:
@@ -271,8 +271,8 @@ class EmailMarketingTest(unittest.TestCase):
         )
         saved_expired = app.run_email_automations("https://fairfares.test", now=datetime.now())
 
-        self.assertEqual(saved_expired["sent"], 1)
-        self.assertIn("Complete your FairFares booking", self.sent_messages[-1]["subject"])
+        self.assertEqual(saved_expired["sent"], 0)
+        self.assertEqual(self.sent_messages, [])
 
     def test_abandoned_booking_skips_expired_unsaved_pending_record(self):
         car = app.get_cars()[0]
