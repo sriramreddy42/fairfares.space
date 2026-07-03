@@ -1074,6 +1074,48 @@ input:focus, select:focus, textarea:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: clamp(40px, 6vw, 76px) clamp(20px, 4vw, 56px);
 }
+.contact-direct-strip {
+  align-items: center;
+  background: #4c4c4c;
+  color: #fff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(22px, 5vw, 56px);
+  justify-content: center;
+  padding: 12px 20px;
+}
+.contact-direct-strip a,
+.contact-direct-strip div {
+  align-items: center;
+  color: inherit;
+  display: inline-flex;
+  gap: 12px;
+  text-decoration: none;
+}
+.contact-direct-strip span {
+  align-items: center;
+  color: var(--red);
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+.contact-direct-strip svg {
+  display: block;
+  fill: none;
+  height: 100%;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+  width: 100%;
+}
+.contact-direct-strip strong {
+  color: #fff;
+  font-size: clamp(1.05rem, 1.8vw, 1.32rem);
+  font-weight: 800;
+  letter-spacing: 0;
+}
 .value-strip article {
   display: grid;
   gap: 18px;

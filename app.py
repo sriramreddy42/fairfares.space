@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260703navgap1"
+ASSET_VERSION = "20260703contact24h1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -2018,7 +2018,7 @@ def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row,
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     subject = f"FairFares booking confirmed: {booking['booking_id']}"
-    support_phone = "9372518688"
+    support_phone = "+1 9372518688"
     poster_url = f"{origin.rstrip('/')}/static/img/booking-confirmation-promise.png"
     savings_or_price_promise = booking_savings_explainer(booking, include_terms=True)
     breakdown = booking_price_breakdown(booking)
@@ -9303,7 +9303,7 @@ def agreement_default_values(
         "lessor_name": "FairFares",
         "lessor_address": "",
         "lessor_email": "fairfars@gmail.com",
-        "lessor_phone": "9372518688",
+        "lessor_phone": "+1 9372518688",
         "lessee_name": row_value(row, "user_name"),
         "lessee_address": row_value(row, "address"),
         "license_state": row_value(license_row, "state", "CO") if license_row else "CO",
