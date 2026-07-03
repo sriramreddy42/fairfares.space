@@ -274,6 +274,48 @@ class EmailMarketingTest(unittest.TestCase):
         self.assertEqual(saved_expired["sent"], 0)
         self.assertEqual(self.sent_messages, [])
 
+    def test_confirmation_email_requires_confirmed_payment(self):
+        car = app.get_cars()[0]
+        user_id = self.create_marketing_user("unpaid-confirmed@example.com")
+        booking = app.create_booking_for_user(user_id, car["id"], days=2)
+
+        with app.db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'CONFIRMED',
+                    status = 'CONFIRMED',
+                    payment_status = 'PAY_AT_PICKUP',
+                    contact_name = 'Unpaid Confirmed',
+                    contact_email = 'unpaid-confirmed@example.com',
+                    contact_phone = '5551234567'
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+
+        outbox_file, delivery_status = app.send_confirmed_booking_email_once(booking["id"], "https://fairfares.test")
+
+        self.assertIsNone(outbox_file)
+        self.assertEqual(delivery_status, "payment not confirmed")
+        self.assertEqual(self.sent_messages, [])
+
+        result = app.save_booking_contact_and_send_confirmation(
+            user_id,
+            "Unpaid",
+            "Confirmed",
+            "unpaid-confirmed@example.com",
+            "5551234567",
+            "https://fairfares.test",
+            False,
+            False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["delivery_status"], "not sent")
+        self.assertIn("Complete payment", result["message"])
+        self.assertEqual(self.sent_messages, [])
+
     def test_abandoned_booking_skips_expired_unsaved_pending_record(self):
         car = app.get_cars()[0]
         user_id = self.create_marketing_user("unsaved@example.com")

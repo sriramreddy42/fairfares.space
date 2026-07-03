@@ -1343,6 +1343,10 @@ def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]
     return status
 
 
+def booking_payment_confirmed(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    return row_value(booking, "payment_status") in {"HOLD_PAID", "PAID"}
+
+
 def stripe_secret_key() -> str:
     load_env_file()
     return os.environ.get("STRIPE_SECRET_KEY", "").strip()
@@ -2643,15 +2647,17 @@ def save_booking_contact_and_send_confirmation(
             )
     delivery_status = "not sent"
     outbox_file: Path | None = None
-    if booking and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
+    if booking and booking_payment_confirmed(booking) and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
         outbox_file, delivery_status = send_confirmed_booking_email_once(booking["id"], origin)
     if booking and booking["booking_status"] == "PENDING_HOLD":
         message = "Details saved. Pay the 10% hold within the reservation window to confirm this car."
     elif delivery_status == "already sent":
         message = "Details saved. Booking confirmation email was already sent."
+    elif delivery_status in {"not sent", "payment not confirmed"}:
+        message = "Details saved. Complete payment to confirm this car."
     else:
         message = "Details saved. Booking confirmation email sent with your trip summary and price-match poster."
-    if delivery_status not in {"not sent", "already sent"} and not delivery_status.startswith("sent"):
+    if delivery_status not in {"not sent", "already sent", "payment not confirmed"} and not delivery_status.startswith("sent"):
         message = "Details saved. A local confirmation email copy was created for this booking."
     return {
         "ok": True,
@@ -2679,6 +2685,8 @@ def send_confirmed_booking_email_once(booking_id: int, origin: str) -> tuple[Pat
     booking = get_booking_by_id(booking_id)
     if not booking:
         return None, "booking not found"
+    if not booking_payment_confirmed(booking):
+        return None, "payment not confirmed"
     if row_value(booking, "confirmation_email_sent_at"):
         return None, "already sent"
     email = row_value(booking, "contact_email")
@@ -2906,8 +2914,7 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
             row_value(booking, "actual_return_time") or row_value(booking, "dropoff_time"),
         )
         booking_status = row_value(booking, "booking_status")
-        payment_status = row_value(booking, "payment_status")
-        if pickup_at and booking_status in {"CONFIRMED", "MODIFIED"} and payment_status in {"HOLD_PAID", "PAID", "PAY_AT_PICKUP"}:
+        if pickup_at and booking_status in {"CONFIRMED", "MODIFIED"} and booking_payment_confirmed(booking):
             until_pickup = pickup_at - now
             if timedelta(hours=2) < until_pickup <= timedelta(hours=24):
                 results.append(
@@ -12100,7 +12107,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (booking["id"], user["id"]),
             )
             con.execute("UPDATE cars SET status = 'HOLD' WHERE id = ?", (booking["car_id"],))
-        notify_slack_payment(booking, "Payment window restarted for 10 minutes.", self.public_origin())
         self.send_json(
             {
                 "ok": True,
@@ -12145,7 +12151,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
             if not active:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
-        notify_slack_payment(booking, "Customer removed unpaid checkout item.", self.public_origin())
         self.send_json({"ok": True, "message": "Removed. The car is available again.", "redirect": "/#results"})
 
     def save_search_car(self) -> None:
@@ -15471,10 +15476,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (form.get("booking_id"),),
             ).fetchone()
+            notify_payment_statuses = {"HOLD_PAID", "PAID", "REFUND_REVIEW", "REFUNDED"}
             if updated_booking and (
                 not previous_booking
                 or row_value(previous_booking, "booking_status") != booking_status
                 or row_value(previous_booking, "payment_status") != payment_status
+            ) and (
+                payment_status in notify_payment_statuses
+                or row_value(previous_booking, "payment_status") in notify_payment_statuses
             ):
                 notify_slack_payment(
                     updated_booking,
