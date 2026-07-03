@@ -352,21 +352,21 @@ WORKSPACE_REACTIONS = (
     ("ANGRY", "😡", "Angry"),
 )
 BASE_STYLESHEETS = [
-    f"/static/css/sections/00-base-home.css?v={ASSET_VERSION}",
-    f"/static/css/sections/10-auth.css?v={ASSET_VERSION}",
-    f"/static/css/sections/20-admin.css?v={ASSET_VERSION}",
-    f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
-    f"/static/css/sections/40-explorer.css?v={ASSET_VERSION}",
-    f"/static/css/sections/50-home-results-late-explorer.css?v={ASSET_VERSION}",
-    f"/static/css/sections/60-payment-admin-final.css?v={ASSET_VERSION}",
-    f"/static/css/sections/70-mobile-polish.css?v={ASSET_VERSION}",
+    f"/static/css/sections/00-base-home.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/20-admin.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/30-dashboard-manage.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/40-explorer.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/50-home-results-late-explorer.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/60-payment-admin-final.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/70-mobile-polish.min.css?v={ASSET_VERSION}",
 ]
 PAGE_STYLESHEETS = {
-    "admin_wiki.html": [f"/static/css/wiki.css?v={ASSET_VERSION}"],
-    "index.html": [f"/static/css/booking-form.css?v={ASSET_VERSION}"],
-    "wiki.html": [f"/static/css/wiki.css?v={ASSET_VERSION}"],
+    "admin_wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
+    "index.html": [f"/static/css/booking-form.min.css?v={ASSET_VERSION}"],
+    "wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
 }
-SHARED_STYLESHEETS = [f"/static/css/app-feedback.css?v={ASSET_VERSION}"]
+SHARED_STYLESHEETS = [f"/static/css/app-feedback.min.css?v={ASSET_VERSION}"]
 
 
 def refresh_storage_paths() -> None:
@@ -9839,8 +9839,9 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = html_text.replace("$favicon_links", favicon_links)
     if favicon_links not in html_text:
         html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
-    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
-    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.min.js?v={ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.min.js?v=explorer-{ASSET_VERSION}")
+    html_text = inject_social_meta(html_text, template_name)
     html_text = inject_structured_data(html_text, template_name)
     if should_track_google_analytics(template_name):
         html_text = inject_google_tag(html_text)
@@ -9987,6 +9988,60 @@ def html_meta_content(html_text: str, name: str, default: str = "") -> str:
     pattern = rf'<meta\s+name="{re.escape(name)}"\s+content="([^"]*)"'
     match = re.search(pattern, html_text, flags=re.IGNORECASE)
     return html.unescape(match.group(1)).strip() if match else default
+
+
+def html_meta_property_content(html_text: str, prop: str, default: str = "") -> str:
+    pattern = rf'<meta\s+property="{re.escape(prop)}"\s+content="([^"]*)"'
+    match = re.search(pattern, html_text, flags=re.IGNORECASE)
+    return html.unescape(match.group(1)).strip() if match else default
+
+
+def html_has_meta_name(html_text: str, name: str) -> bool:
+    return bool(re.search(rf'<meta\s+name="{re.escape(name)}"\b', html_text, flags=re.IGNORECASE))
+
+
+def html_has_meta_property(html_text: str, prop: str) -> bool:
+    return bool(re.search(rf'<meta\s+property="{re.escape(prop)}"\b', html_text, flags=re.IGNORECASE))
+
+
+def inject_social_meta(html_text: str, template_name: str) -> str:
+    if template_name.startswith("admin"):
+        return html_text
+    title = html_title(html_text, "FairFares | Cheap Car Rentals in Denver & Colorado")
+    description = html_meta_content(
+        html_text,
+        "description",
+        "Rent affordable cars across Colorado with FairFares. Price Match Guarantee + 10% off qualifying lower prices.",
+    )
+    canonical = canonical_url_from_html(html_text)
+    origin = schema_origin()
+    image_url = f"{origin}/static/img/hero-road.png?v={ASSET_VERSION}"
+    additions: list[str] = []
+    property_meta = {
+        "og:title": title,
+        "og:description": description,
+        "og:url": canonical,
+        "og:type": "website",
+        "og:site_name": "FairFares",
+        "og:image": image_url,
+        "og:image:alt": "FairFares affordable car rental and price match guarantee",
+    }
+    name_meta = {
+        "twitter:card": "summary_large_image",
+        "twitter:title": html_meta_property_content(html_text, "og:title", title),
+        "twitter:description": html_meta_property_content(html_text, "og:description", description),
+        "twitter:image": image_url,
+        "twitter:image:alt": "FairFares affordable car rental and price match guarantee",
+    }
+    for prop, content in property_meta.items():
+        if not html_has_meta_property(html_text, prop):
+            additions.append(f'  <meta property="{prop}" content="{escape(content)}">')
+    for name, content in name_meta.items():
+        if not html_has_meta_name(html_text, name):
+            additions.append(f'  <meta name="{name}" content="{escape(content)}">')
+    if not additions:
+        return html_text
+    return re.sub(r"(</head>)", "\n".join(additions) + "\n\\1", html_text, count=1, flags=re.IGNORECASE)
 
 
 def html_title(html_text: str, default: str = "FairFares") -> str:
@@ -10199,6 +10254,18 @@ def render_site_loader() -> str:
     """.rstrip()
 
 
+def minify_css(content: str) -> str:
+    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+    content = re.sub(r"\s+", " ", content)
+    content = re.sub(r"\s*([{}:;,>+~])\s*", r"\1", content)
+    content = content.replace(";}", "}")
+    return content.strip()
+
+
+def minify_js(content: str) -> str:
+    return content
+
+
 def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -10282,6 +10349,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/about": self.about_page,
             "/contact": self.contact_page,
             "/robots.txt": self.robots_txt,
+            "/llms.txt": self.llms_txt,
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
@@ -10535,14 +10603,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (
                     "User-agent: *",
                     "Allow: /",
-                    "Disallow: /admin",
+                    "Disallow: /admin/",
                     "Disallow: /api/",
                     "Disallow: /payment/",
                     "Disallow: /stripe/",
+                    "Disallow: /logout",
+                    "",
                     "Sitemap: https://www.fairfare.space/sitemap.xml",
                     "",
                 )
             )
+        )
+
+    def llms_txt(self) -> None:
+        self.send_text(
+            "\n".join(
+                (
+                    "# FairFares",
+                    "",
+                    "> FairFares offers affordable car rentals in Denver and Colorado with airport pickup support, student savings, secure payments, Explorer trip planning, and price match review.",
+                    "",
+                    "## Public pages",
+                    "- Homepage: https://www.fairfare.space/",
+                    "- Manage Booking: https://www.fairfare.space/manage-booking",
+                    "- Deals: https://www.fairfare.space/deals",
+                    "- FAQ: https://www.fairfare.space/wiki",
+                    "- Blog: https://www.fairfare.space/blog",
+                    "- Explorer: https://www.fairfare.space/explorer",
+                    "- Contact: https://www.fairfare.space/contact",
+                    "",
+                    "## Search topics",
+                    "- Cheap car rental Denver",
+                    "- Affordable car rental Colorado",
+                    "- Denver Airport car rental",
+                    "- Student car rental Colorado",
+                    "- SUV rental Denver",
+                    "- Colorado road trip rental",
+                    "",
+                )
+            ),
+            content_type="text/plain; charset=utf-8",
         )
 
     def sitemap_xml(self) -> None:
@@ -13417,7 +13517,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <div class="booking-calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="bookingCalendarModalTitle">
             <button class="booking-calendar-close" type="button" data-booking-calendar-close aria-label="Close booking details">x</button>
             <div class="booking-calendar-dialog-head">
-              <img data-booking-modal-image alt="" hidden>
+              <img data-booking-modal-image alt="Selected FairFares booking vehicle" hidden>
               <div>
                 <p class="eyebrow" data-booking-modal-field="status"></p>
                 <h2 id="bookingCalendarModalTitle" data-booking-modal-field="booking"></h2>
@@ -16689,7 +16789,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <div class="policy-timeline" aria-label="Cancellation timeline">
                             <div class="policy-timeline-labels"><span>Today</span><strong>{escape(str(cancellation_timeline["day_label"]))}</strong><span>Pickup</span></div>
                             <div class="policy-timeline-track">
-                                <img class="policy-car-marker" src="/static/img/policy-family-car.png?v={ASSET_VERSION}" alt="" aria-hidden="true">
+                                <img class="policy-car-marker" src="/static/img/policy-family-car.png?v={ASSET_VERSION}" alt="Cancellation timeline car marker" aria-hidden="true">
                                 <span class="policy-cutoff-marker" aria-hidden="true"></span>
                             </div>
                             <div class="policy-day-ticks" aria-hidden="true">{policy_day_ticks}<strong>24h</strong></div>
@@ -17087,6 +17187,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def serve_static(self, path: str) -> None:
         requested = (BASE_DIR / path.lstrip("/")).resolve()
+        if not requested.exists() and requested.name.endswith((".min.css", ".min.js")):
+            source_name = requested.name.replace(".min.css", ".css").replace(".min.js", ".js")
+            source = requested.with_name(source_name)
+            if str(source).startswith(str(STATIC_DIR.resolve())) and source.exists():
+                raw = source.read_text(encoding="utf-8")
+                is_css = requested.name.endswith(".min.css")
+                body_text = minify_css(raw) if is_css else minify_js(raw)
+                body = body_text.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/css; charset=utf-8" if is_css else "application/javascript; charset=utf-8")
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         if not str(requested).startswith(str(STATIC_DIR.resolve())) or not requested.exists():
             self.not_found()
             return
