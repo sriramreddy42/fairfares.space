@@ -127,7 +127,7 @@ input, select, textarea, button {
   z-index: 10;
 }
 @media (min-width: 861px) {
-  body {
+  body:not(.admin-screen):not(.login-screen):not(.auth-page) {
     padding-top: 190px;
   }
 

@@ -1,6 +1,6 @@
 /* Final mobile system pass. Keep this file last so small-screen surfaces stay compact. */
 @media (min-width: 861px) {
-  body {
+  body:not(.admin-screen):not(.login-screen):not(.auth-page) {
     padding-top: 180px !important;
   }
 
@@ -124,6 +124,14 @@
 
   body.public-header-compact .main-nav .nav-links .active::after {
     background: var(--red) !important;
+  }
+}
+
+@media (min-width: 861px) {
+  body.admin-screen,
+  body.login-screen,
+  body.auth-page {
+    padding-top: 0 !important;
   }
 }
 
