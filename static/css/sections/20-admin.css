@@ -1,6 +1,7 @@
 .admin-screen {
   --admin-oncall-top: 118px;
   background: #f4f6fa;
+  padding-top: 0;
 }
 .admin-shell-header {
   align-items: flex-start;
