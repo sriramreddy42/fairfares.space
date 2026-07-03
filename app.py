@@ -1343,8 +1343,12 @@ def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]
     return status
 
 
+PAYMENT_CONFIRMED_STATUSES = {"HOLD_PAID", "PAID"}
+PAYMENT_UNCONFIRMED_STATUSES = {"", "HOLD_PENDING", "HOLD_EXPIRED", "PAY_AT_PICKUP", "PENDING"}
+
+
 def booking_payment_confirmed(booking: sqlite3.Row | dict[str, object] | None) -> bool:
-    return row_value(booking, "payment_status") in {"HOLD_PAID", "PAID"}
+    return row_value(booking, "payment_status") in PAYMENT_CONFIRMED_STATUSES
 
 
 def stripe_secret_key() -> str:
@@ -4733,7 +4737,7 @@ def expire_stale_booking_holds() -> None:
             """
             SELECT id, car_id
             FROM bookings
-            WHERE booking_status = 'PENDING_HOLD'
+            WHERE booking_status IN ('PENDING_HOLD', 'MODIFIED', 'CANCELLATION_REQUESTED', 'CONFIRMED')
               AND payment_status = 'HOLD_PENDING'
               AND hold_expires_at IS NOT NULL
               AND datetime(hold_expires_at) <= datetime('now')
@@ -7911,6 +7915,12 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
         return "Payment window"
     if status == "EXPIRED_HOLD":
         return "Expired"
+    if payment_status in PAYMENT_UNCONFIRMED_STATUSES and status not in {"CANCELLED", "RETURNED"}:
+        if status == "MODIFIED":
+            return "Modification sent to admin"
+        if status == "CANCELLATION_REQUESTED":
+            return "Request sent to admin"
+        return "Payment pending"
     if status == "CONFIRMED":
         if payment_status == "PAID":
             return "Confirmed / Paid in full"
@@ -7925,7 +7935,9 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
     return labels.get(status, status.replace("_", " ").title())
 
 
-def booking_status_class(status: str) -> str:
+def booking_status_class(status: str, payment_status: str = "") -> str:
+    if payment_status in PAYMENT_UNCONFIRMED_STATUSES and status not in {"CANCELLED", "RETURNED"}:
+        return "status-pending"
     if status in {"CANCELLATION_REQUESTED", "MODIFIED", "PENDING_HOLD"}:
         return "status-pending"
     if status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}:
@@ -7935,7 +7947,7 @@ def booking_status_class(status: str) -> str:
 
 def payment_status_label(status: str) -> str:
     labels = {
-        "PAY_AT_PICKUP": "Pay at pickup",
+        "PAY_AT_PICKUP": "Payment pending",
         "HOLD_PENDING": "Payment pending",
         "HOLD_EXPIRED": "Expired",
         "HOLD_DUE": "10% due now",
@@ -8507,7 +8519,7 @@ def parse_sqlite_datetime(value: object) -> datetime | None:
 
 
 def booking_hold_remaining_seconds(booking: sqlite3.Row | dict[str, object] | None) -> int:
-    if not booking or row_value(booking, "booking_status") != "PENDING_HOLD":
+    if not booking or row_value(booking, "payment_status") not in {"HOLD_PENDING", "PAY_AT_PICKUP"}:
         return 0
     expires_at = parse_sqlite_datetime(row_value(booking, "hold_expires_at"))
     if not expires_at:
@@ -11585,8 +11597,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             {
                 "ok": True,
                 "message": f"Modification request sent: {change_note}",
-                "status_label": booking_status_label("MODIFIED"),
-                "status_class": booking_status_class("MODIFIED"),
+                "status_label": booking_status_label("MODIFIED", row_value(booking, "payment_status")),
+                "status_class": booking_status_class("MODIFIED", row_value(booking, "payment_status")),
             }
         )
 
@@ -11599,22 +11611,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking or booking["booking_status"] not in {"MODIFIED", "CANCELLATION_REQUESTED"}:
             self.send_json({"ok": False, "message": "No pending request to cancel."})
             return
+        payment_confirmed = booking_payment_confirmed(booking)
+        next_status = "CONFIRMED" if payment_confirmed else "PENDING_HOLD"
+        next_payment_status = row_value(booking, "payment_status") if payment_confirmed else "HOLD_PENDING"
+        hold_sql = ""
+        if not payment_confirmed:
+            hold_sql = """
+                    hold_started_at = COALESCE(hold_started_at, CURRENT_TIMESTAMP),
+                    hold_expires_at = COALESCE(hold_expires_at, datetime('now', '+10 minutes')),
+            """
         with db() as con:
             con.execute(
-                """
+                f"""
                 UPDATE bookings
-                SET booking_status = 'CONFIRMED',
-                    status = 'CONFIRMED',
+                SET booking_status = ?,
+                    status = ?,
+                    payment_status = ?,
+                    {hold_sql}
                     cancellation_reason = ''
                 WHERE id = ? AND user_id = ?
                 """,
-                (booking["id"], user["id"]),
+                (next_status, next_status, next_payment_status, booking["id"], user["id"]),
             )
         self.send_json({
             "ok": True,
-            "message": "Pending request cancelled. Your booking is confirmed for pay at pickup.",
-            "status_label": booking_status_label("CONFIRMED", "PAY_AT_PICKUP"),
-            "status_class": booking_status_class("CONFIRMED"),
+            "message": "Pending request cancelled. Complete payment to confirm this booking." if not payment_confirmed else "Pending request cancelled. Your booking remains confirmed.",
+            "status_label": booking_status_label(next_status, next_payment_status),
+            "status_class": booking_status_class(next_status, next_payment_status),
         })
 
     def cancel_user_booking(self) -> None:
@@ -11670,7 +11693,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ),
             "booking_status": next_status,
             "status_label": booking_status_label(next_status, next_payment_status),
-            "status_class": booking_status_class(next_status),
+            "status_class": booking_status_class(next_status, next_payment_status),
         })
 
     def save_current_booking(self) -> None:
@@ -14413,7 +14436,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_status_options = (
             ("PENDING_HOLD", "Pending 10-min hold"),
             ("EXPIRED_HOLD", "Expired hold"),
-            ("CONFIRMED", "Confirmed / Pay at pickup"),
+            ("CONFIRMED", "Confirmed"),
             ("MODIFIED", "Modification pending"),
             ("CANCELLATION_REQUESTED", "Cancellation requested"),
             ("CANCELLED", "Cancelled"),
@@ -14429,7 +14452,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("HOLD_EXPIRED", "Expired"),
             ("HOLD_PAID", "10% hold paid"),
             ("PAID", "Paid in full"),
-            ("PAY_AT_PICKUP", "Pay at pickup"),
+            ("PAY_AT_PICKUP", "Payment pending"),
             ("REFUND_REVIEW", "Refund review"),
             ("REFUNDED", "Refunded"),
         )
@@ -16530,8 +16553,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_confirmation_card = ""
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
         booking_status = row_value(booking, "booking_status") if booking else ""
-        hold_pending = booking_status == "PENDING_HOLD"
-        hold_expired = booking_status == "EXPIRED_HOLD"
+        booking_payment_status = row_value(booking, "payment_status") if booking else ""
+        hold_pending = booking_payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"} and booking_status != "EXPIRED_HOLD"
+        hold_expired = booking_status == "EXPIRED_HOLD" or booking_payment_status == "HOLD_EXPIRED"
         if is_guest_checkout:
             dashboard_booking_title = "Complete Your Booking"
             dashboard_booking_body = "Review the selected vehicle, confirm your contact details, and complete the payment window to reserve this trip."
@@ -16591,7 +16615,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         </form>
                     </div>
                 """
-            elif payment_status == "HOLD_PENDING":
+            elif payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"}:
                 trip_payment_summary = f"""
                     <div class="trip-payment-summary">
                         <div><b>Payment pending</b><span>{escape(format_money(active_breakdown["booking_hold"]))} due now to hold this booking.</span></div>
@@ -16973,7 +16997,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             savings_label=escape(booking_savings_label(booking) if booking else ""),
             price_match_note=escape(booking_savings_explainer(booking) if booking else ""),
             status=escape(booking_status_label(booking["booking_status"], booking["payment_status"]) if booking else "NO BOOKING"),
-            status_class=escape(booking_status_class(booking["booking_status"]) if booking else "status-muted"),
+            status_class=escape(booking_status_class(booking["booking_status"], booking["payment_status"]) if booking else "status-muted"),
             upgrade_options=upgrade_options,
             upgrade_select_options=upgrade_select_options,
             current_vehicle=escape(current_car_name),

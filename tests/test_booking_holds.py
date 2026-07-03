@@ -366,14 +366,29 @@ class BookingHoldTest(unittest.TestCase):
     def test_customer_checkout_labels_are_clean(self):
         self.assertEqual(app.booking_status_label("PENDING_HOLD", "HOLD_PENDING"), "Payment window")
         self.assertEqual(app.booking_status_label("EXPIRED_HOLD", "HOLD_EXPIRED"), "Expired")
+        self.assertEqual(app.booking_status_label("CONFIRMED", "PAY_AT_PICKUP"), "Payment pending")
+        self.assertEqual(app.booking_status_label("CONFIRMED", "HOLD_PENDING"), "Payment pending")
+        self.assertEqual(app.booking_status_class("CONFIRMED", "PAY_AT_PICKUP"), "status-pending")
         self.assertEqual(app.payment_status_label("HOLD_PENDING"), "Payment pending")
+        self.assertEqual(app.payment_status_label("PAY_AT_PICKUP"), "Payment pending")
         self.assertEqual(app.payment_status_label("HOLD_PAID"), "10% paid")
 
     def test_public_booking_id_hidden_until_payment_received(self):
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_PENDING"}), "Pending confirmation")
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_EXPIRED"}), "Pending confirmation")
+        self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "PAY_AT_PICKUP"}), "Pending confirmation")
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "HOLD_PAID"}), "FF123456789")
         self.assertEqual(app.public_booking_id_label({"booking_id": "FF123456789", "payment_status": "PAID"}), "FF123456789")
+
+    def test_unpaid_modified_booking_keeps_payment_window_timer(self):
+        expires_at = (datetime.now() + timedelta(minutes=8)).strftime("%Y-%m-%d %H:%M:%S")
+        booking = {
+            "booking_status": "MODIFIED",
+            "payment_status": "HOLD_PENDING",
+            "hold_expires_at": expires_at,
+        }
+
+        self.assertGreater(app.booking_hold_remaining_seconds(booking), 0)
 
     def test_paid_in_full_cancellation_requires_admin_review_before_cutoff(self):
         booking = {
