@@ -1412,6 +1412,10 @@ const summaryPickup = document.getElementById("summaryPickup");
 const summaryReturn = document.getElementById("summaryReturn");
 const modifyStatus = document.getElementById("modifyStatus");
 
+const reloadManageBooking = () => {
+  window.setTimeout(() => window.location.reload(), 450);
+};
+
 function formatDate(value) {
   if (!value) return "";
   const date = new Date(`${value}T00:00:00`);
@@ -1491,6 +1495,7 @@ modifyForm?.addEventListener("submit", (event) => {
         bookingStatusBadge.textContent = payload.status_label || "Modification sent to admin";
         bookingStatusBadge.className = `status-badge ${payload.status_class || "status-confirmed"}`;
       }
+      reloadManageBooking();
     })
     .catch((payload) => {
       modifyStatus.textContent = payload?.message || "Unable to save this modification.";
@@ -1545,6 +1550,7 @@ cancelForm?.addEventListener("submit", (event) => {
         bookingStatusBadge.textContent = data.status_label;
         bookingStatusBadge.className = `status-badge ${data.status_class || "status-pending"}`;
       }
+      reloadManageBooking();
     })
     .catch((payload) => {
       cancelStatus.textContent = payload?.message || "Unable to submit this cancellation request.";
@@ -2813,6 +2819,7 @@ document.getElementById("cancelPendingRequest")?.addEventListener("click", () =>
         bookingStatusBadge.textContent = payload.status_label;
         bookingStatusBadge.className = `status-badge ${payload.status_class || "status-confirmed"}`;
       }
+      reloadManageBooking();
     });
 });
 
