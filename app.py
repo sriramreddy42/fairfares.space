@@ -7544,23 +7544,134 @@ def assistant_database_context(question: str, user: sqlite3.Row | None, include_
     return context
 
 
+def assistant_action(
+    label: str,
+    href: str,
+    kind: str,
+    risk: str = "safe",
+    note: str = "",
+    requires_confirmation: bool = False,
+) -> dict[str, str]:
+    action = {
+        "label": label,
+        "href": href,
+        "kind": kind,
+        "risk": risk,
+        "note": note,
+        "requires_confirmation": "1" if requires_confirmation else "0",
+    }
+    return action
+
+
 def assistant_actions(question: str, context: dict[str, object]) -> list[dict[str, str]]:
     lower = question.lower()
+    def has_intent(terms: tuple[str, ...]) -> bool:
+        for term in terms:
+            if " " in term:
+                if term in lower:
+                    return True
+            elif re.search(rf"\b{re.escape(term)}\b", lower):
+                return True
+        return False
+
     cars = context.get("cars") if isinstance(context.get("cars"), list) else []
     booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
+    role = str(context.get("role") or "guest")
     actions: list[dict[str, str]] = []
-    if any(word in lower for word in ("book", "cheapest", "car", "suv", "sedan", "select")):
+    wants_booking = has_intent(("booking", "reservation", "trip", "pickup", "drop", "status"))
+    wants_car = has_intent(("book", "cheapest", "car", "cars", "suv", "sedan", "select", "price", "available"))
+    wants_cancel = has_intent(("cancel", "cancellation", "refund"))
+    wants_modify = has_intent(("modify", "change", "extend", "shorten", "different date", "different time"))
+    wants_payment = has_intent(("pay", "payment", "hold", "balance", "checkout", "receipt", "invoice"))
+    wants_docs = has_intent(("document", "documents", "agreement", "license", "insurance", "receipt", "invoice"))
+    wants_support = has_intent(("support", "help", "issue", "problem", "ticket"))
+    wants_discount = has_intent(("discount", "coupon", "promo", "referral", "student", "price match", "deal"))
+    wants_admin = has_intent(("admin", "inventory", "staff", "refund payment", "tax", "fee", "fleet"))
+
+    if wants_car:
         cheapest = cars[0] if cars else None
         if isinstance(cheapest, dict):
-            actions.append({"label": f"Book {cheapest['name']}", "href": str(cheapest["select_url"]), "kind": "book"})
-        actions.append({"label": "Browse all cars", "href": "/#results", "kind": "browse"})
-    if any(word in lower for word in ("cancel", "refund")):
-        actions.append({"label": "Review cancellation", "href": "/manage-booking?agent=cancel#cancel", "kind": "cancel"})
-    if any(word in lower for word in ("booking", "pickup", "drop", "receipt", "invoice", "document", "agreement")) and booking:
-        actions.append({"label": "Open my booking", "href": "/manage-booking", "kind": "booking"})
-        actions.append({"label": "Download documents", "href": "/manage-booking?agent=documents#documents", "kind": "documents"})
-    if any(word in lower for word in ("support", "help", "issue", "problem")):
-        actions.append({"label": "Open support", "href": "/manage-booking?agent=support#support", "kind": "support"})
+            actions.append(
+                assistant_action(
+                    f"Review {cheapest['name']}",
+                    str(cheapest["select_url"]),
+                    "book",
+                    "safe",
+                    "Opens checkout review. Payment still requires confirmation.",
+                )
+            )
+        actions.append(assistant_action("Browse all cars", "/#results", "browse", "safe", "Read-only search."))
+    if wants_booking and booking:
+        actions.append(assistant_action("Open my booking", "/manage-booking", "booking", "safe", "Read booking details."))
+    if wants_payment and booking:
+        actions.append(
+            assistant_action(
+                "Continue payment",
+                "/manage-booking#bookingHoldPanel",
+                "payment",
+                "confirm",
+                "Payment screens require Stripe/app confirmation.",
+                True,
+            )
+        )
+    if wants_cancel:
+        actions.append(
+            assistant_action(
+                "Review cancellation",
+                "/manage-booking?agent=cancel#cancel",
+                "cancel",
+                "confirm",
+                "Opens cancellation review. Nothing cancels until you submit.",
+                True,
+            )
+        )
+    if wants_modify:
+        actions.append(
+            assistant_action(
+                "Request modification",
+                "/manage-booking?agent=modify#modify",
+                "modify",
+                "confirm",
+                "Opens modification request. Staff may need to approve.",
+                True,
+            )
+        )
+    if wants_docs and booking:
+        actions.append(
+            assistant_action(
+                "Open documents",
+                "/manage-booking?agent=documents#documents",
+                "documents",
+                "confirm",
+                "Documents are shown only after login and booking access checks.",
+                True,
+            )
+        )
+    if wants_support:
+        actions.append(
+            assistant_action(
+                "Open support",
+                "/manage-booking?agent=support#support",
+                "support",
+                "confirm",
+                "You review the message before a ticket is created.",
+                True,
+            )
+        )
+    if wants_discount:
+        actions.append(assistant_action("View deals", "/deals", "discount", "safe", "Shows current deal rules."))
+        if role == "user":
+            actions.append(assistant_action("Verify student discount", "/dashboard#student", "student", "confirm", "Requires profile and .edu verification.", True))
+        elif role == "guest":
+            actions.append(assistant_action("Sign in for student discount", "/login", "login", "safe", "Login required."))
+    if wants_admin and role == "admin":
+        actions.append(assistant_action("Open bookings admin", "/admin/bookings", "admin", "admin", "Admin-only. Use admin screens for changes.", True))
+        actions.append(assistant_action("Open inventory admin", "/admin/inventory", "admin", "admin", "Admin-only. Use admin screens for changes.", True))
+        actions.append(assistant_action("Open tax and fee rules", "/admin/discounts", "admin", "admin", "Admin-only. Use admin screens for changes.", True))
+    elif wants_admin:
+        actions.append(assistant_action("Open support", "/manage-booking?agent=support#support", "support", "confirm", "Admin actions are not available to this account.", True))
+    if role == "guest" and any((wants_booking, wants_payment, wants_cancel, wants_modify, wants_docs)):
+        actions.append(assistant_action("Sign in to manage booking", "/login", "login", "safe", "Login required for booking actions."))
     deduped: list[dict[str, str]] = []
     seen: set[str] = set()
     for action in actions:
@@ -7580,7 +7691,7 @@ def local_assistant_answer(question: str, context: dict[str, object]) -> str:
         cheapest = cars[0]
         return (
             f"The lowest available option I see is {cheapest['name']} at "
-            f"{format_money(float(cheapest['daily_price']))}/day. I can take you to checkout or show all cars."
+            f"{format_money(float(cheapest['daily_price']))}/day. I can open the checkout review, but payment still requires your confirmation."
         )
     if booking and any(word in lower for word in ("my booking", "pickup", "drop", "status", "receipt", "invoice", "document")):
         return (
@@ -7593,7 +7704,7 @@ def local_assistant_answer(question: str, context: dict[str, object]) -> str:
         policy_text = f" {policy['title']}: {policy['body']}" if isinstance(policy, dict) else ""
         return (
             "Cancellation and refund review depends on timing, booking status, payment record, and provider terms."
-            f"{policy_text} I can open your cancellation screen so you can confirm the request."
+            f"{policy_text} I can open your cancellation screen; nothing is cancelled until you submit the request."
         )
     if any(word in lower for word in ("admin", "database", "fleet", "users")) and context.get("role") == "admin":
         metrics = context.get("admin_metrics") or {}
@@ -7701,7 +7812,9 @@ def build_openai_assistant_payload(question: str, context: dict[str, object]) ->
                     "You are FairFares Assistant. Answer using only the provided FairFares context and configured MCP tools. "
                     "Respect role permissions. Use MCP tools only for relevant read-only lookups. "
                     "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
-                    "tell the user which action button to use for those steps. Keep answers concise."
+                    "tell the user which action button to use for those steps. "
+                    "Users must confirm cancellation, modification, support ticket creation, payment, document email, refund, discount, and all admin changes inside the app. "
+                    "Never stack discounts automatically; only one discount applies unless admin manually approves. Keep answers concise."
                 ),
             },
             {
@@ -10004,6 +10117,49 @@ def html_has_meta_property(html_text: str, prop: str) -> bool:
     return bool(re.search(rf'<meta\s+property="{re.escape(prop)}"\b', html_text, flags=re.IGNORECASE))
 
 
+SOCIAL_META_UNIQUE_PROPERTIES = {
+    "og:title",
+    "og:description",
+    "og:url",
+    "og:type",
+    "og:site_name",
+    "og:image",
+    "og:image:alt",
+}
+SOCIAL_META_UNIQUE_NAMES = {
+    "twitter:card",
+    "twitter:title",
+    "twitter:description",
+    "twitter:image",
+    "twitter:image:alt",
+}
+
+
+def dedupe_social_meta(html_text: str) -> str:
+    seen_properties: set[str] = set()
+    seen_names: set[str] = set()
+
+    def replace_meta(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        property_match = re.search(r'\bproperty=["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
+        if property_match:
+            prop = property_match.group(1).lower()
+            if prop in SOCIAL_META_UNIQUE_PROPERTIES:
+                if prop in seen_properties:
+                    return ""
+                seen_properties.add(prop)
+        name_match = re.search(r'\bname=["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
+        if name_match:
+            name = name_match.group(1).lower()
+            if name in SOCIAL_META_UNIQUE_NAMES:
+                if name in seen_names:
+                    return ""
+                seen_names.add(name)
+        return tag
+
+    return re.sub(r"  <meta\b[^>]*(?:property|name)=['\"][^'\"]+['\"][^>]*>\n?", replace_meta, html_text, flags=re.IGNORECASE)
+
+
 def inject_social_meta(html_text: str, template_name: str) -> str:
     if template_name.startswith("admin"):
         return html_text
@@ -10039,9 +10195,10 @@ def inject_social_meta(html_text: str, template_name: str) -> str:
     for name, content in name_meta.items():
         if not html_has_meta_name(html_text, name):
             additions.append(f'  <meta name="{name}" content="{escape(content)}">')
-    if not additions:
-        return html_text
-    return re.sub(r"(</head>)", "\n".join(additions) + "\n\\1", html_text, count=1, flags=re.IGNORECASE)
+    if additions:
+        html_text = re.sub(r"(</head>)", "\n".join(additions) + "\n\\1", html_text, count=1, flags=re.IGNORECASE)
+    return dedupe_social_meta(html_text)
+
 
 
 def html_title(html_text: str, default: str = "FairFares") -> str:
@@ -10254,6 +10411,18 @@ def render_site_loader() -> str:
     """.rstrip()
 
 
+PUBLIC_REDIRECT_ROUTES = {
+    "/faq": "/wiki",
+    "/support": "/manage-booking#support",
+    "/rental-guides": "/blog",
+    "/cheap-car-rental-denver": "/car-rental-denver",
+    "/airport-pickup": "/denver-airport-car-rental",
+    "/student-rentals": "/student-car-rental",
+    "/suv-rentals": "/suv-rental",
+    "/long-term-car-rental-colorado": "/monthly-car-rental",
+}
+
+
 def minify_css(content: str) -> str:
     content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
     content = re.sub(r"\s+", " ", content)
@@ -10263,7 +10432,62 @@ def minify_css(content: str) -> str:
 
 
 def minify_js(content: str) -> str:
-    return content
+    out: list[str] = []
+    i = 0
+    length = len(content)
+    quote = ""
+    escaped = False
+
+    def next_non_space(index: int) -> str:
+        while index < length and content[index].isspace():
+            index += 1
+        return content[index] if index < length else ""
+
+    while i < length:
+        char = content[i]
+        nxt = content[i + 1] if i + 1 < length else ""
+        if quote:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            i += 1
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            out.append(char)
+            i += 1
+            continue
+        if char == "/" and nxt == "/":
+            i += 2
+            while i < length and content[i] not in "\r\n":
+                i += 1
+            continue
+        if char == "/" and nxt == "*":
+            i += 2
+            while i + 1 < length and not (content[i] == "*" and content[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if char.isspace():
+            previous = out[-1] if out else ""
+            following = next_non_space(i + 1)
+            if previous and following and (
+                previous.isalnum()
+                or previous in {"_", "$"}
+            ) and (
+                following.isalnum()
+                or following in {"_", "$"}
+            ):
+                out.append(" ")
+            i += 1
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out).strip()
 
 
 def escape(value: object) -> str:
@@ -10325,6 +10549,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in PUBLIC_REDIRECT_ROUTES:
+            self.redirect(PUBLIC_REDIRECT_ROUTES[parsed.path])
+            return
         if parsed.path == "/robots.txt":
             self.send_text(self.robots_txt_body(), head_only=True)
             return
@@ -10358,6 +10585,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path in SEO_LANDING_PAGES:
             self.seo_landing_page()
+            return
+        if parsed.path in PUBLIC_REDIRECT_ROUTES:
+            self.redirect(PUBLIC_REDIRECT_ROUTES[parsed.path])
             return
         routes = {
             "/": self.home,
@@ -16803,7 +17033,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <li><b>Insurance requirement:</b> bring proof of a valid auto policy that extends coverage to rental vehicles. Recommended coverage includes collision, comprehensive, liability, rental vehicle coverage when required, and roadside assistance.</li>
                             <li><b>Coverage on file:</b> {escape(insurance_summary)}</li>
                             <li>FairFares may verify insurance coverage before releasing the vehicle. If your policy does not cover rentals, contact your insurer before completing pickup.</li>
-                            <li><a href="/wiki?q=insurance%20requirement">View the full insurance requirement</a>.</li>
+                            <li><a href="/wiki">View the full insurance requirement</a>.</li>
                             <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
                         </ul>
                         <button class="policy-see-more" type="button" data-policy-toggle aria-expanded="false">See more</button>

@@ -378,22 +378,55 @@
 }
 
 .wiki-agent-actions a {
-  align-items: center;
+  align-items: flex-start;
   background: #07143f;
   border: 1px solid #07143f;
   border-radius: 999px;
   color: #ffffff;
   display: inline-flex;
+  flex-direction: column;
   font-weight: 950;
+  gap: 2px;
   min-height: 40px;
   padding: 8px 13px;
   text-decoration: none;
+}
+
+.wiki-agent-actions a b {
+  line-height: 1.05;
+}
+
+.wiki-agent-actions a small {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.wiki-agent-actions a[data-agent-risk="confirm"] {
+  background: #fff7e6;
+  border-color: #f3c46b;
+  color: #07143f;
+}
+
+.wiki-agent-actions a[data-agent-risk="confirm"] small {
+  color: #6d5726;
+}
+
+.wiki-agent-actions a[data-agent-risk="admin"] {
+  background: #07143f;
+  border-color: #ed001c;
+  color: #ffffff;
 }
 
 .wiki-agent-actions a[data-agent-action="cancel"] {
   background: #ffffff;
   border-color: #ed001c;
   color: #ed001c;
+}
+
+.wiki-agent-actions a[data-agent-action="cancel"] small {
+  color: #9b0012;
 }
 
 @media (max-width: 900px) {
@@ -461,6 +494,10 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .wiki-agent-answer {
+    max-height: 120px;
+  }
+
   .wiki-agent-chips,
   .wiki-agent-actions {
     display: grid;
@@ -482,9 +519,12 @@
     max-height: calc(100vh - 140px);
   }
 
+  .wiki-agent-answer {
+    max-height: 96px;
+  }
+
   .wiki-agent-chips,
   .wiki-agent-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 }
-

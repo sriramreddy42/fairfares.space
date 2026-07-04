@@ -3626,6 +3626,13 @@ function initWikiAgentWidget() {
   const actionsBox = widget.querySelector(".wiki-agent-actions");
   const submit = widget.querySelector(".wiki-agent-submit");
   let promptIndex = 0;
+  const escapeAgentHtml = (value) => String(value || "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
 
   const setOpen = (open) => {
     panel.hidden = !open;
@@ -3679,7 +3686,19 @@ function initWikiAgentWidget() {
         answer.textContent = `${payload.answer || payload.message || "No answer found."}${sourceText}`;
         if (actionsBox && Array.isArray(payload.actions)) {
           actionsBox.innerHTML = payload.actions
-            .map((action) => `<a href="${action.href || "#"}" data-agent-action="${action.kind || "open"}">${action.label || "Open"}</a>`)
+            .map((action) => {
+              const confirmAction = action.requires_confirmation === "1";
+              const note = action.note || (confirmAction ? "Confirmation required." : "");
+              return `
+                <a href="${escapeAgentHtml(action.href || "#")}"
+                  data-agent-action="${escapeAgentHtml(action.kind || "open")}"
+                  data-agent-risk="${escapeAgentHtml(action.risk || "safe")}"
+                  data-agent-confirm="${confirmAction ? "1" : "0"}">
+                  <b>${escapeAgentHtml(action.label || "Open")}</b>
+                  ${note ? `<small>${escapeAgentHtml(note)}</small>` : ""}
+                </a>
+              `;
+            })
             .join("");
         }
       })
@@ -3689,6 +3708,15 @@ function initWikiAgentWidget() {
       .finally(() => {
         submit.disabled = false;
       });
+  });
+
+  actionsBox?.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-agent-action]");
+    if (!link || link.dataset.agentConfirm !== "1") return;
+    const message = link.querySelector("small")?.textContent || "This opens a FairFares screen where you must confirm before anything changes. Continue?";
+    if (!window.confirm(message)) {
+      event.preventDefault();
+    }
   });
 
   document.addEventListener("keydown", (event) => {
