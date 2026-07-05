@@ -3635,6 +3635,7 @@ function initWikiAgentWidget() {
       </label>
       <button class="wiki-agent-submit" type="submit">Ask</button>
       <div class="wiki-agent-answer" aria-live="polite">Pick a suggestion or ask anything about FairFares.</div>
+      <div class="wiki-agent-results" aria-label="Available cars"></div>
       <div class="wiki-agent-actions" aria-label="Assistant actions"></div>
     </form>
   `;
@@ -3648,6 +3649,7 @@ function initWikiAgentWidget() {
   const close = widget.querySelector(".wiki-agent-close");
   const input = widget.querySelector("input[name='question']");
   const answer = widget.querySelector(".wiki-agent-answer");
+  const resultsBox = widget.querySelector(".wiki-agent-results");
   const actionsBox = widget.querySelector(".wiki-agent-actions");
   const submit = widget.querySelector(".wiki-agent-submit");
   let promptIndex = 0;
@@ -3698,6 +3700,7 @@ function initWikiAgentWidget() {
     }
     submit.disabled = true;
     answer.textContent = "Checking FairFares data...";
+    if (resultsBox) resultsBox.innerHTML = "";
     if (actionsBox) actionsBox.innerHTML = "";
     fetch("/wiki/ask", {
       method: "POST",
@@ -3709,6 +3712,24 @@ function initWikiAgentWidget() {
           ? ` Sources: ${payload.sources.map((source) => source.title).join(", ")}.`
           : "";
         answer.textContent = `${payload.answer || payload.message || "No answer found."}${sourceText}`;
+        if (resultsBox) {
+          const cards = Array.isArray(payload.cards) ? payload.cards : [];
+          resultsBox.innerHTML = cards
+            .map((card) => `
+              <a class="wiki-agent-result-card" href="${escapeAgentHtml(card.href || "#")}">
+                <img src="${escapeAgentHtml(card.image || "/static/img/booking-confirmation-promise.png")}"
+                  alt="${escapeAgentHtml(card.alt || card.title || "FairFares rental car")}"
+                  loading="lazy" decoding="async">
+                <span>
+                  <em>${escapeAgentHtml(card.badge || "Available")}</em>
+                  <b>${escapeAgentHtml(card.title || "FairFares car")}</b>
+                  <small>${escapeAgentHtml(card.subtitle || "Review booking")}</small>
+                </span>
+                <strong>Book</strong>
+              </a>
+            `)
+            .join("");
+        }
         if (actionsBox && Array.isArray(payload.actions)) {
           actionsBox.innerHTML = payload.actions
             .map((action) => {

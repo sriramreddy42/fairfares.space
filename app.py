@@ -7510,6 +7510,13 @@ MONTH_NAME_TO_NUMBER = {
 }
 
 
+def assistant_time_match(value: str) -> re.Match[str] | None:
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b", value, re.I)
+    if match:
+        return match
+    return re.search(r"\b(\d{1,2})(?::(\d{2}))\b", value)
+
+
 def assistant_parse_time(value: str, default: str = "10:00 AM") -> str:
     match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b", value, re.I)
     if not match:
@@ -7616,16 +7623,35 @@ def assistant_booking_search_request(question: str) -> dict[str, object] | None:
     if not date_mentions:
         return None
     pickup_date = date_mentions[0]
-    return_date = date_mentions[1] if len(date_mentions) > 1 else pickup_date + timedelta(days=3)
+    return_date = date_mentions[1] if len(date_mentions) > 1 else None
     pickup_segment = question
     return_segment = ""
     return_match = re.search(r"\b(return|drop[\s-]?off|to)\b", question, re.I)
     if return_match:
         pickup_segment = question[:return_match.start()]
         return_segment = question[return_match.start():]
-    pickup_time = assistant_parse_time(pickup_segment, "10:00 AM")
-    return_time = assistant_parse_time(return_segment, "10:00 AM") if return_segment else "10:00 AM"
+    pickup_time = assistant_parse_time(pickup_segment, "") if assistant_time_match(pickup_segment) else ""
+    return_time = assistant_parse_time(return_segment, "") if return_segment and assistant_time_match(return_segment) else ""
     pickup_location = assistant_detect_location(question)
+    missing_fields: list[str] = []
+    if not pickup_time:
+        missing_fields.append("pickup time")
+    if return_date is None:
+        missing_fields.append("return date")
+    if not return_time:
+        missing_fields.append("return time")
+    if missing_fields:
+        return {
+            "pickup_date": pickup_date.isoformat(),
+            "return_date": return_date.isoformat() if return_date else "",
+            "pickup_time": pickup_time,
+            "return_time": return_time,
+            "days": "",
+            "car_type": assistant_detect_car_type(question),
+            "pickup_location": pickup_location,
+            "return_location": pickup_location,
+            "missing_fields": missing_fields,
+        }
     try:
         normalized = normalize_booking_window(
             3,
@@ -7684,6 +7710,8 @@ def assistant_car_matches_request(car: sqlite3.Row, request: dict[str, object] |
 
 
 def assistant_car_context(limit: int = 5, request: dict[str, object] | None = None) -> list[dict[str, object]]:
+    if request and request.get("missing_fields"):
+        return []
     cars = [
         car for car in get_cars()
         if str(row_value(car, "status") or "").upper().strip() == "AVAILABLE"
@@ -7701,10 +7729,37 @@ def assistant_car_context(limit: int = 5, request: dict[str, object] | None = No
             "bags": row_value(car, "bags"),
             "location": primary_inventory_location(row_value(car, "location")),
             "status": row_value(car, "status"),
+            "image_url": row_value(car, "image_url"),
+            "image_alt": vehicle_image_alt(car),
             "select_url": assistant_car_checkout_url(row_value(car, "id"), request),
         }
         for car in cars[:limit]
     ]
+
+
+def assistant_result_cards(context: dict[str, object]) -> list[dict[str, str]]:
+    booking_request = context.get("booking_request") if isinstance(context.get("booking_request"), dict) else None
+    cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    if not booking_request or booking_request.get("missing_fields") or not cars:
+        return []
+    cards: list[dict[str, str]] = []
+    for index, car in enumerate(cars[:3]):
+        if not isinstance(car, dict):
+            continue
+        name = str(car.get("name") or "FairFares car")
+        category = str(car.get("category") or "Rental car")
+        price = format_money(float(car.get("daily_price") or 0))
+        cards.append(
+            {
+                "title": name,
+                "subtitle": f"{category} - {price}/day",
+                "badge": "Cheapest" if index == 0 else "Available",
+                "image": str(car.get("image_url") or "/static/img/booking-confirmation-promise.png"),
+                "alt": str(car.get("image_alt") or f"{name} rental car"),
+                "href": str(car.get("select_url") or "/manage-booking"),
+            }
+        )
+    return cards
 
 
 def assistant_booking_context(user: sqlite3.Row | None) -> dict[str, object] | None:
@@ -7800,7 +7855,10 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
 
     if wants_car:
         cheapest = cars[0] if cars else None
-        if booking_request and cars:
+        missing_fields = booking_request.get("missing_fields") if isinstance(booking_request, dict) else []
+        if missing_fields:
+            actions.append(assistant_action("Open search form", "/", "browse", "safe", "Enter pickup time, return date, and return time."))
+        elif booking_request and cars:
             for car in cars[:3]:
                 if not isinstance(car, dict):
                     continue
@@ -7824,7 +7882,7 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
                     "Opens checkout review. Payment still requires confirmation.",
                 )
             )
-        if booking_request:
+        if booking_request and not missing_fields:
             query_params = {
                 key: str(value)
                 for key, value in booking_request.items()
@@ -7834,7 +7892,7 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
             if query_params:
                 browse_href = f"/?{urllib.parse.urlencode(query_params)}#results"
             actions.append(assistant_action("Search all matching cars", browse_href, "browse", "safe", "Read-only search."))
-        else:
+        elif not booking_request:
             actions.append(assistant_action("Browse all cars", "/#results", "browse", "safe", "Read-only search."))
     if wants_booking and booking:
         actions.append(assistant_action("Open my booking", "/manage-booking", "booking", "safe", "Read booking details."))
@@ -7924,10 +7982,23 @@ def local_assistant_answer(question: str, context: dict[str, object]) -> str:
     booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
     wiki = context.get("wiki") if isinstance(context.get("wiki"), list) else []
     if booking_request:
-        pickup_label = f"{format_booking_date(str(booking_request['pickup_date']), str(booking_request['pickup_date']))} at {booking_request['pickup_time']}"
-        return_label = f"{format_booking_date(str(booking_request['return_date']), str(booking_request['return_date']))} at {booking_request['return_time']}"
+        missing_fields = booking_request.get("missing_fields") if isinstance(booking_request.get("missing_fields"), list) else []
+        pickup_date = str(booking_request.get("pickup_date") or "")
+        return_date = str(booking_request.get("return_date") or "")
+        pickup_label = format_booking_date(pickup_date, pickup_date) if pickup_date else "not selected"
+        if booking_request.get("pickup_time"):
+            pickup_label = f"{pickup_label} at {booking_request['pickup_time']}"
+        return_label = format_booking_date(return_date, return_date) if return_date else "not selected"
+        if booking_request.get("return_time"):
+            return_label = f"{return_label} at {booking_request['return_time']}"
         requested_type = str(booking_request.get("car_type") or "Any car")
         location = str(booking_request.get("pickup_location") or "All available locations")
+        if missing_fields:
+            missing_text = ", ".join(str(field) for field in missing_fields)
+            return (
+                f"I can search cars for pickup {pickup_label}, but I still need {missing_text}. "
+                "Please include pickup date and time, return date and time, car type if you have one, and location."
+            )
         if cars:
             cheapest = cars[0]
             car_lines = "; ".join(
@@ -8072,6 +8143,7 @@ def build_openai_assistant_payload(question: str, context: dict[str, object]) ->
                     "Respect role permissions. Use MCP tools only for relevant read-only lookups. "
                     "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
                     "tell the user which action button to use for those steps. "
+                    "If booking_request contains missing_fields, do not invent dates or times; ask for those exact missing fields. "
                     "For booking searches, use this format when data is present: Pickup, Return, Car type, Available cars cheapest first, Cheapest, then mention the Book button opens payment review. "
                     "Users must confirm cancellation, modification, support ticket creation, payment, document email, refund, discount, and all admin changes inside the app. "
                     "Never stack discounts automatically; only one discount applies unless admin manually approves. Keep answers concise."
@@ -13353,6 +13425,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "answer": answer,
                 "sources": sources,
                 "actions": assistant_actions(question, context),
+                "cards": assistant_result_cards(context),
                 "scope": "Admin database + Wiki" if include_internal else ("Your FairFares data + public Wiki" if user else "Public FairFares data"),
                 "agent": "FairFares Assistant",
             }

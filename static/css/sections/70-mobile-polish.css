@@ -1764,10 +1764,13 @@
   }
 
   .wiki-agent-panel {
-    bottom: 82px !important;
+    bottom: auto !important;
+    left: 50% !important;
     max-height: calc(100vh - 108px) !important;
     padding: 14px !important;
-    right: 10px !important;
+    right: auto !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
     width: calc(100vw - 20px) !important;
   }
 }

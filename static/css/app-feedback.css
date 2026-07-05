@@ -253,15 +253,25 @@
   border-radius: 18px;
   box-shadow: 0 24px 70px rgba(7, 24, 69, 0.28);
   color: #071845;
-  bottom: 112px;
-  max-height: calc(100vh - 48px);
+  bottom: auto;
+  display: grid;
+  gap: 14px 18px;
+  grid-template-columns: minmax(270px, 0.85fr) minmax(330px, 1.15fr);
+  grid-template-areas:
+    "head head"
+    "chips answer"
+    "field answer"
+    "submit results"
+    "actions results";
+  left: 50%;
+  max-height: min(760px, calc(100vh - 56px));
   overflow: auto;
-  padding: 18px;
+  padding: 26px;
   position: fixed;
-  right: 24px;
-  top: auto;
-  transform: none;
-  width: min(680px, calc(100vw - 48px));
+  right: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(940px, calc(100vw - 48px));
   z-index: 132;
 }
 
@@ -272,8 +282,8 @@
 }
 
 .admin-screen .wiki-agent-panel {
-  bottom: 112px;
-  right: 86px;
+  left: 50%;
+  right: auto;
   z-index: 2147483102;
 }
 
@@ -282,7 +292,8 @@
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  margin-bottom: 14px;
+  grid-area: head;
+  margin-bottom: 0;
 }
 
 .wiki-agent-head b {
@@ -317,7 +328,9 @@
 }
 
 .wiki-agent-chips {
-  margin-bottom: 14px;
+  align-content: start;
+  grid-area: chips;
+  margin-bottom: 0;
 }
 
 .wiki-agent-chips button {
@@ -333,6 +346,7 @@
 .wiki-agent-panel label {
   display: grid;
   gap: 7px;
+  grid-area: field;
 }
 
 .wiki-agent-panel input {
@@ -351,6 +365,7 @@
   color: #ffffff;
   cursor: pointer;
   font-weight: 950;
+  grid-area: submit;
   margin-top: 12px;
   padding: 12px;
   width: 100%;
@@ -366,14 +381,76 @@
   border-radius: 12px;
   color: #4e596c;
   font-weight: 800;
+  grid-area: answer;
   line-height: 1.45;
   margin-top: 12px;
-  max-height: 220px;
+  max-height: 260px;
   overflow: auto;
   padding: 12px;
 }
 
+.wiki-agent-results {
+  display: grid;
+  gap: 10px;
+  grid-area: results;
+}
+
+.wiki-agent-result-card {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d8e1ee;
+  border-radius: 14px;
+  color: #071845;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  min-height: 86px;
+  padding: 9px;
+  text-decoration: none;
+}
+
+.wiki-agent-result-card img {
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  height: 68px;
+  object-fit: cover;
+  width: 96px;
+}
+
+.wiki-agent-result-card span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wiki-agent-result-card em {
+  color: #0a8f3d;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.wiki-agent-result-card b,
+.wiki-agent-result-card small {
+  overflow-wrap: anywhere;
+}
+
+.wiki-agent-result-card small {
+  color: #566176;
+  font-weight: 800;
+}
+
+.wiki-agent-result-card strong {
+  background: #07143f;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.78rem;
+  padding: 8px 12px;
+}
+
 .wiki-agent-actions {
+  grid-area: actions;
   margin-top: 12px;
 }
 
@@ -437,9 +514,20 @@
 
   .wiki-agent-panel {
     border-radius: 16px;
-    padding: 14px;
-    right: 10px;
-    width: calc(100vw - 20px);
+    gap: 12px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "chips"
+      "field"
+      "submit"
+      "answer"
+      "results"
+      "actions";
+    left: 50%;
+    padding: 16px;
+    right: auto;
+    width: calc(100vw - 24px);
     z-index: 142;
   }
 }
@@ -471,12 +559,12 @@
   }
 
   .wiki-agent-panel {
-    bottom: max(132px, calc(env(safe-area-inset-bottom) + 132px));
-    left: 10px;
-    max-height: calc(100vh - 156px);
-    right: 10px;
-    top: auto;
-    transform: none;
+    bottom: auto;
+    left: 50%;
+    max-height: calc(100vh - 40px);
+    right: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
     width: auto;
   }
 
@@ -485,8 +573,8 @@
   }
 
   .admin-screen .wiki-agent-panel {
-    left: 10px;
-    right: 10px;
+    left: 50%;
+    right: auto;
   }
 
   .wiki-agent-head {
@@ -526,5 +614,19 @@
   .wiki-agent-chips,
   .wiki-agent-actions {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-agent-result-card {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .wiki-agent-result-card img {
+    height: 58px;
+    width: 76px;
+  }
+
+  .wiki-agent-result-card strong {
+    grid-column: 1 / -1;
+    text-align: center;
   }
 }

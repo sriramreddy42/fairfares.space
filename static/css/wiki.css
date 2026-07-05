@@ -279,19 +279,28 @@
 }
 
 .wiki-agent-panel {
-  right: 24px;
-  max-height: calc(100vh - 48px);
+  display: grid;
+  gap: 14px 18px;
+  grid-template-columns: minmax(270px, 0.85fr) minmax(330px, 1.15fr);
+  grid-template-areas:
+    "head head"
+    "chips answer"
+    "field answer"
+    "submit results"
+    "actions results";
+  left: 50%;
+  max-height: min(760px, calc(100vh - 56px));
   overflow: auto;
   position: fixed;
   top: 50%;
-  transform: translateY(-50%);
-  width: min(680px, calc(100vw - 48px));
+  transform: translate(-50%, -50%);
+  width: min(940px, calc(100vw - 48px));
   border: 1px solid #d8e1ee;
   border-radius: 18px;
   background: #fff;
   color: #071845;
   box-shadow: 0 24px 70px rgba(7, 24, 69, 0.28);
-  padding: 18px;
+  padding: 26px;
   z-index: 92;
 }
 
@@ -304,7 +313,8 @@
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
-  margin-bottom: 14px;
+  grid-area: head;
+  margin-bottom: 0;
 }
 
 .wiki-agent-head b {
@@ -335,7 +345,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 14px;
+  align-content: start;
+  grid-area: chips;
+  margin-bottom: 0;
 }
 
 .wiki-agent-chips button {
@@ -351,6 +363,7 @@
 .wiki-agent-panel label {
   display: grid;
   gap: 7px;
+  grid-area: field;
 }
 
 .wiki-agent-panel input {
@@ -370,6 +383,7 @@
   background: #ed001c;
   color: #fff;
   font-weight: 950;
+  grid-area: submit;
   padding: 12px;
   cursor: pointer;
 }
@@ -381,20 +395,82 @@
 
 .wiki-agent-answer {
   margin-top: 12px;
-  max-height: 220px;
+  max-height: 260px;
   overflow: auto;
   border-radius: 12px;
   background: #f7f9fc;
   color: #4e596c;
   font-weight: 800;
+  grid-area: answer;
   line-height: 1.45;
   padding: 12px;
+}
+
+.wiki-agent-results {
+  display: grid;
+  gap: 10px;
+  grid-area: results;
+}
+
+.wiki-agent-result-card {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d8e1ee;
+  border-radius: 14px;
+  color: #071845;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  min-height: 86px;
+  padding: 9px;
+  text-decoration: none;
+}
+
+.wiki-agent-result-card img {
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  height: 68px;
+  object-fit: cover;
+  width: 96px;
+}
+
+.wiki-agent-result-card span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wiki-agent-result-card em {
+  color: #0a8f3d;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.wiki-agent-result-card b,
+.wiki-agent-result-card small {
+  overflow-wrap: anywhere;
+}
+
+.wiki-agent-result-card small {
+  color: #566176;
+  font-weight: 800;
+}
+
+.wiki-agent-result-card strong {
+  background: #07143f;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.78rem;
+  padding: 8px 12px;
 }
 
 .wiki-agent-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  grid-area: actions;
   margin-top: 12px;
 }
 
@@ -498,7 +574,18 @@
   }
 
   .wiki-agent-panel {
-    right: 10px;
+    gap: 12px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "chips"
+      "field"
+      "submit"
+      "answer"
+      "results"
+      "actions";
+    left: 50%;
+    right: auto;
     top: 50%;
     width: calc(100vw - 20px);
     padding: 14px;
@@ -554,13 +641,13 @@
   }
 
   .wiki-agent-panel {
-    bottom: max(132px, calc(env(safe-area-inset-bottom) + 132px));
-    left: 10px;
-    max-height: calc(100vh - 156px);
+    bottom: auto;
+    left: 50%;
+    max-height: calc(100vh - 40px);
     overflow: auto;
-    right: 10px;
-    top: auto;
-    transform: none;
+    right: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
     width: auto;
   }
 
@@ -595,5 +682,19 @@
   .wiki-agent-actions,
   .wiki-agent-chips {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-agent-result-card {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .wiki-agent-result-card img {
+    height: 58px;
+    width: 76px;
+  }
+
+  .wiki-agent-result-card strong {
+    grid-column: 1 / -1;
+    text-align: center;
   }
 }
