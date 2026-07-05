@@ -695,6 +695,30 @@ const guestOfferModal = document.getElementById("guestOfferModal");
 const bookingReferralModal = document.getElementById("bookingReferralModal");
 const referralClaimModal = document.getElementById("referralClaimModal");
 
+function applySearchParamsFromUrl() {
+  if (!searchForm) return;
+  const params = new URLSearchParams(window.location.search);
+  const fieldMap = [
+    [pickupDate, "pickup_date"],
+    [returnDate, "return_date"],
+    [pickupTime, "pickup_time"],
+    [returnTime, "return_time"],
+    [locationSelect, "pickup_location"],
+    [discountCode, "discount_code"],
+  ];
+  fieldMap.forEach(([field, key]) => {
+    const value = params.get(key);
+    if (field && value) field.value = value;
+  });
+  const requestedType = (params.get("car_type") || "").toLowerCase();
+  if (requestedType) {
+    typeFilters.forEach((input) => {
+      input.checked = String(input.value || "").toLowerCase().includes(requestedType);
+    });
+  }
+  if (discountCode?.value) validateDiscount();
+}
+
 const explorerForm = document.getElementById("explorerForm");
 const moodGrid = document.getElementById("moodGrid");
 const explorerMoodHelper = document.getElementById("explorerMoodHelper");
@@ -1203,6 +1227,7 @@ filterToggle?.addEventListener("click", () => {
 
 mobileQuery.addEventListener?.("change", syncFilterOptions);
 syncFilterOptions();
+applySearchParamsFromUrl();
 
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();

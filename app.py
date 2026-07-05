@@ -4331,6 +4331,10 @@ def split_inventory_locations(value: object) -> list[str]:
     return locations
 
 
+def normalize_location_label(value: object) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold())).strip()
+
+
 def normalize_inventory_locations(value: object, fallback: str = "Denver International Airport (DEN)") -> str:
     locations = split_inventory_locations(value)
     return "\n".join(locations) if locations else fallback
@@ -7478,10 +7482,212 @@ def assistant_user_role(user: sqlite3.Row | None) -> str:
     return "user"
 
 
-def assistant_car_context(limit: int = 5) -> list[dict[str, object]]:
+MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+
+def assistant_parse_time(value: str, default: str = "10:00 AM") -> str:
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b", value, re.I)
+    if not match:
+        match = re.search(r"\b(\d{1,2})(?::(\d{2}))\b", value)
+        if not match:
+            return default
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if hour > 23 or minute > 59:
+            return default
+        return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").strftime("%I:%M %p").lstrip("0")
+    hour = int(match.group(1))
+    minute = int(match.group(2) or "0")
+    period = match.group(3).lower().replace(".", "")
+    if hour < 1 or hour > 12 or minute > 59:
+        return default
+    if period == "pm" and hour != 12:
+        hour += 12
+    if period == "am" and hour == 12:
+        hour = 0
+    return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").strftime("%I:%M %p").lstrip("0")
+
+
+def assistant_parse_date_mentions(question: str) -> list[date]:
+    today = date.today()
+    mentions: list[tuple[int, date]] = []
+    for match in re.finditer(
+        r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*(\d{4}))?",
+        question,
+        re.I,
+    ):
+        month = MONTH_NAME_TO_NUMBER.get(match.group(1).lower())
+        day = int(match.group(2))
+        year = int(match.group(3) or today.year)
+        if month:
+            try:
+                parsed = date(year, month, day)
+                if not match.group(3) and parsed < today:
+                    parsed = date(year + 1, month, day)
+                mentions.append((match.start(), parsed))
+            except ValueError:
+                continue
+    for match in re.finditer(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", question):
+        month = int(match.group(1))
+        day = int(match.group(2))
+        year_raw = match.group(3)
+        year = today.year
+        if year_raw:
+            year = int(year_raw)
+            if year < 100:
+                year += 2000
+        try:
+            parsed = date(year, month, day)
+            if not year_raw and parsed < today:
+                parsed = date(year + 1, month, day)
+            mentions.append((match.start(), parsed))
+        except ValueError:
+            continue
+    ordered: list[date] = []
+    seen: set[str] = set()
+    for _position, parsed in sorted(mentions, key=lambda item: item[0]):
+        key = parsed.isoformat()
+        if key not in seen:
+            ordered.append(parsed)
+            seen.add(key)
+    return ordered
+
+
+def assistant_detect_car_type(question: str) -> str:
+    lower = question.lower()
+    if re.search(r"\b(suv|crossover)\b", lower):
+        return "SUV"
+    if re.search(r"\b(sedan)\b", lower):
+        return "Sedan"
+    if re.search(r"\b(minivan|van|voyager|pacifica)\b", lower):
+        return "Van"
+    if re.search(r"\b(electric|ev|bolt)\b", lower):
+        return "Electric"
+    if re.search(r"\b(hybrid)\b", lower):
+        return "Hybrid"
+    return ""
+
+
+def assistant_detect_location(question: str) -> str:
+    lower = question.lower()
+    locations = get_inventory_locations()
+    if "airport" in lower or "den" in lower:
+        for location in locations:
+            normalized = normalize_location_label(location)
+            if "airport" in normalized or normalized == "den":
+                return location
+    for location in locations:
+        normalized = normalize_location_label(location)
+        if normalized and normalized in normalize_location_label(question):
+            return location
+    return ""
+
+
+def assistant_booking_search_request(question: str) -> dict[str, object] | None:
+    lower = question.lower()
+    if not any(term in lower for term in ("book", "available", "availability", "cheapest", "cheap", "car", "cars", "suv", "sedan", "pickup", "return")):
+        return None
+    date_mentions = assistant_parse_date_mentions(question)
+    if not date_mentions:
+        return None
+    pickup_date = date_mentions[0]
+    return_date = date_mentions[1] if len(date_mentions) > 1 else pickup_date + timedelta(days=3)
+    pickup_segment = question
+    return_segment = ""
+    return_match = re.search(r"\b(return|drop[\s-]?off|to)\b", question, re.I)
+    if return_match:
+        pickup_segment = question[:return_match.start()]
+        return_segment = question[return_match.start():]
+    pickup_time = assistant_parse_time(pickup_segment, "10:00 AM")
+    return_time = assistant_parse_time(return_segment, "10:00 AM") if return_segment else "10:00 AM"
+    pickup_location = assistant_detect_location(question)
+    try:
+        normalized = normalize_booking_window(
+            3,
+            pickup_date.isoformat(),
+            return_date.isoformat(),
+            pickup_time,
+            return_time,
+            strict=True,
+        )
+    except ValueError:
+        return None
+    pickup_iso, return_iso, pickup_time, return_time, days, _start, _end = normalized
+    return {
+        "pickup_date": pickup_iso,
+        "return_date": return_iso,
+        "pickup_time": pickup_time,
+        "return_time": return_time,
+        "days": days,
+        "car_type": assistant_detect_car_type(question),
+        "pickup_location": pickup_location,
+        "return_location": pickup_location,
+    }
+
+
+def assistant_car_checkout_url(car_id: object, request: dict[str, object] | None = None) -> str:
+    params = {"car_id": str(car_id)}
+    if request:
+        for key in ("days", "pickup_date", "return_date", "pickup_time", "return_time", "pickup_location", "return_location"):
+            value = request.get(key)
+            if value:
+                params[key] = str(value)
+    return f"/manage-booking?{urllib.parse.urlencode(params)}"
+
+
+def assistant_car_matches_request(car: sqlite3.Row, request: dict[str, object] | None) -> bool:
+    if not request:
+        return True
+    desired_type = str(request.get("car_type") or "").casefold()
+    if desired_type:
+        haystack = " ".join(
+            str(row_value(car, key) or "")
+            for key in ("name", "category", "type", "fuel_type")
+        ).casefold()
+        if desired_type == "van":
+            if "van" not in haystack and "minivan" not in haystack:
+                return False
+        elif desired_type not in haystack:
+            return False
+    requested_location = str(request.get("pickup_location") or "")
+    if requested_location:
+        requested_key = normalize_location_label(requested_location)
+        location_keys = [normalize_location_label(location) for location in split_inventory_locations(row_value(car, "location"))]
+        if requested_key and requested_key not in location_keys:
+            return False
+    return True
+
+
+def assistant_car_context(limit: int = 5, request: dict[str, object] | None = None) -> list[dict[str, object]]:
     cars = [
         car for car in get_cars()
         if str(row_value(car, "status") or "").upper().strip() == "AVAILABLE"
+        and assistant_car_matches_request(car, request)
     ]
     cars.sort(key=lambda car: float(row_value(car, "daily_price") or 0))
     return [
@@ -7493,8 +7699,9 @@ def assistant_car_context(limit: int = 5) -> list[dict[str, object]]:
             "daily_price": float(row_value(car, "daily_price") or 0),
             "seats": row_value(car, "seats"),
             "bags": row_value(car, "bags"),
+            "location": primary_inventory_location(row_value(car, "location")),
             "status": row_value(car, "status"),
-            "select_url": f"/manage-booking?car_id={row_value(car, 'id')}",
+            "select_url": assistant_car_checkout_url(row_value(car, "id"), request),
         }
         for car in cars[:limit]
     ]
@@ -7525,9 +7732,11 @@ def assistant_booking_context(user: sqlite3.Row | None) -> dict[str, object] | N
 
 def assistant_database_context(question: str, user: sqlite3.Row | None, include_internal: bool) -> dict[str, object]:
     articles = search_wiki_articles(question, include_internal=include_internal)
+    booking_request = assistant_booking_search_request(question)
     context: dict[str, object] = {
         "role": assistant_user_role(user),
-        "cars": assistant_car_context(),
+        "cars": assistant_car_context(request=booking_request),
+        "booking_request": booking_request,
         "booking": assistant_booking_context(user),
         "wiki": [
             {
@@ -7575,6 +7784,7 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
         return False
 
     cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking_request = context.get("booking_request") if isinstance(context.get("booking_request"), dict) else None
     booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
     role = str(context.get("role") or "guest")
     actions: list[dict[str, str]] = []
@@ -7590,7 +7800,21 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
 
     if wants_car:
         cheapest = cars[0] if cars else None
-        if isinstance(cheapest, dict):
+        if booking_request and cars:
+            for car in cars[:3]:
+                if not isinstance(car, dict):
+                    continue
+                actions.append(
+                    assistant_action(
+                        f"Book {car['name']}",
+                        str(car["select_url"]),
+                        "book",
+                        "confirm",
+                        f"{format_money(float(car['daily_price']))}/day. Opens payment dashboard for review.",
+                        True,
+                    )
+                )
+        elif isinstance(cheapest, dict):
             actions.append(
                 assistant_action(
                     f"Review {cheapest['name']}",
@@ -7600,7 +7824,18 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
                     "Opens checkout review. Payment still requires confirmation.",
                 )
             )
-        actions.append(assistant_action("Browse all cars", "/#results", "browse", "safe", "Read-only search."))
+        if booking_request:
+            query_params = {
+                key: str(value)
+                for key, value in booking_request.items()
+                if value and key in {"pickup_date", "return_date", "pickup_time", "return_time", "pickup_location", "return_location", "days", "car_type"}
+            }
+            browse_href = "/#results"
+            if query_params:
+                browse_href = f"/?{urllib.parse.urlencode(query_params)}#results"
+            actions.append(assistant_action("Search all matching cars", browse_href, "browse", "safe", "Read-only search."))
+        else:
+            actions.append(assistant_action("Browse all cars", "/#results", "browse", "safe", "Read-only search."))
     if wants_booking and booking:
         actions.append(assistant_action("Open my booking", "/manage-booking", "booking", "safe", "Read booking details."))
     if wants_payment and booking:
@@ -7685,8 +7920,32 @@ def assistant_actions(question: str, context: dict[str, object]) -> list[dict[st
 def local_assistant_answer(question: str, context: dict[str, object]) -> str:
     lower = question.lower()
     cars = context.get("cars") if isinstance(context.get("cars"), list) else []
+    booking_request = context.get("booking_request") if isinstance(context.get("booking_request"), dict) else None
     booking = context.get("booking") if isinstance(context.get("booking"), dict) else None
     wiki = context.get("wiki") if isinstance(context.get("wiki"), list) else []
+    if booking_request:
+        pickup_label = f"{format_booking_date(str(booking_request['pickup_date']), str(booking_request['pickup_date']))} at {booking_request['pickup_time']}"
+        return_label = f"{format_booking_date(str(booking_request['return_date']), str(booking_request['return_date']))} at {booking_request['return_time']}"
+        requested_type = str(booking_request.get("car_type") or "Any car")
+        location = str(booking_request.get("pickup_location") or "All available locations")
+        if cars:
+            cheapest = cars[0]
+            car_lines = "; ".join(
+                f"{car['name']} ({car['category']}, {format_money(float(car['daily_price']))}/day)"
+                for car in cars[:3]
+                if isinstance(car, dict)
+            )
+            return (
+                f"Pickup: {pickup_label}. Return: {return_label}. Car type: {requested_type}. "
+                f"Location: {location}. Available cars, cheapest first: {car_lines}. "
+                f"Cheapest: {cheapest['name']} at {format_money(float(cheapest['daily_price']))}/day. "
+                "Use Book to open the payment dashboard and review before paying."
+            )
+        return (
+            f"Pickup: {pickup_label}. Return: {return_label}. Car type: {requested_type}. "
+            f"Location: {location}. I do not see an available matching car for that exact request right now. "
+            "Try all car types or all available locations."
+        )
     if any(word in lower for word in ("cheapest", "cheap", "lowest", "price", "car", "suv", "sedan", "book")) and cars:
         cheapest = cars[0]
         return (
@@ -7813,6 +8072,7 @@ def build_openai_assistant_payload(question: str, context: dict[str, object]) ->
                     "Respect role permissions. Use MCP tools only for relevant read-only lookups. "
                     "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
                     "tell the user which action button to use for those steps. "
+                    "For booking searches, use this format when data is present: Pickup, Return, Car type, Available cars cheapest first, Cheapest, then mention the Book button opens payment review. "
                     "Users must confirm cancellation, modification, support ticket creation, payment, document email, refund, discount, and all admin changes inside the app. "
                     "Never stack discounts automatically; only one discount applies unless admin manually approves. Keep answers concise."
                 ),
