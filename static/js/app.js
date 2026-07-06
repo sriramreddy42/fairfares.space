@@ -2965,6 +2965,10 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
       if (guestActions) guestActions.hidden = false;
       if (form.dataset.guestBooking !== "true") {
         form.classList.add("is-saved");
+        if (payload.pricing_updated) {
+          window.setTimeout(() => window.location.reload(), 500);
+          return;
+        }
         document.getElementById("bookingHoldPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       showBookingReferralModal(form, payload);
@@ -2972,6 +2976,18 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
     .catch((payload) => {
       if (status) status.textContent = payload?.message || "Please check your details and try again.";
     });
+});
+
+const checkoutAddDriverToggle = document.getElementById("checkoutAddDriverToggle");
+const checkoutDriverFields = document.querySelector(".checkout-driver-fields");
+const checkoutDriverInputs = [...(checkoutDriverFields?.querySelectorAll("input, select") || [])];
+
+checkoutAddDriverToggle?.addEventListener("change", () => {
+  const enabled = checkoutAddDriverToggle.checked;
+  checkoutDriverFields?.classList.toggle("is-disabled", !enabled);
+  checkoutDriverInputs.forEach((field) => {
+    field.disabled = !enabled;
+  });
 });
 
 document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) => {

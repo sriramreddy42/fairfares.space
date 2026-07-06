@@ -968,11 +968,47 @@
   width: 100%;
 }
 
+.manage-screen.manage-checkout-screen .customer-info-form select {
+  background: #fff !important;
+  border: 1px solid #cfd4df !important;
+  border-radius: 3px;
+  color: #07143f !important;
+  min-height: 44px;
+  padding: 9px 11px !important;
+  width: 100%;
+}
+
 .manage-screen.manage-checkout-screen .customer-info-form input[type="checkbox"] {
   accent-color: #e60019;
   min-height: 16px;
   padding: 0 !important;
   width: 16px;
+}
+
+.manage-screen.manage-checkout-screen .booking-addon-row {
+  grid-column: 1 / -1;
+}
+
+.manage-screen.manage-checkout-screen .booking-addon-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.manage-screen.manage-checkout-screen .booking-addon-row small {
+  color: #545b6b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.manage-screen.manage-checkout-screen .checkout-driver-fields {
+  display: grid;
+  gap: 14px 18px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manage-screen.manage-checkout-screen .checkout-driver-fields.is-disabled {
+  display: none;
 }
 
 .manage-screen.manage-checkout-screen .booking-confirmation-actions {

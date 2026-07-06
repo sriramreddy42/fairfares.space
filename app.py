@@ -2608,6 +2608,9 @@ def save_booking_contact_and_send_confirmation(
     origin: str,
     promo_email_opt_in: bool | None = None,
     text_opt_in: bool | None = None,
+    additional_driver_requested: bool = False,
+    additional_driver_name: str = "",
+    additional_driver_age: str = "",
 ) -> dict[str, str | bool]:
     full_name = " ".join(part for part in (first_name.strip(), last_name.strip()) if part).strip()
     clean_email = normalize_email(email)
@@ -2615,6 +2618,7 @@ def save_booking_contact_and_send_confirmation(
     if not full_name or "@" not in clean_email or len(clean_phone) < 7:
         return {"ok": False, "message": "Please enter your full name, valid email, and phone number."}
     booking = get_booking_for_user(user_id)
+    pricing_updated = False
     with db() as con:
         con.execute(
             """
@@ -2638,16 +2642,66 @@ def save_booking_contact_and_send_confirmation(
             ),
         )
         if booking:
-            con.execute(
+            pricing_fields_sql = ""
+            pricing_params: tuple[object, ...] = ()
+            can_update_addon = (
+                row_value(booking, "payment_status") in {"HOLD_PENDING", "HOLD_EXPIRED", "PAY_AT_PICKUP"}
+                and row_value(booking, "booking_status") in {"PENDING_HOLD", "EXPIRED_HOLD"}
+            )
+            if can_update_addon:
+                driver_requested = bool(additional_driver_requested)
+                driver_fee = additional_driver_fee_for_days(row_value(booking, "days") or 1, driver_requested)
+                discount_amount = calculate_booking_discount_amount(
+                    row_value(booking, "daily_price"),
+                    row_value(booking, "days") or 1,
+                    get_valid_discount(row_value(booking, "discount_code")),
+                )
+                breakdown = rental_price_breakdown(
+                    row_value(booking, "daily_price"),
+                    row_value(booking, "days") or 1,
+                    discount_amount,
+                    driver_fee,
+                )
+                pricing_updated = abs(float(row_value(booking, "additional_driver_fee_amount") or 0) - driver_fee) > 0.01
+                pricing_fields_sql = """
+                    additional_driver_requested = ?,
+                    additional_driver_name = ?,
+                    additional_driver_age = ?,
+                    additional_driver_fee_amount = ?,
+                    subtotal_price = ?,
+                    discount_amount = ?,
+                    tax_fee_amount = ?,
+                    booking_hold_amount = ?,
+                    due_at_pickup_amount = ?,
+                    estimated_market_total = ?,
+                    fairfares_savings_amount = ?,
+                    total_price = ?,
                 """
+                pricing_params = (
+                    int(driver_requested),
+                    additional_driver_name.strip() if driver_requested else "",
+                    additional_driver_age.strip() if driver_requested else "",
+                    driver_fee,
+                    breakdown["base"],
+                    discount_amount,
+                    breakdown["tax_fee_amount"],
+                    breakdown["booking_hold"],
+                    breakdown["due_at_pickup"],
+                    breakdown["market_total"],
+                    breakdown["savings"],
+                    breakdown["total"],
+                )
+            con.execute(
+                f"""
                 UPDATE bookings
                 SET contact_name = ?,
                     contact_email = ?,
                     contact_phone = ?,
+                    {pricing_fields_sql}
                     saved_by_user = 1
                 WHERE id = ? AND user_id = ?
                 """,
-                (full_name, clean_email, clean_phone, booking["id"], user_id),
+                (full_name, clean_email, clean_phone, *pricing_params, booking["id"], user_id),
             )
     delivery_status = "not sent"
     outbox_file: Path | None = None
@@ -2668,6 +2722,7 @@ def save_booking_contact_and_send_confirmation(
         "message": message,
         "delivery_status": delivery_status,
         "outbox_file": str(outbox_file) if outbox_file else "",
+        "pricing_updated": pricing_updated,
     }
 
 
@@ -3231,8 +3286,10 @@ def init_db() -> None:
                 payment_status TEXT NOT NULL DEFAULT 'PAID',
                 return_location TEXT NOT NULL DEFAULT '',
                 cancellation_reason TEXT NOT NULL DEFAULT '',
+                additional_driver_requested INTEGER NOT NULL DEFAULT 0,
                 additional_driver_name TEXT NOT NULL DEFAULT '',
                 additional_driver_age TEXT NOT NULL DEFAULT '',
+                additional_driver_fee_amount REAL NOT NULL DEFAULT 0,
                 saved_by_user INTEGER NOT NULL DEFAULT 0,
                 hold_started_at TEXT,
                 hold_expires_at TEXT,
@@ -3742,8 +3799,10 @@ def init_db() -> None:
         ensure_column(con, "bookings", "fairfares_savings_amount", "fairfares_savings_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "hold_started_at", "hold_started_at TEXT")
         ensure_column(con, "bookings", "hold_expires_at", "hold_expires_at TEXT")
+        ensure_column(con, "bookings", "additional_driver_requested", "additional_driver_requested INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "additional_driver_name", "additional_driver_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "additional_driver_age", "additional_driver_age TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "additional_driver_fee_amount", "additional_driver_fee_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "saved_by_user", "saved_by_user INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "actual_pickup_date", "actual_pickup_date TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "actual_pickup_time", "actual_pickup_time TEXT NOT NULL DEFAULT ''")
@@ -4517,6 +4576,7 @@ def daily_price_range(price: object) -> tuple[int, int]:
 
 
 BOOKING_HOLD_RATE = 0.10
+ADDITIONAL_DRIVER_DAILY_FEE = 10.0
 DURATION_DISCOUNT_TIERS = (
     (30, 0.30, "Monthly rate"),
     (7, 0.15, "Weekly rate"),
@@ -4544,6 +4604,13 @@ def duration_savings_label(daily_price: object, days: object) -> str:
     standard_base = round(float(daily_price or 0) * rental_days, 2)
     savings = round(standard_base * rate, 2)
     return f"{tier['label']} applied: save {format_money(savings)} vs standard daily pricing."
+
+
+def additional_driver_fee_for_days(days: object, requested: object = False) -> float:
+    if str(requested).strip().lower() not in {"1", "true", "yes", "on", "requested"}:
+        return 0.0
+    rental_days = max(1, min(int(float(days or 1)), 366))
+    return round(ADDITIONAL_DRIVER_DAILY_FEE * rental_days, 2)
 
 
 MARKET_COMPARISON_RATE = 0.12
@@ -4636,7 +4703,12 @@ def post_return_fee_rule_summary() -> str:
     return "; ".join(parts)
 
 
-def rental_price_breakdown(daily_price: object, days: object, discount_amount: object = 0) -> dict[str, object]:
+def rental_price_breakdown(
+    daily_price: object,
+    days: object,
+    discount_amount: object = 0,
+    additional_driver_fee_amount: object = 0,
+) -> dict[str, object]:
     rental_days = max(1, min(int(float(days or 1)), 366))
     daily = round(float(daily_price or 0), 2)
     standard_base = round(daily * rental_days, 2)
@@ -4644,6 +4716,8 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
     duration_discount_rate = float(duration_tier["rate"] or 0)
     duration_discount_amount = round(standard_base * duration_discount_rate, 2)
     base = round(max(0.0, standard_base - duration_discount_amount), 2)
+    additional_driver_fee = round(max(0.0, float(additional_driver_fee_amount or 0)), 2)
+    taxable_base = round(base + additional_driver_fee, 2)
     effective_daily = round(base / rental_days, 2) if rental_days else daily
     tax_fee_lines = []
     for rule in get_active_tax_fee_rules():
@@ -4651,7 +4725,7 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
         rule_type = str(tax_fee_rule_value(rule, "rule_type", "DAILY")).strip().upper()
         value = max(0.0, float(tax_fee_rule_value(rule, "value", 0) or 0))
         if rule_type == "PERCENT":
-            amount = round(base * (value / 100), 2)
+            amount = round(taxable_base * (value / 100), 2)
         elif rule_type == "FLAT":
             amount = round(value, 2)
         else:
@@ -4659,8 +4733,8 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
         if amount > 0:
             tax_fee_lines.append((label, amount))
     tax_fee_amount = round(sum(amount for _, amount in tax_fee_lines), 2)
-    discount = round(max(0.0, min(float(discount_amount or 0), base + tax_fee_amount)), 2)
-    total = round(max(0.0, base + tax_fee_amount - discount), 2)
+    discount = round(max(0.0, min(float(discount_amount or 0), taxable_base + tax_fee_amount)), 2)
+    total = round(max(0.0, taxable_base + tax_fee_amount - discount), 2)
     booking_hold = round(total * BOOKING_HOLD_RATE, 2)
     due_at_pickup = round(max(0.0, total - booking_hold), 2)
     market_total = round(total * (1 + MARKET_COMPARISON_RATE), 2)
@@ -4673,6 +4747,7 @@ def rental_price_breakdown(daily_price: object, days: object, discount_amount: o
         "extra_days": rental_days % 7,
         "standard_base": standard_base,
         "base": base,
+        "additional_driver_fee_amount": additional_driver_fee,
         "duration_discount_rate": duration_discount_rate,
         "duration_discount_label": duration_tier["label"],
         "duration_discount_amount": duration_discount_amount,
@@ -4722,16 +4797,30 @@ def duration_discount_breakdown_html(breakdown: dict[str, object]) -> str:
     )
 
 
+def additional_driver_fee_breakdown_html(breakdown: dict[str, object]) -> str:
+    amount = float(breakdown.get("additional_driver_fee_amount") or 0)
+    if amount <= 0:
+        return ""
+    return (
+        '<span class="price-line additional-driver-fee-row">'
+        f'<span class="price-line-amount">{escape(format_money(amount))}</span>'
+        '<span class="price-line-label">Additional driver'
+        f'<small>{escape(format_money(ADDITIONAL_DRIVER_DAILY_FEE))}/day, license approval required</small></span></span>'
+    )
+
+
 def rental_subtotal_breakdown_html(breakdown: dict[str, object]) -> str:
     duration_line = duration_discount_breakdown_html(breakdown)
+    driver_line = additional_driver_fee_breakdown_html(breakdown)
     if not duration_line:
-        return f'<span><b>{escape(format_money(breakdown["base"]))}</b>Rental subtotal</span>'
+        return f'<span><b>{escape(format_money(breakdown["base"]))}</b>Rental subtotal</span>{driver_line}'
     return (
         f'<span><b>{escape(format_money(breakdown["standard_base"]))}</b>Standard rental subtotal</span>'
         f'{duration_line}'
         f'<span class="price-line duration-subtotal-row">'
         f'<span class="price-line-amount">{escape(format_money(breakdown["base"]))}</span>'
         f'<span class="price-line-label">Discounted rental subtotal</span></span>'
+        f'{driver_line}'
     )
 
 
@@ -4775,7 +4864,13 @@ def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict
         subtotal = float(row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
         daily = subtotal / days if days else subtotal
     discount = float(row_value(row, "discount_amount") or 0)
-    breakdown = rental_price_breakdown(daily, row_value(row, "days") or 1, discount)
+    additional_driver_fee = float(row_value(row, "additional_driver_fee_amount") or 0)
+    if additional_driver_fee <= 0 and (
+        row_value(row, "additional_driver_requested") in {"1", "True", "true", "on"}
+        or row_value(row, "additional_driver_name")
+    ):
+        additional_driver_fee = additional_driver_fee_for_days(row_value(row, "days") or 1, True)
+    breakdown = rental_price_breakdown(daily, row_value(row, "days") or 1, discount, additional_driver_fee)
     stored_total = float(row_value(row, "total_price") or 0)
     has_stored_breakdown = any(
         float(row_value(row, key) or 0) > 0
@@ -9063,6 +9158,9 @@ def create_booking_for_user(
     return_time: str = "10:00 AM",
     pickup_location: str = "",
     return_location: str = "",
+    additional_driver_requested: bool = False,
+    additional_driver_name: str = "",
+    additional_driver_age: str = "",
 ) -> sqlite3.Row:
     requested_car = get_car(car_id)
     default_pickup, default_return = default_trip_dates()
@@ -9107,7 +9205,8 @@ def create_booking_for_user(
             booking_id = make_booking_id()
         discount = get_valid_discount(discount_code)
         discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
-        price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+        additional_driver_fee = additional_driver_fee_for_days(rental_days, additional_driver_requested)
+        price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount, additional_driver_fee)
         subtotal = float(price_breakdown["base"])
         final_total = float(price_breakdown["total"])
         applied_code = discount["code"] if discount else ""
@@ -9120,8 +9219,9 @@ def create_booking_for_user(
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, discount_code, discount_amount,
              tax_fee_amount, booking_hold_amount, due_at_pickup_amount, estimated_market_total, fairfares_savings_amount,
+             additional_driver_requested, additional_driver_name, additional_driver_age, additional_driver_fee_amount,
              total_price, status, booking_status, payment_status, hold_started_at, hold_expires_at, contact_name, contact_email, contact_phone)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_HOLD', 'HOLD_PENDING', CURRENT_TIMESTAMP, datetime('now', '+10 minutes'), ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_HOLD', 'HOLD_PENDING', CURRENT_TIMESTAMP, datetime('now', '+10 minutes'), ?, ?, ?)
             """,
             (
                 booking_id,
@@ -9143,6 +9243,10 @@ def create_booking_for_user(
                 price_breakdown["due_at_pickup"],
                 price_breakdown["market_total"],
                 price_breakdown["savings"],
+                int(bool(additional_driver_requested)),
+                additional_driver_name.strip() if additional_driver_requested else "",
+                additional_driver_age.strip() if additional_driver_requested else "",
+                additional_driver_fee,
                 final_total,
                 "PENDING_HOLD",
                 (user["name"] or "") if user else "",
@@ -9169,6 +9273,9 @@ def build_booking_preview(
     return_time: str = "10:00 AM",
     pickup_location: str = "",
     return_location: str = "",
+    additional_driver_requested: bool = False,
+    additional_driver_name: str = "",
+    additional_driver_age: str = "",
 ) -> dict[str, object] | None:
     car = get_car(car_id)
     if not car:
@@ -9184,7 +9291,8 @@ def build_booking_preview(
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
     discount_amount = calculate_booking_discount_amount(car["daily_price"], rental_days, discount)
-    price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount)
+    additional_driver_fee = additional_driver_fee_for_days(rental_days, additional_driver_requested)
+    price_breakdown = rental_price_breakdown(car["daily_price"], rental_days, discount_amount, additional_driver_fee)
     default_location = primary_inventory_location(car["location"])
     selected_pickup_location = pickup_location or default_location
     selected_return_location = return_location or selected_pickup_location
@@ -9208,6 +9316,10 @@ def build_booking_preview(
         "due_at_pickup_amount": price_breakdown["due_at_pickup"],
         "estimated_market_total": price_breakdown["market_total"],
         "fairfares_savings_amount": price_breakdown["savings"],
+        "additional_driver_requested": int(bool(additional_driver_requested)),
+        "additional_driver_name": additional_driver_name.strip() if additional_driver_requested else "",
+        "additional_driver_age": additional_driver_age.strip() if additional_driver_requested else "",
+        "additional_driver_fee_amount": additional_driver_fee,
         "total_price": price_breakdown["total"],
         "status": "PENDING_HOLD",
         "booking_status": "PENDING_HOLD",
@@ -12214,14 +12326,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             changes.append(f"Drop-off location changed to {new_dropoff_location}")
         if requested_car and requested_car["id"] != booking["car_id"]:
             changes.append(f"Vehicle change requested from {booking['car_name']} to {requested_car['name']}")
-        if form.get("driver_name"):
-            changes.append(f"Additional driver added: {form.get('driver_name')}")
+        additional_driver_requested = form.get("additional_driver_requested") == "1" or bool(form.get("driver_name"))
+        if additional_driver_requested:
+            changes.append(f"Additional driver requested{': ' + form.get('driver_name') if form.get('driver_name') else ''}")
         change_note = "; ".join(changes) or "Timing/location review requested"
         car_id = requested_car["id"] if requested_car and requested_car["id"] != booking["car_id"] else booking["car_id"]
         next_days = rental_day_count(requested_start, requested_end, booking["days"])
         next_daily_price = float(row_value(requested_car, "daily_price") if requested_car else row_value(booking, "daily_price") or 0)
         discount_amount = calculate_booking_discount_amount(next_daily_price, next_days, get_valid_discount(booking["discount_code"]))
-        next_breakdown = rental_price_breakdown(next_daily_price, next_days, discount_amount)
+        additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
+        next_breakdown = rental_price_breakdown(next_daily_price, next_days, discount_amount, additional_driver_fee)
         subtotal = float(next_breakdown["base"])
         total_price = float(next_breakdown["total"])
         with db() as con:
@@ -12245,8 +12359,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     due_at_pickup_amount = ?,
                     estimated_market_total = ?,
                     fairfares_savings_amount = ?,
+                    additional_driver_requested = ?,
                     additional_driver_name = ?,
                     additional_driver_age = ?,
+                    additional_driver_fee_amount = ?,
                     booking_status = 'MODIFIED',
                     status = 'MODIFIED',
                     cancellation_reason = ?
@@ -12270,8 +12386,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     next_breakdown["due_at_pickup"],
                     next_breakdown["market_total"],
                     next_breakdown["savings"],
-                    form.get("driver_name", ""),
-                    form.get("driver_age", "") if form.get("driver_name") else "",
+                    int(additional_driver_requested),
+                    form.get("driver_name", "") if additional_driver_requested else "",
+                    form.get("driver_age", "") if additional_driver_requested else "",
+                    additional_driver_fee,
                     change_note,
                     booking["id"],
                     user["id"],
@@ -12964,6 +13082,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.public_origin(),
             form.get("promo_email_opt_in") == "on",
             form.get("text_opt_in") == "on",
+            form.get("additional_driver_requested") == "on",
+            form.get("additional_driver_name", ""),
+            form.get("additional_driver_age", ""),
         )
         reward = None
         if result.get("ok"):
@@ -13293,6 +13414,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 form.get("return_time", "10:00 AM"),
                 form.get("pickup_location", ""),
                 form.get("return_location", ""),
+                form.get("additional_driver_requested") == "on",
+                form.get("additional_driver_name", ""),
+                form.get("additional_driver_age", ""),
             )
         except (RuntimeError, ValueError) as error:
             self.send_json({"ok": False, "message": str(error)}, 400)
@@ -13306,6 +13430,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.public_origin(),
             form.get("promo_email_opt_in") == "on",
             form.get("text_opt_in") == "on",
+            form.get("additional_driver_requested") == "on",
+            form.get("additional_driver_name", ""),
+            form.get("additional_driver_age", ""),
         )
         reward = ensure_referral_reward(user_id, full_name, email, phone)
         self.send_json({
@@ -17450,6 +17577,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 or (not row_value(user, "marketing_unsubscribed_at") and not row_value(user, "phone"))
             ) else ""
             text_checked = " checked" if user and row_value(user, "text_opt_in") in {1, "1", True} else ""
+            additional_driver_checked = " checked" if row_value(booking, "additional_driver_requested") in {1, "1", True, "true"} or row_value(booking, "additional_driver_name") else ""
+            additional_driver_disabled = "" if additional_driver_checked else " disabled"
+            additional_driver_fields_class = "" if additional_driver_checked else " is-disabled"
+            additional_driver_name = row_value(booking, "additional_driver_name")
+            additional_driver_age = row_value(booking, "additional_driver_age") or "21-24"
+            additional_driver_age_options = select_options(["21-24", "25+"], additional_driver_age)
             submit_endpoint_hint = " data-guest-booking=\"true\"" if is_guest_checkout else ""
             hidden_guest_fields = ""
             guest_account_note = ""
@@ -17583,6 +17716,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <label><span>Last Name *</span><input name="last_name" value="{escape(last_name)}" required></label>
                     <label><span>Email Address *</span><input name="email" type="email" value="{escape(user["email"] if user else "")}" required></label>
                     <label><span>Mobile Number *</span><input name="phone" value="{escape((user["phone"] if user else "") or "")}" required></label>
+                    <label class="toggle-row booking-addon-row">
+                        <input id="checkoutAddDriverToggle" name="additional_driver_requested" type="checkbox"{additional_driver_checked}>
+                        <span><b>Add Additional Driver</b><small>{escape(format_money(ADDITIONAL_DRIVER_DAILY_FEE))}/day. Driver must be licensed and approved before pickup.</small></span>
+                    </label>
+                    <div class="checkout-driver-fields{additional_driver_fields_class}">
+                        <label><span>Driver Name</span><input name="additional_driver_name" value="{escape(additional_driver_name)}" placeholder="Optional now"{additional_driver_disabled}></label>
+                        <label><span>Driver Age</span><select name="additional_driver_age"{additional_driver_disabled}>{additional_driver_age_options}</select></label>
+                    </div>
                     <label class="toggle-row"><input name="promo_email_opt_in" type="checkbox"{promo_checked}> I want to receive emails for promotional offers and upcoming rentals</label>
                     <label class="toggle-row"><input name="text_opt_in" type="checkbox"{text_checked}> Yes, send text updates about my current and upcoming rentals</label>
                     <div class="booking-confirmation-actions">

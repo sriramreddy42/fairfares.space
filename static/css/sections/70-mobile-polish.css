@@ -851,6 +851,11 @@
     padding: 7px 10px !important;
   }
 
+  .manage-screen.manage-checkout-screen .customer-info-form select {
+    min-height: 38px !important;
+    padding: 7px 10px !important;
+  }
+
   .manage-screen.manage-checkout-screen .customer-info-form .toggle-row {
     align-items: center !important;
     display: grid !important;
@@ -858,6 +863,11 @@
     grid-template-columns: 24px minmax(0, 1fr) !important;
     min-height: 48px !important;
     padding: 9px 10px !important;
+  }
+
+  .manage-screen.manage-checkout-screen .checkout-driver-fields {
+    gap: 9px !important;
+    grid-template-columns: 1fr !important;
   }
 
   .checkout-policy-card ul {
