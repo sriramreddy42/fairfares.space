@@ -1476,13 +1476,17 @@ modifyForm?.querySelectorAll('input[name="vehicle"]').forEach((vehicle) => {
   });
 });
 
-addDriverToggle?.addEventListener("change", () => {
+function syncModifyDriverFields() {
+  if (!addDriverToggle) return;
   const enabled = addDriverToggle.checked;
   driverFields.forEach((field) => {
     field.disabled = !enabled;
   });
   driverFieldGroup?.classList.toggle("is-disabled", !enabled);
-});
+}
+
+syncModifyDriverFields();
+addDriverToggle?.addEventListener("change", syncModifyDriverFields);
 
 modifyForm?.addEventListener("input", () => {
   modifyStatus.textContent = "";
@@ -2982,13 +2986,17 @@ const checkoutAddDriverToggle = document.getElementById("checkoutAddDriverToggle
 const checkoutDriverFields = document.querySelector(".checkout-driver-fields");
 const checkoutDriverInputs = [...(checkoutDriverFields?.querySelectorAll("input, select") || [])];
 
-checkoutAddDriverToggle?.addEventListener("change", () => {
+function syncCheckoutDriverFields() {
+  if (!checkoutAddDriverToggle) return;
   const enabled = checkoutAddDriverToggle.checked;
   checkoutDriverFields?.classList.toggle("is-disabled", !enabled);
   checkoutDriverInputs.forEach((field) => {
     field.disabled = !enabled;
   });
-});
+}
+
+syncCheckoutDriverFields();
+checkoutAddDriverToggle?.addEventListener("change", syncCheckoutDriverFields);
 
 document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
