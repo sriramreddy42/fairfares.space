@@ -6791,7 +6791,7 @@ body.modal-open {
   aspect-ratio: 1 !important;
   background:
     linear-gradient(135deg, rgba(15, 199, 213, 0.9), rgba(229, 37, 42, 0.9)),
-    url("/static/img/fairfares-glow-logo.png") center / cover no-repeat !important;
+    url("/static/img/fairfares-logo-20260706.png") center / cover no-repeat !important;
   border: 3px solid rgba(255, 255, 255, 0.72) !important;
   border-radius: 999px !important;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2) !important;
