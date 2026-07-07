@@ -2986,17 +2986,25 @@ const checkoutAddDriverToggle = document.getElementById("checkoutAddDriverToggle
 const checkoutDriverFields = document.querySelector(".checkout-driver-fields");
 const checkoutDriverInputs = [...(checkoutDriverFields?.querySelectorAll("input, select") || [])];
 
-function syncCheckoutDriverFields() {
-  if (!checkoutAddDriverToggle) return;
-  const enabled = checkoutAddDriverToggle.checked;
-  checkoutDriverFields?.classList.toggle("is-disabled", !enabled);
-  checkoutDriverInputs.forEach((field) => {
+function syncCheckoutDriverFields(toggle = document.getElementById("checkoutAddDriverToggle")) {
+  if (!toggle) return;
+  const form = toggle.closest("form") || document;
+  const fieldGroup = form.querySelector(".checkout-driver-fields");
+  const inputs = [...(fieldGroup?.querySelectorAll("input, select") || [])];
+  const enabled = toggle.checked;
+  fieldGroup?.classList.toggle("is-disabled", !enabled);
+  inputs.forEach((field) => {
     field.disabled = !enabled;
   });
 }
 
 syncCheckoutDriverFields();
-checkoutAddDriverToggle?.addEventListener("change", syncCheckoutDriverFields);
+checkoutAddDriverToggle?.addEventListener("change", (event) => syncCheckoutDriverFields(event.currentTarget));
+document.addEventListener("change", (event) => {
+  if (event.target?.id === "checkoutAddDriverToggle") {
+    syncCheckoutDriverFields(event.target);
+  }
+});
 
 document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
