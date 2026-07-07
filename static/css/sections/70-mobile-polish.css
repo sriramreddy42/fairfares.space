@@ -1961,3 +1961,47 @@
     padding: 8px 6px !important;
   }
 }
+
+.search-panel.is-search-locked {
+  border-color: rgba(22, 122, 58, 0.28) !important;
+  box-shadow: 0 0 0 2px rgba(22, 122, 58, 0.08) inset !important;
+}
+
+.search-panel.is-search-locked input,
+.search-panel.is-search-locked select {
+  background: #f4f7f5 !important;
+  color: #07143f !important;
+  opacity: 1 !important;
+}
+
+.search-panel.is-search-locked button[type="submit"] {
+  background: #07143f !important;
+}
+
+.customer-info-form.is-saved {
+  border-color: rgba(22, 122, 58, 0.24) !important;
+}
+
+.customer-info-form.is-saved input,
+.customer-info-form.is-saved select {
+  background: #f5f7fa !important;
+  color: #07143f !important;
+  opacity: 1 !important;
+}
+
+@media (max-width: 760px) {
+  .car-card .car-art {
+    min-height: 126px !important;
+  }
+
+  .car-card .car-card-image {
+    height: 104px !important;
+    max-width: 160px !important;
+    width: 160px !important;
+  }
+
+  .car-card .deal-badge {
+    max-width: 116px !important;
+    z-index: 2 !important;
+  }
+}

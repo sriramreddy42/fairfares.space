@@ -1124,6 +1124,7 @@ returnTime?.addEventListener("change", updateCars);
 clampRentalDateInputs();
 
 function clearCarFilters() {
+  setSearchLocked(false);
   typeFilters.forEach((input) => {
     input.checked = false;
   });
@@ -1136,6 +1137,17 @@ function clearCarFilters() {
 
 clearFilters?.addEventListener("click", clearCarFilters);
 resetCarFilters?.addEventListener("click", clearCarFilters);
+
+function setSearchLocked(locked) {
+  if (!searchForm) return;
+  searchForm.classList.toggle("is-search-locked", locked);
+  searchForm.dataset.locked = locked ? "true" : "false";
+  searchForm.querySelectorAll("input, select").forEach((field) => {
+    field.disabled = locked;
+  });
+  const submit = searchForm.querySelector('button[type="submit"]');
+  if (submit) submit.textContent = locked ? "Edit Search" : "Search Cars";
+}
 
 function validateDiscount() {
   if (!discountCode || !discountMessage) return;
@@ -1231,7 +1243,16 @@ applySearchParamsFromUrl();
 
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
-  document.getElementById("results")?.scrollIntoView({ behavior: "smooth" });
+  if (searchForm.dataset.locked === "true") {
+    setSearchLocked(false);
+    searchForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  clampRentalDateInputs();
+  updateRentalRanges();
+  updateCars();
+  setSearchLocked(true);
+  document.getElementById("results")?.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 updateCars();
@@ -2969,11 +2990,12 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
       if (guestActions) guestActions.hidden = false;
       if (form.dataset.guestBooking !== "true") {
         form.classList.add("is-saved");
+        lockSavedCustomerForm(form);
         if (payload.pricing_updated) {
           window.setTimeout(() => window.location.reload(), 500);
           return;
         }
-        document.getElementById("bookingHoldPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        openCheckoutPaymentWindow();
       }
       showBookingReferralModal(form, payload);
     })
@@ -2981,6 +3003,30 @@ document.getElementById("customerInfoForm")?.addEventListener("submit", (event) 
       if (status) status.textContent = payload?.message || "Please check your details and try again.";
     });
 });
+
+function lockSavedCustomerForm(form) {
+  form.querySelectorAll("input, select, textarea").forEach((field) => {
+    field.disabled = true;
+  });
+  form.querySelectorAll("button").forEach((button) => {
+    button.disabled = true;
+  });
+}
+
+function openCheckoutPaymentWindow() {
+  const panel = document.getElementById("bookingHoldPanel");
+  panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const restartButton = document.getElementById("continueHoldButton");
+  if (restartButton) {
+    const status = document.getElementById("paymentHoldStatus");
+    if (status) status.textContent = "Details saved. Restarting the checkout window...";
+    window.setTimeout(() => restartButton.click(), 300);
+    return;
+  }
+  const paymentForm = document.getElementById("paymentHoldForm");
+  const firstPaymentButton = paymentForm?.querySelector("button");
+  firstPaymentButton?.focus({ preventScroll: true });
+}
 
 const checkoutAddDriverToggle = document.getElementById("checkoutAddDriverToggle");
 const checkoutDriverFields = document.querySelector(".checkout-driver-fields");
