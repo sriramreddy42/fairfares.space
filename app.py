@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260707carimages1"
+ASSET_VERSION = "20260707logo1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -123,7 +123,7 @@ BLOG_POSTS = [
         "video_summary": "A quick visual guide to student deals, referral savings, and rental documents.",
         "gallery": [
             ("/static/img/referral-deals-denver.jpeg", "Student referral deal"),
-            ("/static/img/fairfares-logo-20260706.png", "FairFares student rental brand"),
+            ("/static/img/fairfares-logo-20260707.png", "FairFares student rental brand"),
             ("/static/img/download-documents-poster.png", "Student rental documents"),
         ],
         "intro": "Students need rental cars for more than vacations: internships, moves, airport pickups, campus visits, and weekend routes all count.",
@@ -5707,7 +5707,7 @@ def referral_claim_modal(reward: sqlite3.Row | None) -> str:
   <section class="booking-referral-backdrop" id="referralClaimModal" data-auto-show="true" hidden>
     <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="referralClaimTitle">
       <button class="guest-offer-close" type="button" data-claim-close aria-label="Close referral claim">x</button>
-      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260706.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260707.png" alt="FairFares logo">
       <p class="eyebrow">Referral bonus ready</p>
       <h2 id="referralClaimTitle">You referred 3 people.</h2>
       <p>Your referral reward is ready. Claim it now and use this 10% coupon on up to 3 future bookings.</p>
@@ -10750,7 +10750,7 @@ def render_structured_data(template_name: str, html_text: str) -> str:
         "description",
         "Affordable car rentals in Denver and Colorado with airport pickup, student savings, and price match review.",
     )
-    logo_url = f"{origin}/static/img/fairfares-logo-20260706.png"
+    logo_url = f"{origin}/static/img/fairfares-logo-20260707.png"
     business_id = f"{origin}/#fairfares"
     review_data = schema_feedback_summary()
     business: dict[str, object] = {
@@ -10848,7 +10848,7 @@ def render_site_loader() -> str:
     return """
   <div class="site-loader" id="siteLoader" aria-hidden="true">
     <div class="site-loader-mark">
-      <img src="/static/img/fairfares-logo-20260706.png" alt="FairFares" width="653" height="193" decoding="async">
+      <img src="/static/img/fairfares-logo-20260707.png" alt="FairFares" width="820" height="360" decoding="async">
       <span></span>
     </div>
   </div>
@@ -10972,7 +10972,7 @@ def guest_offer_modal() -> str:
   <section class="guest-offer-backdrop" id="guestOfferModal" hidden>
     <div class="guest-offer-modal" role="dialog" aria-modal="true" aria-labelledby="guestOfferTitle">
       <button class="guest-offer-close" type="button" data-offer-close aria-label="Close offer">x</button>
-      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260706.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260707.png" alt="FairFares logo">
       <p class="eyebrow">Referral student deal</p>
       <h2 id="guestOfferTitle">Claim 10% off before booking.</h2>
       <p>Use the FairFares referral deal on this eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
@@ -17737,7 +17737,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
                     <button class="guest-offer-close" type="button" data-referral-close aria-label="Close referral offer">x</button>
-                    <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260706.png" alt="FairFares logo">
+                    <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260707.png" alt="FairFares logo">
                     <p class="eyebrow">Referral bonus</p>
                     <h2 id="bookingReferralTitle">Refer 3 friends. Unlock 10% off future bookings.</h2>
                     <p>Create your account with the same email or phone used on this booking. Share this code with friends through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>
