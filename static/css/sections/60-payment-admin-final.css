@@ -229,7 +229,8 @@
 
 .payment-hold-form button,
 .payment-hold-form small,
-.payment-hold-form .modify-status {
+.payment-hold-form .modify-status,
+.payment-hold-form .checkout-wallet-row {
   grid-column: 1 / -1;
 }
 
@@ -273,6 +274,112 @@
   height: 28px;
   max-width: 92px;
   object-fit: contain;
+}
+
+.checkout-wallet-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 2px;
+}
+
+.checkout-wallet-badge {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  font-size: 1.05rem;
+  font-weight: 900;
+  gap: 5px;
+  justify-content: center;
+  letter-spacing: -0.01em;
+  min-height: 44px;
+  overflow: hidden;
+  padding: 8px 12px;
+  position: relative;
+  white-space: nowrap;
+}
+
+.checkout-wallet-badge b {
+  font-weight: 900;
+  position: relative;
+  z-index: 1;
+}
+
+.checkout-wallet-apple {
+  background: #000;
+  color: #fff;
+}
+
+.checkout-wallet-apple span {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.checkout-wallet-link {
+  background: #00d66f;
+  color: #06131e;
+}
+
+.checkout-wallet-link-mark {
+  align-items: center;
+  background: #06131e;
+  border-radius: 999px;
+  color: #00d66f;
+  display: inline-flex;
+  font-size: 1.2rem;
+  height: 22px;
+  justify-content: center;
+  line-height: 1;
+  transform: rotate(180deg);
+  width: 22px;
+}
+
+.checkout-wallet-amazon {
+  background: #ffd82f;
+  color: #162f62;
+}
+
+.checkout-wallet-amazon::after {
+  background: #162f62;
+  border-radius: 50%;
+  bottom: 7px;
+  content: "";
+  height: 8px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-22%) rotate(-6deg);
+  width: 58px;
+  z-index: 0;
+}
+
+@media (max-width: 760px) {
+  .checkout-wallet-row {
+    gap: 8px;
+  }
+
+  .checkout-wallet-badge {
+    border-radius: 7px;
+    font-size: 0.85rem;
+    min-height: 38px;
+    padding: 6px 8px;
+  }
+
+  .checkout-wallet-apple span {
+    font-size: 1.08rem;
+  }
+
+  .checkout-wallet-link-mark {
+    font-size: 0.95rem;
+    height: 18px;
+    width: 18px;
+  }
+
+  .checkout-wallet-amazon::after {
+    bottom: 6px;
+    height: 6px;
+    width: 44px;
+  }
 }
 
 .payment-hold-paid {
