@@ -1971,7 +1971,9 @@
 .search-panel.is-search-locked select {
   background: #f4f7f5 !important;
   color: #07143f !important;
+  cursor: not-allowed !important;
   opacity: 1 !important;
+  pointer-events: none !important;
 }
 
 .search-panel.is-search-locked button[type="submit"] {
@@ -2007,7 +2009,12 @@
 }
 
 /* Final vehicle-result image normalization. Keep mixed source photos in one clean frame. */
-.car-card .car-art {
+.car-list .car-card {
+  gap: 28px !important;
+  grid-template-columns: 320px minmax(300px, 1fr) minmax(240px, 320px) !important;
+}
+
+.car-list .car-card .car-art {
   align-items: center !important;
   display: flex !important;
   height: 178px !important;
@@ -2017,7 +2024,7 @@
   width: 292px !important;
 }
 
-.car-card .car-card-image {
+.car-list .car-card .car-card-image {
   background: #fff !important;
   border-radius: 4px !important;
   box-shadow: 0 12px 24px rgba(7, 20, 63, 0.18) !important;
@@ -2029,30 +2036,31 @@
   width: 292px !important;
 }
 
-.car-card .deal-badge {
+.car-list .car-card .deal-badge {
   box-shadow: 0 8px 18px rgba(7, 20, 63, 0.14) !important;
   z-index: 3 !important;
 }
 
 @media (max-width: 760px) {
-  .car-card {
+  .car-list .car-card {
     grid-template-columns: 148px minmax(0, 1fr) !important;
+    gap: 12px !important;
   }
 
-  .car-card .car-art {
+  .car-list .car-card .car-art {
     height: 112px !important;
     min-height: 112px !important;
     min-width: 148px !important;
     width: 148px !important;
   }
 
-  .car-card .car-card-image {
+  .car-list .car-card .car-card-image {
     height: 96px !important;
     max-width: 140px !important;
     width: 140px !important;
   }
 
-  .car-card .deal-badge {
+  .car-list .car-card .deal-badge {
     max-width: 132px !important;
   }
 }

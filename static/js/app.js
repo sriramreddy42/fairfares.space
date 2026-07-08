@@ -1143,11 +1143,33 @@ function setSearchLocked(locked) {
   searchForm.classList.toggle("is-search-locked", locked);
   searchForm.dataset.locked = locked ? "true" : "false";
   searchForm.querySelectorAll("input, select").forEach((field) => {
-    field.disabled = locked;
+    if (field.tagName !== "SELECT") {
+      field.toggleAttribute("readonly", locked);
+    }
+    field.setAttribute("aria-disabled", locked ? "true" : "false");
+    if (locked) {
+      field.setAttribute("tabindex", "-1");
+    } else {
+      field.removeAttribute("tabindex");
+    }
   });
   const submit = searchForm.querySelector('button[type="submit"]');
   if (submit) submit.textContent = locked ? "Edit Search" : "Search Cars";
 }
+
+searchForm?.addEventListener("click", (event) => {
+  if (searchForm.dataset.locked !== "true") return;
+  if (event.target.closest('button[type="submit"]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
+searchForm?.addEventListener("keydown", (event) => {
+  if (searchForm.dataset.locked !== "true") return;
+  if (event.target.closest('button[type="submit"]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 
 function validateDiscount() {
   if (!discountCode || !discountMessage) return;
@@ -1252,6 +1274,7 @@ searchForm?.addEventListener("submit", (event) => {
   updateRentalRanges();
   updateCars();
   setSearchLocked(true);
+  document.getElementById("results")?.classList.add("has-searched");
   document.getElementById("results")?.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
