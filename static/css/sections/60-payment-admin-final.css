@@ -682,8 +682,8 @@
 
   .explorer-screen .explorer-hero-subcopy {
     font-size: clamp(0.92rem, 1vw, 1.08rem) !important;
-    line-height: 1.35 !important;
-    margin: 0 !important;
+    line-height: 1.45 !important;
+    margin: 0 0 16px !important;
     max-width: 440px !important;
   }
 
@@ -693,7 +693,7 @@
 
   .explorer-screen .explorer-profile-cluster {
     grid-template-columns: 62px minmax(0, 1fr) !important;
-    margin-top: -16px !important;
+    margin-top: 24px !important;
     max-width: 430px !important;
   }
 
@@ -711,16 +711,19 @@
   }
 
   .explorer-screen .explorer-xp-meter {
-    margin-top: 0 !important;
+    margin-top: 12px !important;
     max-width: 430px !important;
     padding: 12px 14px !important;
   }
 
   .explorer-screen .explorer-book-card {
+    align-content: end !important;
+    justify-items: start !important;
     justify-self: end !important;
     max-width: 520px !important;
     min-height: 330px !important;
     padding: clamp(24px, 3vw, 40px) !important;
+    text-align: left !important;
   }
 
   .explorer-screen .explorer-book-card img {
@@ -883,18 +886,13 @@
   }
 }
 
-/* 2026-06-15 Explorer hero cleanup: remove the top label in markup and let
-   the intro/profile cluster sit higher in the hero. */
+/* 2026-06-15 Explorer hero cleanup: remove the top label in markup. */
 .explorer-screen .explorer-hero-copy {
   padding-top: 0 !important;
 }
 
 .explorer-screen .explorer-hero-subcopy {
   margin-top: 0 !important;
-}
-
-.explorer-screen .explorer-profile-cluster {
-  margin-top: -18px !important;
 }
 
 @media (max-width: 900px) {
