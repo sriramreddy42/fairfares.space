@@ -1602,7 +1602,9 @@
 .explorer-screen .explorer-hero-copy {
   background: transparent !important;
   border-radius: 0 !important;
+  align-self: center !important;
   padding: clamp(16px, 2vw, 26px) !important;
+  transform: translateY(74px) !important;
 }
 
 .explorer-screen .explorer-hero-title {
@@ -1646,9 +1648,39 @@
 
 .explorer-screen .explorer-profile-cluster,
 .explorer-screen .explorer-xp-meter {
-  backdrop-filter: blur(14px) !important;
-  background: rgba(7, 21, 58, 0.58) !important;
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: none !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.explorer-screen .explorer-profile-cluster {
+  align-items: center !important;
+  gap: 14px !important;
+}
+
+.explorer-screen .explorer-profile-strip {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  gap: 12px !important;
+}
+
+.explorer-screen .explorer-profile-strip span {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55) !important;
+}
+
+.explorer-screen .explorer-xp-meter {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  margin-top: 22px !important;
+  max-width: 520px !important;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55) !important;
 }
 
 .explorer-screen .explorer-book-card {
@@ -1672,6 +1704,7 @@
   .explorer-screen .explorer-hero-copy {
     background: rgba(6, 17, 53, 0.56) !important;
     padding: 10px !important;
+    transform: none !important;
     width: 100% !important;
   }
 
