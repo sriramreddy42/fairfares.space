@@ -38,6 +38,10 @@
     bottom: 4px !important;
   }
 
+  body.public-header-compact:not(.admin-screen):not(.login-screen):not(.auth-page) {
+    padding-top: 58px !important;
+  }
+
   body.public-header-compact .top-brand {
     background: transparent !important;
     grid-template-columns: 210px !important;
@@ -144,6 +148,16 @@
   .main-nav .nav-actions {
     gap: clamp(18px, 2.2vw, 28px) !important;
     font-size: clamp(0.82rem, 1.15vw, 0.94rem) !important;
+  }
+
+  body.public-header-compact .main-nav {
+    padding-left: 222px !important;
+    padding-right: 18px !important;
+  }
+
+  body.public-header-compact .main-nav .nav-links,
+  body.public-header-compact .main-nav .nav-actions {
+    gap: clamp(14px, 1.5vw, 24px) !important;
   }
 }
 
