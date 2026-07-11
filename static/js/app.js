@@ -660,19 +660,60 @@ function todayInputDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function clampRentalDateInputs() {
+function minimumPickupDate() {
+  return pickupDate?.min || todayInputDate();
+}
+
+function syncRentalDateLimits() {
   if (!pickupDate || !returnDate) return;
-  const today = todayInputDate();
+  const today = minimumPickupDate();
   pickupDate.min = today;
   returnDate.min = pickupDate.value && pickupDate.value > today ? pickupDate.value : today;
-  if (pickupDate.value && pickupDate.value < today) {
-    pickupDate.value = today;
-  }
   if (returnDate.value && pickupDate.value && returnDate.value <= pickupDate.value) {
     const next = new Date(`${pickupDate.value}T00:00:00`);
     next.setDate(next.getDate() + 1);
     returnDate.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
   }
+}
+
+function setDateValidationMessage(message) {
+  if (!discountMessage) return;
+  discountMessage.textContent = message;
+  discountMessage.classList.add("is-error");
+  discountMessage.dataset.validationSource = "dates";
+}
+
+function clearDateValidationMessage() {
+  if (!discountMessage || discountMessage.dataset.validationSource !== "dates") return;
+  discountMessage.textContent = "";
+  discountMessage.classList.remove("is-error");
+  delete discountMessage.dataset.validationSource;
+}
+
+function validateRentalWindow(showMessage = true) {
+  if (!pickupDate || !returnDate) return true;
+  syncRentalDateLimits();
+  const today = minimumPickupDate();
+  let message = "";
+  if (!pickupDate.value || !returnDate.value) {
+    message = "Please select pickup and return dates.";
+  } else if (pickupDate.value < today) {
+    message = "Pickup date cannot be in the past.";
+  } else {
+    const pickup = new Date(`${pickupDate.value}T${timeTo24(pickupTime?.value)}`);
+    const dropoff = new Date(`${returnDate.value}T${timeTo24(returnTime?.value)}`);
+    if (!Number.isFinite(pickup.getTime()) || !Number.isFinite(dropoff.getTime())) {
+      message = "Please select valid pickup and return dates.";
+    } else if (dropoff <= pickup) {
+      message = "Return date and time must be after pickup date and time.";
+    }
+  }
+  if (message) {
+    if (showMessage) setDateValidationMessage(message);
+    return false;
+  }
+  clearDateValidationMessage();
+  return true;
 }
 
 function parseJsonData(node, fallback = []) {
@@ -1006,7 +1047,8 @@ function rentalLengthText(days) {
 }
 
 function updateRentalRanges() {
-  clampRentalDateInputs();
+  syncRentalDateLimits();
+  validateRentalWindow(false);
   const days = getRentalDays();
   const durationTier = durationRateTier(days);
   if (rentalLengthLabel) rentalLengthLabel.textContent = days > 0 ? rentalLengthText(days) : "Choose valid dates";
@@ -1121,7 +1163,7 @@ pickupDate?.addEventListener("change", updateCars);
 pickupTime?.addEventListener("change", updateCars);
 returnDate?.addEventListener("change", updateCars);
 returnTime?.addEventListener("change", updateCars);
-clampRentalDateInputs();
+syncRentalDateLimits();
 
 function clearCarFilters() {
   setSearchLocked(false);
@@ -1207,11 +1249,7 @@ discountCode?.addEventListener("input", validateDiscount);
 document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").forEach((button) => {
   button.addEventListener("click", (event) => {
     event.preventDefault();
-    if (getRentalDays() <= 0) {
-      if (discountMessage) {
-        discountMessage.textContent = "Return date and time must be after pickup date and time.";
-        discountMessage.classList.add("is-error");
-      }
+    if (!validateRentalWindow(true) || getRentalDays() <= 0) {
       return;
     }
     const url = new URL(button.getAttribute("href"), window.location.origin);
@@ -1270,7 +1308,8 @@ searchForm?.addEventListener("submit", (event) => {
     searchForm.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  clampRentalDateInputs();
+  if (!validateRentalWindow(true)) return;
+  syncRentalDateLimits();
   updateRentalRanges();
   updateCars();
   setSearchLocked(true);

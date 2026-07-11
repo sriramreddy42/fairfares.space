@@ -60,7 +60,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260710explorerVideo8"
+ASSET_VERSION = "20260711bookingDates1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9286,7 +9286,7 @@ def build_booking_preview(
         return_date,
         pickup_time,
         return_time,
-        strict=False,
+        strict=True,
     )
     subtotal = round(float(car["daily_price"]) * rental_days, 2)
     discount = get_valid_discount(discount_code)
@@ -11500,6 +11500,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             services=services,
             cars=cars,
             car_count=escape(len(car_rows)),
+            today_date=escape(date.today().isoformat()),
             default_pickup_date=escape(default_pickup),
             default_return_date=escape(default_return),
             location_options=location_options,
@@ -17286,14 +17287,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         pickup_location: str = "",
         return_location: str = "",
     ) -> None:
-        if user and selected_car_id:
-            booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
-        elif not user and selected_car_id:
-            booking = build_booking_preview(selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
-        elif user:
-            booking = get_booking_for_user(user["id"])
-        else:
+        booking_error = ""
+        try:
+            if user and selected_car_id:
+                booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+            elif not user and selected_car_id:
+                booking = build_booking_preview(selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+            elif user:
+                booking = get_booking_for_user(user["id"])
+            else:
+                booking = None
+        except (RuntimeError, ValueError) as error:
             booking = None
+            selected_car_id = None
+            booking_error = str(error)
         content = get_content()
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
@@ -17783,6 +17790,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         booking_id_label = public_booking_id_label(booking)
+        booking_error_notice = (
+            f"""
+            <div class="request-notice booking-error-notice">
+                <div><b>Choose valid trip dates</b><span>{escape(booking_error)}</span></div>
+                <a class="light-button" href="/#searchForm">Edit search</a>
+            </div>
+            """
+            if booking_error
+            else ""
+        )
         body = render_template(
             "dashboard.html",
             name=escape(user["name"] if user else "FairFares Member"),
@@ -17803,6 +17820,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_link_class=booking_link_class,
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
+            booking_error_notice=booking_error_notice,
             trip_policy_cards=trip_policy_cards,
             request_notice=request_notice,
             trip_payment_summary=trip_payment_summary,

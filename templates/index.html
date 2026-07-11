@@ -62,11 +62,11 @@
         </label>
         <label>
           <span>Pick-up date & time</span>
-          <div class="split-input"><input id="pickupDate" type="date" value="$default_pickup_date"><select id="pickupTime">$pickup_time_options</select></div>
+          <div class="split-input"><input id="pickupDate" type="date" min="$today_date" value="$default_pickup_date"><select id="pickupTime">$pickup_time_options</select></div>
         </label>
         <label>
           <span>Return date & time</span>
-          <div class="split-input"><input id="returnDate" type="date" value="$default_return_date"><select id="returnTime">$return_time_options</select></div>
+          <div class="split-input"><input id="returnDate" type="date" min="$today_date" value="$default_return_date"><select id="returnTime">$return_time_options</select></div>
         </label>
         <div class="booking-options-row">
           <label>
