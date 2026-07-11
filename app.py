@@ -23,8 +23,10 @@ from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from string import Template
+from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
+FAIRFARES_TZ = ZoneInfo(os.environ.get("FAIRFARES_TIMEZONE", "America/Denver"))
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711bookingDates1"
+ASSET_VERSION = "20260711bookingDates2"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -158,6 +160,14 @@ BLOG_POSTS = [
         "cta": ("Compare monthly rentals", "/monthly-car-rental"),
     },
 ]
+
+
+def fairfares_now() -> datetime:
+    return datetime.now(FAIRFARES_TZ)
+
+
+def fairfares_today() -> date:
+    return fairfares_now().date()
 SEO_LANDING_PAGES = {
     "/car-rental-denver": {
         "title": "Car Rental Denver | FairFares",
@@ -4547,7 +4557,7 @@ def normalize_booking_window(
         requested_end = parse_booking_datetime(return_date, return_time)
     if not requested_start or not requested_end:
         raise ValueError("Please select valid pickup and return dates.")
-    if requested_start.date() < date.today():
+    if requested_start.date() < fairfares_today():
         if strict:
             raise ValueError("Pickup date cannot be in the past.")
         pickup_date, return_date = default_pickup, default_return
@@ -5258,7 +5268,7 @@ def create_manual_refund_task(
 
 
 def default_trip_dates() -> tuple[str, str]:
-    pickup = datetime.now().date() + timedelta(days=6)
+    pickup = fairfares_today() + timedelta(days=6)
     dropoff = pickup + timedelta(days=10)
     return pickup.isoformat(), dropoff.isoformat()
 
@@ -11500,7 +11510,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             services=services,
             cars=cars,
             car_count=escape(len(car_rows)),
-            today_date=escape(date.today().isoformat()),
+            today_date=escape(fairfares_today().isoformat()),
             default_pickup_date=escape(default_pickup),
             default_return_date=escape(default_return),
             location_options=location_options,
