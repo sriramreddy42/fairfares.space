@@ -1288,7 +1288,7 @@
     width: 100%;
   }
   .login-main {
-    background: linear-gradient(rgba(255,255,255,0.72), rgba(255,255,255,0.82)), url("/static/img/login-road.png") center top / cover no-repeat;
+    background: linear-gradient(rgba(255,255,255,0.72), rgba(255,255,255,0.82)), url("/static/img/login-road.webp") center top / cover no-repeat;
   }
   .auth-card {
     justify-self: stretch;
@@ -1751,7 +1751,7 @@
   }
 
   .login-main {
-    background: linear-gradient(rgba(255,255,255,0.82), rgba(255,255,255,0.9)), url("/static/img/login-road.png") center bottom / cover no-repeat;
+    background: linear-gradient(rgba(255,255,255,0.82), rgba(255,255,255,0.9)), url("/static/img/login-road.webp") center bottom / cover no-repeat;
     padding: 18px 16px 34px;
   }
 

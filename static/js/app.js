@@ -3901,7 +3901,7 @@ function initWikiAgentWidget() {
           resultsBox.innerHTML = cards
             .map((card) => `
               <a class="wiki-agent-result-card" href="${escapeAgentHtml(card.href || "#")}">
-                <img src="${escapeAgentHtml(card.image || "/static/img/booking-confirmation-promise.png")}"
+                <img src="${escapeAgentHtml(card.image || "/static/img/booking-confirmation-promise.webp")}"
                   alt="${escapeAgentHtml(card.alt || card.title || "FairFares rental car")}"
                   loading="lazy" decoding="async">
                 <span>

@@ -1,7 +1,7 @@
 .explorer-screen {
   background:
     linear-gradient(180deg, rgba(3, 9, 32, 0.78), rgba(4, 10, 30, 0.96)),
-    url("/static/img/explorer-game-bg.png") center top / cover fixed;
+    url("/static/img/explorer-game-bg.webp") center top / cover fixed;
   color: #eef6ff;
 }
 
@@ -2927,7 +2927,7 @@ body.modal-open {
 .explorer-hero {
   background:
     linear-gradient(90deg, rgba(7, 20, 63, 0.92), rgba(7, 20, 63, 0.78)),
-    url("/static/img/fairfares-explorer-button.png") center right / contain no-repeat !important;
+    url("/static/img/fairfares-explorer-button.webp") center right / contain no-repeat !important;
   border-radius: 12px !important;
   min-height: 260px !important;
 }
@@ -5039,7 +5039,7 @@ body.modal-open {
   .explorer-hero {
     background:
       linear-gradient(90deg, rgba(7, 20, 63, 0.96), rgba(7, 20, 63, 0.84)),
-      url("/static/img/fairfares-explorer-button.png") right 10px top 10px / 110px auto no-repeat !important;
+      url("/static/img/fairfares-explorer-button.webp") right 10px top 10px / 110px auto no-repeat !important;
     border-radius: 10px !important;
     min-height: 0 !important;
     padding: 14px !important;
@@ -6277,7 +6277,7 @@ body.modal-open {
 .explorer-hero {
   background:
     linear-gradient(135deg, rgba(6, 22, 65, 0.98), rgba(37, 56, 92, 0.94)),
-    url("/static/img/fairfares-explorer-button.png") right 24px center / min(34%, 360px) auto no-repeat !important;
+    url("/static/img/fairfares-explorer-button.webp") right 24px center / min(34%, 360px) auto no-repeat !important;
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   border-radius: 14px !important;
   box-shadow: 0 22px 48px rgba(6, 22, 65, 0.18) !important;
@@ -6656,7 +6656,7 @@ body.modal-open {
   .explorer-hero {
     background:
       linear-gradient(135deg, rgba(6, 22, 65, 0.98), rgba(37, 56, 92, 0.96)),
-      url("/static/img/fairfares-explorer-button.png") right 14px top 18px / 112px auto no-repeat !important;
+      url("/static/img/fairfares-explorer-button.webp") right 14px top 18px / 112px auto no-repeat !important;
     padding: 18px !important;
   }
 
@@ -6791,7 +6791,7 @@ body.modal-open {
   aspect-ratio: 1 !important;
   background:
     linear-gradient(135deg, rgba(15, 199, 213, 0.9), rgba(229, 37, 42, 0.9)),
-    url("/static/img/fairfares-logo-20260708.png") center / cover no-repeat !important;
+    url("/static/img/fairfares-logo-20260708.webp") center / cover no-repeat !important;
   border: 3px solid rgba(255, 255, 255, 0.72) !important;
   border-radius: 999px !important;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2) !important;

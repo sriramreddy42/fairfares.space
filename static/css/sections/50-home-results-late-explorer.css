@@ -19,7 +19,7 @@
 .results-promo::after {
   background:
     linear-gradient(90deg, rgba(230, 0, 25, 0.9), rgba(16, 196, 200, 0.9)),
-    url("/static/img/hero-road.png") center / cover no-repeat;
+    url("/static/img/hero-road.webp") center / cover no-repeat;
   border-radius: 0 0 8px 8px;
   content: "";
   display: block;
@@ -35,7 +35,7 @@
 .results-ad-card {
   background:
     linear-gradient(135deg, rgba(6, 22, 65, 0.96), rgba(8, 42, 89, 0.9)),
-    url("/static/img/explorer-game-bg.png") center / cover no-repeat;
+    url("/static/img/explorer-game-bg.webp") center / cover no-repeat;
   border-color: rgba(6, 22, 65, 0.2);
   color: #fff;
 }
@@ -458,7 +458,7 @@
 .results-ad-card {
   background:
     linear-gradient(135deg, rgba(6, 22, 65, 0.94), rgba(13, 43, 83, 0.88)),
-    url("/static/img/explorer-game-bg.png") center / cover no-repeat !important;
+    url("/static/img/explorer-game-bg.webp") center / cover no-repeat !important;
 }
 
 .hero-fold-image,

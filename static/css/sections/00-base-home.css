@@ -354,7 +354,7 @@ input, select, textarea, button {
 }
 .hero-fold-image,
 .hero-fold-panel {
-  background-image: url("/static/img/hero-road.png");
+  background-image: url("/static/img/hero-road.webp");
   background-repeat: no-repeat;
 }
 .hero-fold-image {
@@ -365,7 +365,7 @@ input, select, textarea, button {
 }
 .hero-fold-video {
   border: 0;
-  background: #102746 url("/static/img/hero-road.png") center center / cover no-repeat;
+  background: #102746 url("/static/img/hero-road.webp") center center / cover no-repeat;
   height: 100%;
   opacity: 0;
   transition: opacity 360ms ease;

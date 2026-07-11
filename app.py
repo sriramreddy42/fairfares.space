@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711bookingDates3"
+ASSET_VERSION = "20260711imageDelivery1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -80,9 +80,9 @@ BLOG_POSTS = [
         "video_title": "How FairFares shows price match savings before pickup",
         "video_summary": "A short FairFares overview for comparing Denver rental costs, price match savings, and booking confidence.",
         "gallery": [
-            ("/static/img/hero-road.png", "Denver rental car route preview"),
+            ("/static/img/hero-road.webp", "Denver rental car route preview"),
             ("/static/img/referral-deals-denver.jpeg", "Denver FairFares referral deal"),
-            ("/static/img/download-documents-poster.png", "Booking documents and receipts"),
+            ("/static/img/download-documents-poster.webp", "Booking documents and receipts"),
         ],
         "intro": "A low daily rate is only one part of a rental. The better question is what the full Denver trip costs before you pick up the keys.",
         "sections": [
@@ -99,13 +99,13 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Airport pickup",
         "hero": "Denver Airport car rental",
-        "image": "/static/img/hero-road.png",
+        "image": "/static/img/hero-road.webp",
         "video_title": "Airport pickup rental planning with FairFares",
         "video_summary": "Watch how FairFares helps customers move from online booking to pickup-ready rental details.",
         "gallery": [
-            ("/static/img/checkout-denver-bg.png", "Denver checkout and pickup view"),
-            ("/static/img/booking-confirmation-promise.png", "Booking confirmation promise"),
-            ("/static/img/policy-family-car.png", "Pickup and rental policy reminder"),
+            ("/static/img/checkout-denver-bg.webp", "Denver checkout and pickup view"),
+            ("/static/img/booking-confirmation-promise.webp", "Booking confirmation promise"),
+            ("/static/img/policy-family-car.webp", "Pickup and rental policy reminder"),
         ],
         "intro": "Airport pickups are smoother when payment, license, insurance, and timing details are handled before the counter rush.",
         "sections": [
@@ -122,13 +122,13 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Student rentals",
         "hero": "Student car rental",
-        "image": "/static/img/referral-follow-offer.png",
+        "image": "/static/img/referral-follow-offer.webp",
         "video_title": "FairFares student rental and deal flow",
         "video_summary": "A quick visual guide to student deals, referral savings, and rental documents.",
         "gallery": [
             ("/static/img/referral-deals-denver.jpeg", "Student referral deal"),
-            ("/static/img/fairfares-logo-20260708.png", "FairFares student rental brand"),
-            ("/static/img/download-documents-poster.png", "Student rental documents"),
+            ("/static/img/fairfares-logo-20260708.webp", "FairFares student rental brand"),
+            ("/static/img/download-documents-poster.webp", "Student rental documents"),
         ],
         "intro": "Students need rental cars for more than vacations: internships, moves, airport pickups, campus visits, and weekend routes all count.",
         "sections": [
@@ -145,13 +145,13 @@ BLOG_POSTS = [
         "date": "2026-06-30",
         "category": "Long-term rentals",
         "hero": "Long-term car rental Colorado",
-        "image": "/static/img/hero-road.png",
+        "image": "/static/img/hero-road.webp",
         "video_title": "Planning longer Colorado rentals with FairFares",
         "video_summary": "See how longer trips connect date selection, pickup balance, documents, and Colorado routes.",
         "gallery": [
             ("/static/img/honda-civic-sedan-denver-rental.png", "Honda Civic sedan rental available in Denver, Colorado"),
             ("/static/img/hyundai-kona-electric-suv-denver-rental.png", "Hyundai Kona electric SUV rental available in Denver, Colorado"),
-            ("/static/img/hero-road.png", "Colorado long-term route planning"),
+            ("/static/img/hero-road.webp", "Colorado long-term route planning"),
         ],
         "intro": "Longer rentals need clearer math because a small daily difference can become meaningful over several weeks.",
         "sections": [
@@ -5744,7 +5744,7 @@ def referral_claim_modal(reward: sqlite3.Row | None) -> str:
   <section class="booking-referral-backdrop" id="referralClaimModal" data-auto-show="true" hidden>
     <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="referralClaimTitle">
       <button class="guest-offer-close" type="button" data-claim-close aria-label="Close referral claim">x</button>
-      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo">
       <p class="eyebrow">Referral bonus ready</p>
       <h2 id="referralClaimTitle">You referred 3 people.</h2>
       <p>Your referral reward is ready. Claim it now and use this 10% coupon on up to 3 future bookings.</p>
@@ -7886,7 +7886,7 @@ def assistant_result_cards(context: dict[str, object]) -> list[dict[str, str]]:
                 "title": name,
                 "subtitle": f"{category} - {price}/day",
                 "badge": "Cheapest" if index == 0 else "Available",
-                "image": str(car.get("image_url") or "/static/img/booking-confirmation-promise.png"),
+                "image": optimized_static_image_url(str(car.get("image_url") or "/static/img/booking-confirmation-promise.png")),
                 "alt": str(car.get("image_alt") or f"{name} rental car"),
                 "href": str(car.get("select_url") or "/manage-booking"),
             }
@@ -8505,7 +8505,7 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
         rows.append(
             f"""
             <button class="mini-trip" type="button" data-trip-type="{escape(trip_type)}" data-trip-details="{details_json}">
-              {'<img src="' + escape(details["image"]) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
+              {'<img src="' + escape(optimized_static_image_url(details["image"])) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(booking["car_name"])}<br><small>{escape(booking["pickup_date"])} - {escape(booking["dropoff_date"])} · {escape(status)}</small></span>
               <b>{escape(status_text)}</b>
             </button>
@@ -8536,7 +8536,7 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
         rows.append(
             f"""
             <div class="mini-trip saved-mini-trip" role="button" tabindex="0" data-trip-type="favorites" data-trip-details="{details_json}">
-              {'<img src="' + escape(details["image"]) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
+              {'<img src="' + escape(optimized_static_image_url(details["image"])) + '" alt="' + escape(image_alt) + '">' if details["image"] else '<div class="mini-car"></div>'}
               <span>{escape(saved["car_name"])}<br><small>{escape(details["pickup"])} · Saved car</small></span>
               <button class="light-button mini-trip-remove" type="button" data-unsave-car-id="{saved["car_id"]}">Remove saved</button>
             </div>
@@ -9872,6 +9872,21 @@ def row_value(row: sqlite3.Row | dict[str, object] | None, key: str, default: st
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+def optimized_static_image_url(url: str) -> str:
+    if not url.startswith("/static/img/"):
+        return url
+    path = Path(url.split("?", 1)[0])
+    if path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        return url
+    webp_path = path.with_suffix(".webp")
+    if (BASE_DIR / webp_path.as_posix().lstrip("/")).exists():
+        suffix = ""
+        if "?" in url:
+            suffix = "?" + url.split("?", 1)[1]
+        return webp_path.as_posix() + suffix
+    return url
+
+
 def profile_photo_url(user: sqlite3.Row | dict[str, object] | None) -> str:
     if not user:
         return ""
@@ -10715,7 +10730,7 @@ def inject_social_meta(html_text: str, template_name: str) -> str:
     )
     canonical = canonical_url_from_html(html_text)
     origin = schema_origin()
-    image_url = f"{origin}/static/img/hero-road.png?v={ASSET_VERSION}"
+    image_url = f"{origin}/static/img/hero-road.webp?v={ASSET_VERSION}"
     additions: list[str] = []
     property_meta = {
         "og:title": title,
@@ -10948,7 +10963,7 @@ def render_site_loader() -> str:
     return """
   <div class="site-loader" id="siteLoader" aria-hidden="true">
     <div class="site-loader-mark">
-      <img src="/static/img/fairfares-logo-20260708.png" alt="FairFares" width="820" height="360" decoding="async">
+      <img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares" width="820" height="360" decoding="async">
       <span></span>
     </div>
   </div>
@@ -11073,7 +11088,7 @@ def guest_offer_modal() -> str:
   <section class="guest-offer-backdrop" id="guestOfferModal" hidden>
     <div class="guest-offer-modal" role="dialog" aria-modal="true" aria-labelledby="guestOfferTitle">
       <button class="guest-offer-close" type="button" data-offer-close aria-label="Close offer">x</button>
-      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.png" alt="FairFares logo">
+      <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo">
       <p class="eyebrow">Referral student deal</p>
       <h2 id="guestOfferTitle">Claim 10% off before booking.</h2>
       <p>Use the FairFares referral deal on this eligible booking. Follow us, generate your own referral code, or start with our current deal code while the offer is active.</p>
@@ -11723,7 +11738,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         gallery_items = "\n".join(
             f"""
             <figure>
-              <img src="{escape(src)}?v={ASSET_VERSION}" alt="{escape(alt)}" loading="lazy" decoding="async">
+              <img src="{escape(optimized_static_image_url(src))}?v={ASSET_VERSION}" alt="{escape(alt)}" loading="lazy" decoding="async">
               <figcaption>{escape(alt)}</figcaption>
             </figure>
             """
@@ -11740,7 +11755,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             category=escape(post["category"]),
             date=escape(post["date"]),
             hero=escape(post["hero"]),
-            hero_image=escape(post.get("image") or "/static/img/hero-road.png"),
+            hero_image=escape(optimized_static_image_url(post.get("image") or "/static/img/hero-road.webp")),
             intro=escape(post["intro"]),
             sections=sections,
             video_title=escape(post.get("video_title") or "Related FairFares video"),
@@ -12037,7 +12052,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         features = "".join(f"<li>{escape(feature)}</li>" for feature in row["features"].split("|"))
         image_alt = vehicle_image_alt(row)
         car_visual = (
-            f'<img class="car-card-image" src="{escape(row["image_url"])}" alt="{escape(image_alt)}" width="520" height="320" loading="lazy" decoding="async">'
+            f'<img class="car-card-image" src="{escape(optimized_static_image_url(row["image_url"]))}" alt="{escape(image_alt)}" width="520" height="320" loading="lazy" decoding="async">'
             if row["image_url"]
             else '<div class="car-shape"></div>'
         )
@@ -14155,7 +14170,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             car_id=escape(row_value(car, "id")),
             car_name=escape(row_value(car, "name")),
             car_meta=escape(f"{row_value(car, 'year') or '-'} {row_value(car, 'category') or row_value(car, 'type') or 'Vehicle'} | {row_value(car, 'fuel_type') or 'Fuel'}"),
-            car_image=escape(row_value(car, "image_url") or "/static/img/booking-confirmation-promise.png"),
+            car_image=escape(optimized_static_image_url(row_value(car, "image_url") or "/static/img/booking-confirmation-promise.png")),
             car_image_alt=escape(vehicle_image_alt(car)),
             purchase_cost=format_money(row_value(car, "purchase_cost") or 0),
             purchase_receipt=self.render_receipt_link(car),
@@ -17514,7 +17529,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
         if booking and booking["image_url"]:
-            booking_car_visual = f'<img class="trip-car-image" src="{escape(booking["image_url"])}" alt="{escape(booking["car_name"])}">'
+            booking_car_visual = f'<img class="trip-car-image" src="{escape(optimized_static_image_url(booking["image_url"]))}" alt="{escape(booking["car_name"])}">'
         else:
             booking_car_visual = f'<div class="car-art {car_color_class}"><div class="car-shape"></div></div>'
         active_breakdown = booking_price_breakdown(booking) if booking else booking_price_breakdown(None)
@@ -17614,7 +17629,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <div class="policy-timeline" aria-label="Cancellation timeline">
                             <div class="policy-timeline-labels"><span>Today</span><strong>{escape(str(cancellation_timeline["day_label"]))}</strong><span>Pickup</span></div>
                             <div class="policy-timeline-track">
-                                <img class="policy-car-marker" src="/static/img/policy-family-car.png?v={ASSET_VERSION}" alt="Cancellation timeline car marker" aria-hidden="true">
+                                <img class="policy-car-marker" src="/static/img/policy-family-car.webp?v={ASSET_VERSION}" alt="Cancellation timeline car marker" aria-hidden="true">
                                 <span class="policy-cutoff-marker" aria-hidden="true"></span>
                             </div>
                             <div class="policy-day-ticks" aria-hidden="true">{policy_day_ticks}<strong>24h</strong></div>
@@ -17646,7 +17661,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if show_start_experience or show_signed_out_empty:
             first_time_manage_content = """
             <section class="first-time-founder-card">
-                <img src="/static/img/founders-note-fairfares.png" alt="FairFares founders note">
+                <img src="/static/img/founders-note-fairfares.webp" alt="FairFares founders note">
                 <div class="first-time-founder-actions">
                     <div>
                         <p class="eyebrow">Founders note</p>
@@ -17662,7 +17677,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if show_start_experience or show_signed_out_empty:
             first_booking_promo = f"""
             <section class="first-booking-promo" id="upcoming">
-                <img src="/static/img/referral-deals-denver.jpeg" alt="FairFares Denver referral deal">
+                <img src="/static/img/referral-deals-denver.webp" alt="FairFares Denver referral deal">
                 <div class="first-booking-promo-body">
                     <div>
                         <p class="eyebrow">First trip offer</p>
@@ -17854,7 +17869,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <section class="booking-referral-backdrop" id="bookingReferralModal" data-share-url="{escape(referral_share_url)}" hidden>
                 <div class="booking-referral-modal" role="dialog" aria-modal="true" aria-labelledby="bookingReferralTitle">
                     <button class="guest-offer-close" type="button" data-referral-close aria-label="Close referral offer">x</button>
-                    <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.png" alt="FairFares logo">
+                    <img class="guest-offer-logo" src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo">
                     <p class="eyebrow">Referral bonus</p>
                     <h2 id="bookingReferralTitle">Refer 3 friends. Unlock 10% off future bookings.</h2>
                     <p>Create your account with the same email or phone used on this booking. Share this code with friends through WhatsApp or email. After 3 referred people sign up with your code, we will add your 10% coupon to your account. The coupon can be used up to 3 times.</p>
@@ -18064,6 +18079,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.path = path
         return SimpleHTTPRequestHandler.do_GET(self)
+
+    def end_headers(self) -> None:
+        if str(getattr(self, "path", "")).startswith("/static/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        super().end_headers()
 
     def not_found(self) -> None:
         self.send_html(render_template("404.html"), 404)

@@ -25,7 +25,7 @@
 }
 .login-benefits b { display: block; }
 .login-main {
-  background: url("/static/img/login-road.png") left top / auto 100% no-repeat, linear-gradient(90deg, #dcecf7, #fff);
+  background: url("/static/img/login-road.webp") left top / auto 100% no-repeat, linear-gradient(90deg, #dcecf7, #fff);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(380px, 520px);
   min-height: 1175px;
@@ -159,4 +159,3 @@
   padding: 28px;
 }
 .login-footer span { color: var(--navy); font-weight: 700; }
-
