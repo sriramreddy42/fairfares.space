@@ -8344,7 +8344,7 @@ def sarvam_assistant_answer(question: str, context: dict[str, object]) -> str | 
     if not api_key:
         return None
     payload = {
-        "model": os.environ.get("SARVAM_CHAT_MODEL", "sarvam-m"),
+        "model": os.environ.get("SARVAM_CHAT_MODEL", "sarvam-30b"),
         "messages": build_assistant_messages(question, context),
         "max_tokens": 360,
         "temperature": 0.2,
