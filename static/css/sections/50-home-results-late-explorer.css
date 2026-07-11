@@ -1692,18 +1692,22 @@
 
 @media (max-width: 920px) {
   .explorer-screen .explorer-hero {
+    align-items: stretch !important;
+    gap: 8px !important;
     min-height: auto !important;
+    padding: 14px !important;
   }
 
   .explorer-screen .explorer-hero-video-shade {
     background:
-      linear-gradient(180deg, rgba(4, 12, 39, 0.88) 0%, rgba(4, 12, 39, 0.72) 50%, rgba(4, 12, 39, 0.9) 100%),
-      linear-gradient(90deg, rgba(4, 12, 39, 0.36), rgba(4, 12, 39, 0.68)) !important;
+      linear-gradient(180deg, rgba(4, 12, 39, 0.56) 0%, rgba(4, 12, 39, 0.38) 50%, rgba(4, 12, 39, 0.62) 100%),
+      linear-gradient(90deg, rgba(4, 12, 39, 0.18), rgba(4, 12, 39, 0.34)) !important;
   }
 
   .explorer-screen .explorer-hero-copy {
-    background: rgba(6, 17, 53, 0.56) !important;
-    padding: 10px !important;
+    align-self: stretch !important;
+    background: transparent !important;
+    padding: 4px 2px 0 !important;
     transform: none !important;
     width: 100% !important;
   }
@@ -1714,6 +1718,63 @@
   }
 
   .explorer-screen .explorer-book-card {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 150px minmax(0, 1fr) !important;
+    min-height: 92px !important;
+    padding: 4px 0 0 !important;
     width: 100% !important;
+  }
+
+  .explorer-screen .explorer-profile-cluster {
+    gap: 10px !important;
+    justify-content: center !important;
+    margin: 0 auto !important;
+    max-width: 100% !important;
+  }
+
+  .explorer-screen .explorer-profile-strip {
+    display: grid !important;
+    flex: 1 1 auto !important;
+    gap: 6px !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    min-width: 0 !important;
+  }
+
+  .explorer-screen .explorer-profile-strip span {
+    min-height: 40px !important;
+    padding: 0 !important;
+  }
+
+  .explorer-screen .explorer-xp-meter {
+    margin: 18px auto 0 !important;
+    max-width: calc(100% - 20px) !important;
+    padding: 0 !important;
+  }
+
+  .explorer-screen .explorer-book-card img {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    height: auto !important;
+    margin-left: 38px !important;
+    max-width: 96px !important;
+    width: 96px !important;
+  }
+
+  .explorer-screen .explorer-book-card div {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    min-width: 0 !important;
+  }
+
+  .explorer-screen .explorer-book-card h2 {
+    font-size: clamp(1.15rem, 6vw, 1.65rem) !important;
+    line-height: 1.02 !important;
+  }
+
+  .explorer-screen .explorer-book-card p {
+    font-size: 0.82rem !important;
+    line-height: 1.18 !important;
   }
 }
