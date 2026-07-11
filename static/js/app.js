@@ -664,6 +664,44 @@ function minimumPickupDate() {
   return pickupDate?.min || todayInputDate();
 }
 
+function nextFullHourLabel() {
+  const now = new Date();
+  if (now.getMinutes() || now.getSeconds() || now.getMilliseconds()) {
+    now.setHours(now.getHours() + 1);
+  }
+  now.setMinutes(0, 0, 0);
+  let hours = now.getHours();
+  const period = hours >= 12 ? "PM" : "AM";
+  hours %= 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:00 ${period}`;
+}
+
+function timeTextToMinutes(timeText) {
+  const [hoursText, minutesText] = timeTo24(timeText).split(":");
+  return (Number(hoursText) * 60) + Number(minutesText);
+}
+
+function minimumPickupTimeToday() {
+  return pickupDate?.dataset.minTimeToday || nextFullHourLabel();
+}
+
+function syncPickupTimeLimits() {
+  if (!pickupDate || !pickupTime) return;
+  const sameDayMinimum = minimumPickupDate();
+  const isMinimumDate = pickupDate.value === sameDayMinimum;
+  const minimumMinutes = timeTextToMinutes(minimumPickupTimeToday());
+  let firstAllowed = "";
+  Array.from(pickupTime.options).forEach((option) => {
+    const disabled = isMinimumDate && timeTextToMinutes(option.value || option.textContent) < minimumMinutes;
+    option.disabled = disabled;
+    if (!disabled && !firstAllowed) firstAllowed = option.value || option.textContent;
+  });
+  if (isMinimumDate && pickupTime.selectedOptions[0]?.disabled && firstAllowed) {
+    pickupTime.value = firstAllowed;
+  }
+}
+
 function syncRentalDateLimits() {
   if (!pickupDate || !returnDate) return;
   const today = minimumPickupDate();
@@ -674,6 +712,7 @@ function syncRentalDateLimits() {
     next.setDate(next.getDate() + 1);
     returnDate.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
   }
+  syncPickupTimeLimits();
 }
 
 function setDateValidationMessage(message) {
@@ -702,8 +741,11 @@ function validateRentalWindow(showMessage = true) {
   } else {
     const pickup = new Date(`${pickupDate.value}T${timeTo24(pickupTime?.value)}`);
     const dropoff = new Date(`${returnDate.value}T${timeTo24(returnTime?.value)}`);
+    const minimumTodayMinutes = timeTextToMinutes(minimumPickupTimeToday());
     if (!Number.isFinite(pickup.getTime()) || !Number.isFinite(dropoff.getTime())) {
       message = "Please select valid pickup and return dates.";
+    } else if (pickupDate.value === today && timeTextToMinutes(pickupTime?.value) < minimumTodayMinutes) {
+      message = `For pickup today, choose ${minimumPickupTimeToday()} or later.`;
     } else if (dropoff <= pickup) {
       message = "Return date and time must be after pickup date and time.";
     }
@@ -1159,6 +1201,8 @@ locationSelect?.addEventListener("change", updateCars);
 sortCars?.addEventListener("change", updateCars);
 pickupDate?.addEventListener("change", updateRentalRanges);
 returnDate?.addEventListener("change", updateRentalRanges);
+pickupTime?.addEventListener("change", updateRentalRanges);
+returnTime?.addEventListener("change", updateRentalRanges);
 pickupDate?.addEventListener("change", updateCars);
 pickupTime?.addEventListener("change", updateCars);
 returnDate?.addEventListener("change", updateCars);

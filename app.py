@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711bookingDates2"
+ASSET_VERSION = "20260711bookingDates3"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -168,6 +168,19 @@ def fairfares_now() -> datetime:
 
 def fairfares_today() -> date:
     return fairfares_now().date()
+
+
+def next_pickup_slot(now: datetime | None = None) -> datetime:
+    current = now or fairfares_now()
+    if current.minute or current.second or current.microsecond:
+        current = current.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    else:
+        current = current.replace(second=0, microsecond=0)
+    return current
+
+
+def next_pickup_slot_label(now: datetime | None = None) -> str:
+    return next_pickup_slot(now).strftime("%I:%M %p").lstrip("0")
 SEO_LANDING_PAGES = {
     "/car-rental-denver": {
         "title": "Car Rental Denver | FairFares",
@@ -4564,6 +4577,18 @@ def normalize_booking_window(
         pickup_time, return_time = "10:00 AM", "10:00 AM"
         requested_start = parse_booking_datetime(pickup_date, pickup_time)
         requested_end = parse_booking_datetime(return_date, return_time)
+    min_pickup_slot = next_pickup_slot()
+    min_pickup_naive = min_pickup_slot.replace(tzinfo=None)
+    if requested_start and requested_start < min_pickup_naive:
+        if strict:
+            if requested_start.date() < fairfares_today():
+                raise ValueError("Pickup date cannot be in the past.")
+            if min_pickup_slot.date() > fairfares_today():
+                raise ValueError("Same-day pickup is closed. Please choose the next available date.")
+            raise ValueError(f"Pickup time must be at or after {next_pickup_slot_label(min_pickup_slot)} today.")
+        pickup_date = min_pickup_slot.date().isoformat()
+        pickup_time = next_pickup_slot_label(min_pickup_slot)
+        requested_start = parse_booking_datetime(pickup_date, pickup_time)
     if not requested_start or not requested_end or requested_end <= requested_start:
         if strict:
             raise ValueError("Return date and time must be after pickup date and time.")
@@ -11494,6 +11519,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ]
         )
         commercial = get_active_commercial()
+        min_pickup_slot = next_pickup_slot()
         body = render_template(
             "index.html",
             brand=escape(content["brand"]),
@@ -11510,7 +11536,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             services=services,
             cars=cars,
             car_count=escape(len(car_rows)),
-            today_date=escape(fairfares_today().isoformat()),
+            today_date=escape(min_pickup_slot.date().isoformat()),
+            min_pickup_time_today=escape(next_pickup_slot_label(min_pickup_slot)),
             default_pickup_date=escape(default_pickup),
             default_return_date=escape(default_return),
             location_options=location_options,
