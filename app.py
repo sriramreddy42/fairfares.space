@@ -66,6 +66,8 @@ ASSET_VERSION = "20260711bookingDates3"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
+ASSISTANT_PROVIDER_ENV = "FAIRFARES_ASSISTANT_PROVIDER"
+SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
 BLOG_POSTS = [
     {
         "slug": "cheap-car-rental-denver-guide",
@@ -8262,28 +8264,32 @@ def parse_openai_agent_mcp_servers() -> list[dict[str, object]]:
     return tools[:5]
 
 
+def build_assistant_messages(question: str, context: dict[str, object]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are FairFares Assistant. Answer using only the provided FairFares context and configured tools. "
+                "Respect role permissions. Use tools only for relevant read-only lookups. "
+                "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
+                "tell the user which action button to use for those steps. "
+                "If booking_request contains missing_fields, do not invent dates or times; ask for those exact missing fields. "
+                "For booking searches, use this format when data is present: Pickup, Return, Car type, Available cars cheapest first, Cheapest, then mention the Book button opens payment review. "
+                "Users must confirm cancellation, modification, support ticket creation, payment, document email, refund, discount, and all admin changes inside the app. "
+                "Never stack discounts automatically; only one discount applies unless admin manually approves. Keep answers concise."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps({"question": question, "context": context}, default=str),
+        },
+    ]
+
+
 def build_openai_assistant_payload(question: str, context: dict[str, object]) -> dict[str, object]:
     payload: dict[str, object] = {
         "model": os.environ.get("OPENAI_AGENT_MODEL", "gpt-4o-mini"),
-        "input": [
-            {
-                "role": "system",
-                "content": (
-                    "You are FairFares Assistant. Answer using only the provided FairFares context and configured MCP tools. "
-                    "Respect role permissions. Use MCP tools only for relevant read-only lookups. "
-                    "Do not claim you completed booking, cancellation, refund, payment, profile, or admin changes; "
-                    "tell the user which action button to use for those steps. "
-                    "If booking_request contains missing_fields, do not invent dates or times; ask for those exact missing fields. "
-                    "For booking searches, use this format when data is present: Pickup, Return, Car type, Available cars cheapest first, Cheapest, then mention the Book button opens payment review. "
-                    "Users must confirm cancellation, modification, support ticket creation, payment, document email, refund, discount, and all admin changes inside the app. "
-                    "Never stack discounts automatically; only one discount applies unless admin manually approves. Keep answers concise."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps({"question": question, "context": context}, default=str),
-            },
-        ],
+        "input": build_assistant_messages(question, context),
         "max_output_tokens": 360,
     }
     mcp_tools = parse_openai_agent_mcp_servers()
@@ -8328,6 +8334,60 @@ def openai_assistant_answer(question: str, context: dict[str, object]) -> str | 
             if content.get("type") in {"output_text", "text"} and content.get("text"):
                 chunks.append(str(content["text"]))
     return " ".join(chunks).strip() or None
+
+
+def sarvam_assistant_answer(question: str, context: dict[str, object]) -> str | None:
+    provider = os.environ.get(ASSISTANT_PROVIDER_ENV, os.environ.get("AI_PROVIDER", "")).strip().lower()
+    api_key = os.environ.get("SARVAM_API_KEY", "").strip()
+    if provider == "sarvam" and not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    payload = {
+        "model": os.environ.get("SARVAM_CHAT_MODEL", "sarvam-m"),
+        "messages": build_assistant_messages(question, context),
+        "max_tokens": 360,
+        "temperature": 0.2,
+    }
+    request = urllib.request.Request(
+        os.environ.get("SARVAM_CHAT_URL", SARVAM_CHAT_URL),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")[:1000]
+        except Exception:
+            error_body = ""
+        print(f"FairFares assistant Sarvam error {exc.code}: {error_body}", flush=True)
+        return None
+    except Exception:
+        print("FairFares assistant Sarvam request failed.", flush=True)
+        return None
+    choices = data.get("choices") or []
+    if choices:
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if content:
+            return str(content).strip()
+    return None
+
+
+def llm_assistant_answer(question: str, context: dict[str, object]) -> str | None:
+    provider = os.environ.get(ASSISTANT_PROVIDER_ENV, os.environ.get("AI_PROVIDER", "")).strip().lower()
+    if provider == "sarvam":
+        return sarvam_assistant_answer(question, context)
+    if provider == "openai" or not provider:
+        return openai_assistant_answer(question, context)
+    print(f"FairFares assistant provider {provider!r} is not supported.", flush=True)
+    return None
 
 
 def search_wiki_articles(query: str = "", include_internal: bool = False) -> list[sqlite3.Row]:
@@ -13574,7 +13634,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Ask about cars, booking, cancellation, refunds, Explorer, or support."}, 400)
             return
         context = assistant_database_context(question, user, include_internal)
-        answer = openai_assistant_answer(question, context) or local_assistant_answer(question, context)
+        answer = llm_assistant_answer(question, context) or local_assistant_answer(question, context)
         wiki_sources = context.get("wiki") if isinstance(context.get("wiki"), list) else []
         sources = [
             {
