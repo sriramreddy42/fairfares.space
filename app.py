@@ -10696,7 +10696,12 @@ def dedupe_social_meta(html_text: str) -> str:
                 seen_names.add(name)
         return tag
 
-    return re.sub(r"  <meta\b[^>]*(?:property|name)=['\"][^'\"]+['\"][^>]*>\n?", replace_meta, html_text, flags=re.IGNORECASE)
+    return re.sub(
+        r"[ \t]*<meta\b(?=[^>]*(?:property|name)=['\"][^'\"]+['\"])[^>]*>[ \t]*\n?",
+        replace_meta,
+        html_text,
+        flags=re.IGNORECASE,
+    )
 
 
 def inject_social_meta(html_text: str, template_name: str) -> str:
@@ -10955,6 +10960,7 @@ PUBLIC_REDIRECT_ROUTES = {
     "/support": "/manage-booking#support",
     "/rental-guides": "/blog",
     "/cheap-car-rental-denver": "/car-rental-denver",
+    "/cheap-car-rental-near-denver-airport": "/cheap-car-rental-denver-airport",
     "/airport-pickup": "/denver-airport-car-rental",
     "/student-rentals": "/student-car-rental",
     "/suv-rentals": "/suv-rental",
