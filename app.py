@@ -10171,14 +10171,14 @@ def render_public_feed_panel(user: sqlite3.Row | None, active_type: str = "") ->
       <section class="user-community-board user-feed-workspace" id="community">
         <aside class="user-community-profile feed-workspace-left" aria-label="Feed groups">
           <p class="workspace-rail-title">Groups</p>
-          <div class="feed-profile-card">
-            {user_avatar_span(user) if user else '<span>FF</span>'}
+          <div class="feed-profile-card feed-marketplace-card">
+            <span aria-hidden="true">FF</span>
             <div>
-              <h2>{escape(profile_name or "FairFares member")}</h2>
-              <small>{escape(profile_note)}</small>
+              <h2>FairFares Marketplace</h2>
+              <small>Community posts for rooms, rides, local help, and travel questions.</small>
             </div>
           </div>
-          <a class="feed-slack-chip" href="/feed">Marketplace feed</a>
+          <a class="feed-slack-chip" href="/feed">All local posts</a>
           <a class="feed-side-card" href="/accommodations">
             <b>Room rent / shared rent</b>
             <span>List rooms, roommates, apartments, and short stays.</span>
@@ -10191,17 +10191,26 @@ def render_public_feed_panel(user: sqlite3.Row | None, active_type: str = "") ->
 
         <article class="user-community-feed feed-workspace-center" aria-label="FairFares public feed">
           <div class="feed-workspace-tabs">
-            <b>Community advertisements</b>
-            <span>Rooms, rides, accommodations, and local asks</span>
+            <b>Community feed</b>
+            <span>Company wide</span>
           </div>
           <form class="community-request-form feed-composer" id="communityRequestForm" action="/feed/post" method="post">
             <input type="hidden" name="request_type" id="communityRequestType" value="{escape(initial_type)}">
             <input type="hidden" name="current_lat" id="communityCurrentLat">
             <input type="hidden" name="current_lng" id="communityCurrentLng">
+            <div class="feed-composer-intro">
+              <h2>What are you looking for today?</h2>
+              <p>Start with a quick prompt or post a local request.</p>
+              <div class="feed-prompt-pills" aria-label="Quick feed prompts">
+                <button type="button" data-community-action="QUESTION">Rent a car</button>
+                <button type="button" data-community-action="ACCOMMODATION">Find accommodations</button>
+                <button type="button" data-community-action="EXPLORER">Explore the area</button>
+              </div>
+            </div>
             <div class="feed-composer-row">
               {user_avatar_span(user) if user else '<span>FF</span>'}
               <label>
-                <span id="communityPromptLabel">What are you looking for?</span>
+                <span id="communityPromptLabel">Ask what you need, add context, or post an update.</span>
                 <textarea name="message" id="communityMessage" rows="3" placeholder="Example: looking for shared rent near campus, need a ride to airport, or listing a room..." {post_disabled}></textarea>
               </label>
             </div>
@@ -10222,7 +10231,7 @@ def render_public_feed_panel(user: sqlite3.Row | None, active_type: str = "") ->
         </article>
 
         <aside class="user-community-actions feed-workspace-right" aria-label="Feed actions">
-          <div><p class="eyebrow">Post type</p><h2>Choose a category</h2></div>
+          <div><p class="eyebrow">Quick actions</p><h2>Choose a category</h2></div>
           {action_buttons}
         </aside>
       </section>

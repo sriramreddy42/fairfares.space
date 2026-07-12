@@ -125,8 +125,18 @@
   }
 
   body.public-header-compact .main-nav .nav-links a,
+  body.public-header-compact .main-nav .nav-dropdown-trigger,
   body.public-header-compact .main-nav .nav-actions > span {
     color: #fff !important;
+  }
+
+  body.public-header-compact .main-nav .nav-dropdown-menu {
+    background: #fff !important;
+    color: var(--navy) !important;
+  }
+
+  body.public-header-compact .main-nav .nav-dropdown-menu a {
+    color: var(--navy) !important;
   }
 
   body.public-header-compact .main-nav .nav-marketplace-row {
@@ -208,6 +218,10 @@
 
   .main-nav .nav-marketplace-row {
     display: none !important;
+  }
+
+  .nav-dropdown {
+    align-self: stretch;
   }
 
   h1,

@@ -294,6 +294,67 @@ input, select, textarea, button {
   padding: 18px 0 14px;
   position: relative;
 }
+.nav-dropdown {
+  align-items: center;
+  display: inline-flex;
+  position: relative;
+}
+.nav-dropdown-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: inherit;
+  padding: 18px 0 14px;
+}
+.nav-dropdown-trigger::after {
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  content: "";
+  height: 6px;
+  margin-left: 8px;
+  transform: rotate(45deg) translateY(-2px);
+  width: 6px;
+}
+.nav-dropdown-menu {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(0, 20, 55, 0.16);
+  display: grid;
+  gap: 2px;
+  left: 0;
+  min-width: 210px;
+  opacity: 0;
+  padding: 8px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% - 2px);
+  transform: translateY(8px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 90;
+}
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown:focus-within .nav-dropdown-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.nav-dropdown-menu a {
+  border-radius: 6px;
+  color: var(--navy);
+  display: flex;
+  padding: 10px 12px;
+  white-space: nowrap;
+}
+.nav-dropdown-menu a:hover,
+.nav-dropdown-menu a:focus-visible {
+  background: #f3f7fb;
+  color: var(--red);
+}
 .nav-links .active { color: var(--red); }
 .nav-links .active::after {
   background: var(--red);
