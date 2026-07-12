@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711feedWorkspace"
+ASSET_VERSION = "20260711publicFeedMarketplace"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3493,6 +3493,22 @@ def init_db() -> None:
                 FOREIGN KEY(ticket_id) REFERENCES support_tickets(id)
             );
 
+            CREATE TABLE IF NOT EXISTS community_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                post_type TEXT NOT NULL DEFAULT 'QUESTION',
+                title TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL DEFAULT '',
+                pickup_location TEXT NOT NULL DEFAULT '',
+                dropoff_location TEXT NOT NULL DEFAULT '',
+                current_lat TEXT NOT NULL DEFAULT '',
+                current_lng TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS oncall_shifts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 shift_date TEXT NOT NULL UNIQUE,
@@ -3888,6 +3904,13 @@ def init_db() -> None:
         ensure_column(con, "support_tickets", "escalated_by", "escalated_by INTEGER")
         ensure_column(con, "support_tickets", "escalation_reason", "escalation_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "support_tickets", "escalated_at", "escalated_at TEXT")
+        ensure_column(con, "community_posts", "title", "title TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "community_posts", "pickup_location", "pickup_location TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "community_posts", "dropoff_location", "dropoff_location TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "community_posts", "current_lat", "current_lat TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "community_posts", "current_lng", "current_lng TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "community_posts", "status", "status TEXT NOT NULL DEFAULT 'OPEN'")
+        ensure_column(con, "community_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         con.execute(
             """
             UPDATE support_tickets
@@ -9938,6 +9961,164 @@ def community_routing_target(action: str) -> str:
     return "FairFares community ops"
 
 
+FEED_ACTIONS = (
+    ("ROOM_RENT", "Room rent", "Post a room, shared rent, or roommate lead."),
+    ("ACCOMMODATION", "Accommodations", "Ask for apartment, hotel, or short-stay help."),
+    ("CAR_LIFT", "Car lift", "Request pickup and drop-off help from local drivers."),
+    ("LOCAL_RIDE", "Ride share", "Share current location and destination for a ride."),
+    ("QUESTION", "Ask community", "Ask students, renters, and local partners."),
+)
+
+
+FEED_TYPE_LABELS = {key: label for key, label, _description in FEED_ACTIONS}
+
+
+def feed_type_label(post_type: str) -> str:
+    return FEED_TYPE_LABELS.get((post_type or "").upper(), "Community post")
+
+
+def get_community_posts(limit: int = 20, post_type: str = "") -> list[sqlite3.Row]:
+    filters: list[str] = []
+    params: list[object] = []
+    normalized = (post_type or "").upper().strip()
+    if normalized == "HOUSING":
+        filters.append("community_posts.post_type IN (?, ?)")
+        params.extend(("ROOM_RENT", "ACCOMMODATION"))
+    elif normalized:
+        filters.append("community_posts.post_type = ?")
+        params.append(normalized)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT community_posts.*, users.name AS user_name, users.email AS user_email
+            FROM community_posts
+            LEFT JOIN users ON users.id = community_posts.user_id
+            {where}
+            ORDER BY community_posts.id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+
+
+def render_feed_post_card(post: sqlite3.Row) -> str:
+    post_type = row_value(post, "post_type")
+    pickup = row_value(post, "pickup_location")
+    dropoff = row_value(post, "dropoff_location")
+    location_line = ""
+    if pickup or dropoff:
+        if dropoff:
+            location_line = f"<span>{escape(pickup or 'Pickup not listed')} &rarr; {escape(dropoff)}</span>"
+        else:
+            location_line = f"<span>{escape(pickup)}</span>"
+    title = row_value(post, "title") or feed_type_label(post_type)
+    author = row_value(post, "user_name") or "FairFares member"
+    return f"""
+      <article class="community-post-card">
+        <div class="community-post-head">
+          <span>{escape(feed_type_label(post_type))}</span>
+          <small>{escape(row_value(post, "created_at"))}</small>
+        </div>
+        <h3>{escape(title)}</h3>
+        <p>{escape(row_value(post, "message"))}</p>
+        <div class="community-post-meta">
+          <b>{escape(author)}</b>
+          {location_line}
+        </div>
+      </article>
+    """
+
+
+def render_public_feed_panel(user: sqlite3.Row | None, active_type: str = "") -> str:
+    posts = get_community_posts(18, active_type)
+    normalized_type = (active_type or "").upper().strip()
+    initial_type = normalized_type if normalized_type in FEED_TYPE_LABELS else "QUESTION"
+    if normalized_type == "HOUSING":
+        initial_type = "ACCOMMODATION"
+    ride_hidden = "" if initial_type in {"CAR_LIFT", "LOCAL_RIDE"} else "hidden"
+    post_cards = "".join(render_feed_post_card(post) for post in posts) or """
+      <article class="community-post-card community-post-empty">
+        <div class="community-post-head"><span>Community board</span><small>New</small></div>
+        <h3>No public posts yet.</h3>
+        <p>Start with a room rent, shared rent, accommodation, car lift, or local question.</p>
+      </article>
+    """
+    action_buttons = "\n".join(
+        f"""
+        <button type="button" class="{'is-active' if key == initial_type else ''}" data-community-action="{escape(key)}">
+          <b>{escape(label)}</b>
+          <span>{escape(description)}</span>
+        </button>
+        """
+        for key, label, description in FEED_ACTIONS
+    )
+    profile_name = row_value(user, "name") if user else "Guest"
+    profile_note = row_value(user, "email") if user else "Sign in to post to the board"
+    post_disabled = "" if user else "disabled"
+    post_hint = "Post to the public FairFares feed." if user else "Sign in to publish a post."
+    return f"""
+      <section class="user-community-board user-feed-workspace" id="community">
+        <aside class="user-community-profile feed-workspace-left" aria-label="Feed groups">
+          <p class="workspace-rail-title">Groups</p>
+          <div class="feed-profile-card">
+            {user_avatar_span(user) if user else '<span>FF</span>'}
+            <div>
+              <h2>{escape(profile_name or "FairFares member")}</h2>
+              <small>{escape(profile_note)}</small>
+            </div>
+          </div>
+          <a class="feed-slack-chip" href="/feed">Marketplace feed</a>
+          <a class="feed-side-card" href="/accommodations">
+            <b>Room rent / shared rent</b>
+            <span>List rooms, roommates, apartments, and short stays.</span>
+          </a>
+          <a class="feed-side-card" href="/car-lift">
+            <b>Car lift</b>
+            <span>Request pickup and drop-off help from local drivers.</span>
+          </a>
+        </aside>
+
+        <article class="user-community-feed feed-workspace-center" aria-label="FairFares public feed">
+          <div class="feed-workspace-tabs">
+            <b>Community advertisements</b>
+            <span>Rooms, rides, accommodations, and local asks</span>
+          </div>
+          <form class="community-request-form feed-composer" id="communityRequestForm" action="/feed/post" method="post">
+            <input type="hidden" name="request_type" id="communityRequestType" value="{escape(initial_type)}">
+            <input type="hidden" name="current_lat" id="communityCurrentLat">
+            <input type="hidden" name="current_lng" id="communityCurrentLng">
+            <div class="feed-composer-row">
+              {user_avatar_span(user) if user else '<span>FF</span>'}
+              <label>
+                <span id="communityPromptLabel">What are you looking for?</span>
+                <textarea name="message" id="communityMessage" rows="3" placeholder="Example: looking for shared rent near campus, need a ride to airport, or listing a room..." {post_disabled}></textarea>
+              </label>
+            </div>
+            <div class="community-ride-fields" id="communityRideFields" {ride_hidden}>
+              <label><span>Current / pickup location</span><input name="pickup_location" id="communityPickupLocation" placeholder="Use current location or type pickup" {post_disabled}></label>
+              <button type="button" class="light-button" id="communityUseLocation" {post_disabled}>Use current location</button>
+              <label><span>Drop location</span><input name="dropoff_location" id="communityDropoffLocation" placeholder="Where do you want to go?" {post_disabled}></label>
+            </div>
+            <div class="community-form-actions">
+              <button type="submit" {post_disabled}>Post</button>
+              {'<a class="light-button" href="/login">Sign in to post</a>' if not user else ''}
+              <p class="modify-status" id="communityRequestStatus" aria-live="polite">{escape(post_hint)}</p>
+            </div>
+          </form>
+          <div class="community-post-list">
+            {post_cards}
+          </div>
+        </article>
+
+        <aside class="user-community-actions feed-workspace-right" aria-label="Feed actions">
+          <div><p class="eyebrow">Post type</p><h2>Choose a category</h2></div>
+          {action_buttons}
+        </aside>
+      </section>
+    """
+
+
 def render_user_community_panel(
     user: sqlite3.Row | None,
     booking: sqlite3.Row | None,
@@ -11298,6 +11479,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/feed": self.feed_page,
+            "/car-lift": self.car_lift_page,
+            "/accommodations": self.accommodations_page,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
@@ -11369,6 +11552,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
             "/community/request": self.create_community_request,
+            "/feed/post": self.create_feed_post,
             "/feedback": self.submit_app_feedback,
             "/wiki/ask": self.ask_wiki_agent,
             "/student-verification": self.update_student_verification,
@@ -11606,6 +11790,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/contact",
             "/deals",
             "/explorer",
+            "/feed",
+            "/car-lift",
+            "/accommodations",
         ]
         urls = [*static_urls, *SEO_LANDING_PAGES.keys(), *(f"/blog/{post['slug']}" for post in BLOG_POSTS)]
         today = date.today().isoformat()
@@ -13837,6 +14024,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "message": f"Posted to FairFares community ops as {ticket_id}. {routing_target} will review it.",
         })
 
+    def create_feed_post(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to post to the feed."}, 401)
+            return
+        form = self.read_form()
+        post_type = (form.get("request_type") or "QUESTION").upper().strip()
+        allowed = {key for key, _label, _description in FEED_ACTIONS}
+        if post_type not in allowed:
+            post_type = "QUESTION"
+        message = (form.get("message") or "").strip()
+        pickup_location = (form.get("pickup_location") or "").strip()
+        dropoff_location = (form.get("dropoff_location") or "").strip()
+        current_lat = (form.get("current_lat") or "").strip()
+        current_lng = (form.get("current_lng") or "").strip()
+        if not message and post_type not in {"CAR_LIFT", "LOCAL_RIDE"}:
+            self.send_json({"ok": False, "message": "Add a short description before posting."}, 400)
+            return
+        if post_type in {"CAR_LIFT", "LOCAL_RIDE"} and not dropoff_location:
+            self.send_json({"ok": False, "message": "Add the drop location for ride or car-lift posts."}, 400)
+            return
+        title = feed_type_label(post_type)
+        if post_type in {"ROOM_RENT", "ACCOMMODATION"} and message:
+            title = "Housing lead"
+        elif post_type in {"CAR_LIFT", "LOCAL_RIDE"}:
+            title = "Ride request"
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO community_posts
+                (user_id, post_type, title, message, pickup_location, dropoff_location, current_lat, current_lng)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user["id"], post_type, title, message, pickup_location, dropoff_location, current_lat, current_lng),
+            )
+        self.send_json({
+            "ok": True,
+            "message": "Posted to FairFares Feed.",
+        })
+
     def submit_app_feedback(self) -> None:
         user = self.current_user()
         form = self.read_form()
@@ -14025,26 +14252,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def feed_page(self) -> None:
         user = self.current_user()
-        if user and is_staff_user(user):
-            self.redirect("/admin/workspace")
-            return
-        booking = get_booking_for_user(user["id"]) if user else None
-        support_tickets = get_support_tickets_for_user(user["id"]) if user else []
-        feed_content = (
-            render_user_community_panel(user, booking, support_tickets)
-            if user
-            else """
-            <section class="feed-signin-card">
-              <p class="eyebrow">FairFares Feed</p>
-              <h1>Ask, list, ride, and plan with FairFares.</h1>
-              <p>Sign in to post ride requests, list local offers, ask the community, and route help to FairFares ops.</p>
-              <div class="seo-landing-actions">
-                <a class="select-button" href="/login">Sign in to Feed</a>
-                <a class="light-button" href="/signup">Create account</a>
-              </div>
-            </section>
-            """
-        )
+        feed_content = render_public_feed_panel(user)
         auth_link = (
             '<a class="nav-button" href="/dashboard">Dashboard</a>'
             if user
@@ -14056,6 +14264,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feed_content=feed_content,
         )
         self.send_html(body)
+
+    def feed_focus_page(self, active_type: str, title: str, description: str) -> None:
+        user = self.current_user()
+        intro = f"""
+          <section class="feed-hero">
+            <p class="eyebrow">FairFares Feed</p>
+            <h1>{escape(title)}</h1>
+            <p>{escape(description)}</p>
+          </section>
+        """
+        feed_content = intro + render_public_feed_panel(user, active_type)
+        auth_link = (
+            '<a class="nav-button" href="/dashboard">Dashboard</a>'
+            if user
+            else '<a href="/login">Sign in / Join</a>'
+        )
+        body = render_template(
+            "feed.html",
+            auth_link=auth_link,
+            feed_content=feed_content,
+        )
+        self.send_html(body)
+
+    def car_lift_page(self) -> None:
+        self.feed_focus_page(
+            "CAR_LIFT",
+            "Find or post a car lift.",
+            "Use pickup and drop-off details so local drivers and FairFares partners can understand the route quickly.",
+        )
+
+    def accommodations_page(self) -> None:
+        self.feed_focus_page(
+            "HOUSING",
+            "Find rooms, shared rent, and short stays.",
+            "Post housing-style advertisements or ask the FairFares community for accommodation leads near your route or campus.",
+        )
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.current_user()

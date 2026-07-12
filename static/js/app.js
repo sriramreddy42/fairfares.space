@@ -3092,6 +3092,9 @@ const communityStatus = document.getElementById("communityRequestStatus");
 const communityPrompts = {
   ACK: "Post an acknowledgement, pickup note, or quick update",
   LISTING: "List a ride, room, item, or local service",
+  ROOM_RENT: "Post a room rent or shared rent advertisement",
+  ACCOMMODATION: "Ask for accommodations or post a short-stay lead",
+  CAR_LIFT: "Request a car lift with pickup and drop-off",
   CHECKUP: "Ask FairFares to check documents, insurance, pickup, or vehicle readiness",
   FOOD: "Ask for nearby food options or delivery help",
   LOCAL_RIDE: "Request a cheap local ride",
@@ -3102,6 +3105,9 @@ const communityPrompts = {
 const communityPlaceholders = {
   ACK: "Example: Payment is done, please confirm my pickup checklist.",
   LISTING: "Example: I can offer a ride, room lead, local help, or student deal.",
+  ROOM_RENT: "Example: Shared room near campus available from August 1, rent range, contact details, and rules.",
+  ACCOMMODATION: "Example: Looking for a short stay near Denver Airport for two nights, budget $80/night.",
+  CAR_LIFT: "Example: Need a lift from campus to Denver Airport, two bags, flexible after 5 PM.",
   CHECKUP: "Example: Can someone confirm what I still need before pickup?",
   FOOD: "Example: Any affordable food near my pickup or hotel?",
   LOCAL_RIDE: "Need a budget ride from pickup to drop-off.",
@@ -3114,7 +3120,7 @@ function setCommunityAction(action) {
   if (!communityForm || !communityType) return;
   const normalized = action || "QUESTION";
   communityType.value = normalized;
-  const isRide = normalized === "LOCAL_RIDE" || normalized === "RIDESHARE";
+  const isRide = normalized === "LOCAL_RIDE" || normalized === "RIDESHARE" || normalized === "CAR_LIFT";
   if (communityRideFields) communityRideFields.hidden = !isRide;
   if (communityPromptLabel) communityPromptLabel.textContent = communityPrompts[normalized] || communityPrompts.QUESTION;
   if (communityMessage) {
@@ -3129,6 +3135,10 @@ function setCommunityAction(action) {
 document.querySelectorAll("[data-community-action]").forEach((button) => {
   button.addEventListener("click", () => setCommunityAction(button.dataset.communityAction));
 });
+
+if (communityForm && communityType?.value) {
+  setCommunityAction(communityType.value);
+}
 
 document.getElementById("communityUseLocation")?.addEventListener("click", () => {
   if (!navigator.geolocation) {
@@ -3163,8 +3173,12 @@ communityForm?.addEventListener("submit", (event) => {
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
       if (communityStatus) communityStatus.textContent = payload.message || "Request posted.";
+      const shouldReloadFeed = communityForm.action.includes("/feed/post");
       communityForm.reset();
       setCommunityAction("QUESTION");
+      if (shouldReloadFeed) {
+        window.setTimeout(() => window.location.reload(), 600);
+      }
     })
     .catch((payload) => {
       if (communityStatus) communityStatus.textContent = payload?.message || "Could not post this request.";
