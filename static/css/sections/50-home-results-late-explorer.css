@@ -1301,7 +1301,6 @@
     padding: 10px 12px !important;
   }
 
-  .mobile-menu a[href="/wiki"],
   .mobile-menu .user-chip {
     display: none !important;
   }

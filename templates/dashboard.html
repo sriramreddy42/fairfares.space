@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manage Booking | FairFares</title>
   $stylesheet_links
-  <script defer src="/static/js/app.js?v=54"></script>
+  <script defer src="/static/js/app.js?v=55"></script>
 </head>
 <body class="manage-screen public-header-compact $manage_flow_class">
   <header class="top-brand">
@@ -21,9 +21,6 @@
     <div class="nav-links">
       <a href="/">Car rentals</a>
       <a class="active" href="/manage-booking">Manage Booking</a>
-      <a href="/feed">Feed</a>
-      <a href="/car-lift">Car Lift</a>
-      <a href="/accommodations">Accommodations</a>
       <a href="/deals">Deals</a>
       <a href="/blog">Blog</a>
       <a href="/wiki">FAQ</a>
@@ -35,6 +32,16 @@
       <span>EN</span>
       $manage_auth
       <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+    <div class="nav-marketplace-row" aria-label="FairFares marketplace shortcuts">
+      <a class="market-home" href="/" aria-label="FairFares home">⌂</a>
+      <a href="/feed">Near Me Feed</a>
+      <a href="/accommodations">Roommates</a>
+      <a href="/accommodations">Rentals</a>
+      <a href="/car-lift">Car Lift</a>
+      <a href="/feed">Local Services</a>
+      <a class="market-pill" href="/accommodations">I need a place to live</a>
+      <a class="market-pill" href="/feed?type=ROOM_RENT">I have a place available</a>
     </div>
   </nav>
 

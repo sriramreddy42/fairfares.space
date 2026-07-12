@@ -1,7 +1,7 @@
 /* Final mobile system pass. Keep this file last so small-screen surfaces stay compact. */
 @media (min-width: 861px) {
   body:not(.admin-screen):not(.login-screen):not(.auth-page) {
-    padding-top: 180px !important;
+    padding-top: 230px !important;
   }
 
   .main-nav .nav-links a {
@@ -20,7 +20,7 @@
 
   .main-nav {
     left: 0 !important;
-    min-height: 58px !important;
+    min-height: 108px !important;
     padding-bottom: 0 !important;
     padding-top: 0 !important;
     position: fixed !important;
@@ -39,7 +39,7 @@
   }
 
   body.public-header-compact:not(.admin-screen):not(.login-screen):not(.auth-page) {
-    padding-top: 58px !important;
+    padding-top: 102px !important;
   }
 
   body.public-header-compact .top-brand {
@@ -78,7 +78,7 @@
     background: #061b44 !important;
     border-bottom: 0 !important;
     color: #fff !important;
-    min-height: 58px !important;
+    min-height: 102px !important;
     padding-left: 222px !important;
     padding-right: 18px !important;
     top: 0 !important;
@@ -126,6 +126,25 @@
 
   body.public-header-compact .main-nav .nav-links a,
   body.public-header-compact .main-nav .nav-actions > span {
+    color: #fff !important;
+  }
+
+  body.public-header-compact .main-nav .nav-marketplace-row {
+    border-top-color: rgba(255, 255, 255, 0.18) !important;
+    color: rgba(255, 255, 255, 0.78) !important;
+    min-height: 42px !important;
+  }
+
+  body.public-header-compact .main-nav .nav-marketplace-row a {
+    color: rgba(255, 255, 255, 0.8) !important;
+  }
+
+  body.public-header-compact .main-nav .nav-marketplace-row a:hover,
+  body.public-header-compact .main-nav .nav-marketplace-row a:focus-visible {
+    color: #fff !important;
+  }
+
+  body.public-header-compact .main-nav .nav-marketplace-row .market-pill {
     color: #fff !important;
   }
 
@@ -185,6 +204,10 @@
     overflow-x: hidden;
     text-size-adjust: 100%;
     -webkit-text-size-adjust: 100%;
+  }
+
+  .main-nav .nav-marketplace-row {
+    display: none !important;
   }
 
   h1,
