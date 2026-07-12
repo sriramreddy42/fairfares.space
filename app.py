@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260712marketplaceNav"
+ASSET_VERSION = "20260712accommodationHub"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9973,6 +9973,116 @@ FEED_ACTIONS = (
 FEED_TYPE_LABELS = {key: label for key, label, _description in FEED_ACTIONS}
 
 
+ACCOMMODATION_CATEGORIES = (
+    ("single-room", "Single Room", "Private room leads"),
+    ("shared-room", "Shared Room", "Shared rent and roommates"),
+    ("paying-guest", "Paying Guest", "Short-stay PG style leads"),
+    ("apartment", "Apartment", "1B/2B apartments"),
+    ("single-family", "Single Family Home", "Full-home rentals"),
+    ("condos", "Condos", "Condo and townhome leads"),
+    ("town-house", "Town House", "Townhouse rentals"),
+    ("basement", "Basement Apartment", "Private basement units"),
+)
+
+
+ACCOMMODATION_SAMPLE_LEADS = (
+    {
+        "kind": "Private room",
+        "intent": "Place available",
+        "title": "Private bedroom + bathroom in 2B2B",
+        "location": "The Ridge at Thornton Station",
+        "metro": "Thornton / Downtown Denver access",
+        "move_in": "Flexible",
+        "gender": "Responsible roommate",
+        "price": "Ask owner",
+        "highlights": ("2 min walk to RTD", "17 min to Downtown by train", "Private bath"),
+        "body": "Clean roommate preferred. Good RTD access and a quick drive to downtown Denver.",
+        "tone": "premium",
+    },
+    {
+        "kind": "Private room",
+        "intent": "Place available",
+        "title": "Female roommate wanted in Lone Tree",
+        "location": "Lone Tree, CO",
+        "metro": "Lone Tree / Meridian / Highlands Ranch",
+        "move_in": "Discuss with owner",
+        "gender": "Female only",
+        "price": "Ask owner",
+        "highlights": ("Attached bath", "Near RTD", "Near offices and Park Meadows"),
+        "body": "Private bedroom in a 2B2B apartment with closet, laundry, parking, gym, and nearby groceries.",
+        "tone": "green",
+    },
+    {
+        "kind": "Temporary shared room",
+        "intent": "Place available",
+        "title": "Temporary shared accommodation for 1 male",
+        "location": "IMT Dayton",
+        "metro": "Denver metro",
+        "move_in": "July 24",
+        "gender": "Male",
+        "price": "Ask owner",
+        "highlights": ("1 month", "Shared stay", "Move-in July 24"),
+        "body": "Short-term shared accommodation lead. Good for someone needing a temporary landing spot.",
+        "tone": "blue",
+    },
+    {
+        "kind": "Basement apartment",
+        "intent": "Place available",
+        "title": "Private basement near DU",
+        "location": "Platt Park, Denver",
+        "metro": "5 min from University of Denver",
+        "move_in": "Now - Aug 1",
+        "gender": "Quiet renter",
+        "price": "Ask owner",
+        "highlights": ("Private basement", "Near DU", "Quiet home preferred"),
+        "body": "Owner lives upstairs and prefers a quiet, simple, respectful renter.",
+        "tone": "navy",
+    },
+    {
+        "kind": "Looking for room",
+        "intent": "Need a place",
+        "title": "Looking for private room near Downtown / DTC",
+        "location": "Downtown, Central Park, Centennial, Englewood, Lone Tree",
+        "metro": "RTD / train preferred",
+        "move_in": "July 15",
+        "gender": "27M professional",
+        "price": "Budget flexible",
+        "highlights": ("Private room", "Okay sharing bath", "Easy commute"),
+        "body": "Working professional looking for a clean room with commute access.",
+        "tone": "orange",
+    },
+    {
+        "kind": "Looking for room",
+        "intent": "Need a place",
+        "title": "Looking for private room for one girl",
+        "location": "Downtown Denver / DU / nearby",
+        "metro": "Safe and well-connected",
+        "move_in": "Soon",
+        "gender": "Female",
+        "price": "Ask renter",
+        "highlights": ("Private room preferred", "Near DU", "Clean and safe"),
+        "body": "Looking for accommodation near downtown Denver, DU, or a nearby neighborhood.",
+        "tone": "pink",
+    },
+)
+
+
+ACCOMMODATION_LOCATION_LINKS = (
+    "Denver, CO",
+    "Aurora, CO",
+    "Englewood, CO",
+    "Littleton, CO",
+    "Lone Tree, CO",
+    "Thornton, CO",
+    "Commerce City, CO",
+    "Centennial, CO",
+    "Parker, CO",
+    "Colorado Springs, CO",
+    "Boulder, CO",
+    "Lakewood, CO",
+)
+
+
 def feed_type_label(post_type: str) -> str:
     return FEED_TYPE_LABELS.get((post_type or "").upper(), "Community post")
 
@@ -10115,6 +10225,220 @@ def render_public_feed_panel(user: sqlite3.Row | None, active_type: str = "") ->
           <div><p class="eyebrow">Post type</p><h2>Choose a category</h2></div>
           {action_buttons}
         </aside>
+      </section>
+    """
+
+
+def render_accommodation_listing_card(lead: dict[str, object]) -> str:
+    highlights = "".join(
+        f"<span>{escape(str(item))}</span>" for item in lead.get("highlights", ())
+    )
+    tone = re.sub(r"[^a-z0-9_-]", "", str(lead.get("tone") or "blue").lower())
+    return f"""
+      <article class="accommodation-card accommodation-card-{escape(tone)}">
+        <div class="accommodation-card-art" aria-hidden="true">
+          <span>{escape(str(lead.get("kind", "Room"))[:2].upper())}</span>
+        </div>
+        <div class="accommodation-card-body">
+          <div class="accommodation-card-top">
+            <span>{escape(str(lead.get("intent") or "Housing lead"))}</span>
+            <b>{escape(str(lead.get("price") or "Ask"))}</b>
+          </div>
+          <h3>{escape(str(lead.get("title") or "Accommodation lead"))}</h3>
+          <p>{escape(str(lead.get("body") or ""))}</p>
+          <div class="accommodation-meta-grid">
+            <span><b>Area</b>{escape(str(lead.get("location") or "Denver metro"))}</span>
+            <span><b>Commute</b>{escape(str(lead.get("metro") or "Ask poster"))}</span>
+            <span><b>Move-in</b>{escape(str(lead.get("move_in") or "Flexible"))}</span>
+            <span><b>Fit</b>{escape(str(lead.get("gender") or "Open"))}</span>
+          </div>
+          <div class="accommodation-tags">{highlights}</div>
+        </div>
+        <a class="accommodation-card-cta" href="#accommodationPost">Ask / respond</a>
+      </article>
+    """
+
+
+def render_accommodations_page_content(user: sqlite3.Row | None) -> str:
+    post_disabled = "" if user else "disabled"
+    signin_hint = "" if user else '<a class="light-button" href="/login">Sign in to post</a>'
+    post_hint = "Post a housing need or list a place. Community leads are reviewed before you share private details." if user else "Sign in to post a room, roommate, or accommodation need."
+    category_buttons = "".join(
+        f"""
+        <button type="button" data-accommodation-filter="{escape(key)}">
+          <span aria-hidden="true">{icon}</span>
+          <b>{escape(label)}</b>
+          <small>{escape(description)}</small>
+        </button>
+        """
+        for (key, label, description), icon in zip(
+            ACCOMMODATION_CATEGORIES,
+            ("🛏", "🧳", "🏠", "🏢", "🏡", "🏘", "🚪", "🔑"),
+        )
+    )
+    listings = "".join(render_accommodation_listing_card(lead) for lead in ACCOMMODATION_SAMPLE_LEADS)
+    location_links = "".join(
+        f'<a href="#accommodationListings">Rooms for rent in {escape(location)}</a>'
+        for location in ACCOMMODATION_LOCATION_LINKS
+    )
+    feed_posts = get_community_posts(6, "HOUSING")
+    recent_posts = "".join(render_feed_post_card(post) for post in feed_posts)
+    if not recent_posts:
+        recent_posts = """
+          <article class="community-post-card community-post-empty">
+            <div class="community-post-head"><span>Housing board</span><small>New</small></div>
+            <h3>No live FairFares housing posts yet.</h3>
+            <p>Use the form above to post a room, shared rent, short stay, or roommate need.</p>
+          </article>
+        """
+    return f"""
+      <section class="accommodation-hero">
+        <div class="accommodation-hero-copy">
+          <p class="eyebrow">FairFares housing help</p>
+          <h1>Find local rooms, shared rent, and short stays.</h1>
+          <p>Search Denver metro housing leads, post what you need, or list a place for students and renters already planning rides, rentals, and moves.</p>
+          <div class="accommodation-hero-actions">
+            <a href="#accommodationPost">Post your need</a>
+            <a href="#accommodationListings">Browse leads</a>
+          </div>
+        </div>
+        <form class="accommodation-search" action="#accommodationListings">
+          <b>Search housing leads</b>
+          <div>
+            <label>
+              <span>Need</span>
+              <select>
+                <option>Room for rent</option>
+                <option>Shared room</option>
+                <option>Private room</option>
+                <option>Apartment</option>
+              </select>
+            </label>
+            <label>
+              <span>Area</span>
+              <input placeholder="Denver Metro Area">
+            </label>
+            <label>
+              <span>Move-in</span>
+              <input type="date">
+            </label>
+            <label>
+              <span>Budget</span>
+              <select>
+                <option>Any price</option>
+                <option>Under $700</option>
+                <option>$700 - $1,000</option>
+                <option>$1,000+</option>
+              </select>
+            </label>
+          </div>
+          <button type="submit">Search accommodations</button>
+        </form>
+      </section>
+
+      <section class="accommodation-intake" aria-label="Accommodation categories">
+        <div>
+          <h2>Looking for a place to stay or have a place to rent out?</h2>
+          <p>Pick a category, then post a short note. Keep it simple: location, move-in date, rent range, roommate preference, and contact instructions.</p>
+        </div>
+        <div class="accommodation-category-grid">{category_buttons}</div>
+      </section>
+
+      <section class="accommodation-post-panel" id="accommodationPost">
+        <div class="accommodation-post-copy">
+          <p class="eyebrow">Post to FairFares housing</p>
+          <h2>Need a room or listing a place?</h2>
+          <p>FairFares keeps this separate from admin workspace data. Public posts are community advertisements, not verified rental agreements.</p>
+        </div>
+        <form class="community-request-form accommodation-post-form" id="communityRequestForm" action="/feed/post" method="post">
+          <input type="hidden" name="request_type" id="communityRequestType" value="ACCOMMODATION">
+          <input type="hidden" name="current_lat" id="communityCurrentLat">
+          <input type="hidden" name="current_lng" id="communityCurrentLng">
+          <div class="accommodation-post-type">
+            <button type="button" class="is-active" data-community-action="ACCOMMODATION">I need a place</button>
+            <button type="button" data-community-action="ROOM_RENT">I have a place</button>
+          </div>
+          <label>
+            <span id="communityPromptLabel">Ask for accommodations or post a short-stay lead</span>
+            <textarea name="message" id="communityMessage" rows="4" placeholder="Example: Looking for a private room near DU from Aug 1, budget $900, easy RTD commute preferred." {post_disabled}></textarea>
+          </label>
+          <div class="community-ride-fields" id="communityRideFields" hidden>
+            <label><span>Current / pickup location</span><input id="communityPickupLocation" placeholder="Use current location or type pickup" {post_disabled}></label>
+            <button type="button" class="light-button" id="communityUseLocation" {post_disabled}>Use current location</button>
+            <label><span>Drop location</span><input id="communityDropoffLocation" placeholder="Where do you want to go?" {post_disabled}></label>
+          </div>
+          <div class="accommodation-form-grid">
+            <input name="pickup_location" placeholder="Area or apartment name" {post_disabled}>
+            <input name="housing_move_in" placeholder="Move-in date / availability" {post_disabled}>
+            <input name="housing_rent" placeholder="Rent range" {post_disabled}>
+            <input name="housing_preference" placeholder="Preference: male, female, open" {post_disabled}>
+          </div>
+          <div class="community-form-actions">
+            <button type="submit" {post_disabled}>Post housing lead</button>
+            {signin_hint}
+            <p class="modify-status" id="communityRequestStatus" aria-live="polite">{escape(post_hint)}</p>
+          </div>
+        </form>
+      </section>
+
+      <section class="accommodation-listings" id="accommodationListings">
+        <div class="section-heading-row">
+          <div>
+            <p class="eyebrow">Denver metro housing board</p>
+            <h2>Community accommodation leads</h2>
+          </div>
+          <a href="/feed?type=HOUSING">Open feed view</a>
+        </div>
+        <div class="accommodation-card-grid">{listings}</div>
+      </section>
+
+      <section class="accommodation-live-feed">
+        <div>
+          <p class="eyebrow">Latest public posts</p>
+          <h2>Live FairFares housing posts</h2>
+        </div>
+        <div class="community-post-list">{recent_posts}</div>
+      </section>
+
+      <section class="accommodation-info-grid">
+        <article>
+          <p class="eyebrow">About FairFares housing</p>
+          <h2>Built for renters who need fast local clarity.</h2>
+          <p>Use the board for temporary accommodation, roommates, shared rent, private rooms, and apartment leads around Denver, DU, DTC, Lone Tree, Thornton, Aurora, and nearby RTD routes.</p>
+          <p>Listings should include rent range, move-in date, area, room type, commute details, and whether the poster has gender or roommate preferences.</p>
+        </article>
+        <article class="accommodation-choice-list">
+          <p class="eyebrow">Why people use it</p>
+          <ol>
+            <li><b>Easy posting</b><span>One short post can describe the room or need.</span></li>
+            <li><b>Local matching</b><span>Filter by area, commute, room type, and timing.</span></li>
+            <li><b>Community leads</b><span>Connect with students and renters already using FairFares.</span></li>
+            <li><b>Privacy first</b><span>Share private contact details only when you are ready.</span></li>
+          </ol>
+        </article>
+      </section>
+
+      <section class="accommodation-locations">
+        <h2>Roommates and rooms for rent in popular locations</h2>
+        <div class="accommodation-location-tabs">
+          <button type="button" class="is-active">Rooms nearby cities</button>
+          <button type="button">Metro areas</button>
+          <button type="button">University areas</button>
+          <button type="button">Nearby rooms</button>
+        </div>
+        <div class="accommodation-location-grid">{location_links}</div>
+      </section>
+
+      <section class="housing-corner">
+        <div>
+          <p class="eyebrow">Housing corner</p>
+          <h2>Quick posting tips</h2>
+        </div>
+        <div class="housing-tip-grid">
+          <article><b>For renters</b><span>Include move-in date, budget, commute, room type, and whether you can share a bathroom.</span></article>
+          <article><b>For owners</b><span>Include rent, deposit, lease term, parking, utilities, transit, house rules, and photos when available.</span></article>
+          <article><b>For safety</b><span>Meet in public first, verify identities, avoid upfront payment pressure, and report suspicious posts.</span></article>
+        </div>
       </section>
     """
 
@@ -14039,6 +14363,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         dropoff_location = (form.get("dropoff_location") or "").strip()
         current_lat = (form.get("current_lat") or "").strip()
         current_lng = (form.get("current_lng") or "").strip()
+        if post_type in {"ROOM_RENT", "ACCOMMODATION"}:
+            housing_meta = []
+            for label, field in (
+                ("Area", "pickup_location"),
+                ("Move-in", "housing_move_in"),
+                ("Rent", "housing_rent"),
+                ("Preference", "housing_preference"),
+            ):
+                value = (form.get(field) or "").strip()
+                if value:
+                    housing_meta.append(f"{label}: {value}")
+            if housing_meta:
+                meta_line = " | ".join(housing_meta)
+                message = f"{message}\n\n{meta_line}" if message else meta_line
         if not message and post_type not in {"CAR_LIFT", "LOCAL_RIDE"}:
             self.send_json({"ok": False, "message": "Add a short description before posting."}, 400)
             return
@@ -14262,6 +14600,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "feed.html",
             auth_link=auth_link,
             feed_content=feed_content,
+            feed_title="FairFares Feed | Rooms, Rides, and Local Listings",
+            feed_description="Post and browse FairFares community listings for room rent, shared rent, accommodations, car lift requests, rides, and local questions.",
+            feed_canonical="https://www.fairfare.space/feed",
         )
         self.send_html(body)
 
@@ -14284,6 +14625,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "feed.html",
             auth_link=auth_link,
             feed_content=feed_content,
+            feed_title=f"FairFares Feed | {title}",
+            feed_description=description,
+            feed_canonical="https://www.fairfare.space/feed",
         )
         self.send_html(body)
 
@@ -14295,11 +14639,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
 
     def accommodations_page(self) -> None:
-        self.feed_focus_page(
-            "HOUSING",
-            "Find rooms, shared rent, and short stays.",
-            "Post housing-style advertisements or ask the FairFares community for accommodation leads near your route or campus.",
+        user = self.current_user()
+        auth_link = (
+            '<a class="nav-button" href="/dashboard">Dashboard</a>'
+            if user
+            else '<a href="/login">Sign in / Join</a>'
         )
+        body = render_template(
+            "feed.html",
+            auth_link=auth_link,
+            feed_content=render_accommodations_page_content(user),
+            feed_title="FairFares Accommodations | Rooms and Shared Rent in Denver",
+            feed_description="Find and post Denver metro rooms, shared rent, roommates, apartments, and short-stay accommodation leads on FairFares.",
+            feed_canonical="https://www.fairfare.space/accommodations",
+        )
+        self.send_html(body)
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.current_user()
