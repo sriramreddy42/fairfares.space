@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711imageDelivery1"
+ASSET_VERSION = "20260711userCommunity2"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9904,6 +9904,123 @@ def user_avatar_span(user: sqlite3.Row | dict[str, object] | None) -> str:
     return f"<span{style}></span>"
 
 
+COMMUNITY_ACTIONS = (
+    ("ACK", "Acknowledgement board", "Share a pickup note, payment concern, or quick update."),
+    ("LISTING", "List an offer", "Post a ride, room, item, or local service for the community."),
+    ("CHECKUP", "Rental checkup", "Ask about documents, insurance, pickup, or vehicle readiness."),
+    ("FOOD", "Order food", "Ask for food options near your pickup, stay, or route."),
+    ("LOCAL_RIDE", "Book cheap local ride", "Post pickup and drop-off so ride partners can help."),
+    ("RIDESHARE", "Book rideshare", "Request a rideshare option with current and drop location."),
+    ("EXPLORER", "Explorer", "Ask for stops, routes, weather-fit plans, or trip ideas."),
+)
+
+
+def community_action_meta(action: str) -> tuple[str, str]:
+    normalized = (action or "QUESTION").upper()
+    for key, label, description in COMMUNITY_ACTIONS:
+        if key == normalized:
+            return label, description
+    return "Ask the community", "Ask owners, staff, and local partners for help."
+
+
+def community_routing_target(action: str) -> str:
+    normalized = (action or "").upper()
+    if normalized in {"LOCAL_RIDE", "RIDESHARE"}:
+        return "Ride / car-owner ops"
+    if normalized == "LISTING":
+        return "Marketplace / partner ops"
+    if normalized == "FOOD":
+        return "Food and local partner ops"
+    if normalized == "EXPLORER":
+        return "Explorer planning ops"
+    if normalized == "CHECKUP":
+        return "Pickup readiness ops"
+    return "FairFares community ops"
+
+
+def render_user_community_panel(
+    user: sqlite3.Row | None,
+    booking: sqlite3.Row | None,
+    support_tickets: list[sqlite3.Row],
+) -> str:
+    if not user:
+        return ""
+    recent = support_tickets[:3]
+    recent_items = "".join(
+        f"""
+        <li>
+          <b>{escape(row_value(ticket, "topic"))}</b>
+          <span>{escape(row_value(ticket, "status") or "OPEN")} · {escape(row_value(ticket, "ticket_id"))}</span>
+        </li>
+        """
+        for ticket in recent
+    ) or "<li><b>No open requests</b><span>Post a question or request when you need help.</span></li>"
+    action_buttons = "\n".join(
+        f"""
+        <button type="button" data-community-action="{escape(key)}">
+          <b>{escape(label)}</b>
+          <span>{escape(description)}</span>
+        </button>
+        """
+        for key, label, description in COMMUNITY_ACTIONS
+    )
+    booking_summary = (
+        f"{public_booking_id_label(booking)} · {row_value(booking, 'car_name')} · {row_value(booking, 'pickup_date')} {row_value(booking, 'pickup_time')}"
+        if booking
+        else "No active booking selected"
+    )
+    map_link = (
+        f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(row_value(booking, 'pickup_location'))}"
+        if booking and row_value(booking, "pickup_location")
+        else "https://www.google.com/maps"
+    )
+    return f"""
+      <section class="user-community-board" id="community">
+        <aside class="user-community-profile" aria-label="Community profile">
+          {user_avatar_span(user)}
+          <div>
+            <p class="eyebrow">Community</p>
+            <h2>{escape(row_value(user, "name") or "FairFares member")}</h2>
+            <small>{escape(booking_summary)}</small>
+          </div>
+          <ul>{recent_items}</ul>
+        </aside>
+        <article class="user-community-feed" aria-label="FairFares community feed">
+          <div class="community-map-status">
+            <div>
+              <p class="eyebrow">Live request board</p>
+              <h2>Ask, list, or request local help.</h2>
+              <p>Ride and local-service requests include pickup/drop details and notify FairFares ops for routing.</p>
+            </div>
+            <a href="{escape(map_link)}" target="_blank" rel="noopener">Open map</a>
+          </div>
+          <form class="community-request-form" id="communityRequestForm" action="/community/request" method="post">
+            <input type="hidden" name="request_type" id="communityRequestType" value="QUESTION">
+            <input type="hidden" name="current_lat" id="communityCurrentLat">
+            <input type="hidden" name="current_lng" id="communityCurrentLng">
+            <label>
+              <span id="communityPromptLabel">Ask a question to the community</span>
+              <textarea name="message" id="communityMessage" rows="3" placeholder="What are you looking for?"></textarea>
+            </label>
+            <div class="community-ride-fields" id="communityRideFields" hidden>
+              <label><span>Current / pickup location</span><input name="pickup_location" id="communityPickupLocation" placeholder="Use current location or type pickup"></label>
+              <button type="button" class="light-button" id="communityUseLocation">Use current location</button>
+              <label><span>Drop location</span><input name="dropoff_location" id="communityDropoffLocation" placeholder="Where do you want to go?"></label>
+            </div>
+            <div class="community-form-actions">
+              <button type="submit">Post request</button>
+              <p class="modify-status" id="communityRequestStatus" aria-live="polite"></p>
+            </div>
+          </form>
+        </article>
+        <aside class="user-community-actions" aria-label="Community actions">
+          <div><p class="eyebrow">Action board</p><h2>What do you need?</h2></div>
+          {action_buttons}
+        </aside>
+      </section>
+    """
+
+
 PRICE_MATCH_PROMISE = (
     "Bring a lower comparable quote before pickup. FairFares will review it, match the eligible price, "
     "and add another 10% off so your savings stay clear on your documents."
@@ -11231,6 +11348,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
+            "/community/request": self.create_community_request,
             "/feedback": self.submit_app_feedback,
             "/wiki/ask": self.ask_wiki_agent,
             "/student-verification": self.update_student_verification,
@@ -13621,6 +13739,82 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "priority": priority,
             "sla": support_sla_text(priority),
             "message": f"Ticket {ticket_id} created as {priority}. SLA: {support_sla_text(priority)}. Target response by {due_at}.",
+        })
+
+    def create_community_request(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to post a community request."}, 401)
+            return
+        form = self.read_form()
+        action = (form.get("request_type") or "QUESTION").upper().strip()
+        label, _description = community_action_meta(action)
+        message = (form.get("message") or "").strip()
+        pickup_location = (form.get("pickup_location") or "").strip()
+        dropoff_location = (form.get("dropoff_location") or "").strip()
+        current_lat = (form.get("current_lat") or "").strip()
+        current_lng = (form.get("current_lng") or "").strip()
+        is_ride = action in {"LOCAL_RIDE", "RIDESHARE"}
+        if not message and not is_ride:
+            self.send_json({"ok": False, "message": "Add a short question or request before posting."}, 400)
+            return
+        if is_ride and not dropoff_location:
+            self.send_json({"ok": False, "message": "Add the drop location for ride requests."}, 400)
+            return
+        booking = get_booking_for_user(user["id"])
+        booking_line = public_booking_id_label(booking) if booking else "No active booking"
+        location_lines = ""
+        if is_ride:
+            location_lines = (
+                f"\nPickup/current: {pickup_location or 'Customer did not type a pickup location'}"
+                f"\nDrop-off: {dropoff_location}"
+            )
+            if current_lat and current_lng:
+                location_lines += f"\nCurrent coordinates: {current_lat}, {current_lng}"
+        routing_target = community_routing_target(action)
+        ticket_message = (
+            f"Community request routed to {routing_target}\n"
+            f"Action: {label}\n"
+            f"Booking: {booking_line}\n"
+            f"Customer: {row_value(user, 'name')} · {row_value(user, 'email')} · {row_value(user, 'phone') or 'No phone'}"
+            f"{location_lines}\n"
+            f"Message: {message or '-'}"
+        )
+        ticket_id = make_ticket_id()
+        priority = "P2" if is_ride else "P3"
+        with db() as con:
+            while con.execute("SELECT 1 FROM support_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone():
+                ticket_id = make_ticket_id()
+            con.execute(
+                """
+                INSERT INTO support_tickets
+                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    ticket_id,
+                    booking["id"] if booking else None,
+                    user["id"],
+                    f"Community: {label}",
+                    "Community board",
+                    ticket_message,
+                    priority,
+                ),
+            )
+            ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            queue_support_alerts(
+                con,
+                ticket_pk,
+                ticket_id,
+                priority,
+                f"{priority} FairFares community request {ticket_id}",
+                ticket_message,
+            )
+        notify_slack_support_ticket(ticket_id, priority, f"Community: {label}", user, self.public_origin(), escalated=False)
+        self.send_json({
+            "ok": True,
+            "ticket_id": ticket_id,
+            "message": f"Posted to FairFares community ops as {ticket_id}. {routing_target} will review it.",
         })
 
     def submit_app_feedback(self) -> None:
@@ -17906,6 +18100,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if booking
             else "Provider contact details appear after a booking is selected."
         )
+        user_community_panel = render_user_community_panel(user, booking, support_tickets)
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         booking_id_label = public_booking_id_label(booking)
         booking_error_notice = (
@@ -17939,6 +18134,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
             booking_error_notice=booking_error_notice,
+            user_community_panel=user_community_panel,
             trip_policy_cards=trip_policy_cards,
             request_notice=request_notice,
             trip_payment_summary=trip_payment_summary,

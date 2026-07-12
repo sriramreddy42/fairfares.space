@@ -1612,7 +1612,32 @@
     padding: 10px !important;
   }
 
+  .workspace-compose-head {
+    grid-column: 1 / -1 !important;
+  }
+
+  .workspace-compose-head b {
+    font-size: 0.94rem !important;
+  }
+
+  .workspace-compose-head span {
+    font-size: 0.76rem !important;
+  }
+
+  .workspace-compose-suggestions {
+    gap: 6px !important;
+    grid-column: 1 / -1 !important;
+  }
+
+  .workspace-compose-suggestions button {
+    font-size: 0.72rem !important;
+    min-height: 30px !important;
+    padding: 5px 9px !important;
+  }
+
   .workspace-compose-trigger {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
     min-height: 52px !important;
     min-width: 0 !important;
     padding: 6px 8px !important;
@@ -1635,6 +1660,8 @@
   }
 
   .workspace-compose-photo {
+    grid-column: 2 !important;
+    grid-row: 3 !important;
     min-height: 52px !important;
     padding: 0 !important;
   }

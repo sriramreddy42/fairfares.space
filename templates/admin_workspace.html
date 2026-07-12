@@ -50,9 +50,18 @@
           <a href="/admin">Company wide</a>
         </div>
         <article class="workspace-compose-card" aria-label="Create workspace post">
+          <div class="workspace-compose-head">
+            <b>What are you looking for today?</b>
+            <span>Start with a quick prompt or share an operations update.</span>
+          </div>
+          <div class="workspace-compose-suggestions" aria-label="Post suggestions">
+            <button type="button" data-workspace-post-open data-workspace-post-template="Need help with a rental request: pickup date, return date, car type, location, and customer notes.">Rent a car</button>
+            <button type="button" data-workspace-post-open data-workspace-post-template="Looking for accommodation ideas near the pickup area. Add city, dates, budget, and any customer preferences.">Find accommodations</button>
+            <button type="button" data-workspace-post-open data-workspace-post-template="Explorer idea request: destination, trip mood, stops, timing, and weather notes.">Explore the area</button>
+          </div>
           <button class="workspace-compose-trigger" type="button" data-workspace-post-open aria-haspopup="dialog" aria-controls="workspacePostModal">
             <span class="admin-profile-avatar" $admin_avatar_style data-admin-profile-avatar>$admin_avatar_text</span>
-            <span>What&apos;s on your mind, $admin_first_name?</span>
+            <span>Ask what they need, add context, or post an update.</span>
           </button>
           <button class="workspace-compose-photo" type="button" data-workspace-post-open data-workspace-post-photo aria-controls="workspacePostModal">
             <i class="workspace-button-icon" aria-hidden="true">&#128247;</i>
