@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FairFares Feed | Community Help and Local Requests</title>
+  <meta name="description" content="Use FairFares Feed to ask the community, list local offers, request rides, plan Explorer trips, and route help to FairFares ops.">
+  <link rel="canonical" href="https://www.fairfare.space/feed">
+  <meta property="og:title" content="FairFares Feed | Community Help and Local Requests">
+  <meta property="og:description" content="Ask, list, request rides, and plan with FairFares Feed.">
+  <meta property="og:url" content="https://www.fairfare.space/feed">
+  <meta name="twitter:title" content="FairFares Feed | Community Help and Local Requests">
+  <meta name="twitter:description" content="Ask, list, request rides, and plan with FairFares Feed.">
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="public-header-compact feed-screen">
+  <header class="top-brand compact-top">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">car</span><strong>Ride help</strong><span>Pickup & drop-off</span></div>
+      <div class="benefit-pill"><span class="circle-icon">fuel</span><strong>Community</strong><span>Ask & list</span></div>
+      <div class="benefit-pill"><span class="circle-icon">bolt</span><strong>Explorer</strong><span>Routes & stops</span></div>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Book</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a class="active" href="/feed">Feed</a>
+      <a href="/deals">Deals</a>
+      <a href="/blog">Blog</a>
+      <a href="/wiki">FAQ</a>
+      <a href="/about">About Us</a>
+      <a href="/contact">Contact Us</a>
+      <a href="/explorer">Explorer</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="feed-page feed-workspace-page">
+    $feed_content
+  </main>
+</body>
+</html>

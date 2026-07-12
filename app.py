@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711userCommunity2"
+ASSET_VERSION = "20260711feedWorkspace"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -9975,33 +9975,43 @@ def render_user_community_panel(
         else "https://www.google.com/maps"
     )
     return f"""
-      <section class="user-community-board" id="community">
-        <aside class="user-community-profile" aria-label="Community profile">
-          {user_avatar_span(user)}
-          <div>
-            <p class="eyebrow">Community</p>
-            <h2>{escape(row_value(user, "name") or "FairFares member")}</h2>
-            <small>{escape(booking_summary)}</small>
-          </div>
-          <ul>{recent_items}</ul>
-        </aside>
-        <article class="user-community-feed" aria-label="FairFares community feed">
-          <div class="community-map-status">
+      <section class="user-community-board user-feed-workspace" id="community">
+        <aside class="user-community-profile feed-workspace-left" aria-label="Community profile">
+          <p class="workspace-rail-title">Groups</p>
+          <div class="feed-profile-card">
+            {user_avatar_span(user)}
             <div>
-              <p class="eyebrow">Live request board</p>
-              <h2>Ask, list, or request local help.</h2>
-              <p>Ride and local-service requests include pickup/drop details and notify FairFares ops for routing.</p>
+              <h2>{escape(row_value(user, "name") or "FairFares member")}</h2>
+              <small>FairFares community</small>
             </div>
-            <a href="{escape(map_link)}" target="_blank" rel="noopener">Open map</a>
           </div>
-          <form class="community-request-form" id="communityRequestForm" action="/community/request" method="post">
+          <a class="feed-slack-chip" href="/contact"># FairFares help</a>
+          <div class="feed-side-card">
+            <b>Current trip</b>
+            <span>{escape(booking_summary)}</span>
+          </div>
+          <div class="feed-side-card">
+            <b>Recent requests</b>
+            <ul>{recent_items}</ul>
+          </div>
+        </aside>
+
+        <article class="user-community-feed feed-workspace-center" aria-label="FairFares community feed">
+          <div class="feed-workspace-tabs">
+            <b>FairFares feed</b>
+            <span>Community wide</span>
+          </div>
+          <form class="community-request-form feed-composer" id="communityRequestForm" action="/community/request" method="post">
             <input type="hidden" name="request_type" id="communityRequestType" value="QUESTION">
             <input type="hidden" name="current_lat" id="communityCurrentLat">
             <input type="hidden" name="current_lng" id="communityCurrentLng">
-            <label>
-              <span id="communityPromptLabel">Ask a question to the community</span>
-              <textarea name="message" id="communityMessage" rows="3" placeholder="What are you looking for?"></textarea>
-            </label>
+            <div class="feed-composer-row">
+              {user_avatar_span(user)}
+              <label>
+                <span id="communityPromptLabel">Ask a question to the community</span>
+                <textarea name="message" id="communityMessage" rows="3" placeholder="What are you looking for?"></textarea>
+              </label>
+            </div>
             <div class="community-ride-fields" id="communityRideFields" hidden>
               <label><span>Current / pickup location</span><input name="pickup_location" id="communityPickupLocation" placeholder="Use current location or type pickup"></label>
               <button type="button" class="light-button" id="communityUseLocation">Use current location</button>
@@ -10012,8 +10022,17 @@ def render_user_community_panel(
               <p class="modify-status" id="communityRequestStatus" aria-live="polite"></p>
             </div>
           </form>
+          <div class="community-map-status feed-status-card">
+            <div>
+              <p class="eyebrow">Live request board</p>
+              <h2>Status and routing</h2>
+              <p>Ride and local-service requests include pickup/drop details and notify FairFares ops for routing.</p>
+            </div>
+            <a href="{escape(map_link)}" target="_blank" rel="noopener">Open map</a>
+          </div>
         </article>
-        <aside class="user-community-actions" aria-label="Community actions">
+
+        <aside class="user-community-actions feed-workspace-right" aria-label="Community actions">
           <div><p class="eyebrow">Action board</p><h2>What do you need?</h2></div>
           {action_buttons}
         </aside>
@@ -11278,6 +11297,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/deals": self.deals_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
+            "/feed": self.feed_page,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
@@ -14002,6 +14022,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/admin")
             return
         self.render_manage_booking(user)
+
+    def feed_page(self) -> None:
+        user = self.current_user()
+        if user and is_staff_user(user):
+            self.redirect("/admin/workspace")
+            return
+        booking = get_booking_for_user(user["id"]) if user else None
+        support_tickets = get_support_tickets_for_user(user["id"]) if user else []
+        feed_content = (
+            render_user_community_panel(user, booking, support_tickets)
+            if user
+            else """
+            <section class="feed-signin-card">
+              <p class="eyebrow">FairFares Feed</p>
+              <h1>Ask, list, ride, and plan with FairFares.</h1>
+              <p>Sign in to post ride requests, list local offers, ask the community, and route help to FairFares ops.</p>
+              <div class="seo-landing-actions">
+                <a class="select-button" href="/login">Sign in to Feed</a>
+                <a class="light-button" href="/signup">Create account</a>
+              </div>
+            </section>
+            """
+        )
+        auth_link = (
+            '<a class="nav-button" href="/dashboard">Dashboard</a>'
+            if user
+            else '<a href="/login">Sign in / Join</a>'
+        )
+        body = render_template(
+            "feed.html",
+            auth_link=auth_link,
+            feed_content=feed_content,
+        )
+        self.send_html(body)
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.current_user()
@@ -18100,7 +18154,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if booking
             else "Provider contact details appear after a booking is selected."
         )
-        user_community_panel = render_user_community_panel(user, booking, support_tickets)
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         booking_id_label = public_booking_id_label(booking)
         booking_error_notice = (
@@ -18134,7 +18187,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
             booking_error_notice=booking_error_notice,
-            user_community_panel=user_community_panel,
             trip_policy_cards=trip_policy_cards,
             request_notice=request_notice,
             trip_payment_summary=trip_payment_summary,
