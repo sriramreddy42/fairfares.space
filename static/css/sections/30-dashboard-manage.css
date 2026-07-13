@@ -334,7 +334,6 @@
   display: grid;
   gap: 8px;
   padding: 13px 14px;
-  text-decoration: none;
 }
 .feed-slack-chip {
   font-weight: 900;
@@ -397,55 +396,6 @@
   border: 1px solid #d6e8f0;
   border-radius: 8px;
   padding: 14px;
-}
-.community-post-list {
-  display: grid;
-  gap: 12px;
-}
-.community-post-card {
-  background: #fff;
-  border: 1px solid #d9e7ef;
-  border-radius: 8px;
-  display: grid;
-  gap: 8px;
-  padding: 14px;
-}
-.community-post-head,
-.community-post-meta {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-}
-.community-post-head span {
-  background: #eaf8ee;
-  border-radius: 999px;
-  color: #087a2d;
-  font-size: 0.78rem;
-  font-weight: 900;
-  padding: 5px 9px;
-}
-.community-post-head small,
-.community-post-meta span {
-  color: #647083;
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-.community-post-card h3 {
-  color: var(--navy);
-  font-size: 1.05rem;
-  margin: 0;
-}
-.community-post-card p {
-  color: #404a5c;
-  font-size: 0.94rem;
-  font-weight: 750;
-  line-height: 1.4;
-  margin: 0;
-}
-.community-post-meta b {
-  color: var(--navy);
-  font-size: 0.86rem;
 }
 .community-map-status a {
   border: 1px solid #cfe0e9;
