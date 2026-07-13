@@ -3137,20 +3137,6 @@ document.querySelectorAll("[data-community-action]").forEach((button) => {
   button.addEventListener("click", () => setCommunityAction(button.dataset.communityAction));
 });
 
-document.querySelectorAll("[data-accommodation-filter]").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll("[data-accommodation-filter]").forEach((item) => {
-      item.classList.toggle("is-active", item === button);
-    });
-    setCommunityAction("ACCOMMODATION");
-    const category = button.querySelector("b")?.textContent?.trim();
-    if (category && communityMessage && !communityMessage.value.trim()) {
-      communityMessage.placeholder = `Example: Looking for ${category.toLowerCase()} near Denver, move-in date, rent range, and roommate preference.`;
-    }
-    document.getElementById("accommodationPost")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
-});
-
 if (communityForm && communityType?.value) {
   setCommunityAction(communityType.value);
 }
