@@ -299,6 +299,9 @@ input, select, textarea, button {
   display: inline-flex;
   position: relative;
 }
+.nav-mega {
+  position: static;
+}
 .nav-dropdown-trigger {
   align-items: center;
   background: transparent;
@@ -309,6 +312,7 @@ input, select, textarea, button {
   font: inherit;
   font-weight: inherit;
   padding: 18px 0 14px;
+  position: relative;
 }
 .nav-dropdown-trigger::after {
   border: solid currentColor;
@@ -356,7 +360,7 @@ input, select, textarea, button {
   color: var(--red);
 }
 .nav-links .active { color: var(--red); }
-.nav-links .active::after {
+.nav-links a.active::after {
   background: var(--red);
   border-radius: 999px;
   bottom: 5px;
@@ -365,6 +369,41 @@ input, select, textarea, button {
   left: 0;
   position: absolute;
   right: 0;
+}
+.nav-dropdown-trigger.active::before {
+  background: var(--red);
+  border-radius: 999px;
+  bottom: 5px;
+  content: "";
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 18px;
+}
+.nav-mega-panel {
+  gap: 26px;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  left: 30px;
+  min-width: min(760px, calc(100vw - 48px));
+  padding: 20px 22px;
+  top: calc(100% + 1px);
+  z-index: 150;
+}
+.nav-mega-panel div {
+  align-content: start;
+  display: grid;
+  gap: 4px;
+}
+.nav-mega-panel small {
+  color: #7a8495;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  margin: 0 0 4px 12px;
+}
+.nav-mega-panel a:first-of-type {
+  font-size: 1.04rem;
+  font-weight: 950;
 }
 .nav-marketplace-row {
   align-items: center;
