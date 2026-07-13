@@ -272,9 +272,8 @@ input, select, textarea, button {
   background: #fff;
   border-bottom: 3px solid var(--red);
   display: flex;
-  flex-wrap: wrap;
   justify-content: space-between;
-  min-height: 108px;
+  min-height: 68px;
   padding: 0 30px;
   position: sticky;
   top: 0;
@@ -291,7 +290,7 @@ input, select, textarea, button {
 .nav-links a {
   align-items: center;
   display: inline-flex;
-  padding: 18px 0 14px;
+  padding: 23px 0 20px;
   position: relative;
 }
 .nav-links .active { color: var(--red); }
@@ -304,48 +303,6 @@ input, select, textarea, button {
   left: 0;
   position: absolute;
   right: 0;
-}
-.nav-marketplace-row {
-  align-items: center;
-  border-top: 1px solid #e3e8f2;
-  color: #4d5568;
-  display: flex;
-  flex: 0 0 100%;
-  gap: clamp(16px, 2.2vw, 34px);
-  min-height: 44px;
-  overflow-x: auto;
-  padding: 0 0 0 2px;
-  scrollbar-width: none;
-  white-space: nowrap;
-}
-.nav-marketplace-row::-webkit-scrollbar { display: none; }
-.nav-marketplace-row a {
-  align-items: center;
-  color: #555d6e;
-  display: inline-flex;
-  font-size: 0.82rem;
-  font-weight: 750;
-  line-height: 1;
-}
-.nav-marketplace-row a:hover,
-.nav-marketplace-row a:focus-visible {
-  color: var(--navy);
-}
-.nav-marketplace-row .market-home {
-  color: var(--navy);
-  font-size: 1rem;
-}
-.nav-marketplace-row .market-pill {
-  background: linear-gradient(90deg, #c755ad, #f06576);
-  border-radius: 5px;
-  color: #fff;
-  font-size: 0.78rem;
-  padding: 7px 12px;
-}
-.nav-marketplace-row .market-pill:hover,
-.nav-marketplace-row .market-pill:focus-visible {
-  color: #fff;
-  filter: brightness(0.97);
 }
 .menu-button {
   background: none;
