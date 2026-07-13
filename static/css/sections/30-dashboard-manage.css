@@ -501,23 +501,6 @@
   color: var(--navy);
   font-size: 0.86rem;
 }
-.community-post-open {
-  align-items: center;
-  border: 1px solid #cfe0e9;
-  border-radius: 6px;
-  color: #006b99;
-  display: inline-flex;
-  font-size: 0.86rem;
-  font-weight: 900;
-  justify-self: start;
-  padding: 7px 10px;
-  text-decoration: none;
-}
-.community-post-open:hover,
-.community-post-open:focus-visible {
-  background: #eef9ff;
-  color: var(--red);
-}
 .community-map-status a {
   border: 1px solid #cfe0e9;
   border-radius: 6px;
@@ -1043,8 +1026,6 @@
   background-size: auto, auto, auto, 54px 54px, 54px 54px, auto;
   border: 1px solid #cde2ed;
   border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65), 0 18px 38px rgba(0, 34, 79, 0.08);
-  isolation: isolate;
   min-height: 330px;
   overflow: hidden;
   position: relative;
@@ -1060,7 +1041,6 @@
   top: 47%;
   transform: rotate(-12deg);
   width: 112%;
-  z-index: 0;
 }
 .housing-map-board::after {
   height: 12px;
@@ -1068,7 +1048,6 @@
   top: 31%;
   transform: rotate(17deg);
   width: 86%;
-  z-index: 0;
 }
 .housing-map-watermark {
   bottom: 14px;

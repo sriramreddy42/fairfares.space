@@ -34,7 +34,7 @@
     padding-top: 17px !important;
   }
 
-  .main-nav .nav-links a.active::after {
+  .main-nav .nav-links .active::after {
     bottom: 4px !important;
   }
 
@@ -162,8 +162,7 @@
     color: #fff !important;
   }
 
-  body.public-header-compact .main-nav .nav-links a.active::after,
-  body.public-header-compact .main-nav .nav-dropdown-trigger.active::before {
+  body.public-header-compact .main-nav .nav-links .active::after {
     background: var(--red) !important;
   }
 }

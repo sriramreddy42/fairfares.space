@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260712marketplaceMap"
+ASSET_VERSION = "20260712housingMap"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -10173,8 +10173,7 @@ def accommodation_fallback_map_point(label: str, index: int) -> tuple[int, int]:
     return left, top
 
 
-def render_accommodation_map(leads: list[dict[str, object]], posts: list[sqlite3.Row], selected_area: str = "") -> str:
-    area_label = (selected_area or "Denver metro").strip()
+def render_accommodation_map(leads: list[dict[str, object]], posts: list[sqlite3.Row]) -> str:
     pins: list[str] = []
     for index, lead in enumerate(leads[:10]):
         lead_id = accommodation_lead_id(lead)
@@ -10216,8 +10215,8 @@ def render_accommodation_map(leads: list[dict[str, object]], posts: list[sqlite3
           </div>
         """)
     return f"""
-      <div class="housing-map-board" aria-label="Housing lead map for {escape(area_label)}">
-        <div class="housing-map-watermark">{escape(area_label)} housing map</div>
+      <div class="housing-map-board" aria-label="Housing lead map">
+        <div class="housing-map-watermark">Denver metro housing map</div>
         {''.join(pins)}
       </div>
     """
@@ -10260,18 +10259,6 @@ def get_community_posts(limit: int = 20, post_type: str = "") -> list[sqlite3.Ro
         ).fetchall()
 
 
-def filter_community_posts_by_area(posts: list[sqlite3.Row], area: str) -> list[sqlite3.Row]:
-    term = (area or "").strip().lower()
-    if not term:
-        return posts
-    fields = ("pickup_location", "city_area_zip", "message", "title")
-    matched = [
-        post for post in posts
-        if any(term in row_value(post, field).lower() for field in fields)
-    ]
-    return matched or posts
-
-
 def get_community_post(post_id: str) -> sqlite3.Row | None:
     try:
         normalized_id = int(post_id)
@@ -10303,14 +10290,8 @@ def render_feed_post_card(post: sqlite3.Row) -> str:
             location_line = f"<span>{escape(pickup)}</span>"
     title = row_value(post, "title") or feed_type_label(post_type)
     author = row_value(post, "user_name") or "FairFares member"
-    post_id = row_value(post, "id")
-    detail_url = (
-        f"/accommodations/post/{escape(post_id)}"
-        if (post_type or "").upper() in {"ROOM_RENT", "ACCOMMODATION"}
-        else f"/feed#housing-post-{escape(post_id)}"
-    )
     return f"""
-      <article class="community-post-card" id="housing-post-{escape(post_id)}">
+      <article class="community-post-card" id="housing-post-{escape(row_value(post, "id"))}">
         <div class="community-post-head">
           <span>{escape(feed_type_label(post_type))}</span>
           <small>{escape(row_value(post, "created_at"))}</small>
@@ -10323,7 +10304,6 @@ def render_feed_post_card(post: sqlite3.Row) -> str:
           {f"<span>Phone: {escape(contact_phone)}</span>" if contact_phone else ""}
           {f"<span>{len(image_refs)} photo{'s' if len(image_refs) != 1 else ''} attached</span>" if image_refs else ""}
         </div>
-        <a class="community-post-open" href="{detail_url}">Open details</a>
       </article>
     """
 
@@ -10607,7 +10587,7 @@ def render_accommodations_page_content(user: sqlite3.Row | None, filters: dict[s
         f'<a href="/accommodations?area={urllib.parse.quote(location)}#accommodationListings">Rooms for rent in {escape(location)}</a>'
         for location in suggested_locations
     )
-    feed_posts = filter_community_posts_by_area(get_community_posts(12, "HOUSING"), selected_area)
+    feed_posts = get_community_posts(6, "HOUSING")
     recent_posts = "".join(render_feed_post_card(post) for post in feed_posts)
     if not recent_posts:
         recent_posts = """
@@ -10730,7 +10710,7 @@ def render_accommodations_page_content(user: sqlite3.Row | None, filters: dict[s
           <h2>Housing leads near your search</h2>
           <p>Open a pin to review the type, area, rent, and full lead details.</p>
         </div>
-        {render_accommodation_map(matched_leads, feed_posts, selected_area)}
+        {render_accommodation_map(matched_leads, feed_posts)}
       </section>
 
       <section class="accommodation-live-feed accommodation-live-posts">
