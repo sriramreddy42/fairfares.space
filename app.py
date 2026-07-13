@@ -10305,6 +10305,7 @@ def render_accommodations_page_content(user: sqlite3.Row | None) -> str:
         <div class="accommodation-hero-copy">
           <p class="eyebrow">FairFares housing help</p>
           <h1>Find local rooms, shared rent, and short stays.</h1>
+          <p>Search Denver metro housing leads, post what you need, or list a place for students and renters already planning rides, rentals, and moves.</p>
           <div class="accommodation-hero-actions">
             <a href="#accommodationPost">Post your need</a>
             <a href="#accommodationListings">Browse leads</a>
