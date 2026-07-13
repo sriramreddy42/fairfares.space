@@ -699,6 +699,7 @@
 .accommodation-search input,
 .accommodation-search select,
 .accommodation-post-form input,
+.accommodation-post-form select,
 .accommodation-post-form textarea {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -782,9 +783,23 @@
 }
 .accommodation-post-panel {
   align-items: start;
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72)),
+    url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/3a/08/cb9e317507fed19b25acedecad6955fbd2358374299065b18c1240d8a3b1.jpeg") left top / 50% 50% no-repeat,
+    url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/2c/10/b00a9e8eaf872d80dd3bb8f863386db88db3a7ca3c602e1917abd8eadd69.jpeg") right top / 50% 50% no-repeat,
+    url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/98/b0/e6105efe8ded85d71bd57eddac9e18c9efa10b912fb2d431ab0e1ff4f8c2.jpeg") left bottom / 50% 50% no-repeat,
+    url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/19/8d/008da79b75338407d16eab0c93e8fa800d57dfd352b04459c137d5c39216.jpeg") right bottom / 50% 50% no-repeat;
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(230px, 0.62fr) minmax(0, 1.38fr);
+}
+.accommodation-post-form {
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(14px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  box-shadow: 0 16px 36px rgba(0, 20, 55, 0.14);
+  padding: 14px;
 }
 .accommodation-post-type {
   display: flex;
@@ -808,7 +823,26 @@
 .accommodation-form-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.accommodation-image-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.accommodation-image-fields label {
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px dashed #c7d8e6;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+.accommodation-image-fields span {
+  color: var(--navy);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 .section-heading-row {
   align-items: end;
@@ -826,8 +860,14 @@
   border-radius: 8px;
   box-shadow: 0 14px 32px rgba(0, 34, 79, 0.08);
   display: grid;
-  grid-template-rows: 120px 1fr auto;
+  grid-template-rows: 120px 1fr auto auto;
   overflow: hidden;
+  position: relative;
+}
+.accommodation-card-detail {
+  inset: 0;
+  position: absolute;
+  z-index: 1;
 }
 .accommodation-card-art {
   align-items: center;
@@ -900,6 +940,74 @@
 .accommodation-card-cta {
   border-radius: 0;
   text-align: center;
+  z-index: 2;
+}
+.accommodation-card-respond {
+  background: #fff;
+  border-top: 1px solid #d9e7ef;
+  color: var(--navy);
+  font-weight: 900;
+  padding: 11px;
+  text-align: center;
+  text-decoration: none;
+  z-index: 2;
+}
+.accommodation-detail-hero {
+  background: #fff;
+  border: 1px solid #d9e7ef;
+  border-radius: 8px;
+  box-shadow: 0 18px 36px rgba(0, 34, 79, 0.08);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+}
+.accommodation-detail-grid {
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+}
+.accommodation-detail-grid h1 {
+  color: var(--navy);
+  font-size: clamp(2.2rem, 5vw, 4.3rem);
+  line-height: 1;
+  margin: 0 0 14px;
+}
+.accommodation-detail-grid p {
+  color: #4d5565;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.45;
+  margin: 0 0 16px;
+}
+.accommodation-detail-summary {
+  background: linear-gradient(135deg, #f7fbff, #fff);
+  border: 1px solid #d9e7ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+.accommodation-detail-summary span {
+  border-bottom: 1px solid #e2e8f0;
+  color: #4d5565;
+  display: grid;
+  gap: 3px;
+  font-weight: 850;
+  padding-bottom: 9px;
+}
+.accommodation-detail-summary b {
+  color: var(--navy);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+.accommodation-detail-summary a {
+  background: var(--red);
+  border-radius: 7px;
+  color: #fff;
+  font-weight: 950;
+  padding: 13px;
+  text-align: center;
+  text-decoration: none;
 }
 .accommodation-live-feed,
 .accommodation-info-grid {
@@ -2004,8 +2112,10 @@
   .accommodation-category-grid,
   .accommodation-card-grid,
   .accommodation-form-grid,
+  .accommodation-image-fields,
   .accommodation-location-grid,
-  .housing-tip-grid {
+  .housing-tip-grid,
+  .accommodation-detail-grid {
     grid-template-columns: 1fr;
   }
   .accommodation-category-grid {

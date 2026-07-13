@@ -3183,7 +3183,7 @@ communityForm?.addEventListener("submit", (event) => {
   if (communityStatus) communityStatus.textContent = "Posting request...";
   fetch(communityForm.action, {
     method: "POST",
-    body: new URLSearchParams(new FormData(communityForm)),
+    body: new FormData(communityForm),
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((payload) => {
