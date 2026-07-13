@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260712housingDetails"
+ASSET_VERSION = "20260712housingMap"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -10156,6 +10156,72 @@ def accommodation_locations_from_leads(leads: list[dict[str, object]]) -> list[s
     return locations[:12]
 
 
+ACCOMMODATION_MAP_POINTS = {
+    "private-bedroom-bathroom-thornton": (18, 28),
+    "female-roommate-lone-tree": (72, 36),
+    "temporary-shared-imt-dayton": (51, 70),
+    "private-basement-near-du": (84, 61),
+    "need-private-room-downtown-dtc": (31, 55),
+    "need-private-room-near-du": (66, 78),
+}
+
+
+def accommodation_fallback_map_point(label: str, index: int) -> tuple[int, int]:
+    seed = sum(ord(char) for char in label) + (index * 37)
+    left = 18 + (seed % 64)
+    top = 24 + ((seed // 3) % 54)
+    return left, top
+
+
+def render_accommodation_map(leads: list[dict[str, object]], posts: list[sqlite3.Row]) -> str:
+    pins: list[str] = []
+    for index, lead in enumerate(leads[:10]):
+        lead_id = accommodation_lead_id(lead)
+        left, top = ACCOMMODATION_MAP_POINTS.get(
+            lead_id,
+            accommodation_fallback_map_point(str(lead.get("location") or lead.get("title") or ""), index),
+        )
+        price = str(lead.get("price") or "Ask")
+        kind = str(lead.get("kind") or "Housing")
+        title = str(lead.get("title") or "Housing lead")
+        location = str(lead.get("location") or "Denver metro")
+        pins.append(f"""
+          <a class="housing-map-pin" href="/accommodations/{lead_id}" style="left:{left}%;top:{top}%">
+            <span>{escape(price)}</span>
+            <b>{escape(kind)}</b>
+            <em>{escape(location)}</em>
+            <strong>{escape(title)}</strong>
+          </a>
+        """)
+    for index, post in enumerate(posts[:6], start=len(pins)):
+        location = row_value(post, "pickup_location") or row_value(post, "city_area_zip") or "Denver metro"
+        left, top = accommodation_fallback_map_point(location, index)
+        rent = row_value(post, "rent_range") or "Ask"
+        post_type = feed_type_label(row_value(post, "post_type"))
+        title = row_value(post, "title") or post_type
+        pins.append(f"""
+          <a class="housing-map-pin housing-map-pin-live" href="/accommodations/post/{escape(row_value(post, "id"))}" style="left:{left}%;top:{top}%">
+            <span>{escape(rent)}</span>
+            <b>{escape(post_type)}</b>
+            <em>{escape(location)}</em>
+            <strong>{escape(title)}</strong>
+          </a>
+        """)
+    if not pins:
+        pins.append("""
+          <div class="housing-map-empty">
+            <b>No housing pins yet.</b>
+            <span>Post a room, shared rent, short stay, or roommate need to appear here.</span>
+          </div>
+        """)
+    return f"""
+      <div class="housing-map-board" aria-label="Housing lead map">
+        <div class="housing-map-watermark">Denver metro housing map</div>
+        {''.join(pins)}
+      </div>
+    """
+
+
 def render_select_options(options: list[str], selected: str = "") -> str:
     selected_normalized = (selected or "").strip().lower()
     return "".join(
@@ -10193,6 +10259,23 @@ def get_community_posts(limit: int = 20, post_type: str = "") -> list[sqlite3.Ro
         ).fetchall()
 
 
+def get_community_post(post_id: str) -> sqlite3.Row | None:
+    try:
+        normalized_id = int(post_id)
+    except (TypeError, ValueError):
+        return None
+    with db() as con:
+        return con.execute(
+            """
+            SELECT community_posts.*, users.name AS user_name, users.email AS user_email
+            FROM community_posts
+            LEFT JOIN users ON users.id = community_posts.user_id
+            WHERE community_posts.id = ?
+            """,
+            (normalized_id,),
+        ).fetchone()
+
+
 def render_feed_post_card(post: sqlite3.Row) -> str:
     post_type = row_value(post, "post_type")
     pickup = row_value(post, "pickup_location")
@@ -10208,7 +10291,7 @@ def render_feed_post_card(post: sqlite3.Row) -> str:
     title = row_value(post, "title") or feed_type_label(post_type)
     author = row_value(post, "user_name") or "FairFares member"
     return f"""
-      <article class="community-post-card">
+      <article class="community-post-card" id="housing-post-{escape(row_value(post, "id"))}">
         <div class="community-post-head">
           <span>{escape(feed_type_label(post_type))}</span>
           <small>{escape(row_value(post, "created_at"))}</small>
@@ -10222,6 +10305,69 @@ def render_feed_post_card(post: sqlite3.Row) -> str:
           {f"<span>{len(image_refs)} photo{'s' if len(image_refs) != 1 else ''} attached</span>" if image_refs else ""}
         </div>
       </article>
+    """
+
+
+def render_accommodation_post_detail_content(post: sqlite3.Row, user: sqlite3.Row | None) -> str:
+    post_type = row_value(post, "post_type")
+    title = row_value(post, "title") or feed_type_label(post_type)
+    message = row_value(post, "message")
+    area = row_value(post, "pickup_location") or row_value(post, "city_area_zip") or "Denver metro"
+    rent = row_value(post, "rent_range") or "Ask poster"
+    move_in = row_value(post, "move_in_date") or "Flexible"
+    radius = row_value(post, "radius_range") or "Nearby"
+    preference = row_value(post, "roommate_preference") or "Open"
+    contact_phone = row_value(post, "contact_phone")
+    author = row_value(post, "user_name") or "FairFares member"
+    image_refs = [item for item in row_value(post, "image_refs").split(",") if item]
+    contact_cta = "/accommodations#accommodationPost" if user else "/login"
+    contact_text = "Ask / respond" if user else "Sign in to respond"
+    phone_row = f"<span><b>Phone</b>{escape(contact_phone)}</span>" if contact_phone else ""
+    photo_row = f"<span><b>Photos</b>{len(image_refs)} attached</span>" if image_refs else ""
+    return f"""
+      <section class="accommodation-detail-hero accommodation-post-detail">
+        <a class="light-button" href="/accommodations#housingMap">&larr; Back to housing map</a>
+        <div class="accommodation-detail-grid">
+          <div>
+            <p class="eyebrow">{escape(feed_type_label(post_type))}</p>
+            <h1>{escape(title)}</h1>
+            <p>{escape(message)}</p>
+            <div class="accommodation-tags">
+              <span>{escape(area)}</span>
+              <span>{escape(rent)}</span>
+              <span>{escape(move_in)}</span>
+              <span>{escape(preference)}</span>
+            </div>
+          </div>
+          <aside class="accommodation-detail-summary">
+            <span><b>Posted by</b>{escape(author)}</span>
+            <span><b>Area</b>{escape(area)}</span>
+            <span><b>Radius</b>{escape(radius)}</span>
+            <span><b>Rent</b>{escape(rent)}</span>
+            <span><b>Move-in</b>{escape(move_in)}</span>
+            <span><b>Preference</b>{escape(preference)}</span>
+            {phone_row}
+            {photo_row}
+            <a href="{contact_cta}">{contact_text}</a>
+          </aside>
+        </div>
+      </section>
+
+      <section class="accommodation-info-grid">
+        <article>
+          <p class="eyebrow">Post details</p>
+          <h2>Use this post to start a focused housing conversation.</h2>
+          <p>Confirm exact location, lease or stay dates, rent, utilities, deposit, viewing time, and identity before sharing private details or sending money.</p>
+        </article>
+        <article class="accommodation-choice-list">
+          <p class="eyebrow">Recommended checks</p>
+          <ol>
+            <li><b>Location</b><span>Confirm the area and safe viewing plan.</span></li>
+            <li><b>Cost</b><span>Confirm rent, deposit, utilities, parking, and fees.</span></li>
+            <li><b>Proof</b><span>Ask for listing photos, availability, and contact details.</span></li>
+          </ol>
+        </article>
+      </section>
     """
 
 
@@ -10558,7 +10704,16 @@ def render_accommodations_page_content(user: sqlite3.Row | None, filters: dict[s
         <div class="accommodation-card-grid">{listings}</div>
       </section>
 
-      <section class="accommodation-live-feed">
+      <section class="accommodation-live-feed" id="housingMap">
+        <div>
+          <p class="eyebrow">Map view</p>
+          <h2>Housing leads near your search</h2>
+          <p>Open a pin to review the type, area, rent, and full lead details.</p>
+        </div>
+        {render_accommodation_map(matched_leads, feed_posts)}
+      </section>
+
+      <section class="accommodation-live-feed accommodation-live-posts">
         <div>
           <p class="eyebrow">Latest public posts</p>
           <h2>Live FairFares housing posts</h2>
@@ -11949,6 +12104,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/blog/"):
             self.blog_post_page(parsed.path.rsplit("/", 1)[-1])
+            return
+        if parsed.path.startswith("/accommodations/post/"):
+            self.accommodation_post_detail_page(parsed.path.rsplit("/", 1)[-1])
             return
         if parsed.path.startswith("/accommodations/"):
             self.accommodation_detail_page(parsed.path.rsplit("/", 1)[-1])
@@ -14885,6 +15043,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             feed_title=f"{title} | FairFares Accommodations",
             feed_description=f"Review details for {title} on FairFares housing leads.",
             feed_canonical=f"https://www.fairfare.space/accommodations/{accommodation_lead_id(lead)}",
+        )
+        self.send_html(body)
+
+    def accommodation_post_detail_page(self, post_id: str) -> None:
+        post = get_community_post(post_id)
+        if not post or row_value(post, "post_type").upper() not in {"ROOM_RENT", "ACCOMMODATION"}:
+            self.not_found()
+            return
+        user = self.current_user()
+        auth_link = (
+            '<a class="nav-button" href="/dashboard">Dashboard</a>'
+            if user
+            else '<a href="/login">Sign in / Join</a>'
+        )
+        title = escape(row_value(post, "title") or feed_type_label(row_value(post, "post_type")))
+        body = render_template(
+            "feed.html",
+            auth_link=auth_link,
+            feed_content=render_accommodation_post_detail_content(post, user),
+            feed_title=f"{title} | FairFares Housing Post",
+            feed_description=f"Review this FairFares housing post for area, rent, move-in timing, and contact details.",
+            feed_canonical=f"https://www.fairfare.space/accommodations/post/{escape(row_value(post, 'id'))}",
         )
         self.send_html(body)
 
