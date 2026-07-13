@@ -378,67 +378,13 @@
 .feed-composer {
   border: 1px solid #d6e8f0;
   border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(0, 34, 79, 0.06);
   padding: 14px;
-}
-.feed-composer-intro {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-.feed-composer-intro h2 {
-  color: var(--navy);
-  font-size: 1.05rem;
-  line-height: 1.1;
-  margin: 0;
-}
-.feed-composer-intro p {
-  color: #4d5565;
-  font-size: 0.85rem;
-  font-weight: 850;
-  margin: 0;
-}
-.feed-prompt-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 2px;
-}
-.feed-prompt-pills button {
-  background: #eef8ff;
-  border: 1px solid #bfe0f4;
-  border-radius: 999px;
-  color: var(--navy);
-  cursor: pointer;
-  font-weight: 900;
-  min-height: 34px;
-  padding: 7px 13px;
-}
-.feed-prompt-pills button:hover,
-.feed-prompt-pills button:focus-visible {
-  background: var(--navy);
-  border-color: var(--navy);
-  color: #fff;
 }
 .feed-composer-row {
   align-items: start;
   display: grid;
   gap: 12px;
   grid-template-columns: 54px minmax(0, 1fr);
-}
-.feed-composer-row label {
-  background: #f1f7fb;
-  border: 1px solid #d6e8f0;
-  border-radius: 999px;
-  min-width: 0;
-  padding: 8px 12px;
-}
-.feed-composer-row label > span {
-  color: #4d5565;
-  display: block;
-  font-weight: 900;
-  line-height: 1.1;
-  margin: 0 0 5px;
 }
 .community-map-status {
   align-items: center;
@@ -526,16 +472,6 @@
   padding: 12px 13px;
   width: 100%;
 }
-.feed-composer-row textarea {
-  background: transparent;
-  border: 0;
-  min-height: 38px;
-  padding: 0;
-  resize: vertical;
-}
-.feed-composer-row textarea:focus {
-  outline: 0;
-}
 .community-ride-fields {
   background: #f7fbff;
   border: 1px dashed #bad8e8;
@@ -589,13 +525,6 @@
   min-height: 0;
   padding: 11px 12px;
   text-align: left;
-}
-.feed-marketplace-card > span {
-  align-items: center;
-  color: var(--navy);
-  display: flex;
-  font-weight: 950;
-  justify-content: center;
 }
 .user-community-actions button.is-active {
   background: var(--navy);
