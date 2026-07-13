@@ -1675,54 +1675,14 @@
   padding: 7px 8px;
 }
 .workspace-compose-card {
+  align-items: center;
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(126, 198, 232, 0.34);
   border-radius: 12px;
   box-shadow: 0 18px 44px rgba(6, 31, 76, 0.10);
-  display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding: 12px;
-}
-.workspace-compose-head {
-  display: grid;
-  gap: 2px;
-  grid-column: 1;
-}
-.workspace-compose-head b {
-  color: var(--navy);
-  font-size: 0.98rem;
-  font-weight: 950;
-}
-.workspace-compose-head span {
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 800;
-  line-height: 1.25;
-}
-.workspace-compose-suggestions {
-  align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  grid-column: 1 / -1;
-}
-.workspace-compose-suggestions button {
-  background: rgba(239, 246, 252, 0.92);
-  border: 1px solid rgba(126, 198, 232, 0.42);
-  border-radius: 999px;
-  color: var(--navy);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 900;
-  min-height: 32px;
-  padding: 6px 11px;
-}
-.workspace-compose-suggestions button:hover,
-.workspace-compose-suggestions button:focus-visible {
-  background: rgba(229, 239, 248, 0.98);
-  border-color: rgba(7, 20, 63, 0.18);
+  gap: 10px;
+  padding: 12px;
 }
 .workspace-compose-trigger {
   align-items: center;
@@ -1732,11 +1692,11 @@
   color: var(--muted);
   cursor: pointer;
   display: flex;
+  flex: 1;
   font: inherit;
   font-size: 1.05rem;
   font-weight: 700;
   gap: 10px;
-  grid-column: 1;
   min-height: 52px;
   min-width: 0;
   padding: 7px 16px 7px 7px;
@@ -1762,8 +1722,6 @@
   font: inherit;
   font-weight: 900;
   gap: 8px;
-  grid-column: 2;
-  grid-row: 3;
   min-height: 52px;
   padding: 8px 14px;
 }

@@ -147,15 +147,12 @@ function closeWorkspacePostModal() {
   document.body.classList.remove("modal-open");
 }
 
-function openWorkspacePostModal(openPhoto = false, template = "") {
+function openWorkspacePostModal(openPhoto = false) {
   if (!workspacePostModal) return;
   workspacePostModal.hidden = false;
   document.body.classList.add("modal-open");
   const textarea = workspacePostModal.querySelector("textarea[name='body']");
   const fileInput = workspacePostModal.querySelector("[data-workspace-post-image]");
-  if (template && textarea instanceof HTMLTextAreaElement && !textarea.value.trim()) {
-    textarea.value = template;
-  }
   window.setTimeout(() => {
     if (openPhoto && fileInput instanceof HTMLInputElement) {
       fileInput.click();
@@ -167,7 +164,7 @@ function openWorkspacePostModal(openPhoto = false, template = "") {
 
 document.querySelectorAll("[data-workspace-post-open]").forEach((button) => {
   button.addEventListener("click", () => {
-    openWorkspacePostModal(button.hasAttribute("data-workspace-post-photo"), button.dataset.workspacePostTemplate || "");
+    openWorkspacePostModal(button.hasAttribute("data-workspace-post-photo"));
   });
 });
 
@@ -3078,98 +3075,6 @@ document.getElementById("supportForm")?.addEventListener("submit", (event) => {
 });
 
 syncSupportTopic();
-
-const communityForm = document.getElementById("communityRequestForm");
-const communityType = document.getElementById("communityRequestType");
-const communityMessage = document.getElementById("communityMessage");
-const communityPromptLabel = document.getElementById("communityPromptLabel");
-const communityRideFields = document.getElementById("communityRideFields");
-const communityPickupLocation = document.getElementById("communityPickupLocation");
-const communityDropoffLocation = document.getElementById("communityDropoffLocation");
-const communityLat = document.getElementById("communityCurrentLat");
-const communityLng = document.getElementById("communityCurrentLng");
-const communityStatus = document.getElementById("communityRequestStatus");
-const communityPrompts = {
-  ACK: "Post an acknowledgement, pickup note, or quick update",
-  LISTING: "List a ride, room, item, or local service",
-  CHECKUP: "Ask FairFares to check documents, insurance, pickup, or vehicle readiness",
-  FOOD: "Ask for nearby food options or delivery help",
-  LOCAL_RIDE: "Request a cheap local ride",
-  RIDESHARE: "Request a rideshare option",
-  EXPLORER: "Ask Explorer for stops, routes, weather-fit plans, or trip ideas",
-  QUESTION: "Ask a question to the community",
-};
-const communityPlaceholders = {
-  ACK: "Example: Payment is done, please confirm my pickup checklist.",
-  LISTING: "Example: I can offer a ride, room lead, local help, or student deal.",
-  CHECKUP: "Example: Can someone confirm what I still need before pickup?",
-  FOOD: "Example: Any affordable food near my pickup or hotel?",
-  LOCAL_RIDE: "Need a budget ride from pickup to drop-off.",
-  RIDESHARE: "Need rideshare help from pickup to drop-off.",
-  EXPLORER: "Example: Suggest safe scenic stops for my rental route.",
-  QUESTION: "What are you looking for?",
-};
-
-function setCommunityAction(action) {
-  if (!communityForm || !communityType) return;
-  const normalized = action || "QUESTION";
-  communityType.value = normalized;
-  const isRide = normalized === "LOCAL_RIDE" || normalized === "RIDESHARE";
-  if (communityRideFields) communityRideFields.hidden = !isRide;
-  if (communityPromptLabel) communityPromptLabel.textContent = communityPrompts[normalized] || communityPrompts.QUESTION;
-  if (communityMessage) {
-    communityMessage.placeholder = communityPlaceholders[normalized] || communityPlaceholders.QUESTION;
-    communityMessage.focus();
-  }
-  document.querySelectorAll("[data-community-action]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.communityAction === normalized);
-  });
-}
-
-document.querySelectorAll("[data-community-action]").forEach((button) => {
-  button.addEventListener("click", () => setCommunityAction(button.dataset.communityAction));
-});
-
-document.getElementById("communityUseLocation")?.addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    if (communityStatus) communityStatus.textContent = "Current location is not available in this browser.";
-    return;
-  }
-  if (communityStatus) communityStatus.textContent = "Requesting current location...";
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const { latitude, longitude } = position.coords;
-      if (communityLat) communityLat.value = latitude.toFixed(6);
-      if (communityLng) communityLng.value = longitude.toFixed(6);
-      if (communityPickupLocation && !communityPickupLocation.value) {
-        communityPickupLocation.value = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-      }
-      if (communityStatus) communityStatus.textContent = "Current location added to this request.";
-    },
-    () => {
-      if (communityStatus) communityStatus.textContent = "Location permission was not granted. You can type pickup manually.";
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-  );
-});
-
-communityForm?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  if (communityStatus) communityStatus.textContent = "Posting request...";
-  fetch(communityForm.action, {
-    method: "POST",
-    body: new URLSearchParams(new FormData(communityForm)),
-  })
-    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
-    .then((payload) => {
-      if (communityStatus) communityStatus.textContent = payload.message || "Request posted.";
-      communityForm.reset();
-      setCommunityAction("QUESTION");
-    })
-    .catch((payload) => {
-      if (communityStatus) communityStatus.textContent = payload?.message || "Could not post this request.";
-    });
-});
 
 document.getElementById("customerInfoForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
