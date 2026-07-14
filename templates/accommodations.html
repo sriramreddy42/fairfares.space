@@ -374,10 +374,31 @@
         const areaInput = searchForm.querySelector('input[name="area"]');
         const metroSelect = searchForm.querySelector('select[name="metro"]');
         if (areaInput && place) areaInput.value = place;
-        if (metroSelect && metro) metroSelect.value = metro;
-        if (metroSelect && !metro && place && place.includes("CO")) metroSelect.value = "Denver Metro Area";
+        if (metroSelect && metro) {
+          if (![...metroSelect.options].some((option) => option.value === metro)) {
+            metroSelect.add(new Option(metro, metro));
+          }
+          metroSelect.value = metro;
+        }
         closeLocation();
         searchForm.submit();
+      };
+      const lookupLocation = async (query) => {
+        const cleanQuery = (query || "").trim();
+        if (!cleanQuery) return;
+        const lookupButton = locationModal && locationModal.querySelector("[data-use-location]");
+        if (lookupButton) lookupButton.disabled = true;
+        try {
+          const response = await fetch(`/api/accommodations/locations?q=${encodeURIComponent(cleanQuery)}`, {
+            headers: { "Accept": "application/json" }
+          });
+          const payload = await response.json();
+          submitLocation(payload.selectedLocation || cleanQuery, payload.metro || "");
+        } catch (error) {
+          submitLocation(cleanQuery, "");
+        } finally {
+          if (lookupButton) lookupButton.disabled = false;
+        }
       };
       document.querySelectorAll("[data-open-location]").forEach((button) => button.addEventListener("click", openLocation));
       document.querySelectorAll("[data-close-location]").forEach((button) => button.addEventListener("click", closeLocation));
@@ -397,6 +418,35 @@
           searchForm.submit();
         });
       });
+      const locationInput = locationModal && locationModal.querySelector("[data-location-search]");
+      const locationButton = locationModal && locationModal.querySelector("[data-use-location]");
+      if (locationButton && locationInput) {
+        locationButton.addEventListener("click", () => lookupLocation(locationInput.value));
+        locationInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            lookupLocation(locationInput.value);
+          }
+        });
+      }
+      const preciseLocationButton = locationModal && locationModal.querySelector("[data-precise-location]");
+      if (preciseLocationButton) {
+        preciseLocationButton.addEventListener("click", () => {
+          if (!navigator.geolocation) {
+            if (locationInput) lookupLocation(locationInput.value);
+            return;
+          }
+          preciseLocationButton.disabled = true;
+          navigator.geolocation.getCurrentPosition(
+            (position) => lookupLocation(`${position.coords.latitude},${position.coords.longitude}`),
+            () => {
+              preciseLocationButton.disabled = false;
+              if (locationInput) lookupLocation(locationInput.value);
+            },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 300000 }
+          );
+        });
+      }
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");
       const categorySelect = form.querySelector('select[name="category"]');

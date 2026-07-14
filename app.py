@@ -3423,6 +3423,42 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS accommodation_metros (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metro_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT 'US',
+                state TEXT NOT NULL DEFAULT '',
+                center_city TEXT NOT NULL DEFAULT '',
+                lat REAL NOT NULL DEFAULT 0,
+                lng REAL NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'STATIC_FALLBACK',
+                raw_json TEXT NOT NULL DEFAULT '{}',
+                last_refreshed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS accommodation_local_areas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metro_id INTEGER NOT NULL,
+                place_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                city TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT '',
+                zip_code TEXT NOT NULL DEFAULT '',
+                place_type TEXT NOT NULL DEFAULT 'LOCALITY',
+                lat REAL NOT NULL DEFAULT 0,
+                lng REAL NOT NULL DEFAULT 0,
+                radius_miles REAL NOT NULL DEFAULT 60,
+                source TEXT NOT NULL DEFAULT 'STATIC_FALLBACK',
+                raw_json TEXT NOT NULL DEFAULT '{}',
+                last_refreshed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(metro_id) REFERENCES accommodation_metros(id)
+            );
+
             CREATE TABLE IF NOT EXISTS cars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -4154,6 +4190,7 @@ def init_db() -> None:
             )
 
         ensure_default_admin(con)
+        seed_accommodation_location_cache(con)
         repair_normalized_auth_emails(con)
         normalize_user_roles(con)
         apply_staff_role_overrides(con)
@@ -10125,16 +10162,386 @@ def render_accommodation_place_chips(values: tuple[str, ...], selected_area: str
 def render_accommodation_metro_list(selected_metro: str = "") -> str:
     return "\n".join(
         f'<button type="button" class="housing-location-row{" active" if value == selected_metro else ""}" data-metro="{escape(value)}">{escape(label)}</button>'
-        for value, label in ACCOMMODATION_METRO_FILTERS
+        for value, label in accommodation_metro_filter_options()
         if value
     )
 
 
+def slugify_location_key(value: str) -> str:
+    value = (value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-") or "location"
+
+
+def split_city_state(value: str) -> tuple[str, str]:
+    parts = [part.strip() for part in (value or "").split(",") if part.strip()]
+    if len(parts) >= 2:
+        return parts[0], parts[1].upper()[:2]
+    return (parts[0] if parts else "", "")
+
+
+def normalize_accommodation_place_label(value: str) -> str:
+    value = re.sub(r"\s+", " ", (value or "").strip())
+    value = re.sub(r",\s*US$", "", value, flags=re.IGNORECASE)
+    return value
+
+
+def accommodation_metro_name_from_place(value: str) -> str:
+    city, state = split_city_state(value)
+    if city and state:
+        return f"{city} Metro Area"
+    if city:
+        return city if "metro" in city.lower() or city.lower() in {"bay area", "new jersey"} else f"{city} Metro Area"
+    return "Denver Metro Area"
+
+
+def upsert_accommodation_metro(
+    con: sqlite3.Connection,
+    name: str,
+    *,
+    country: str = "US",
+    state: str = "",
+    center_city: str = "",
+    lat: float = 0,
+    lng: float = 0,
+    source: str = "STATIC_FALLBACK",
+    raw: dict[str, object] | None = None,
+) -> int:
+    name = normalize_accommodation_place_label(name) or "Denver Metro Area"
+    if not center_city:
+        center_city, parsed_state = split_city_state(name.replace(" Metro Area", ""))
+        state = state or parsed_state
+    metro_key = slugify_location_key(f"{country}-{state}-{name}")
+    con.execute(
+        """
+        INSERT INTO accommodation_metros
+            (metro_key, name, country, state, center_city, lat, lng, source, raw_json, last_refreshed_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(metro_key) DO UPDATE SET
+            name = excluded.name,
+            country = excluded.country,
+            state = COALESCE(NULLIF(excluded.state, ''), accommodation_metros.state),
+            center_city = COALESCE(NULLIF(excluded.center_city, ''), accommodation_metros.center_city),
+            lat = CASE WHEN excluded.lat != 0 THEN excluded.lat ELSE accommodation_metros.lat END,
+            lng = CASE WHEN excluded.lng != 0 THEN excluded.lng ELSE accommodation_metros.lng END,
+            source = excluded.source,
+            raw_json = excluded.raw_json,
+            last_refreshed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (metro_key, name, country, state, center_city, lat, lng, source, json.dumps(raw or {})),
+    )
+    row = con.execute("SELECT id FROM accommodation_metros WHERE metro_key = ?", (metro_key,)).fetchone()
+    return int(row["id"])
+
+
+def upsert_accommodation_local_area(
+    con: sqlite3.Connection,
+    metro_id: int,
+    name: str,
+    *,
+    city: str = "",
+    state: str = "",
+    zip_code: str = "",
+    place_type: str = "LOCALITY",
+    lat: float = 0,
+    lng: float = 0,
+    radius_miles: float = 60,
+    source: str = "STATIC_FALLBACK",
+    raw: dict[str, object] | None = None,
+) -> None:
+    name = normalize_accommodation_place_label(name or zip_code)
+    if not name:
+        return
+    if not city or not state:
+        parsed_city, parsed_state = split_city_state(name)
+        city = city or parsed_city
+        state = state or parsed_state
+    place_key = slugify_location_key(f"{metro_id}-{place_type}-{zip_code or name}")
+    con.execute(
+        """
+        INSERT INTO accommodation_local_areas
+            (metro_id, place_key, name, city, state, zip_code, place_type, lat, lng, radius_miles, source, raw_json, last_refreshed_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(place_key) DO UPDATE SET
+            metro_id = excluded.metro_id,
+            name = excluded.name,
+            city = COALESCE(NULLIF(excluded.city, ''), accommodation_local_areas.city),
+            state = COALESCE(NULLIF(excluded.state, ''), accommodation_local_areas.state),
+            zip_code = COALESCE(NULLIF(excluded.zip_code, ''), accommodation_local_areas.zip_code),
+            place_type = excluded.place_type,
+            lat = CASE WHEN excluded.lat != 0 THEN excluded.lat ELSE accommodation_local_areas.lat END,
+            lng = CASE WHEN excluded.lng != 0 THEN excluded.lng ELSE accommodation_local_areas.lng END,
+            radius_miles = excluded.radius_miles,
+            source = excluded.source,
+            raw_json = excluded.raw_json,
+            last_refreshed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (metro_id, place_key, name, city, state, zip_code, place_type, lat, lng, radius_miles, source, json.dumps(raw or {})),
+    )
+
+
+def seed_accommodation_location_cache(con: sqlite3.Connection) -> None:
+    for metro_name, data in ACCOMMODATION_METRO_GROUPS.items():
+        sample_place = next(iter(data.get("suggested", ()) or (metro_name,)), metro_name)
+        _, state = split_city_state(str(sample_place))
+        metro_id = upsert_accommodation_metro(con, metro_name, state=state, source="STATIC_FALLBACK", raw={"seed": True})
+        for place in data.get("suggested", ()):
+            city, place_state = split_city_state(str(place))
+            upsert_accommodation_local_area(con, metro_id, str(place), city=city, state=place_state or state, place_type="LOCALITY")
+        for zip_code in data.get("zips", ()):
+            upsert_accommodation_local_area(con, metro_id, str(zip_code), zip_code=str(zip_code), state=state, place_type="ZIP")
+    for metro_name, _label in ACCOMMODATION_METRO_FILTERS:
+        if metro_name:
+            upsert_accommodation_metro(con, metro_name, source="STATIC_FALLBACK", raw={"seed": True})
+
+
+def accommodation_metro_filter_options() -> tuple[tuple[str, str], ...]:
+    try:
+        with db() as con:
+            rows = con.execute("SELECT name FROM accommodation_metros ORDER BY name ASC").fetchall()
+    except sqlite3.Error:
+        rows = []
+    options = [("", "Metros")]
+    seen = {""}
+    for row in rows:
+        name = row_value(row, "name")
+        if name and name not in seen:
+            options.append((name, name))
+            seen.add(name)
+    for value, label in ACCOMMODATION_METRO_FILTERS:
+        if value and value not in seen:
+            options.append((value, label))
+            seen.add(value)
+    return tuple(options)
+
+
+def cached_accommodation_metro_for_place(place: str) -> str:
+    place = normalize_accommodation_place_label(place)
+    if not place:
+        return ""
+    try:
+        with db() as con:
+            exact = con.execute(
+                """
+                SELECT metro.name
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE lower(area.name) = lower(?) OR area.zip_code = ?
+                LIMIT 1
+                """,
+                (place, place),
+            ).fetchone()
+            if exact:
+                return row_value(exact, "name")
+            city = place.split(",")[0].strip()
+            fuzzy = con.execute(
+                """
+                SELECT metro.name
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                LIMIT 1
+                """,
+                (f"%{city}%", city),
+            ).fetchone()
+            return row_value(fuzzy, "name") if fuzzy else ""
+    except sqlite3.Error:
+        return ""
+
+
+def google_accommodation_geocode(query: str) -> dict[str, object] | None:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    query = (query or "").strip()
+    if not api_key or not query:
+        return None
+    params = urllib.parse.urlencode({"address": query, "key": api_key})
+    try:
+        payload = google_api_get(f"https://maps.googleapis.com/maps/api/geocode/json?{params}")
+    except Exception:
+        return None
+    if payload.get("status") != "OK":
+        return None
+    results = payload.get("results") or []
+    return results[0] if results and isinstance(results[0], dict) else None
+
+
+def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> list[dict[str, object]]:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    if not api_key or not query or not lat or not lng:
+        return []
+    places: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for text_query in (f"cities near {query}", f"neighborhoods near {query}", f"apartments and neighborhoods near {query}"):
+        params = {
+            "query": text_query,
+            "key": api_key,
+            "location": f"{lat},{lng}",
+            "radius": "96560",
+        }
+        try:
+            payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}")
+        except Exception:
+            continue
+        if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+            continue
+        for place in payload.get("results") or []:
+            if not isinstance(place, dict):
+                continue
+            name = normalize_accommodation_place_label(str(place.get("name") or ""))
+            if not name or name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            places.append(place)
+            if len(places) >= 18:
+                return places
+    return places
+
+
+def refresh_accommodation_location_cache(query: str) -> str:
+    query = normalize_accommodation_place_label(query)
+    if not query:
+        return ""
+    cached = cached_accommodation_metro_for_place(query)
+    if cached:
+        return cached
+    geocode = google_accommodation_geocode(query)
+    if not geocode:
+        return ""
+    address_components = geocode.get("address_components") or []
+    city = ""
+    state = ""
+    country = "US"
+    zip_code = ""
+    if isinstance(address_components, list):
+        for component in address_components:
+            if not isinstance(component, dict):
+                continue
+            types = set(component.get("types") or [])
+            if "locality" in types or ("postal_town" in types and not city):
+                city = str(component.get("long_name") or "")
+            elif "administrative_area_level_1" in types:
+                state = str(component.get("short_name") or "")
+            elif "country" in types:
+                country = str(component.get("short_name") or "US")
+            elif "postal_code" in types:
+                zip_code = str(component.get("long_name") or "")
+    formatted = normalize_accommodation_place_label(str(geocode.get("formatted_address") or query))
+    if not city:
+        city, parsed_state = split_city_state(formatted)
+        state = state or parsed_state
+    geometry = geocode.get("geometry") if isinstance(geocode.get("geometry"), dict) else {}
+    location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+    lat = float(location.get("lat") or 0)
+    lng = float(location.get("lng") or 0)
+    metro_name = accommodation_metro_name_from_place(f"{city or query}, {state}" if state else city or query)
+    with db() as con:
+        metro_id = upsert_accommodation_metro(
+            con,
+            metro_name,
+            country=country,
+            state=state,
+            center_city=city or query,
+            lat=lat,
+            lng=lng,
+            source="GOOGLE_GEOCODE",
+            raw=geocode,
+        )
+        locality_label = f"{city}, {state}" if city and state else formatted
+        upsert_accommodation_local_area(
+            con,
+            metro_id,
+            locality_label,
+            city=city,
+            state=state,
+            zip_code=zip_code if re.fullmatch(r"\d{5}", query) else "",
+            place_type="ZIP" if re.fullmatch(r"\d{5}", query) else "LOCALITY",
+            lat=lat,
+            lng=lng,
+            source="GOOGLE_GEOCODE",
+            raw=geocode,
+        )
+        for place in google_accommodation_nearby_areas(city or query, lat, lng):
+            place_name = normalize_accommodation_place_label(str(place.get("name") or ""))
+            place_geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
+            place_location = place_geometry.get("location") if isinstance(place_geometry.get("location"), dict) else {}
+            place_lat = float(place_location.get("lat") or 0)
+            place_lng = float(place_location.get("lng") or 0)
+            upsert_accommodation_local_area(
+                con,
+                metro_id,
+                f"{place_name}, {state}" if state and "," not in place_name else place_name,
+                city=place_name,
+                state=state,
+                place_type="LOCALITY",
+                lat=place_lat,
+                lng=place_lng,
+                source="GOOGLE_PLACES",
+                raw=place,
+            )
+    return metro_name
+
+
+def accommodation_location_terms(search_metro: str) -> list[str]:
+    search_metro = (search_metro or "").strip()
+    if not search_metro:
+        return []
+    terms = [search_metro.replace(" Metro Area", "").strip(), search_metro]
+    try:
+        with db() as con:
+            rows = con.execute(
+                """
+                SELECT area.name, area.city, area.zip_code
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE metro.name = ?
+                ORDER BY CASE area.place_type WHEN 'ZIP' THEN 2 ELSE 1 END, area.name ASC
+                """,
+                (search_metro,),
+            ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    for row in rows:
+        for key in ("name", "city", "zip_code"):
+            value = row_value(row, key).strip()
+            if value:
+                terms.append(value.split(",")[0].strip() if key != "zip_code" else value)
+    return [term for term in dict.fromkeys(terms) if term]
+
+
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
-    metro_name = search_metro if search_metro in ACCOMMODATION_METRO_GROUPS else "Denver Metro Area"
-    metro_data = ACCOMMODATION_METRO_GROUPS.get(metro_name, ACCOMMODATION_METRO_GROUPS["Denver Metro Area"])
-    suggested = tuple(metro_data.get("suggested", ()))
-    zips = tuple(metro_data.get("zips", ()))
+    if search_area:
+        refreshed = cached_accommodation_metro_for_place(search_area) or refresh_accommodation_location_cache(search_area)
+        search_metro = search_metro or refreshed
+    elif search_metro and search_metro not in {row[0] for row in accommodation_metro_filter_options()}:
+        search_metro = refresh_accommodation_location_cache(search_metro) or search_metro
+    metro_name = search_metro or "Denver Metro Area"
+    try:
+        with db() as con:
+            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone()
+            if not metro:
+                metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", ("Denver Metro Area",)).fetchone()
+            if metro:
+                metro_name = row_value(metro, "name", "Denver Metro Area")
+                area_rows = con.execute(
+                    """
+                    SELECT * FROM accommodation_local_areas
+                    WHERE metro_id = ?
+                    ORDER BY CASE place_type WHEN 'ZIP' THEN 2 ELSE 1 END, name ASC
+                    """,
+                    (metro["id"],),
+                ).fetchall()
+            else:
+                area_rows = []
+    except sqlite3.Error:
+        area_rows = []
+    suggested = tuple(row_value(row, "name") for row in area_rows if row_value(row, "place_type") != "ZIP")[:18]
+    zips = tuple(row_value(row, "zip_code") or row_value(row, "name") for row in area_rows if row_value(row, "place_type") == "ZIP")[:12]
+    if not suggested:
+        suggested = tuple(ACCOMMODATION_METRO_GROUPS["Denver Metro Area"]["suggested"])
+    if not zips:
+        zips = tuple(ACCOMMODATION_METRO_GROUPS["Denver Metro Area"]["zips"])
     return {
         "selected_location": search_area or "Denver, CO",
         "suggested_location": suggested[0] if suggested else "Denver, CO",
@@ -11524,6 +11931,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/explorer/config-status":
             self.api_explorer_config_status()
             return
+        if parsed.path == "/api/accommodations/locations":
+            self.api_accommodation_locations(parsed)
+            return
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
             return
@@ -12125,22 +12535,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             clauses.append("category = ?")
             values.append(search_property_type)
         metro_context = accommodation_metro_context(search_metro, search_area)
+        if not search_metro and search_area:
+            search_metro = cached_accommodation_metro_for_place(search_area)
         if search_metro:
-            metro_data = ACCOMMODATION_METRO_GROUPS.get(search_metro, {})
-            metro_terms = [search_metro]
-            metro_terms.extend(str(place).split(",")[0].strip() for place in metro_data.get("suggested", ()))
-            metro_terms.extend(str(zip_code).strip() for zip_code in metro_data.get("zips", ()))
-            metro_terms = [term for term in dict.fromkeys(metro_terms) if term]
+            metro_terms = accommodation_location_terms(search_metro)
             metro_sql = " OR ".join(
                 "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
                 for _ in metro_terms
             )
-            clauses.append(
-                f"({metro_sql})"
-            )
-            for term in metro_terms:
-                metro_pattern = f"%{term}%"
-                values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
+            if metro_sql:
+                clauses.append(f"({metro_sql})")
+                for term in metro_terms:
+                    metro_pattern = f"%{term}%"
+                    values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
         if search_gender:
             clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
             values.append(search_gender)
@@ -12190,7 +12597,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             post_modal_hidden=post_modal_hidden,
             search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need or "need_room_share"),
             search_property_type_options=render_select_options(ACCOMMODATION_PROPERTY_TYPE_FILTERS, search_property_type),
-            search_metro_options=render_select_options(ACCOMMODATION_METRO_FILTERS, search_metro),
+            search_metro_options=render_select_options(accommodation_metro_filter_options(), search_metro),
             search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),
             search_price_options=render_select_options(ACCOMMODATION_PRICE_FILTERS, search_budget),
             housing_subnav_links=render_accommodation_subnav_links(search_property_type),
@@ -12420,6 +12827,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_explorer_config_status(self) -> None:
         self.send_json({"ok": True, "explorer": explorer_config_status()})
+
+    def api_accommodation_locations(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        query = normalize_accommodation_place_label((params.get("q") or [""])[0])
+        lat = (params.get("lat") or [""])[0].strip()
+        lng = (params.get("lng") or [""])[0].strip()
+        if not query and lat and lng:
+            query = f"{lat},{lng}"
+        if not query:
+            self.send_json({"ok": False, "message": "Enter a city, zip code, or area."}, 400)
+            return
+        metro_name = cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+        context = accommodation_metro_context(metro_name, query)
+        self.send_json(
+            {
+                "ok": True,
+                "metro": metro_name or "Denver Metro Area",
+                "selectedLocation": query,
+                "suggestedLocation": context["suggested_location"],
+                "source": "cache" if cached_accommodation_metro_for_place(query) else "lookup",
+            }
+        )
 
     def create_explorer_quest(self) -> None:
         user = self.current_user()

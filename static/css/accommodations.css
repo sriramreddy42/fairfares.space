@@ -3,6 +3,10 @@
   color: #071943;
 }
 
+body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-screen):not(.auth-page) {
+  padding-top: 0 !important;
+}
+
 .housing-shell {
   max-width: 1460px;
   margin: 0 auto;
@@ -155,14 +159,16 @@
 
 .housing-subnav-scroll {
   display: flex;
-  gap: 2px;
+  gap: 4px;
   align-items: center;
   overflow-x: auto;
   padding: 8px 10px;
 }
 
 .housing-subnav-link {
-  padding: 0 14px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 0.94rem;
 }
 
 .housing-subnav-link.active,
@@ -171,12 +177,14 @@
 }
 
 .housing-live-pill {
+  flex: 0 0 auto;
   min-height: 36px;
-  margin-left: 8px;
-  padding: 0 16px;
+  margin-left: 4px;
+  padding: 0 12px;
   border-radius: 6px;
   background: linear-gradient(90deg, #cc47b2, #f05b80);
   color: #fff;
+  font-size: 0.92rem;
 }
 
 .housing-hero {
@@ -268,13 +276,13 @@
 .housing-filter-card {
   position: relative;
   z-index: 2;
-  margin: -46px clamp(14px, 4vw, 42px) 18px;
+  margin: 16px clamp(14px, 4vw, 42px) 18px;
   overflow: hidden;
 }
 
 .housing-filter-bar {
   display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(130px, 0.75fr) minmax(210px, 1.2fr) minmax(150px, 0.85fr) minmax(120px, 0.7fr) minmax(132px, 0.72fr);
+  grid-template-columns: minmax(220px, 1.25fr) minmax(175px, 0.95fr) minmax(150px, 0.78fr) minmax(230px, 1.12fr) minmax(160px, 0.82fr) minmax(120px, 0.64fr) minmax(158px, 0.7fr);
   align-items: stretch;
 }
 
@@ -288,7 +296,8 @@
   min-height: 70px;
   margin: 9px;
   border-radius: 999px;
-  font-size: 1.05rem;
+  font-size: 1rem;
+  white-space: nowrap;
 }
 
 .housing-search-card h2,
@@ -344,7 +353,7 @@
   border-radius: 0;
   padding: 0;
   color: #565f6d;
-  font-size: clamp(1rem, 1.5vw, 1.16rem);
+  font-size: clamp(0.95rem, 1.2vw, 1.08rem);
   font-weight: 900;
 }
 
@@ -1139,7 +1148,7 @@
   }
 
   .housing-filter-card {
-    margin: -34px 14px 18px;
+    margin: 16px 14px 18px;
   }
 
   .housing-filter-bar {
@@ -1206,6 +1215,7 @@
   }
 
   .housing-filter-card .housing-search-submit {
+    width: calc(100% - 24px);
     margin: 12px;
   }
 
