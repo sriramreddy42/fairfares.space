@@ -3374,6 +3374,8 @@ def init_db() -> None:
                 area_or_apartment TEXT NOT NULL DEFAULT '',
                 work_school_location TEXT NOT NULL DEFAULT '',
                 radius_miles INTEGER NOT NULL DEFAULT 10,
+                lat REAL NOT NULL DEFAULT 0,
+                lng REAL NOT NULL DEFAULT 0,
                 move_in_date TEXT NOT NULL DEFAULT '',
                 rent_min REAL NOT NULL DEFAULT 0,
                 rent_max REAL NOT NULL DEFAULT 0,
@@ -4175,6 +4177,8 @@ def init_db() -> None:
         ensure_column(con, "explorer_stops", "reviews_json", "reviews_json TEXT NOT NULL DEFAULT '[]'")
         ensure_column(con, "explorer_stops", "google_url", "google_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_stops", "source", "source TEXT NOT NULL DEFAULT 'LOCAL'")
+        ensure_column(con, "accommodation_posts", "lat", "lat REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "lng", "lng REAL NOT NULL DEFAULT 0")
 
         for badge in (
             ("First Explorer", "compass", "Complete your first FairFares city quest.", 0),
@@ -10510,6 +10514,123 @@ def accommodation_location_terms(search_metro: str) -> list[str]:
     return [term for term in dict.fromkeys(terms) if term]
 
 
+def distance_miles_between(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 3958.7613
+    d_lat = math.radians(lat2 - lat1)
+    d_lng = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lng / 2) ** 2
+    )
+    return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def accommodation_location_point(query: str, search_metro: str = "", allow_refresh: bool = True) -> dict[str, object]:
+    query = normalize_accommodation_place_label(query)
+    if not query and search_metro:
+        query = normalize_accommodation_place_label(search_metro)
+    if not query:
+        return {}
+    try:
+        with db() as con:
+            row = con.execute(
+                """
+                SELECT area.name, area.city, area.zip_code, area.lat, area.lng, metro.name AS metro_name, metro.lat AS metro_lat, metro.lng AS metro_lng
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE lower(area.name) = lower(?) OR area.zip_code = ?
+                ORDER BY CASE WHEN area.lat != 0 AND area.lng != 0 THEN 0 ELSE 1 END
+                LIMIT 1
+                """,
+                (query, query),
+            ).fetchone()
+            if not row:
+                city = query.split(",")[0].strip()
+                row = con.execute(
+                    """
+                    SELECT area.name, area.city, area.zip_code, area.lat, area.lng, metro.name AS metro_name, metro.lat AS metro_lat, metro.lng AS metro_lng
+                    FROM accommodation_local_areas area
+                    JOIN accommodation_metros metro ON metro.id = area.metro_id
+                    WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                    ORDER BY CASE WHEN area.lat != 0 AND area.lng != 0 THEN 0 ELSE 1 END
+                    LIMIT 1
+                    """,
+                    (f"%{city}%", city),
+                ).fetchone()
+            if row and float(row["lat"] or 0) and float(row["lng"] or 0):
+                return {
+                    "label": row_value(row, "name") or query,
+                    "metro": row_value(row, "metro_name"),
+                    "lat": float(row["lat"] or 0),
+                    "lng": float(row["lng"] or 0),
+                    "source": "cache",
+                }
+            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (search_metro or query,)).fetchone()
+            if metro and float(metro["lat"] or 0) and float(metro["lng"] or 0):
+                return {
+                    "label": row_value(metro, "center_city") or row_value(metro, "name") or query,
+                    "metro": row_value(metro, "name"),
+                    "lat": float(metro["lat"] or 0),
+                    "lng": float(metro["lng"] or 0),
+                    "source": "metro",
+                }
+    except sqlite3.Error:
+        pass
+    if allow_refresh:
+        metro_name = refresh_accommodation_location_cache(query)
+        if metro_name:
+            return accommodation_location_point(query, metro_name, allow_refresh=False)
+    return {"label": query, "metro": search_metro, "lat": 0, "lng": 0, "source": "needs_geocode"}
+
+
+def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: str, search_metro: str) -> dict[str, object]:
+    center = accommodation_location_point(selected_location, search_metro)
+    if not float(center.get("lat") or 0) or not float(center.get("lng") or 0):
+        center = accommodation_location_point(search_metro or "Denver, CO", search_metro)
+    payload_posts: list[dict[str, object]] = []
+    center_lat = float(center.get("lat") or 0)
+    center_lng = float(center.get("lng") or 0)
+    for row in posts[:80]:
+        location_label = (
+            row_value(row, "city_area_zip")
+            or row_value(row, "area_or_apartment")
+            or row_value(row, "work_school_location")
+            or selected_location
+        )
+        lat = float(row_value(row, "lat") or 0)
+        lng = float(row_value(row, "lng") or 0)
+        point_source = "post"
+        if not lat or not lng:
+            point = accommodation_location_point(location_label, search_metro, allow_refresh=False)
+            lat = float(point.get("lat") or 0)
+            lng = float(point.get("lng") or 0)
+            point_source = str(point.get("source") or "needs_geocode")
+        distance = distance_miles_between(center_lat, center_lng, lat, lng) if center_lat and center_lng and lat and lng else None
+        payload_posts.append(
+            {
+                "id": row_value(row, "public_id"),
+                "title": row_value(row, "title"),
+                "category": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
+                "location": location_label,
+                "lat": lat,
+                "lng": lng,
+                "radius": int(float(row_value(row, "radius_miles") or 0)),
+                "rent": format_accommodation_rent(row),
+                "distance": round(distance, 1) if distance is not None else None,
+                "source": point_source,
+            }
+        )
+    return {
+        "center": {
+            "label": center.get("label") or selected_location or search_metro or "Denver, CO",
+            "lat": center_lat,
+            "lng": center_lng,
+        },
+        "posts": payload_posts,
+        "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
+    }
+
+
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
     if search_area:
         refreshed = cached_accommodation_metro_for_place(search_area) or refresh_accommodation_location_cache(search_area)
@@ -12583,6 +12704,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 values,
             ).fetchall()
+        map_payload = accommodation_post_map_payload(posts, search_area or metro_context["selected_location"], search_metro)
+        map_payload_json = json.dumps(map_payload).replace("</", "<\\/")
         if "posted" in params:
             status_message = '<p class="housing-status success">Housing lead posted.</p>'
         elif "error" in params:
@@ -12618,6 +12741,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             gender_options=render_select_options(ACCOMMODATION_GENDER_OPTIONS, "open"),
             lease_term_options=render_select_options(ACCOMMODATION_LEASE_TERMS, "flexible"),
             posts_html=render_accommodation_posts(posts),
+            map_payload_json=map_payload_json,
+            maps_loader=explorer_maps_loader(),
         )
         self.send_html(body)
 
@@ -12637,19 +12762,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
         contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
         contact_phone = (form.get("contact_phone") or row_value(user, "phone")).strip()
+        location_query = (
+            (form.get("city_area_zip") or "").strip()
+            or (form.get("area_or_apartment") or "").strip()
+            or (form.get("work_school_location") or "").strip()
+        )
+        location_point = accommodation_location_point(location_query)
+        post_lat = float(location_point.get("lat") or 0)
+        post_lng = float(location_point.get("lng") or 0)
         now = datetime.utcnow().isoformat(timespec="seconds")
         with db() as con:
             cursor = con.execute(
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description,
-                 city_area_zip, area_or_apartment, work_school_location, radius_miles,
+                 city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
                  roommate_count, gender_preference, commute_preference, lease_term, amenities,
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?)
                 """,
                 (
                     public_id,
@@ -12662,6 +12795,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (form.get("area_or_apartment") or "").strip(),
                     (form.get("work_school_location") or "").strip(),
                     int_from_form(form, "radius_miles", 10 if mode == "NEED_PLACE" else 0),
+                    post_lat,
+                    post_lng,
                     (form.get("move_in_date") or "").strip(),
                     float_from_form(form, "rent_min"),
                     float_from_form(form, "rent_max"),
@@ -12840,12 +12975,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         metro_name = cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
         context = accommodation_metro_context(metro_name, query)
+        point = accommodation_location_point(query, metro_name, allow_refresh=False)
         self.send_json(
             {
                 "ok": True,
                 "metro": metro_name or "Denver Metro Area",
                 "selectedLocation": query,
                 "suggestedLocation": context["suggested_location"],
+                "lat": float(point.get("lat") or 0),
+                "lng": float(point.get("lng") or 0),
                 "source": "cache" if cached_accommodation_metro_for_place(query) else "lookup",
             }
         )

@@ -20,14 +20,12 @@
     <button class="housing-top-location" type="button" data-open-location><span>⌖</span>$selected_location</button>
     <button class="housing-top-search" type="button" aria-label="Search housing">⌕</button>
     <div class="housing-top-links">
-      <a href="/deals">Events</a>
+      <a href="/accommodations">Near me</a>
       <a href="/accommodations?need=need_room_share">Roommates</a>
       <a href="/accommodations?need=need_property_rent">Rentals</a>
-      <a href="/wiki">IT Training</a>
-      <a href="/contact">Jobs</a>
-      <a href="/about">Care</a>
-      <a href="/contact">Local Services</a>
-      <button type="button">More⌄</button>
+      <a href="/accommodations?property_type=paying_guest">Paying Guest</a>
+      <a href="/accommodations?property_type=apartment">Apartments</a>
+      <a href="/accommodations?property_type=condo">Condos</a>
     </div>
     <div class="housing-top-actions">
       <button class="housing-device-button" type="button" aria-label="Mobile app">▯</button>
@@ -35,25 +33,6 @@
       <button class="menu-button housing-menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
     </div>
   </header>
-
-  <nav class="main-nav housing-main-nav">
-    <div class="nav-links">
-      <a href="/">Book</a>
-      <a href="/manage-booking">Manage Booking</a>
-      <a href="/deals">Deals</a>
-      <a class="active" href="/accommodations">Accommodations</a>
-      <a href="/blog">Blog</a>
-      <a href="/wiki">FAQ</a>
-      <a href="/about">About Us</a>
-      <a href="/contact">Contact Us</a>
-      <a href="/explorer">Explorer</a>
-    </div>
-    <div class="nav-actions">
-      <span>EN</span>
-      $auth_link
-      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
-    </div>
-  </nav>
 
   <div class="housing-market-nav">
     <div class="housing-location-trigger">
@@ -66,7 +45,6 @@
       $housing_subnav_links
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE">I need a place to live</button>
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE">I have a place available</button>
-      <button class="housing-subnav-link" type="button">More⌄</button>
     </div>
   </div>
 
@@ -123,6 +101,21 @@
       <button type="button" data-filter-category="condo"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></button>
       <button type="button" data-filter-category="town_house"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></button>
       <button type="button" data-filter-category="basement_apartment"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></button>
+    </section>
+
+    <section class="housing-map-section" aria-label="Housing results map">
+      <div class="housing-map-copy">
+        <p class="eyebrow">Map view</p>
+        <h2>Listings around $selected_location</h2>
+        <p>See each lead by rent, radius, and distance from your selected location.</p>
+      </div>
+      <div class="housing-map-layout">
+        <div id="housingMapCanvas" class="housing-map-canvas">
+          <b>Loading map</b>
+          <span>Housing pins appear here when location data is available.</span>
+        </div>
+        <div class="housing-map-results" data-map-results></div>
+      </div>
     </section>
 
     <section id="housing-posts" class="housing-posts-section">
@@ -352,6 +345,8 @@
     </section>
   </div>
 
+  <script type="application/json" id="housingMapPayload">$map_payload_json</script>
+  $maps_loader
   <script>
     (() => {
       const form = document.querySelector("[data-accommodation-form]");
@@ -447,6 +442,159 @@
           );
         });
       }
+      const milesBetween = (a, b) => {
+        if (!a || !b || !Number(a.lat) || !Number(a.lng) || !Number(b.lat) || !Number(b.lng)) return null;
+        const toRad = (value) => value * Math.PI / 180;
+        const radius = 3958.7613;
+        const dLat = toRad(Number(b.lat) - Number(a.lat));
+        const dLng = toRad(Number(b.lng) - Number(a.lng));
+        const lat1 = toRad(Number(a.lat));
+        const lat2 = toRad(Number(b.lat));
+        const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+        return radius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+      };
+      const escapeMapHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[char]));
+      const renderMapFallbackList = (payload, message) => {
+        const mapCanvas = document.getElementById("housingMapCanvas");
+        const results = document.querySelector("[data-map-results]");
+        if (mapCanvas) {
+          mapCanvas.innerHTML = `<b>${message || "Map preview"}</b><span>Live pins render when Google Maps is available. The listings below still show saved location, rent, and radius.</span>`;
+        }
+        if (results) {
+          const posts = payload.posts || [];
+          results.innerHTML = posts.length ? posts.map((post) => `
+            <article>
+              <b>${escapeMapHtml(post.title || "Housing lead")}</b>
+              <span>${escapeMapHtml(post.location || "Location pending")}</span>
+              <small>${escapeMapHtml(post.rent || "Rent open")} · ${escapeMapHtml(post.radius || 0)} mi radius</small>
+            </article>
+          `).join("") : "<p>No active housing leads match this search yet.</p>";
+        }
+      };
+      const renderHousingMap = (attempt = 0) => {
+        const payloadNode = document.getElementById("housingMapPayload");
+        const mapCanvas = document.getElementById("housingMapCanvas");
+        const results = document.querySelector("[data-map-results]");
+        if (!payloadNode || !mapCanvas || !results) return;
+        let payload = {};
+        try {
+          payload = JSON.parse(payloadNode.textContent || "{}");
+        } catch (error) {
+          renderMapFallbackList({ posts: [] }, "Map data unavailable");
+          return;
+        }
+        const posts = Array.isArray(payload.posts) ? payload.posts : [];
+        const center = payload.center || {};
+        if (!window.google?.maps) {
+          if (payload.mapsEnabled && attempt < 20) {
+            mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Connecting housing pins and distance circles.</span>";
+            window.setTimeout(() => renderHousingMap(attempt + 1), 350);
+            return;
+          }
+          renderMapFallbackList(payload, payload.mapsEnabled ? "Map could not load" : "Map ready when Google Maps key is enabled");
+          return;
+        }
+        const geocoder = new google.maps.Geocoder();
+        const geocodePost = (post) => new Promise((resolve) => {
+          if (Number(post.lat) && Number(post.lng)) {
+            resolve(post);
+            return;
+          }
+          if (!post.location) {
+            resolve(post);
+            return;
+          }
+          geocoder.geocode({ address: post.location }, (results, status) => {
+            if (status === "OK" && results?.[0]?.geometry?.location) {
+              post.lat = results[0].geometry.location.lat();
+              post.lng = results[0].geometry.location.lng();
+              post.source = "browser_geocode";
+            }
+            resolve(post);
+          });
+        });
+        const geocodeCenter = () => new Promise((resolve) => {
+          if (Number(center.lat) && Number(center.lng)) {
+            resolve(center);
+            return;
+          }
+          geocoder.geocode({ address: center.label || "Denver, CO" }, (results, status) => {
+            if (status === "OK" && results?.[0]?.geometry?.location) {
+              center.lat = results[0].geometry.location.lat();
+              center.lng = results[0].geometry.location.lng();
+            }
+            resolve(center);
+          });
+        });
+        geocodeCenter().then(() => Promise.all(posts.map(geocodePost))).then((resolvedPosts) => {
+          const visiblePosts = resolvedPosts.filter((post) => Number(post.lat) && Number(post.lng));
+          if (!Number(center.lat) || !Number(center.lng)) {
+            renderMapFallbackList(payload, "Choose a location to map results");
+            return;
+          }
+          mapCanvas.innerHTML = "";
+          const map = new google.maps.Map(mapCanvas, {
+            center: { lat: Number(center.lat), lng: Number(center.lng) },
+            zoom: 11,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: true,
+          });
+          const bounds = new google.maps.LatLngBounds();
+          const centerPosition = { lat: Number(center.lat), lng: Number(center.lng) };
+          bounds.extend(centerPosition);
+          new google.maps.Marker({
+            map,
+            position: centerPosition,
+            label: "★",
+            title: center.label || "Desired location",
+          });
+          visiblePosts.forEach((post, index) => {
+            const position = { lat: Number(post.lat), lng: Number(post.lng) };
+            const distance = post.distance ?? milesBetween(centerPosition, position);
+            post.distance = distance === null ? null : Math.round(distance * 10) / 10;
+            bounds.extend(position);
+            const marker = new google.maps.Marker({
+              map,
+              position,
+              label: String(index + 1),
+              title: `${post.title || "Housing lead"} · ${post.rent || "Rent open"}`,
+            });
+            const radius = Math.max(0, Number(post.radius || 0));
+            if (radius) {
+              new google.maps.Circle({
+                map,
+                center: position,
+                radius: radius * 1609.344,
+                strokeColor: "#1266f1",
+                strokeOpacity: 0.35,
+                strokeWeight: 2,
+                fillColor: "#1266f1",
+                fillOpacity: 0.08,
+              });
+            }
+            const info = new google.maps.InfoWindow({
+              content: `<strong>${escapeMapHtml(post.title || "Housing lead")}</strong><br>${escapeMapHtml(post.location || "")}<br>${escapeMapHtml(post.rent || "Rent open")}${post.distance !== null ? `<br>${escapeMapHtml(post.distance)} mi from ${escapeMapHtml(center.label || "selected location")}` : ""}`,
+            });
+            marker.addListener("click", () => info.open({ map, anchor: marker }));
+          });
+          if (visiblePosts.length) map.fitBounds(bounds);
+          results.innerHTML = visiblePosts.length ? visiblePosts.map((post, index) => `
+            <article>
+              <b>${index + 1}. ${escapeMapHtml(post.title || "Housing lead")}</b>
+              <span>${escapeMapHtml(post.location || "Location pending")}</span>
+              <small>${escapeMapHtml(post.rent || "Rent open")} · ${escapeMapHtml(post.radius || 0)} mi radius${post.distance !== null ? ` · ${escapeMapHtml(post.distance)} mi away` : ""}</small>
+            </article>
+          `).join("") : "<p>No mappable housing leads match this search yet.</p>";
+        });
+      };
+      renderHousingMap();
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");
       const categorySelect = form.querySelector('select[name="category"]');

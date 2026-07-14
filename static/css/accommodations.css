@@ -319,7 +319,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   min-height: 88px;
   align-content: center;
   gap: 6px;
-  padding: 12px 18px;
+  padding: 12px 14px;
   border-right: 1px solid #d7e2f0;
 }
 
@@ -353,7 +353,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   border-radius: 0;
   padding: 0;
   color: #565f6d;
-  font-size: clamp(0.95rem, 1.2vw, 1.08rem);
+  font-size: clamp(0.9rem, 1.05vw, 1rem);
   font-weight: 900;
 }
 
@@ -787,6 +787,94 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   padding: 22px;
 }
 
+.housing-map-section {
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid #d7e2f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(7, 25, 67, 0.05);
+}
+
+.housing-map-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.housing-map-copy h2,
+.housing-map-copy p {
+  margin: 0;
+}
+
+.housing-map-copy p:last-child {
+  max-width: 420px;
+  color: #5d6470;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.housing-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.36fr);
+  gap: 14px;
+  min-height: 430px;
+}
+
+.housing-map-canvas {
+  display: grid;
+  min-height: 430px;
+  place-items: center;
+  border: 1px solid #d7e2f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eef4fb;
+  color: #4f5a6d;
+  font-weight: 900;
+  text-align: center;
+}
+
+.housing-map-canvas span {
+  display: block;
+  max-width: 360px;
+  margin-top: 6px;
+  font-size: 0.9rem;
+}
+
+.housing-map-results {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  max-height: 430px;
+  overflow: auto;
+}
+
+.housing-map-results article,
+.housing-map-results p {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #d7e2f0;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.housing-map-results article {
+  display: grid;
+  gap: 5px;
+}
+
+.housing-map-results b {
+  color: #071943;
+}
+
+.housing-map-results span,
+.housing-map-results small {
+  color: #5d6470;
+  font-weight: 800;
+}
+
 .housing-section-heading {
   display: flex;
   justify-content: space-between;
@@ -1129,7 +1217,8 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   }
 
   .housing-top-location,
-  .housing-top-search {
+  .housing-top-search,
+  .housing-top-links {
     display: none;
   }
 
@@ -1163,6 +1252,18 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   .housing-filter-card .housing-search-submit {
     grid-column: 1 / -1;
     min-height: 56px;
+  }
+
+  .housing-map-copy {
+    display: grid;
+  }
+
+  .housing-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .housing-map-results {
+    max-height: none;
   }
 
   .housing-category-strip,
@@ -1219,8 +1320,13 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
     margin: 12px;
   }
 
+  .housing-map-section,
   .housing-posts-section {
     padding: 14px;
+  }
+
+  .housing-map-canvas {
+    min-height: 320px;
   }
 
   .housing-modal {
