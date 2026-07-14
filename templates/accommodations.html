@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FairFares Housing | Rooms, Shared Rent, and Short Stays</title>
+  <meta name="description" content="Post or find rooms, shared rent, short stays, apartments, and roommate leads near Denver and other student-friendly areas.">
+  <link rel="canonical" href="https://www.fairfare.space/accommodations">
+  <meta property="og:title" content="FairFares Housing | Rooms and Shared Rent">
+  <meta property="og:description" content="Find or post local accommodation leads for rooms, roommates, short stays, and apartments.">
+  <meta property="og:url" content="https://www.fairfare.space/accommodations">
+  <meta name="twitter:title" content="FairFares Housing | Rooms and Shared Rent">
+  <meta name="twitter:description" content="Find or post local accommodation leads for rooms, roommates, short stays, and apartments.">
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="public-header-compact accommodations-page">
+  <header class="top-brand compact-top">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">home</span><strong>Housing</strong><span>Rooms & stays</span></div>
+      <div class="benefit-pill"><span class="circle-icon">map</span><strong>Local leads</strong><span>Area based</span></div>
+      <div class="benefit-pill"><span class="circle-icon">safe</span><strong>Privacy</strong><span>Share when ready</span></div>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="nav-links">
+      <a href="/">Car Rental</a>
+      <a class="active" href="/accommodations">Feed</a>
+      <a href="/blog">Blog</a>
+      <a href="/wiki">FAQ</a>
+      <a href="/about">About Us</a>
+      <a href="/contact">Contact Us</a>
+      <a href="/explorer">Explorer</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      $auth_link
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
+
+  <main class="housing-shell">
+    <section class="housing-hero">
+      <div>
+        <p class="eyebrow">FairFares housing help</p>
+        <h1>Find local rooms, shared rent, and short stays.</h1>
+        <div class="housing-hero-actions">
+          <a class="select-button" href="#post">Post your need</a>
+          <a class="light-button" href="#housing-posts">Browse leads</a>
+        </div>
+      </div>
+      <form class="housing-search-card" action="/accommodations" method="get">
+        <h2>Search housing leads</h2>
+        <label>
+          <span>Need</span>
+          <select name="need">$search_need_options</select>
+        </label>
+        <label>
+          <span>Area</span>
+          <input name="area" value="$search_area" placeholder="Denver Metro Area">
+        </label>
+        <label>
+          <span>Move-in</span>
+          <input name="move_in" value="$search_move_in" type="date">
+        </label>
+        <label>
+          <span>Budget</span>
+          <input name="budget" value="$search_budget" placeholder="Any price">
+        </label>
+        <button class="select-button" type="submit">Search accommodations</button>
+      </form>
+    </section>
+
+    <section class="housing-category-strip" aria-label="Accommodation categories">
+      <a href="#post"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></a>
+      <a href="#post"><span>🧳</span><strong>Shared Room</strong><small>Roommate shares</small></a>
+      <a href="#post"><span>🏠</span><strong>Paying Guest</strong><small>Short-stay leads</small></a>
+      <a href="#post"><span>🏢</span><strong>Apartment</strong><small>1B/2B places</small></a>
+      <a href="#post"><span>🏡</span><strong>Single Family Home</strong><small>Full-home rentals</small></a>
+      <a href="#post"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></a>
+      <a href="#post"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></a>
+      <a href="#post"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></a>
+    </section>
+
+    <section id="post" class="housing-post-panel">
+      <div class="housing-panel-copy">
+        <p class="eyebrow">Post to FairFares housing</p>
+        <h2>Need a room or listing a place?</h2>
+        <p>Choose the right mode, add location details, and include enough context for local renters to understand the lead.</p>
+      </div>
+
+      <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data">
+        <div class="housing-mode-tabs" aria-label="Post type">
+          <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
+          <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
+        </div>
+
+        $status_message
+
+        <label class="wide">
+          <span>Describe the lead</span>
+          <textarea name="description" required rows="4" placeholder="Example: Looking for a private room near DU from August, budget around 900 monthly, prefer female roommates."></textarea>
+        </label>
+
+        <div class="housing-form-grid">
+          <label>
+            <span>Category</span>
+            <select name="category" required>$category_options</select>
+          </label>
+          <label>
+            <span>City, area, or ZIP</span>
+            <input name="city_area_zip" placeholder="Denver, Lone Tree, 80231">
+          </label>
+          <label>
+            <span>Area or apartment</span>
+            <input name="area_or_apartment" placeholder="DU, IMT Dayton, Platt Park">
+          </label>
+          <label class="need-only">
+            <span>Work / school location</span>
+            <input name="work_school_location" placeholder="DU, DTC, downtown office">
+          </label>
+          <label class="need-only">
+            <span>Search radius</span>
+            <select name="radius_miles">$radius_options</select>
+          </label>
+          <label>
+            <span>Move-in / available date</span>
+            <input name="move_in_date" type="date">
+          </label>
+          <label>
+            <span>Rent minimum</span>
+            <input name="rent_min" type="number" min="0" step="1" placeholder="700">
+          </label>
+          <label>
+            <span>Rent maximum</span>
+            <input name="rent_max" type="number" min="0" step="1" placeholder="1200">
+          </label>
+          <label>
+            <span>Rent period</span>
+            <select name="rent_period">$rent_period_options</select>
+          </label>
+          <label class="have-only">
+            <span>Bedrooms</span>
+            <input name="bedroom_count" type="number" min="0" step="1" placeholder="2">
+          </label>
+          <label class="have-only">
+            <span>Bathrooms</span>
+            <input name="bathroom_count" type="number" min="0" step="1" placeholder="2">
+          </label>
+          <label class="need-only">
+            <span>Roommates needed</span>
+            <input name="roommate_count" type="number" min="0" step="1" placeholder="1">
+          </label>
+          <label>
+            <span>Gender / roommate preference</span>
+            <select name="gender_preference">$gender_options</select>
+          </label>
+          <label class="need-only">
+            <span>Commute preference</span>
+            <input name="commute_preference" placeholder="Near RTD, 20 min to DTC">
+          </label>
+          <label>
+            <span>Lease term</span>
+            <select name="lease_term">$lease_term_options</select>
+          </label>
+          <label class="wide">
+            <span>Amenities / notes</span>
+            <input name="amenities" placeholder="Attached bath, parking, gym, near RTD, grocery nearby">
+          </label>
+          <div class="housing-checks have-only">
+            <label><input type="checkbox" name="private_bath"> Private bath</label>
+            <label><input type="checkbox" name="furnished"> Furnished</label>
+            <label><input type="checkbox" name="parking"> Parking</label>
+            <label><input type="checkbox" name="utilities_included"> Utilities included</label>
+          </div>
+          <label>
+            <span>Contact name</span>
+            <input name="contact_name" placeholder="Your name">
+          </label>
+          <label>
+            <span>Contact phone</span>
+            <input name="contact_phone" placeholder="Phone number">
+          </label>
+          <label>
+            <span>Contact email</span>
+            <input name="contact_email" type="email" placeholder="Email">
+          </label>
+          <label class="image-input"><span>Image 1</span><input name="image_1" type="file" accept="image/*"></label>
+          <label class="image-input"><span>Image 2</span><input name="image_2" type="file" accept="image/*"></label>
+          <label class="image-input"><span>Image 3</span><input name="image_3" type="file" accept="image/*"></label>
+        </div>
+
+        <div class="housing-submit-row">
+          <button class="select-button" type="submit">Post housing lead</button>
+          <p>Community leads are public. Share private contact details only when you are comfortable.</p>
+        </div>
+      </form>
+    </section>
+
+    <section id="housing-posts" class="housing-posts-section">
+      <div class="housing-section-heading">
+        <p class="eyebrow">Latest public posts</p>
+        <h2>Roommate matches and housing leads</h2>
+      </div>
+      <div class="housing-post-grid">
+        $posts_html
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const form = document.querySelector("[data-accommodation-form]");
+      if (!form) return;
+      const sync = () => {
+        const checked = form.querySelector('input[name="post_mode"]:checked');
+        form.classList.toggle("is-have", checked && checked.value === "HAVE_PLACE");
+      };
+      form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
+      sync();
+    })();
+  </script>
+</body>
+</html>

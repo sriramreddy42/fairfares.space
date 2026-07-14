@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260711imageDelivery1"
+ASSET_VERSION = "20260713accommodation1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -376,6 +376,58 @@ WORKSPACE_REACTIONS = (
     ("SAD", "😢", "Sad"),
     ("ANGRY", "😡", "Angry"),
 )
+ACCOMMODATION_MODES = (
+    ("NEED_PLACE", "I need a place"),
+    ("HAVE_PLACE", "I have a place"),
+)
+ACCOMMODATION_CATEGORIES = (
+    ("single_room", "Single Room"),
+    ("shared_room", "Shared Room"),
+    ("paying_guest", "Paying Guest"),
+    ("apartment", "Apartment"),
+    ("single_family_home", "Single Family Home"),
+    ("condo", "Condo"),
+    ("town_house", "Town House"),
+    ("basement_apartment", "Basement Apartment"),
+)
+ACCOMMODATION_SEARCH_NEEDS = (
+    ("", "Any housing lead"),
+    ("room_for_rent", "Room for rent"),
+    ("shared_room", "Shared room"),
+    ("apartment", "Apartment"),
+    ("short_stay", "Short stay"),
+    ("roommate_match", "Roommate match"),
+)
+ACCOMMODATION_RENT_PERIODS = (
+    ("MONTH", "Monthly"),
+    ("WEEK", "Weekly"),
+    ("NIGHT", "Nightly"),
+    ("FLEXIBLE", "Flexible"),
+)
+ACCOMMODATION_RADIUS_OPTIONS = (
+    ("3", "3 miles"),
+    ("5", "5 miles"),
+    ("10", "10 miles"),
+    ("15", "15 miles"),
+    ("25", "25 miles"),
+    ("50", "50 miles"),
+)
+ACCOMMODATION_GENDER_OPTIONS = (
+    ("open", "Open"),
+    ("female", "Female preferred"),
+    ("male", "Male preferred"),
+    ("couple", "Couple"),
+    ("family", "Family"),
+    ("no_preference", "No preference"),
+)
+ACCOMMODATION_LEASE_TERMS = (
+    ("short_stay", "Short stay"),
+    ("one_month", "One month"),
+    ("flexible", "Flexible"),
+    ("three_to_six", "3-6 months"),
+    ("six_to_twelve", "6-12 months"),
+    ("year_plus", "12+ months"),
+)
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
@@ -388,6 +440,7 @@ BASE_STYLESHEETS = [
 ]
 PAGE_STYLESHEETS = {
     "admin_wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
+    "accommodations.html": [f"/static/css/accommodations.css?v={ASSET_VERSION}"],
     "index.html": [f"/static/css/booking-form.min.css?v={ASSET_VERSION}"],
     "wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
 }
@@ -3215,6 +3268,67 @@ def init_db() -> None:
                 body TEXT NOT NULL,
                 icon TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS accommodation_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                user_id INTEGER,
+                post_mode TEXT NOT NULL CHECK(post_mode IN ('NEED_PLACE', 'HAVE_PLACE')),
+                category TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                city_area_zip TEXT NOT NULL DEFAULT '',
+                area_or_apartment TEXT NOT NULL DEFAULT '',
+                work_school_location TEXT NOT NULL DEFAULT '',
+                radius_miles INTEGER NOT NULL DEFAULT 10,
+                move_in_date TEXT NOT NULL DEFAULT '',
+                rent_min REAL NOT NULL DEFAULT 0,
+                rent_max REAL NOT NULL DEFAULT 0,
+                rent_period TEXT NOT NULL DEFAULT 'MONTH',
+                bedroom_count INTEGER NOT NULL DEFAULT 0,
+                bathroom_count INTEGER NOT NULL DEFAULT 0,
+                roommate_count INTEGER NOT NULL DEFAULT 0,
+                gender_preference TEXT NOT NULL DEFAULT '',
+                commute_preference TEXT NOT NULL DEFAULT '',
+                lease_term TEXT NOT NULL DEFAULT '',
+                amenities TEXT NOT NULL DEFAULT '',
+                private_bath INTEGER NOT NULL DEFAULT 0,
+                furnished INTEGER NOT NULL DEFAULT 0,
+                parking INTEGER NOT NULL DEFAULT 0,
+                utilities_included INTEGER NOT NULL DEFAULT 0,
+                contact_name TEXT NOT NULL DEFAULT '',
+                contact_phone TEXT NOT NULL DEFAULT '',
+                contact_email TEXT NOT NULL DEFAULT '',
+                visibility_status TEXT NOT NULL DEFAULT 'ACTIVE',
+                source_label TEXT NOT NULL DEFAULT 'fairfares_web',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS accommodation_post_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                image_url TEXT NOT NULL DEFAULT '',
+                drive_file_id TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(post_id) REFERENCES accommodation_posts(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS accommodation_interests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                user_id INTEGER,
+                contact_name TEXT NOT NULL DEFAULT '',
+                contact_email TEXT NOT NULL DEFAULT '',
+                contact_phone TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'NEW',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(post_id) REFERENCES accommodation_posts(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS cars (
@@ -9872,6 +9986,117 @@ def row_value(row: sqlite3.Row | dict[str, object] | None, key: str, default: st
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+def accommodation_public_id() -> str:
+    return f"FFH-{secrets.token_hex(4).upper()}"
+
+
+def normalize_accommodation_mode(value: str) -> str:
+    value = (value or "").strip().upper()
+    valid_modes = {mode for mode, _ in ACCOMMODATION_MODES}
+    return value if value in valid_modes else "NEED_PLACE"
+
+
+def option_label(options: tuple[tuple[str, str], ...], value: str, default: str = "") -> str:
+    value = (value or "").strip()
+    for option_value, label in options:
+        if option_value == value:
+            return label
+    return default
+
+
+def render_select_options(options: tuple[tuple[str, str], ...], selected: str = "") -> str:
+    return "\n".join(
+        f'<option value="{escape(value)}"{" selected" if value == selected else ""}>{escape(label)}</option>'
+        for value, label in options
+    )
+
+
+def int_from_form(form: dict[str, str], key: str, default: int = 0) -> int:
+    try:
+        return int((form.get(key) or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def float_from_form(form: dict[str, str], key: str, default: float = 0.0) -> float:
+    try:
+        value = (form.get(key) or "").strip().replace("$", "").replace(",", "")
+        return float(value) if value else default
+    except (TypeError, ValueError):
+        return default
+
+
+def checked_from_form(form: dict[str, str], key: str) -> int:
+    return 1 if (form.get(key) or "").strip().lower() in {"1", "on", "true", "yes"} else 0
+
+
+def format_accommodation_rent(row: sqlite3.Row | dict[str, object]) -> str:
+    rent_min = float(row_value(row, "rent_min") or 0)
+    rent_max = float(row_value(row, "rent_max") or 0)
+    period = option_label(ACCOMMODATION_RENT_PERIODS, row_value(row, "rent_period"), "monthly").lower()
+    if rent_min and rent_max and rent_min != rent_max:
+        return f"${rent_min:,.0f}-${rent_max:,.0f} / {period}"
+    if rent_max:
+        return f"Up to ${rent_max:,.0f} / {period}"
+    if rent_min:
+        return f"From ${rent_min:,.0f} / {period}"
+    return "Rent open"
+
+
+def accommodation_title_from_form(form: dict[str, str], mode: str, category_label: str) -> str:
+    area = (form.get("area_or_apartment") or form.get("city_area_zip") or form.get("work_school_location") or "").strip()
+    if mode == "HAVE_PLACE":
+        return f"{category_label} available{f' in {area}' if area else ''}"
+    target = area or "your preferred area"
+    return f"Looking for {category_label.lower()} near {target}"
+
+
+def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
+    if not posts:
+        return """
+        <div class="housing-empty">
+          <span>Housing board</span>
+          <h3>No live FairFares housing posts yet.</h3>
+          <p>Use the form above to post a room, shared rent, short stay, or roommate need.</p>
+        </div>
+        """
+    cards: list[str] = []
+    for post in posts:
+        mode = row_value(post, "post_mode")
+        mode_label = "Need a place" if mode == "NEED_PLACE" else "Place available"
+        category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
+        city = row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Area open"
+        move_in = row_value(post, "move_in_date") or "Flexible"
+        fit = option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(post, "gender_preference"), "Open fit")
+        amenities = [item.strip() for item in row_value(post, "amenities").split(",") if item.strip()]
+        chips = amenities[:3]
+        for key, label in (("private_bath", "Private bath"), ("furnished", "Furnished"), ("parking", "Parking")):
+            if row_value(post, key) == "1":
+                chips.append(label)
+        chips_html = "".join(f"<span>{escape(chip)}</span>" for chip in chips[:5])
+        cards.append(
+            f"""
+            <article class="housing-post-card">
+              <div class="housing-post-top">
+                <span class="housing-mode-badge">{escape(mode_label)}</span>
+                <span>{escape(category)}</span>
+              </div>
+              <h3>{escape(row_value(post, "title"))}</h3>
+              <p>{escape(row_value(post, "description"))}</p>
+              <dl>
+                <div><dt>Area</dt><dd>{escape(city)}</dd></div>
+                <div><dt>Move-in</dt><dd>{escape(move_in)}</dd></div>
+                <div><dt>Budget/Rent</dt><dd>{escape(format_accommodation_rent(post))}</dd></div>
+                <div><dt>Fit</dt><dd>{escape(fit)}</dd></div>
+              </dl>
+              <div class="housing-chips">{chips_html}</div>
+              <a class="housing-card-action" href="/accommodations#housing-posts">View details</a>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
 def optimized_static_image_url(url: str) -> str:
     if not url.startswith("/static/img/"):
         return url
@@ -11159,6 +11384,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
+            "/feed": self.accommodations_page,
+            "/accommodations": self.accommodations_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/activate": self.activate_account,
@@ -11233,6 +11460,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
             "/wiki/ask": self.ask_wiki_agent,
+            "/accommodations/post": self.create_accommodation_post,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
             "/referrals/claim": self.claim_referral_bonus,
@@ -11694,6 +11922,159 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
+
+    def accommodations_page(self) -> None:
+        user = self.current_user()
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        search_need = (params.get("need", [""])[0] or "").strip()
+        search_area = (params.get("area", [""])[0] or "").strip()
+        search_move_in = (params.get("move_in", [""])[0] or "").strip()
+        search_budget = (params.get("budget", [""])[0] or "").strip()
+        clauses = ["visibility_status = 'ACTIVE'"]
+        values: list[object] = []
+        if search_need == "room_for_rent":
+            clauses.append("category IN ('single_room', 'paying_guest', 'basement_apartment')")
+        elif search_need == "shared_room":
+            clauses.append("category = 'shared_room'")
+        elif search_need == "apartment":
+            clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home')")
+        elif search_need == "short_stay":
+            clauses.append("(lease_term = 'short_stay' OR description LIKE '%short%' OR description LIKE '%temporary%')")
+        elif search_need == "roommate_match":
+            clauses.append("(post_mode = 'NEED_PLACE' OR roommate_count > 0 OR category = 'shared_room')")
+        if search_area:
+            pattern = f"%{search_area}%"
+            clauses.append(
+                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
+            )
+            values.extend([pattern, pattern, pattern, pattern])
+        if search_move_in:
+            clauses.append("(move_in_date = '' OR move_in_date <= ?)")
+            values.append(search_move_in)
+        budget_value = float_from_form({"budget": search_budget}, "budget")
+        if budget_value:
+            clauses.append("(rent_max = 0 OR rent_max <= ? OR rent_min <= ?)")
+            values.extend([budget_value, budget_value])
+        where_sql = " AND ".join(clauses)
+        with db() as con:
+            posts = con.execute(
+                f"""
+                SELECT accommodation_posts.*,
+                       (SELECT image_url FROM accommodation_post_images
+                        WHERE accommodation_post_images.post_id = accommodation_posts.id
+                        ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
+                FROM accommodation_posts
+                WHERE {where_sql}
+                ORDER BY datetime(created_at) DESC
+                LIMIT 80
+                """,
+                values,
+            ).fetchall()
+        if "posted" in params:
+            status_message = '<p class="housing-status success">Housing lead posted.</p>'
+        elif "error" in params:
+            status_message = '<p class="housing-status error">Add a category and a short description.</p>'
+        else:
+            status_message = ""
+        body = render_template(
+            "accommodations.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            status_message=status_message,
+            search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
+            search_area=escape(search_area),
+            search_move_in=escape(search_move_in),
+            search_budget=escape(search_budget),
+            category_options=render_select_options(ACCOMMODATION_CATEGORIES),
+            radius_options=render_select_options(ACCOMMODATION_RADIUS_OPTIONS, "10"),
+            rent_period_options=render_select_options(ACCOMMODATION_RENT_PERIODS, "MONTH"),
+            gender_options=render_select_options(ACCOMMODATION_GENDER_OPTIONS, "open"),
+            lease_term_options=render_select_options(ACCOMMODATION_LEASE_TERMS, "flexible"),
+            posts_html=render_accommodation_posts(posts),
+        )
+        self.send_html(body)
+
+    def create_accommodation_post(self) -> None:
+        user = self.current_user()
+        form, files = self.read_form_with_files()
+        mode = normalize_accommodation_mode(form.get("post_mode", ""))
+        category = (form.get("category") or "").strip()
+        description = (form.get("description") or "").strip()
+        if not category or not description:
+            self.redirect("/accommodations?error=missing#post")
+            return
+        public_id = accommodation_public_id()
+        category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
+        title = accommodation_title_from_form(form, mode, category_label)
+        user_id = int(row_value(user, "id") or 0) if user else None
+        contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
+        contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
+        contact_phone = (form.get("contact_phone") or row_value(user, "phone")).strip()
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with db() as con:
+            cursor = con.execute(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description,
+                 city_area_zip, area_or_apartment, work_school_location, radius_miles,
+                 move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
+                 roommate_count, gender_preference, commute_preference, lease_term, amenities,
+                 private_bath, furnished, parking, utilities_included,
+                 contact_name, contact_phone, contact_email, visibility_status, source_label,
+                 created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?)
+                """,
+                (
+                    public_id,
+                    user_id,
+                    mode,
+                    category,
+                    title,
+                    description,
+                    (form.get("city_area_zip") or "").strip(),
+                    (form.get("area_or_apartment") or "").strip(),
+                    (form.get("work_school_location") or "").strip(),
+                    int_from_form(form, "radius_miles", 10 if mode == "NEED_PLACE" else 0),
+                    (form.get("move_in_date") or "").strip(),
+                    float_from_form(form, "rent_min"),
+                    float_from_form(form, "rent_max"),
+                    (form.get("rent_period") or "MONTH").strip(),
+                    int_from_form(form, "bedroom_count"),
+                    int_from_form(form, "bathroom_count"),
+                    int_from_form(form, "roommate_count"),
+                    (form.get("gender_preference") or "open").strip(),
+                    (form.get("commute_preference") or "").strip(),
+                    (form.get("lease_term") or "flexible").strip(),
+                    (form.get("amenities") or "").strip(),
+                    checked_from_form(form, "private_bath"),
+                    checked_from_form(form, "furnished"),
+                    checked_from_form(form, "parking"),
+                    checked_from_form(form, "utilities_included"),
+                    contact_name,
+                    contact_phone,
+                    contact_email,
+                    now,
+                    now,
+                ),
+            )
+            post_id = int(cursor.lastrowid)
+            for index in range(1, 4):
+                image_url = save_file_payload_locally(
+                    folder_name="accommodations",
+                    file_data=files.get(f"image_{index}"),
+                    fallback_name=f"{public_id.lower()}-{index}",
+                )
+                if not image_url:
+                    continue
+                con.execute(
+                    """
+                    INSERT INTO accommodation_post_images
+                    (post_id, image_url, drive_file_id, sort_order, created_at)
+                    VALUES (?, ?, '', ?, ?)
+                    """,
+                    (post_id, image_url, index, now),
+                )
+        self.redirect("/accommodations?posted=1#housing-posts")
 
     def blog_index_page(self) -> None:
         user = self.current_user()
