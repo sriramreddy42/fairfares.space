@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714accommodation-ui2"
+ASSET_VERSION = "20260714accommodation-location-display1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -10189,6 +10189,16 @@ def normalize_accommodation_place_label(value: str) -> str:
     return value
 
 
+def dedupe_repeated_location_label(value: str) -> str:
+    value = normalize_accommodation_place_label(value)
+    if not value:
+        return ""
+    half = len(value) // 2
+    if len(value) % 2 == 0 and value[:half].strip().lower() == value[half:].strip().lower():
+        return value[:half].strip()
+    return value
+
+
 def accommodation_metro_name_from_place(value: str) -> str:
     city, state = split_city_state(value)
     if city and state:
@@ -10407,11 +10417,11 @@ def refresh_accommodation_location_cache(query: str) -> str:
     if not query:
         return ""
     cached = cached_accommodation_metro_for_place(query)
-    if cached:
+    if cached and not re.fullmatch(r"\d{5}", query):
         return cached
     geocode = google_accommodation_geocode(query)
     if not geocode:
-        return ""
+        return cached
     address_components = geocode.get("address_components") or []
     city = ""
     state = ""
@@ -12972,15 +12982,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not query:
             self.send_json({"ok": False, "message": "Enter a city, zip code, or area."}, 400)
             return
-        metro_name = cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+        is_zip_query = bool(re.fullmatch(r"\d{5}", query))
+        metro_name = (
+            refresh_accommodation_location_cache(query) or cached_accommodation_metro_for_place(query)
+            if is_zip_query
+            else cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+        )
         context = accommodation_metro_context(metro_name, query)
         point = accommodation_location_point(query, metro_name, allow_refresh=False)
+        suggested_location = dedupe_repeated_location_label(context["suggested_location"])
+        display_location = dedupe_repeated_location_label(str(point.get("label") or ""))
+        point_source = str(point.get("source") or "")
+        if is_zip_query and point_source == "needs_geocode":
+            display_location = query
+        elif is_zip_query and (not display_location or display_location == query):
+            display_location = suggested_location
+        if not display_location:
+            display_location = suggested_location or query
+        if is_zip_query and display_location != query:
+            suggested_location = display_location
         self.send_json(
             {
                 "ok": True,
                 "metro": metro_name or "Denver Metro Area",
-                "selectedLocation": query,
-                "suggestedLocation": context["suggested_location"],
+                "selectedLocation": display_location,
+                "rawLocation": query,
+                "suggestedLocation": suggested_location,
                 "lat": float(point.get("lat") or 0),
                 "lng": float(point.get("lng") or 0),
                 "source": "cache" if cached_accommodation_metro_for_place(query) else "lookup",

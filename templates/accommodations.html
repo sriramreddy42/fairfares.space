@@ -394,7 +394,7 @@
             headers: { "Accept": "application/json" }
           });
           const payload = await response.json();
-          submitLocation(payload.selectedLocation || cleanQuery, payload.metro || "");
+          submitLocation(payload.selectedLocation || payload.suggestedLocation || cleanQuery, payload.metro || "");
         } catch (error) {
           submitLocation(cleanQuery, "");
         } finally {
