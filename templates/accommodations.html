@@ -49,49 +49,78 @@
         <p class="eyebrow">FairFares housing help</p>
         <h1>Find local rooms, shared rent, and short stays.</h1>
         <div class="housing-hero-actions">
-          <a class="select-button" href="#post">Post your need</a>
+          <button class="select-button" type="button" data-open-housing-post>Post your need</button>
           <a class="light-button" href="#housing-posts">Browse leads</a>
         </div>
       </div>
-      <form class="housing-search-card" action="/accommodations" method="get">
-        <h2>Search housing leads</h2>
+    </section>
+
+    <form class="housing-search-card housing-filter-card" action="/accommodations" method="get">
+      <div class="housing-filter-bar">
         <label>
-          <span>Need</span>
+          <span>Looking for</span>
           <select name="need">$search_need_options</select>
         </label>
         <label>
+          <span>Property type</span>
+          <select name="property_type">$search_property_type_options</select>
+        </label>
+        <label>
+          <span>Metro</span>
+          <select name="metro">$search_metro_options</select>
+        </label>
+        <label class="housing-area-pill">
           <span>Area</span>
           <input name="area" value="$search_area" placeholder="Denver Metro Area">
         </label>
         <label>
-          <span>Move-in</span>
-          <input name="move_in" value="$search_move_in" type="date">
+          <span>Gender</span>
+          <select name="gender">$search_gender_options</select>
         </label>
         <label>
-          <span>Budget</span>
-          <input name="budget" value="$search_budget" placeholder="Any price">
+          <span>Price</span>
+          <select name="price">$search_price_options</select>
         </label>
-        <button class="select-button" type="submit">Search accommodations</button>
-      </form>
-    </section>
+        <button class="select-button housing-search-submit" type="submit">Search</button>
+      </div>
+      <div class="housing-ad-search">
+        <input name="ad_id" value="$search_ad_id" placeholder="Search by Ad ID">
+      </div>
+    </form>
 
     <section class="housing-category-strip" aria-label="Accommodation categories">
-      <a href="#post"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></a>
-      <a href="#post"><span>🧳</span><strong>Shared Room</strong><small>Roommate shares</small></a>
-      <a href="#post"><span>🏠</span><strong>Paying Guest</strong><small>Short-stay leads</small></a>
-      <a href="#post"><span>🏢</span><strong>Apartment</strong><small>1B/2B places</small></a>
-      <a href="#post"><span>🏡</span><strong>Single Family Home</strong><small>Full-home rentals</small></a>
-      <a href="#post"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></a>
-      <a href="#post"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></a>
-      <a href="#post"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></a>
+      <button type="button" data-open-housing-post data-category="single_room"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></button>
+      <button type="button" data-open-housing-post data-category="shared_room"><span>🧳</span><strong>Shared Room</strong><small>Roommate shares</small></button>
+      <button type="button" data-open-housing-post data-category="paying_guest"><span>🏠</span><strong>Paying Guest</strong><small>Short-stay leads</small></button>
+      <button type="button" data-open-housing-post data-category="apartment"><span>🏢</span><strong>Apartment</strong><small>1B/2B places</small></button>
+      <button type="button" data-open-housing-post data-category="single_family_home"><span>🏡</span><strong>Single Family Home</strong><small>Full-home rentals</small></button>
+      <button type="button" data-open-housing-post data-category="condo"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></button>
+      <button type="button" data-open-housing-post data-category="town_house"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></button>
+      <button type="button" data-open-housing-post data-category="basement_apartment"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></button>
     </section>
 
-    <section id="post" class="housing-post-panel">
-      <div class="housing-panel-copy">
-        <p class="eyebrow">Post to FairFares housing</p>
-        <h2>Need a room or listing a place?</h2>
-        <p>Choose the right mode, add location details, and include enough context for local renters to understand the lead.</p>
+    <section id="housing-posts" class="housing-posts-section">
+      <div class="housing-section-heading">
+        <p class="eyebrow">Latest public posts</p>
+        <h2>Roommate matches and housing leads</h2>
       </div>
+      <div class="housing-post-grid">
+        $posts_html
+      </div>
+    </section>
+  </main>
+
+  <div class="housing-modal" data-housing-modal aria-hidden="$post_modal_hidden">
+    <div class="housing-modal-backdrop" data-close-housing-post></div>
+    <section id="post" class="housing-post-panel" role="dialog" aria-modal="true" aria-labelledby="housing-post-title">
+      <div class="housing-modal-head">
+        <div>
+          <p class="eyebrow">Post to FairFares housing</p>
+          <h2 id="housing-post-title">Need a room or listing a place?</h2>
+        </div>
+        <button class="housing-modal-close" type="button" data-close-housing-post aria-label="Close housing post form">×</button>
+      </div>
+      <p class="housing-modal-intro">Choose the right mode, add location details, and include enough context for local renters to understand the lead.</p>
 
       <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data">
         <div class="housing-mode-tabs" aria-label="Post type">
@@ -200,28 +229,44 @@
         </div>
       </form>
     </section>
-
-    <section id="housing-posts" class="housing-posts-section">
-      <div class="housing-section-heading">
-        <p class="eyebrow">Latest public posts</p>
-        <h2>Roommate matches and housing leads</h2>
-      </div>
-      <div class="housing-post-grid">
-        $posts_html
-      </div>
-    </section>
-  </main>
+  </div>
 
   <script>
     (() => {
       const form = document.querySelector("[data-accommodation-form]");
       if (!form) return;
+      const modal = document.querySelector("[data-housing-modal]");
+      const categorySelect = form.querySelector('select[name="category"]');
+      const firstField = form.querySelector('textarea, input, select, button');
+      const openModal = (category) => {
+        if (category && categorySelect) categorySelect.value = category;
+        if (modal) {
+          modal.classList.add("is-open");
+          modal.setAttribute("aria-hidden", "false");
+          document.body.classList.add("housing-modal-open");
+        }
+        window.setTimeout(() => firstField && firstField.focus(), 80);
+      };
+      const closeModal = () => {
+        if (!modal) return;
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("housing-modal-open");
+      };
       const sync = () => {
         const checked = form.querySelector('input[name="post_mode"]:checked');
         form.classList.toggle("is-have", checked && checked.value === "HAVE_PLACE");
       };
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
+      document.querySelectorAll("[data-open-housing-post]").forEach((button) => {
+        button.addEventListener("click", () => openModal(button.dataset.category));
+      });
+      document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeModal();
+      });
       sync();
+      if (modal && modal.getAttribute("aria-hidden") === "false") openModal();
     })();
   </script>
 </body>

@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260713accommodation1"
+ASSET_VERSION = "20260714accommodation-filters1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -391,12 +391,51 @@ ACCOMMODATION_CATEGORIES = (
     ("basement_apartment", "Basement Apartment"),
 )
 ACCOMMODATION_SEARCH_NEEDS = (
+    ("need_room_share", "Need a Room for Share"),
+    ("need_property_rent", "Need a Property for Rent"),
+    ("have_room_share", "Have a Room to Share"),
+    ("have_property_rent", "Have a Property to Rent"),
+    ("have_commercial_rent", "Have a Commercial Space to Rent"),
     ("", "Any housing lead"),
-    ("room_for_rent", "Room for rent"),
-    ("shared_room", "Shared room"),
+)
+ACCOMMODATION_PROPERTY_TYPE_FILTERS = (
+    ("", "All Property Types"),
+    ("single_room", "Single Room"),
+    ("shared_room", "Shared Room"),
+    ("paying_guest", "Paying Guest"),
     ("apartment", "Apartment"),
-    ("short_stay", "Short stay"),
-    ("roommate_match", "Roommate match"),
+    ("single_family_home", "Single Family Home"),
+    ("condo", "Condo"),
+    ("town_house", "Town House"),
+    ("basement_apartment", "Basement Apartment"),
+)
+ACCOMMODATION_METRO_FILTERS = (
+    ("", "Metros"),
+    ("Denver Metro Area", "Denver Metro Area"),
+    ("Denver", "Denver"),
+    ("Aurora", "Aurora"),
+    ("Lone Tree", "Lone Tree"),
+    ("Centennial", "Centennial"),
+    ("DTC", "DTC"),
+    ("Boulder", "Boulder"),
+    ("Colorado Springs", "Colorado Springs"),
+)
+ACCOMMODATION_PRICE_FILTERS = (
+    ("", "Price"),
+    ("700", "Up to $700"),
+    ("900", "Up to $900"),
+    ("1200", "Up to $1,200"),
+    ("1600", "Up to $1,600"),
+    ("2000", "Up to $2,000"),
+    ("2500", "Up to $2,500"),
+)
+ACCOMMODATION_GENDER_FILTERS = (
+    ("", "Select Gender"),
+    ("female", "Female preferred"),
+    ("male", "Male preferred"),
+    ("couple", "Couple"),
+    ("family", "Family"),
+    ("no_preference", "No preference"),
 )
 ACCOMMODATION_RENT_PERIODS = (
     ("MONTH", "Monthly"),
@@ -11927,22 +11966,54 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.current_user()
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        search_need = (params.get("need", [""])[0] or "").strip()
+        raw_search_need = (params.get("need", [""])[0] or "").strip()
+        search_need = raw_search_need
+        search_property_type = (params.get("property_type", [""])[0] or "").strip()
+        search_metro = (params.get("metro", [""])[0] or "").strip()
+        search_gender = (params.get("gender", [""])[0] or "").strip()
+        search_ad_id = (params.get("ad_id", [""])[0] or "").strip()
         search_area = (params.get("area", [""])[0] or "").strip()
         search_move_in = (params.get("move_in", [""])[0] or "").strip()
-        search_budget = (params.get("budget", [""])[0] or "").strip()
+        search_budget = (params.get("price", params.get("budget", [""]))[0] or "").strip()
         clauses = ["visibility_status = 'ACTIVE'"]
         values: list[object] = []
-        if search_need == "room_for_rent":
-            clauses.append("category IN ('single_room', 'paying_guest', 'basement_apartment')")
-        elif search_need == "shared_room":
-            clauses.append("category = 'shared_room'")
+        if search_need in {"room_for_rent", "shared_room", "roommate_match"}:
+            search_need = "need_room_share"
         elif search_need == "apartment":
-            clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home')")
+            search_need = "need_property_rent"
         elif search_need == "short_stay":
             clauses.append("(lease_term = 'short_stay' OR description LIKE '%short%' OR description LIKE '%temporary%')")
-        elif search_need == "roommate_match":
-            clauses.append("(post_mode = 'NEED_PLACE' OR roommate_count > 0 OR category = 'shared_room')")
+        if search_need == "need_room_share":
+            clauses.append("post_mode = 'NEED_PLACE'")
+            clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
+        elif search_need == "need_property_rent":
+            clauses.append("post_mode = 'NEED_PLACE'")
+            clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home', 'basement_apartment')")
+        elif search_need == "have_room_share":
+            clauses.append("post_mode = 'HAVE_PLACE'")
+            clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
+        elif search_need == "have_property_rent":
+            clauses.append("post_mode = 'HAVE_PLACE'")
+            clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home', 'basement_apartment')")
+        elif search_need == "have_commercial_rent":
+            clauses.append("post_mode = 'HAVE_PLACE'")
+            clauses.append("(title LIKE '%commercial%' OR description LIKE '%commercial%' OR amenities LIKE '%commercial%' OR title LIKE '%office%' OR description LIKE '%office%')")
+        if search_property_type:
+            clauses.append("category = ?")
+            values.append(search_property_type)
+        if search_metro:
+            metro_pattern = f"%{search_metro}%"
+            clauses.append(
+                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
+            )
+            values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
+        if search_gender:
+            clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
+            values.append(search_gender)
+        if search_ad_id:
+            ad_pattern = f"%{search_ad_id}%"
+            clauses.append("(public_id LIKE ? OR title LIKE ? OR description LIKE ?)")
+            values.extend([ad_pattern, ad_pattern, ad_pattern])
         if search_area:
             pattern = f"%{search_area}%"
             clauses.append(
@@ -11977,11 +12048,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             status_message = '<p class="housing-status error">Add a category and a short description.</p>'
         else:
             status_message = ""
+        post_modal_hidden = "false" if "error" in params else "true"
         body = render_template(
             "accommodations.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
             status_message=status_message,
-            search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
+            post_modal_hidden=post_modal_hidden,
+            search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need or "need_room_share"),
+            search_property_type_options=render_select_options(ACCOMMODATION_PROPERTY_TYPE_FILTERS, search_property_type),
+            search_metro_options=render_select_options(ACCOMMODATION_METRO_FILTERS, search_metro),
+            search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),
+            search_price_options=render_select_options(ACCOMMODATION_PRICE_FILTERS, search_budget),
+            search_ad_id=escape(search_ad_id),
             search_area=escape(search_area),
             search_move_in=escape(search_move_in),
             search_budget=escape(search_budget),
@@ -12001,7 +12079,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         category = (form.get("category") or "").strip()
         description = (form.get("description") or "").strip()
         if not category or not description:
-            self.redirect("/accommodations?error=missing#post")
+            self.redirect("/accommodations?error=missing")
             return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
