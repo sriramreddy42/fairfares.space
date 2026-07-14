@@ -69,7 +69,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-top-links {
   display: flex;
-  gap: clamp(10px, 1.1vw, 18px);
+  gap: clamp(12px, 1.25vw, 22px);
   align-items: center;
   overflow-x: auto;
   padding: 0 14px;
@@ -175,7 +175,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 .housing-subnav-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 7px;
   align-items: center;
   justify-content: flex-end;
   margin-left: auto;
@@ -184,21 +184,39 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-subnav-account-link {
   display: inline-flex;
-  min-height: 36px;
+  min-height: 42px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   border: 1px solid #d7e2f0;
-  border-radius: 999px;
+  border-radius: 9px;
   background: #fff;
   color: #071943;
   cursor: pointer;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   font-weight: 950;
-  padding: 0 13px;
+  padding: 0 10px;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.housing-action-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #071943;
+  font-size: 0.82rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.housing-feed-link {
+  min-width: 88px;
 }
 
 .housing-messenger-link {
@@ -207,10 +225,15 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   color: #fff;
 }
 
+.housing-messenger-link .housing-action-icon {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
 .housing-messenger-link b {
   display: inline-flex;
-  min-width: 22px;
-  height: 22px;
+  min-width: 20px;
+  height: 20px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
@@ -1335,6 +1358,10 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
     justify-content: flex-start;
     overflow-x: auto;
     padding: 0 10px 8px;
+  }
+
+  .housing-subnav-account-link {
+    flex: 0 0 auto;
   }
 
   .housing-location-trigger {
