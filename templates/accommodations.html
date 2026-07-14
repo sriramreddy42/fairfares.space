@@ -22,12 +22,14 @@
     <div class="housing-top-links">
       <a href="/">Book</a>
       <a href="/#results">Rentals</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="/deals">Deals</a>
       <a class="active" href="/accommodations">Housing</a>
       <a href="/explorer">Explorer</a>
-      <a href="/deals">Deals</a>
       <a href="/blog">Blog</a>
       <a href="/wiki">FAQ</a>
-      <a href="/contact">Contact</a>
+      <a href="/about">About Us</a>
+      <a href="/contact">Contact Us</a>
     </div>
     <div class="housing-top-actions">
       <button class="housing-device-button" type="button" aria-label="Mobile app">▯</button>
@@ -195,6 +197,7 @@
 
       <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data" hidden>
         <button class="housing-wizard-back" type="button" data-edit-wizard>‹ Edit setup</button>
+        <div class="housing-form-mode-summary" data-form-mode-summary></div>
         <div class="housing-mode-tabs" aria-label="Post type" hidden>
           <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
           <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
@@ -205,7 +208,7 @@
 
         <label class="wide">
           <span>Describe the lead</span>
-          <textarea name="description" required rows="4" placeholder="Example: Looking for a private room near DU from August, budget around 900 monthly, prefer female roommates."></textarea>
+          <textarea name="description" required rows="4" data-description-field placeholder="Example: Looking for a private room near DU from August, budget around 900 monthly, prefer female roommates."></textarea>
         </label>
 
         <div class="housing-form-grid">
@@ -607,6 +610,20 @@
       const wizard = document.querySelector("[data-post-wizard]");
       const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
+      const modeSummary = form.querySelector("[data-form-mode-summary]");
+      const descriptionField = form.querySelector("[data-description-field]");
+      const modeCopy = {
+        NEED_PLACE: {
+          title: "Finding a place",
+          body: "Share the room, apartment, area, budget, and move-in timing you need.",
+          placeholder: "Example: Looking for a private room near DU from August, budget around 900 monthly, prefer female roommates."
+        },
+        HAVE_PLACE: {
+          title: "Listing a place",
+          body: "Share the room or property you have, availability, rent, amenities, and who it fits.",
+          placeholder: "Example: Private room available in Littleton from August, furnished, parking included, 1050 monthly."
+        }
+      };
       const setMode = (mode) => {
         modeInputs.forEach((input) => {
           input.checked = input.value === mode;
@@ -641,7 +658,22 @@
           modal.setAttribute("aria-hidden", "false");
           document.body.classList.add("housing-modal-open");
         }
-        showWizard(category || mode ? "summary" : "intent");
+        if (mode && !category) {
+          showWizard("category");
+        } else if (category || mode) {
+          showWizard("summary");
+        } else {
+          showWizard("intent");
+        }
+      };
+      const openDirectForm = (mode) => {
+        setMode(mode || "NEED_PLACE");
+        if (modal) {
+          modal.classList.add("is-open");
+          modal.setAttribute("aria-hidden", "false");
+          document.body.classList.add("housing-modal-open");
+        }
+        showForm();
       };
       const closeModal = () => {
         if (!modal) return;
@@ -651,11 +683,23 @@
       };
       const sync = () => {
         const checked = form.querySelector('input[name="post_mode"]:checked');
-        form.classList.toggle("is-have", checked && checked.value === "HAVE_PLACE");
+        const mode = checked ? checked.value : "NEED_PLACE";
+        const copy = modeCopy[mode] || modeCopy.NEED_PLACE;
+        form.classList.toggle("is-have", mode === "HAVE_PLACE");
+        if (modeSummary) {
+          modeSummary.innerHTML = `<b>${copy.title}</b><span>${copy.body}</span>`;
+        }
+        if (descriptionField) descriptionField.placeholder = copy.placeholder;
       };
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
       document.querySelectorAll("[data-open-housing-post]").forEach((button) => {
-        button.addEventListener("click", () => openModal({ category: button.dataset.category, mode: button.dataset.mode }));
+        button.addEventListener("click", () => {
+          if (button.dataset.mode && !button.dataset.category) {
+            openDirectForm(button.dataset.mode);
+            return;
+          }
+          openModal({ category: button.dataset.category, mode: button.dataset.mode });
+        });
       });
       document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
       document.querySelectorAll("[data-wizard-intent]").forEach((button) => {
