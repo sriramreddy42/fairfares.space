@@ -15,16 +15,28 @@
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
 <body class="public-header-compact accommodations-page">
-  <header class="top-brand compact-top">
-    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
-    <div class="top-benefits">
-      <div class="benefit-pill"><span class="circle-icon">home</span><strong>Housing</strong><span>Rooms & stays</span></div>
-      <div class="benefit-pill"><span class="circle-icon">map</span><strong>Local leads</strong><span>Area based</span></div>
-      <div class="benefit-pill"><span class="circle-icon">safe</span><strong>Privacy</strong><span>Share when ready</span></div>
+  <header class="housing-topbar">
+    <a class="housing-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    <button class="housing-top-location" type="button" data-open-location><span>⌖</span>$selected_location</button>
+    <button class="housing-top-search" type="button" aria-label="Search housing">⌕</button>
+    <div class="housing-top-links">
+      <a href="/deals">Events</a>
+      <a href="/accommodations?need=need_room_share">Roommates</a>
+      <a href="/accommodations?need=need_property_rent">Rentals</a>
+      <a href="/wiki">IT Training</a>
+      <a href="/contact">Jobs</a>
+      <a href="/about">Care</a>
+      <a href="/contact">Local Services</a>
+      <button type="button">More⌄</button>
+    </div>
+    <div class="housing-top-actions">
+      <button class="housing-device-button" type="button" aria-label="Mobile app">▯</button>
+      <button class="housing-post-button" type="button" data-open-housing-post>✎ Post your Need</button>
+      <button class="menu-button housing-menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
     </div>
   </header>
 
-  <nav class="main-nav">
+  <nav class="main-nav housing-main-nav">
     <div class="nav-links">
       <a href="/">Book</a>
       <a href="/manage-booking">Manage Booking</a>
@@ -43,6 +55,21 @@
     </div>
   </nav>
 
+  <div class="housing-market-nav">
+    <div class="housing-location-trigger">
+      <button type="button" data-open-location aria-label="Change housing location">
+        <span>⌖</span>
+        <strong>$selected_location</strong>
+      </button>
+    </div>
+    <div class="housing-subnav-scroll" aria-label="Housing categories">
+      $housing_subnav_links
+      <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE">I need a place to live</button>
+      <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE">I have a place available</button>
+      <button class="housing-subnav-link" type="button">More⌄</button>
+    </div>
+  </div>
+
   <main class="housing-shell">
     <section class="housing-hero">
       <div>
@@ -50,7 +77,6 @@
         <h1>Find local rooms, shared rent, and short stays.</h1>
         <div class="housing-hero-actions">
           <button class="select-button" type="button" data-open-housing-post>Post your need</button>
-          <a class="light-button" href="#housing-posts">Browse leads</a>
         </div>
       </div>
     </section>
@@ -89,14 +115,14 @@
     </form>
 
     <section class="housing-category-strip" aria-label="Accommodation categories">
-      <button type="button" data-open-housing-post data-category="single_room"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></button>
-      <button type="button" data-open-housing-post data-category="shared_room"><span>🧳</span><strong>Shared Room</strong><small>Roommate shares</small></button>
-      <button type="button" data-open-housing-post data-category="paying_guest"><span>🏠</span><strong>Paying Guest</strong><small>Short-stay leads</small></button>
-      <button type="button" data-open-housing-post data-category="apartment"><span>🏢</span><strong>Apartment</strong><small>1B/2B places</small></button>
-      <button type="button" data-open-housing-post data-category="single_family_home"><span>🏡</span><strong>Single Family Home</strong><small>Full-home rentals</small></button>
-      <button type="button" data-open-housing-post data-category="condo"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></button>
-      <button type="button" data-open-housing-post data-category="town_house"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></button>
-      <button type="button" data-open-housing-post data-category="basement_apartment"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></button>
+      <button type="button" data-filter-category="single_room"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></button>
+      <button type="button" data-filter-category="shared_room"><span>🧳</span><strong>Shared Room</strong><small>Roommate shares</small></button>
+      <button type="button" data-filter-category="paying_guest"><span>🏠</span><strong>Paying Guest</strong><small>Short-stay leads</small></button>
+      <button type="button" data-filter-category="apartment"><span>🏢</span><strong>Apartment</strong><small>1B/2B places</small></button>
+      <button type="button" data-filter-category="single_family_home"><span>🏡</span><strong>Single Family Home</strong><small>Full-home rentals</small></button>
+      <button type="button" data-filter-category="condo"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></button>
+      <button type="button" data-filter-category="town_house"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></button>
+      <button type="button" data-filter-category="basement_apartment"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></button>
     </section>
 
     <section id="housing-posts" class="housing-posts-section">
@@ -120,13 +146,71 @@
         </div>
         <button class="housing-modal-close" type="button" data-close-housing-post aria-label="Close housing post form">×</button>
       </div>
-      <p class="housing-modal-intro">Choose the right mode, add location details, and include enough context for local renters to understand the lead.</p>
 
-      <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data">
+      <div class="housing-post-wizard" data-post-wizard>
+        <div class="housing-wizard-step is-active" data-wizard-step="intent">
+          <button class="housing-wizard-back" type="button" data-close-housing-post>‹ Back</button>
+          <h3>I would like to</h3>
+          <div class="housing-wizard-icon">🚪</div>
+          <div class="housing-intent-actions">
+            <button type="button" data-wizard-intent="HAVE_PLACE">List my room</button>
+            <button type="button" data-wizard-intent="NEED_PLACE">Find a room</button>
+          </div>
+        </div>
+
+        <div class="housing-wizard-step" data-wizard-step="category">
+          <button class="housing-wizard-back" type="button" data-wizard-back="intent">‹ Back</button>
+          <h3>Select property type</h3>
+          <div class="housing-wizard-cards">
+            <button type="button" data-wizard-category="shared_room"><span>🧳</span><strong>Shared room</strong></button>
+            <button type="button" data-wizard-category="single_room"><span>🚪</span><strong>Single room</strong></button>
+            <button type="button" data-wizard-category="paying_guest"><span>🏠</span><strong>Paying Guest</strong></button>
+            <button type="button" data-wizard-category="apartment"><span>🏢</span><strong>Apartment</strong></button>
+          </div>
+        </div>
+
+        <div class="housing-wizard-step" data-wizard-step="summary">
+          <button class="housing-wizard-back" type="button" data-wizard-back="category">‹ Back</button>
+          <h3>Confirm your ad setup</h3>
+          <div class="housing-setup-columns">
+            <div>
+              <h4>What is your need?</h4>
+              <button type="button" data-need-preset="HAVE_PLACE">I have a room to rent</button>
+              <button type="button" data-need-preset="NEED_PLACE">I need a room for rent</button>
+              <button type="button" data-need-preset="HAVE_PLACE" data-category-preset="apartment">I have a property to rent</button>
+              <button type="button" data-need-preset="NEED_PLACE" data-category-preset="apartment">I need a property for rent</button>
+            </div>
+            <div>
+              <h4>Property Type</h4>
+              <button type="button" data-category-preset="shared_room">Shared Room</button>
+              <button type="button" data-category-preset="single_room">Single Room</button>
+              <button type="button" data-category-preset="paying_guest">Paying Guest</button>
+              <button type="button" data-category-preset="apartment">Apartment</button>
+            </div>
+            <div>
+              <h4>About You</h4>
+              <button type="button" data-about-preset="owner">I am the property owner</button>
+              <button type="button" data-about-preset="tenant">I am an existing tenant</button>
+              <button type="button" data-about-preset="agent">I am an agent</button>
+            </div>
+            <label>
+              <h4>Location</h4>
+              <input data-wizard-location value="$selected_location" placeholder="Denver, CO">
+            </label>
+          </div>
+          <button class="select-button housing-wizard-continue" type="button" data-wizard-continue>Continue</button>
+        </div>
+      </div>
+
+      <p class="housing-modal-intro" data-post-form-intro hidden>Choose the right mode, add location details, and include enough context for local renters to understand the lead.</p>
+
+      <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data" hidden>
+        <button class="housing-wizard-back" type="button" data-edit-wizard>‹ Edit setup</button>
         <div class="housing-mode-tabs" aria-label="Post type">
           <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
           <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
         </div>
+        <input type="hidden" name="about_you" value="">
 
         $status_message
 
@@ -231,21 +315,132 @@
     </section>
   </div>
 
+  <div class="housing-location-modal" data-location-modal aria-hidden="true">
+    <div class="housing-location-backdrop" data-close-location></div>
+    <section class="housing-location-panel" role="dialog" aria-modal="true" aria-labelledby="housing-location-title">
+      <div class="housing-location-head">
+        <h2 id="housing-location-title">Explore your location</h2>
+        <button type="button" data-close-location aria-label="Close location chooser">×</button>
+      </div>
+      <div class="housing-location-search">
+        <select aria-label="Country"><option>USA</option><option>Canada</option><option>India</option></select>
+        <input data-location-search placeholder="Enter a Zip Code or City">
+        <button type="button" data-use-location>⌖</button>
+      </div>
+      <div class="housing-location-current">
+        <span>⌖ Selected Location: <strong>$selected_location</strong></span>
+        <span>➤ Suggested Location: <strong>$suggested_location</strong></span>
+        <button type="button" data-precise-location>Use Precise Location</button>
+      </div>
+      <h3>Suggested for you</h3>
+      <div class="housing-place-list">$suggested_place_chips</div>
+      <h3>Nearest Zip Codes</h3>
+      <div class="housing-place-list">$zip_chips</div>
+      <h3>Popular Locations</h3>
+      <div class="housing-place-list">$top_city_chips</div>
+      <h3>Choose your location</h3>
+      <div class="housing-location-columns">
+        <div><h4>Metro</h4><div class="housing-location-list">$metro_list</div></div>
+        <div><h4>Top Cities</h4><div class="housing-location-list">$top_city_rows</div></div>
+      </div>
+      <div class="housing-location-foot">
+        <span>🇺🇸 Stay on FairFares US</span>
+        <span>🇨🇦 Canada Housing</span>
+        <span>🇮🇳 India Housing</span>
+        <button type="button">View top cities ›</button>
+      </div>
+    </section>
+  </div>
+
   <script>
     (() => {
       const form = document.querySelector("[data-accommodation-form]");
+      const searchForm = document.querySelector(".housing-filter-card");
+      const locationModal = document.querySelector("[data-location-modal]");
+      const openLocation = () => {
+        if (!locationModal) return;
+        locationModal.classList.add("is-open");
+        locationModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("housing-modal-open");
+      };
+      const closeLocation = () => {
+        if (!locationModal) return;
+        locationModal.classList.remove("is-open");
+        locationModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("housing-modal-open");
+      };
+      const submitLocation = (place, metro) => {
+        if (!searchForm) return;
+        const areaInput = searchForm.querySelector('input[name="area"]');
+        const metroSelect = searchForm.querySelector('select[name="metro"]');
+        if (areaInput && place) areaInput.value = place;
+        if (metroSelect && metro) metroSelect.value = metro;
+        if (metroSelect && !metro && place && place.includes("CO")) metroSelect.value = "Denver Metro Area";
+        closeLocation();
+        searchForm.submit();
+      };
+      document.querySelectorAll("[data-open-location]").forEach((button) => button.addEventListener("click", openLocation));
+      document.querySelectorAll("[data-close-location]").forEach((button) => button.addEventListener("click", closeLocation));
+      document.querySelectorAll("[data-place]").forEach((button) => {
+        button.addEventListener("click", () => submitLocation(button.dataset.place || "", ""));
+      });
+      document.querySelectorAll("[data-metro]").forEach((button) => {
+        button.addEventListener("click", () => submitLocation("", button.dataset.metro || ""));
+      });
+      document.querySelectorAll("[data-filter-category]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          if (!searchForm) return;
+          const category = button.dataset.filterCategory || "";
+          const propertySelect = searchForm.querySelector('select[name="property_type"]');
+          if (propertySelect) propertySelect.value = category;
+          searchForm.submit();
+        });
+      });
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");
       const categorySelect = form.querySelector('select[name="category"]');
+      const modeInputs = form.querySelectorAll('input[name="post_mode"]');
+      const cityInput = form.querySelector('input[name="city_area_zip"]');
+      const aboutInput = form.querySelector('input[name="about_you"]');
+      const wizard = document.querySelector("[data-post-wizard]");
+      const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
-      const openModal = (category) => {
+      const setMode = (mode) => {
+        modeInputs.forEach((input) => {
+          input.checked = input.value === mode;
+        });
+        sync();
+      };
+      const setWizardStep = (step) => {
+        document.querySelectorAll("[data-wizard-step]").forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.wizardStep === step);
+        });
+      };
+      const showWizard = (step = "intent") => {
+        if (wizard) wizard.hidden = false;
+        form.hidden = true;
+        if (formIntro) formIntro.hidden = true;
+        setWizardStep(step);
+      };
+      const showForm = () => {
+        if (wizard) wizard.hidden = true;
+        form.hidden = false;
+        if (formIntro) formIntro.hidden = false;
+        window.setTimeout(() => firstField && firstField.focus(), 80);
+      };
+      const openModal = (options = {}) => {
+        if (typeof options === "string") options = { category: options };
+        const category = options.category || "";
+        const mode = options.mode || "";
         if (category && categorySelect) categorySelect.value = category;
+        if (mode) setMode(mode);
         if (modal) {
           modal.classList.add("is-open");
           modal.setAttribute("aria-hidden", "false");
           document.body.classList.add("housing-modal-open");
         }
-        window.setTimeout(() => firstField && firstField.focus(), 80);
+        showWizard(category || mode ? "summary" : "intent");
       };
       const closeModal = () => {
         if (!modal) return;
@@ -259,14 +454,58 @@
       };
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
       document.querySelectorAll("[data-open-housing-post]").forEach((button) => {
-        button.addEventListener("click", () => openModal(button.dataset.category));
+        button.addEventListener("click", () => openModal({ category: button.dataset.category, mode: button.dataset.mode }));
       });
       document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
+      document.querySelectorAll("[data-wizard-intent]").forEach((button) => {
+        button.addEventListener("click", () => {
+          setMode(button.dataset.wizardIntent || "NEED_PLACE");
+          setWizardStep("category");
+        });
+      });
+      document.querySelectorAll("[data-wizard-category]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (categorySelect) categorySelect.value = button.dataset.wizardCategory || "";
+          setWizardStep("summary");
+        });
+      });
+      document.querySelectorAll("[data-wizard-back]").forEach((button) => {
+        button.addEventListener("click", () => setWizardStep(button.dataset.wizardBack || "intent"));
+      });
+      document.querySelectorAll("[data-need-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          setMode(button.dataset.needPreset || "NEED_PLACE");
+          if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
+        });
+      });
+      document.querySelectorAll("[data-category-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (categorySelect) categorySelect.value = button.dataset.categoryPreset || "";
+        });
+      });
+      document.querySelectorAll("[data-about-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (aboutInput) aboutInput.value = button.dataset.aboutPreset || "";
+        });
+      });
+      document.querySelector("[data-wizard-continue]")?.addEventListener("click", () => {
+        const wizardLocation = document.querySelector("[data-wizard-location]");
+        if (cityInput && wizardLocation && wizardLocation.value) cityInput.value = wizardLocation.value;
+        showForm();
+      });
+      document.querySelector("[data-edit-wizard]")?.addEventListener("click", () => showWizard("summary"));
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") closeModal();
+        if (event.key === "Escape") {
+          closeModal();
+          closeLocation();
+        }
       });
       sync();
-      if (modal && modal.getAttribute("aria-hidden") === "false") openModal();
+      if (modal && modal.getAttribute("aria-hidden") === "false") {
+        modal.classList.add("is-open");
+        document.body.classList.add("housing-modal-open");
+        showForm();
+      }
     })();
   </script>
 </body>

@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714accommodation-filters1"
+ASSET_VERSION = "20260714accommodation-wizard1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -398,6 +398,49 @@ ACCOMMODATION_SEARCH_NEEDS = (
     ("have_commercial_rent", "Have a Commercial Space to Rent"),
     ("", "Any housing lead"),
 )
+ACCOMMODATION_SUBNAV_LINKS = (
+    ("", "Near me", ""),
+    ("", "Rooms", "single_room"),
+    ("", "Single Rooms", "single_room"),
+    ("", "Shared Rooms", "shared_room"),
+    ("", "Paying Guest", "paying_guest"),
+    ("", "Apartments", "apartment"),
+    ("", "Condos", "condo"),
+    ("", "Town Houses", "town_house"),
+)
+ACCOMMODATION_METRO_GROUPS = {
+    "Denver Metro Area": {
+        "suggested": (
+            "Denver, CO",
+            "Wheat Ridge, CO",
+            "Commerce City, CO",
+            "Westminster, CO",
+            "Englewood, CO",
+            "Aurora, CO",
+            "Dupont, CO",
+            "Littleton, CO",
+            "Henderson, CO",
+            "Golden, CO",
+            "Thornton, CO",
+            "Centennial, CO",
+            "Lone Tree, CO",
+            "DTC, CO",
+            "Lakewood, CO",
+            "Broomfield, CO",
+            "Parker, CO",
+            "Boulder, CO",
+        ),
+        "zips": ("80219", "80231", "80229", "80221", "80211", "80206", "80124", "80111", "80014"),
+    },
+    "Bay Area": {
+        "suggested": ("San Jose, CA", "San Francisco, CA", "Fremont, CA", "Sunnyvale, CA", "Santa Clara, CA"),
+        "zips": ("95112", "94105", "94538", "94086", "95050"),
+    },
+    "Austin Metro Area": {
+        "suggested": ("Austin, TX", "Round Rock, TX", "Cedar Park, TX", "Pflugerville, TX", "Leander, TX"),
+        "zips": ("78701", "78758", "78664", "78613", "78641"),
+    },
+}
 ACCOMMODATION_PROPERTY_TYPE_FILTERS = (
     ("", "All Property Types"),
     ("single_room", "Single Room"),
@@ -411,12 +454,22 @@ ACCOMMODATION_PROPERTY_TYPE_FILTERS = (
 )
 ACCOMMODATION_METRO_FILTERS = (
     ("", "Metros"),
+    ("Anchorage Metro Area", "Anchorage Metro Area"),
+    ("Atlanta Metro Area", "Atlanta Metro Area"),
+    ("Austin Metro Area", "Austin Metro Area"),
+    ("Baltimore Metro Area", "Baltimore Metro Area"),
+    ("Bay Area", "Bay Area"),
+    ("Birmingham Metro Area", "Birmingham Metro Area"),
+    ("Boston Metro Area", "Boston Metro Area"),
+    ("Calgary Metro Area", "Calgary Metro Area"),
+    ("Chicago Metro Area", "Chicago Metro Area"),
+    ("Dallas Metro Area", "Dallas Metro Area"),
     ("Denver Metro Area", "Denver Metro Area"),
-    ("Denver", "Denver"),
-    ("Aurora", "Aurora"),
-    ("Lone Tree", "Lone Tree"),
-    ("Centennial", "Centennial"),
-    ("DTC", "DTC"),
+    ("Houston Metro Area", "Houston Metro Area"),
+    ("Los Angeles Metro Area", "Los Angeles Metro Area"),
+    ("New Jersey", "New Jersey"),
+    ("New York Metro Area", "New York Metro Area"),
+    ("Seattle Metro Area", "Seattle Metro Area"),
     ("Boulder", "Boulder"),
     ("Colorado Springs", "Colorado Springs"),
 )
@@ -10050,6 +10103,76 @@ def render_select_options(options: tuple[tuple[str, str], ...], selected: str = 
     )
 
 
+def render_accommodation_subnav_links(selected_category: str = "") -> str:
+    links: list[str] = []
+    for href, label, category in ACCOMMODATION_SUBNAV_LINKS:
+        if category:
+            url = f"/accommodations?property_type={urllib.parse.quote(category)}#housing-posts"
+            active = " active" if category == selected_category else ""
+            links.append(f'<a class="housing-subnav-link{active}" href="{url}" data-filter-category="{escape(category)}">{escape(label)}</a>')
+        else:
+            links.append(f'<button class="housing-subnav-link" type="button" data-open-location>{escape(label)}</button>')
+    return "\n".join(links)
+
+
+def render_accommodation_place_chips(values: tuple[str, ...], selected_area: str = "") -> str:
+    return "\n".join(
+        f'<button type="button" class="housing-place-chip{" active" if value == selected_area else ""}" data-place="{escape(value)}">{escape(value)}</button>'
+        for value in values
+    )
+
+
+def render_accommodation_metro_list(selected_metro: str = "") -> str:
+    return "\n".join(
+        f'<button type="button" class="housing-location-row{" active" if value == selected_metro else ""}" data-metro="{escape(value)}">{escape(label)}</button>'
+        for value, label in ACCOMMODATION_METRO_FILTERS
+        if value
+    )
+
+
+def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
+    metro_name = search_metro if search_metro in ACCOMMODATION_METRO_GROUPS else "Denver Metro Area"
+    metro_data = ACCOMMODATION_METRO_GROUPS.get(metro_name, ACCOMMODATION_METRO_GROUPS["Denver Metro Area"])
+    suggested = tuple(metro_data.get("suggested", ()))
+    zips = tuple(metro_data.get("zips", ()))
+    return {
+        "selected_location": search_area or "Denver, CO",
+        "suggested_location": suggested[0] if suggested else "Denver, CO",
+        "suggested_place_chips": render_accommodation_place_chips(suggested, search_area),
+        "zip_chips": render_accommodation_place_chips(zips, search_area),
+        "metro_list": render_accommodation_metro_list(metro_name),
+        "top_city_chips": render_accommodation_place_chips(
+            (
+                "Austin",
+                "Bay Area",
+                "Chicago",
+                "Dallas",
+                "Los Angeles",
+                "New Jersey",
+                "New York",
+                "Philadelphia",
+                "Seattle",
+                "Toronto",
+                "Washington",
+            ),
+            search_area,
+        ),
+        "top_city_rows": render_accommodation_place_chips(
+            (
+                "San Jose, CA, US",
+                "San Francisco, CA, US",
+                "Chicago, IL, US",
+                "New York, NY, US",
+                "Edison, NJ, US",
+                "Los Angeles, CA, US",
+                "Houston, TX, US",
+                "San Diego, CA, US",
+            ),
+            search_area,
+        ),
+    }
+
+
 def int_from_form(form: dict[str, str], key: str, default: int = 0) -> int:
     try:
         return int((form.get(key) or "").strip())
@@ -12001,12 +12124,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if search_property_type:
             clauses.append("category = ?")
             values.append(search_property_type)
+        metro_context = accommodation_metro_context(search_metro, search_area)
         if search_metro:
-            metro_pattern = f"%{search_metro}%"
-            clauses.append(
+            metro_data = ACCOMMODATION_METRO_GROUPS.get(search_metro, {})
+            metro_terms = [search_metro]
+            metro_terms.extend(str(place).split(",")[0].strip() for place in metro_data.get("suggested", ()))
+            metro_terms.extend(str(zip_code).strip() for zip_code in metro_data.get("zips", ()))
+            metro_terms = [term for term in dict.fromkeys(metro_terms) if term]
+            metro_sql = " OR ".join(
                 "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
+                for _ in metro_terms
             )
-            values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
+            clauses.append(
+                f"({metro_sql})"
+            )
+            for term in metro_terms:
+                metro_pattern = f"%{term}%"
+                values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
         if search_gender:
             clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
             values.append(search_gender)
@@ -12059,6 +12193,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             search_metro_options=render_select_options(ACCOMMODATION_METRO_FILTERS, search_metro),
             search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),
             search_price_options=render_select_options(ACCOMMODATION_PRICE_FILTERS, search_budget),
+            housing_subnav_links=render_accommodation_subnav_links(search_property_type),
+            selected_location=escape(metro_context["selected_location"]),
+            suggested_location=escape(metro_context["suggested_location"]),
+            suggested_place_chips=metro_context["suggested_place_chips"],
+            zip_chips=metro_context["zip_chips"],
+            metro_list=metro_context["metro_list"],
+            top_city_chips=metro_context["top_city_chips"],
+            top_city_rows=metro_context["top_city_rows"],
             search_ad_id=escape(search_ad_id),
             search_area=escape(search_area),
             search_move_in=escape(search_move_in),
