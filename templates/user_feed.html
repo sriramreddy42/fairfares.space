@@ -31,7 +31,7 @@
       <div>
         <p class="eyebrow">FairFares member feed</p>
         <h1>Welcome back, $member_first_name.</h1>
-        <p>Messages, accommodation posts, car bookings, and support updates stay together here.</p>
+        <p>Local housing needs, available places, and community thoughts near $feed_area_label.</p>
       </div>
       <div class="user-feed-quick-actions">
         <a href="/accommodations">Post or browse housing</a>
@@ -39,12 +39,12 @@
       </div>
     </section>
 
-    <section class="member-workspace user-feed-workspace" aria-label="FairFares member workspace">
+    <section class="member-workspace user-feed-workspace" aria-label="FairFares member feed">
       <aside class="member-workspace-rail" aria-label="Profile and shortcuts">
         <article class="member-profile-card">
           <div class="member-profile-avatar">$member_avatar</div>
           <b>$member_full_name</b>
-          <small>FairFares member workspace</small>
+          <small>FairFares member feed</small>
           <div class="member-profile-meta">
             <span>$member_email</span>
             <span>$member_phone</span>
@@ -64,17 +64,29 @@
 
       <section class="member-workspace-feed" aria-label="Member activity feed">
         <div class="member-workspace-scope">
-          <span>Member feed</span>
-          <a href="/dashboard">Dashboard tools</a>
+          <span>Local feed · $feed_area_label</span>
+          <a href="/accommodations">Housing leads</a>
         </div>
-        <article class="member-compose-card">
-          <button type="button" data-chat-open>
+        <form class="user-feed-compose-card" action="/feed/post" method="post" enctype="multipart/form-data">
+          <div class="user-feed-compose-main">
             <span class="member-compose-avatar">$member_avatar</span>
-            <span>Check Fair Messenger, $member_first_name</span>
-          </button>
-          <a href="/accommodations">Post need</a>
-        </article>
-        $member_workspace_feed
+            <label>
+              <span>Share with nearby members</span>
+              <textarea name="body" rows="4" maxlength="1400" placeholder="Post a thought, local tip, roommate note, or housing update near $feed_area_label"></textarea>
+            </label>
+          </div>
+          <div class="user-feed-compose-tools">
+            <label><span>Area</span><input name="area_label" value="$feed_area_label" placeholder="City, area, or ZIP"></label>
+            <label class="user-feed-photo-input"><span>Photo 1</span><input type="file" name="feed_image_1" accept="image/*"></label>
+            <label class="user-feed-photo-input"><span>Photo 2</span><input type="file" name="feed_image_2" accept="image/*"></label>
+            <label class="user-feed-photo-input"><span>Photo 3</span><input type="file" name="feed_image_3" accept="image/*"></label>
+            <label class="user-feed-photo-input"><span>Photo 4</span><input type="file" name="feed_image_4" accept="image/*"></label>
+            <button type="submit">Post to feed</button>
+          </div>
+        </form>
+        <div class="user-feed-card-list">
+          $user_feed_cards
+        </div>
       </section>
 
       <aside class="member-workspace-messenger" aria-label="Fair Messenger">
