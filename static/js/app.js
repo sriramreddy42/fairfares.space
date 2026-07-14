@@ -4137,6 +4137,21 @@ function openManageTabFromAgentQuery() {
 
 openManageTabFromAgentQuery();
 
+function initMemberAccommodationSearch() {
+  document.querySelectorAll("[data-member-accommodation-search]").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      const params = new URLSearchParams({ q: query });
+      window.location.href = `/accommodations?${params.toString()}`;
+    });
+  });
+}
+
+initMemberAccommodationSearch();
+
 function initPublicHeaderCompactMode() {
   const topBrand = document.querySelector(".top-brand");
   const mainNav = document.querySelector(".main-nav");

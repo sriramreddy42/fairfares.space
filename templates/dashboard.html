@@ -56,6 +56,74 @@
     </aside>
 
     <section class="manage-content">
+      <section class="member-workspace" aria-label="FairFares member workspace">
+        <aside class="member-workspace-rail" aria-label="Profile and shortcuts">
+          <article class="member-profile-card">
+            <div class="member-profile-avatar">$member_avatar</div>
+            <b>$member_full_name</b>
+            <small>FairFares member workspace</small>
+            <div class="member-profile-meta">
+              <span>$member_email</span>
+              <span>$member_phone</span>
+            </div>
+            <div class="member-profile-stats">
+              <a href="#upcoming"><b>$member_booking_count</b><span>bookings</span></a>
+              <a href="/dashboard?tab=housing#housing"><b>$member_listing_count</b><span>listings</span></a>
+              <a href="/dashboard?tab=housing#housing"><b>$member_request_count</b><span>requests</span></a>
+              <button type="button" data-chat-open><b>$member_chat_count</b><span>messages</span></button>
+            </div>
+          </article>
+          <a href="/accommodations"><i aria-hidden="true">&#127968;</i><b>Rooms & Rentals</b><span>Post or browse short and long accommodations</span></a>
+          <a href="/dashboard#upcoming"><i aria-hidden="true">&#128663;</i><b>Booked Cars</b><span>Status, modify, cancel, and payment</span></a>
+          <a href="/dashboard?tab=housing#housing"><i aria-hidden="true">&#128204;</i><b>My Posts</b><span>Listings, requests, expiry, and responses</span></a>
+          <a href="/dashboard#support" data-manage-tab="support"><i aria-hidden="true">&#127903;</i><b>Support</b><span>Tickets, questions, and follow-up</span></a>
+        </aside>
+
+        <section class="member-workspace-feed" aria-label="Member activity feed">
+          <div class="member-workspace-scope">
+            <span>Member feed</span>
+            <a href="/dashboard">Dashboard wide</a>
+          </div>
+          <article class="member-compose-card">
+            <button type="button" data-chat-open>
+              <span class="member-compose-avatar">$member_avatar</span>
+              <span>Check Fair Messenger, $member_first_name</span>
+            </button>
+            <a href="/accommodations">Post need</a>
+          </article>
+          $member_workspace_feed
+        </section>
+
+        <aside class="member-workspace-messenger" aria-label="Fair Messenger">
+          <div class="member-messenger-head">
+            <div>
+              <b>Fair Messenger</b>
+              <span>Accommodation messages, alerts, and replies</span>
+            </div>
+            <button type="button" data-chat-open aria-label="Open Fair Messenger">&#128172;</button>
+          </div>
+          <div class="member-messenger-tabs">
+            <button class="active" type="button" data-chat-open><i aria-hidden="true">&#128172;</i> Inbox</button>
+            <a href="/dashboard#upcoming"><i aria-hidden="true">&#128663;</i> Bookings</a>
+            <a href="/accommodations"><i aria-hidden="true">&#127968;</i> Housing</a>
+            <a href="/dashboard#support" data-manage-tab="support"><i aria-hidden="true">&#127903;</i> Support</a>
+          </div>
+          <label class="member-accommodation-search">
+            <span>Search accommodations</span>
+            <input type="search" placeholder="Short stay, room, apartment, city, or zip" data-member-accommodation-search>
+          </label>
+          <div class="member-chat-preview">
+            $member_workspace_chat
+          </div>
+          <div class="member-link-stack">
+            <a href="/accommodations?type=single-room"><b>Single rooms</b><span>Private room leads</span></a>
+            <a href="/accommodations?type=shared-room"><b>Shared rooms</b><span>Roommate shares</span></a>
+            <a href="/accommodations?type=apartment"><b>Apartments</b><span>Long-stay rentals</span></a>
+            <a href="/accommodations?type=paying-guest"><b>Paying guest</b><span>Short-stay options</span></a>
+          </div>
+        </aside>
+      </section>
+
       <div class="page-heading">
         <div><h1>$dashboard_booking_title</h1><p>$dashboard_booking_body</p></div>
         <button type="button" data-manage-tab="details" data-detail-jump="saved">View All Bookings</button>

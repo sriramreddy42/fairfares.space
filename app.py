@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714housing-chat1"
+ASSET_VERSION = "20260714member-workspace1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -11288,6 +11288,129 @@ def render_dashboard_housing_rows(posts: list[sqlite3.Row]) -> str:
     return "\n".join(rows)
 
 
+def render_member_workspace_feed(
+    bookings: list[sqlite3.Row],
+    housing_posts: list[sqlite3.Row],
+    chats: list[dict[str, object]],
+    support_tickets: list[sqlite3.Row],
+) -> str:
+    cards: list[str] = []
+    if chats:
+        for conversation in chats[:2]:
+            unread = int(conversation.get("unread") or 0)
+            cards.append(
+                f"""
+                <article class="member-feed-card">
+                  <div class="member-feed-head">
+                    <span class="member-feed-avatar">FM</span>
+                    <div><b>{escape(str(conversation.get("otherName") or "FairFares member"))}</b><span>Fair Messenger</span></div>
+                    {'<strong>' + escape(str(unread)) + ' new</strong>' if unread else '<small>Read</small>'}
+                  </div>
+                  <h3>{escape(str(conversation.get("subject") or "Accommodation chat"))}</h3>
+                  <p>{escape(str(conversation.get("lastMessage") or "No messages yet"))}</p>
+                  <div class="member-feed-actions">
+                    <button type="button" data-chat-open data-conversation-id="{escape(str(conversation.get("id") or ""))}">Open chat</button>
+                  </div>
+                </article>
+                """
+            )
+    if housing_posts:
+        for post in housing_posts[:2]:
+            mode_label = "Request made" if row_value(post, "post_mode") == "NEED_PLACE" else "Listing posted"
+            cards.append(
+                f"""
+                <article class="member-feed-card">
+                  <div class="member-feed-head">
+                    <span class="member-feed-avatar is-green">H</span>
+                    <div><b>{escape(mode_label)}</b><span>{escape(accommodation_expiry_label(post))}</span></div>
+                    <small>#{escape(row_value(post, "public_id"))}</small>
+                  </div>
+                  <h3>{escape(row_value(post, "title") or option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing"))}</h3>
+                  <p>{escape((row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Location open"))} · {escape(format_accommodation_rent(post))}</p>
+                  <div class="member-feed-actions">
+                    <a href="/accommodations?ad_id={escape(row_value(post, 'public_id'))}">View post</a>
+                    <a href="/dashboard?tab=housing#housing">Dashboard</a>
+                  </div>
+                </article>
+                """
+            )
+    if bookings:
+        for booking in bookings[:2]:
+            cards.append(
+                f"""
+                <article class="member-feed-card">
+                  <div class="member-feed-head">
+                    <span class="member-feed-avatar is-red">CAR</span>
+                    <div><b>Car rental booking</b><span>{escape(booking_status_label(row_value(booking, "booking_status"), row_value(booking, "payment_status")))}</span></div>
+                    <small>{escape(public_booking_id_label(booking))}</small>
+                  </div>
+                  <h3>{escape(row_value(booking, "car_name") or "Rental car")}</h3>
+                  <p>{escape(row_value(booking, "pickup_location") or "Pickup")} · {escape(row_value(booking, "pickup_date") or "Date pending")}</p>
+                  <div class="member-feed-actions">
+                    <a href="/dashboard#upcoming">Manage booking</a>
+                  </div>
+                </article>
+                """
+            )
+    if support_tickets:
+        for ticket in support_tickets[:1]:
+            cards.append(
+                f"""
+                <article class="member-feed-card">
+                  <div class="member-feed-head">
+                    <span class="member-feed-avatar is-yellow">?</span>
+                    <div><b>Support request</b><span>{escape(row_value(ticket, "status") or "Open")}</span></div>
+                  </div>
+                  <h3>{escape(row_value(ticket, "topic") or "Support ticket")}</h3>
+                  <p>{escape(row_value(ticket, "message") or "Support details are saved in your dashboard.")}</p>
+                  <div class="member-feed-actions">
+                    <a href="/dashboard#support" data-manage-tab="support">Open support</a>
+                  </div>
+                </article>
+                """
+            )
+    if not cards:
+        return """
+        <article class="member-feed-card">
+          <div class="member-feed-head">
+            <span class="member-feed-avatar">FF</span>
+            <div><b>Welcome to FairFares</b><span>Your activity will appear here</span></div>
+          </div>
+          <h3>Start with a car, room, or roommate search.</h3>
+          <p>Bookings, accommodation posts, requests, and messages will show up in this feed.</p>
+          <div class="member-feed-actions">
+            <a href="/">Book a car</a>
+            <a href="/accommodations">Open housing</a>
+          </div>
+        </article>
+        """
+    return "\n".join(cards[:5])
+
+
+def render_member_workspace_chat_preview(conversations: list[dict[str, object]]) -> str:
+    if not conversations:
+        return """
+        <article class="member-chat-empty">
+          <b>No conversations yet</b>
+          <span>Message a housing lead or reply to someone interested in your post.</span>
+        </article>
+        """
+    rows: list[str] = []
+    for conversation in conversations[:4]:
+        unread = int(conversation.get("unread") or 0)
+        rows.append(
+            f"""
+            <button class="member-chat-row" type="button" data-chat-open data-conversation-id="{escape(str(conversation.get("id") or ""))}">
+              <span>{escape(str(conversation.get("otherName") or "FairFares member"))}</span>
+              <b>{escape(str(conversation.get("subject") or "Accommodation chat"))}</b>
+              <small>{escape(str(conversation.get("lastMessage") or "No messages yet"))}</small>
+              {'<strong>' + escape(str(unread)) + '</strong>' if unread else ''}
+            </button>
+            """
+        )
+    return "\n".join(rows)
+
+
 def optimized_static_image_url(url: str) -> str:
     if not url.startswith("/static/img/"):
         return url
@@ -19310,6 +19433,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if row_value(row, "visibility_status") == "ACTIVE" and accommodation_days_left(row) > 0
         )
         housing_expired_count = len(housing_posts) - housing_active_count
+        active_booking_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        total_listing_count = len(housing_posts)
+        support_open_count = sum(1 for row in support_tickets if str(row_value(row, "status") or "").upper() not in {"CLOSED", "RESOLVED"})
         is_first_time_user = bool(user and not user_bookings)
         is_guest_checkout = bool(not user and booking and selected_car_id)
         show_start_experience = bool(user and is_first_time_user and not selected_car_id)
@@ -19812,6 +19938,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if user
                 else signed_out_auth
             ),
+            member_avatar=user_avatar_span(user),
+            member_first_name=escape((user["name"].split()[0] if user and user["name"] else "there")),
+            member_full_name=escape(user["name"] if user else "FairFares Member"),
+            member_email=escape(user["email"] if user else "Sign in to save email"),
+            member_phone=escape((user["phone"] if user else "") or "Add phone number"),
+            member_booking_count=escape(str(active_booking_count)),
+            member_listing_count=escape(str(total_listing_count)),
+            member_request_count=escape(str(housing_active_count + support_open_count)),
+            member_chat_count=escape(str(chat_unread_count)),
+            member_workspace_feed=render_member_workspace_feed(user_bookings, housing_posts, chat_conversations, support_tickets),
+            member_workspace_chat=render_member_workspace_chat_preview(chat_conversations),
             booking_id=escape(booking_id_label),
             dashboard_booking_title=escape(dashboard_booking_title),
             dashboard_booking_body=escape(dashboard_booking_body),
