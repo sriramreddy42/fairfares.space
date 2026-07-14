@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714feed-nav-actions1"
+ASSET_VERSION = "20260714user-feed-page1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -11411,6 +11411,42 @@ def render_member_workspace_chat_preview(conversations: list[dict[str, object]])
     return "\n".join(rows)
 
 
+def member_workspace_context(user: sqlite3.Row) -> dict[str, object]:
+    user_bookings = get_bookings_for_user(int(user["id"]))
+    support_tickets = get_support_tickets_for_user(int(user["id"]))
+    housing_posts = get_accommodation_posts_for_user(int(user["id"]))
+    chat_conversations = get_chat_conversations_for_user(int(user["id"]))
+    chat_unread_count = sum(int(conversation.get("unread") or 0) for conversation in chat_conversations)
+    housing_active_count = sum(
+        1
+        for row in housing_posts
+        if row_value(row, "visibility_status") == "ACTIVE" and accommodation_days_left(row) > 0
+    )
+    support_open_count = sum(
+        1
+        for row in support_tickets
+        if str(row_value(row, "status") or "").upper() not in {"CLOSED", "RESOLVED"}
+    )
+    active_booking_count = sum(
+        1
+        for row in user_bookings
+        if row["booking_status"] not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}
+    )
+    return {
+        "member_avatar": user_avatar_span(user),
+        "member_first_name": escape(user["name"].split()[0] if user["name"] else "there"),
+        "member_full_name": escape(user["name"] or "FairFares Member"),
+        "member_email": escape(user["email"] or "Add email"),
+        "member_phone": escape(row_value(user, "phone") or "Add phone number"),
+        "member_booking_count": escape(str(active_booking_count)),
+        "member_listing_count": escape(str(len(housing_posts))),
+        "member_request_count": escape(str(housing_active_count + support_open_count)),
+        "member_chat_count": escape(str(chat_unread_count)),
+        "member_workspace_feed": render_member_workspace_feed(user_bookings, housing_posts, chat_conversations, support_tickets),
+        "member_workspace_chat": render_member_workspace_chat_preview(chat_conversations),
+    }
+
+
 def optimized_static_image_url(url: str) -> str:
     if not url.startswith("/static/img/"):
         return url
@@ -12707,7 +12743,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
-            "/feed": self.dashboard,
+            "/feed": self.user_feed_page,
             "/accommodations": self.accommodations_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
@@ -13049,7 +13085,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
             user = con.execute("SELECT is_admin, role FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_response(303)
-        self.send_header("Location", "/admin" if is_staff_user(user) else "/dashboard")
+        self.send_header("Location", "/admin" if is_staff_user(user) else "/feed")
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
         self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
@@ -15814,6 +15850,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/admin")
             return
         self.render_manage_booking(user)
+
+    def user_feed_page(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.redirect("/login")
+            return
+        if is_staff_user(user):
+            self.redirect("/admin")
+            return
+        body = render_template(
+            "user_feed.html",
+            **member_workspace_context(user),
+        )
+        self.send_html(body)
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.current_user()
