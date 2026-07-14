@@ -23,7 +23,6 @@
       <a href="/">Book</a>
       <a href="/#results">Rentals</a>
       <a href="/manage-booking">Manage Booking</a>
-      <a href="/dashboard">Dashboard</a>
       <a href="/deals">Deals</a>
       <a class="active" href="/accommodations">Housing</a>
       <a href="/explorer">Explorer</a>
@@ -44,6 +43,13 @@
       $housing_subnav_links
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE">I need a place to live</button>
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE">I have a place available</button>
+    </div>
+    <div class="housing-subnav-actions" aria-label="Housing account actions">
+      <a class="housing-subnav-account-link" href="/feed">Dashboard</a>
+      <button class="housing-subnav-account-link housing-messenger-link" type="button" data-chat-open>
+        <span>Fair Messenger</span>
+        <b class="$chat_unread_badge_class">$chat_unread_count</b>
+      </button>
     </div>
   </div>
 

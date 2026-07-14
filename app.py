@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714member-workspace1"
+ASSET_VERSION = "20260714housing-subnav-feed1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -12707,7 +12707,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
-            "/feed": self.accommodations_page,
+            "/feed": self.dashboard,
             "/accommodations": self.accommodations_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
@@ -13340,6 +13340,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchall()
         map_payload = accommodation_post_map_payload(posts, search_area or metro_context["selected_location"], search_metro)
         map_payload_json = json.dumps(map_payload).replace("</", "<\\/")
+        chat_unread_count = 0
+        if user:
+            chat_unread_count = sum(
+                int(conversation.get("unread") or 0)
+                for conversation in get_chat_conversations_for_user(int(row_value(user, "id") or 0))
+            )
         if "posted" in params:
             status_message = '<p class="housing-status success">Housing lead posted.</p>'
         elif "error" in params:
@@ -13358,6 +13364,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),
             search_price_options=render_select_options(ACCOMMODATION_PRICE_FILTERS, search_budget),
             housing_subnav_links=render_accommodation_subnav_links(search_property_type),
+            chat_unread_count=escape(str(chat_unread_count)),
+            chat_unread_badge_class="" if chat_unread_count else "is-empty",
             selected_location=escape(metro_context["selected_location"]),
             suggested_location=escape(metro_context["suggested_location"]),
             suggested_place_chips=metro_context["suggested_place_chips"],
