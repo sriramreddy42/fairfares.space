@@ -400,7 +400,6 @@ ACCOMMODATION_SEARCH_NEEDS = (
 )
 ACCOMMODATION_SUBNAV_LINKS = (
     ("", "Near me", ""),
-    ("", "Rooms", "single_room"),
     ("", "Single Rooms", "single_room"),
     ("", "Shared Rooms", "shared_room"),
     ("", "Paying Guest", "paying_guest"),

@@ -20,12 +20,14 @@
     <button class="housing-top-location" type="button" data-open-location><span>⌖</span>$selected_location</button>
     <button class="housing-top-search" type="button" aria-label="Search housing">⌕</button>
     <div class="housing-top-links">
-      <a href="/accommodations">Near me</a>
-      <a href="/accommodations?need=need_room_share">Roommates</a>
-      <a href="/accommodations?need=need_property_rent">Rentals</a>
-      <a href="/accommodations?property_type=paying_guest">Paying Guest</a>
-      <a href="/accommodations?property_type=apartment">Apartments</a>
-      <a href="/accommodations?property_type=condo">Condos</a>
+      <a href="/">Book</a>
+      <a href="/#results">Rentals</a>
+      <a class="active" href="/accommodations">Housing</a>
+      <a href="/explorer">Explorer</a>
+      <a href="/deals">Deals</a>
+      <a href="/blog">Blog</a>
+      <a href="/wiki">FAQ</a>
+      <a href="/contact">Contact</a>
     </div>
     <div class="housing-top-actions">
       <button class="housing-device-button" type="button" aria-label="Mobile app">▯</button>
@@ -35,12 +37,6 @@
   </header>
 
   <div class="housing-market-nav">
-    <div class="housing-location-trigger">
-      <button type="button" data-open-location aria-label="Change housing location">
-        <span>⌖</span>
-        <strong>$selected_location</strong>
-      </button>
-    </div>
     <div class="housing-subnav-scroll" aria-label="Housing categories">
       $housing_subnav_links
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE">I need a place to live</button>
@@ -199,7 +195,7 @@
 
       <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data" hidden>
         <button class="housing-wizard-back" type="button" data-edit-wizard>‹ Edit setup</button>
-        <div class="housing-mode-tabs" aria-label="Post type">
+        <div class="housing-mode-tabs" aria-label="Post type" hidden>
           <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
           <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
         </div>
@@ -351,6 +347,7 @@
     (() => {
       const form = document.querySelector("[data-accommodation-form]");
       const searchForm = document.querySelector(".housing-filter-card");
+      const topSearchButton = document.querySelector(".housing-top-search");
       const locationModal = document.querySelector("[data-location-modal]");
       const openLocation = () => {
         if (!locationModal) return;
@@ -378,6 +375,12 @@
         closeLocation();
         searchForm.submit();
       };
+      topSearchButton?.addEventListener("click", () => {
+        if (!searchForm) return;
+        const areaInput = searchForm.querySelector('input[name="area"]');
+        searchForm.scrollIntoView({ behavior: "smooth", block: "center" });
+        window.setTimeout(() => areaInput?.focus(), 260);
+      });
       const lookupLocation = async (query) => {
         const cleanQuery = (query || "").trim();
         if (!cleanQuery) return;

@@ -83,6 +83,11 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   white-space: nowrap;
 }
 
+.housing-top-links a.active,
+.housing-top-links a:hover {
+  color: #e9001d;
+}
+
 .housing-top-links button {
   border: 0;
   padding: 0;
@@ -119,9 +124,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   position: sticky;
   top: 0;
   z-index: 20;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  display: block;
   border-top: 1px solid #d7e2f0;
   border-bottom: 1px solid #d7e2f0;
   background: rgba(255, 255, 255, 0.98);
@@ -232,6 +235,10 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   align-items: center;
 }
 
+.housing-mode-tabs[hidden] {
+  display: none;
+}
+
 .select-button,
 .light-button,
 .housing-card-action {
@@ -276,7 +283,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 .housing-filter-card {
   position: relative;
   z-index: 2;
-  margin: 16px clamp(14px, 4vw, 42px) 18px;
+  margin: 16px 0 18px;
   overflow: hidden;
 }
 
@@ -402,9 +409,11 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-category-strip button {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   min-height: 112px;
   align-content: center;
+  align-items: center;
   text-align: left;
   padding: 14px;
   border: 1px solid #d7e8f2;
@@ -426,8 +435,11 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-category-strip span {
   display: inline-flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
   width: fit-content;
-  transform-origin: left center;
+  transform-origin: center;
   font-size: 1.45rem;
   transition: transform 0.16s ease;
 }
@@ -438,10 +450,14 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 }
 
 .housing-category-strip strong {
+  grid-column: 1;
+  grid-row: 1;
   font-size: 1.05rem;
 }
 
 .housing-category-strip small {
+  grid-column: 1;
+  grid-row: 2;
   color: #5b6473;
   font-weight: 800;
 }
