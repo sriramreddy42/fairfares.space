@@ -756,12 +756,13 @@
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0 0 16px;
 }
 .housing-dashboard-summary span,
 .housing-dashboard-empty,
-.housing-dashboard-row {
+.housing-dashboard-row,
+.chat-inbox-row {
   background: #f7f9fc;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -779,6 +780,47 @@
 .housing-dashboard-list {
   display: grid;
   gap: 10px;
+}
+.housing-dashboard-subhead {
+  color: var(--navy);
+  font-size: 0.95rem;
+  margin: 18px 0 10px;
+  text-transform: uppercase;
+}
+.chat-inbox-list {
+  display: grid;
+  gap: 10px;
+}
+.chat-inbox-row {
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+  text-align: left;
+}
+.manage-card .chat-inbox-row {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  color: inherit;
+  justify-items: start;
+  min-height: 0;
+  padding: 14px;
+}
+.manage-card .chat-inbox-row:hover,
+.manage-card .chat-inbox-row:focus-visible {
+  background: #eef4fb;
+  color: inherit;
+}
+.chat-inbox-row span,
+.chat-inbox-row small {
+  color: var(--muted);
+  font-weight: 800;
+}
+.chat-inbox-row b {
+  color: var(--navy);
+}
+.chat-inbox-row strong {
+  color: var(--red);
 }
 .housing-dashboard-row {
   align-items: center;
@@ -814,6 +856,136 @@
 .housing-dashboard-empty {
   display: grid;
   gap: 10px;
+}
+.fairfares-chat-drawer {
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  transition: opacity 0.18s ease;
+  z-index: 20000;
+}
+.fairfares-chat-drawer::before {
+  background: rgba(4, 12, 32, 0.42);
+  content: "";
+  inset: 0;
+  position: absolute;
+  z-index: 0;
+}
+.fairfares-chat-drawer.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.fairfares-chat-panel {
+  background: #fff;
+  border-left: 1px solid var(--line);
+  box-shadow: -20px 0 50px rgba(5, 12, 32, 0.22);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  height: 100%;
+  margin-left: auto;
+  max-width: min(420px, 100vw);
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+.fairfares-chat-panel header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 18px;
+}
+.fairfares-chat-panel header span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.fairfares-chat-panel h2 {
+  color: var(--navy);
+  font-size: 1.1rem;
+  margin: 2px 0 0;
+}
+.fairfares-chat-panel header button {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--navy);
+  font-weight: 900;
+  height: 40px;
+  width: 40px;
+}
+.fairfares-chat-messages {
+  align-content: end;
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  padding: 18px;
+}
+.fairfares-chat-messages article {
+  background: #f2f5fa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  justify-self: start;
+  max-width: 86%;
+  padding: 10px 12px;
+}
+.fairfares-chat-messages article.mine {
+  background: #061b4e;
+  color: #fff;
+  justify-self: end;
+}
+.fairfares-chat-messages span,
+.fairfares-chat-messages small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.fairfares-chat-messages article.mine span,
+.fairfares-chat-messages article.mine small {
+  color: rgba(255,255,255,0.75);
+}
+.fairfares-chat-messages p {
+  margin: 0;
+}
+.chat-empty {
+  color: var(--muted);
+  font-weight: 800;
+  text-align: center;
+}
+.fairfares-chat-form {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px;
+}
+.fairfares-chat-form input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+.fairfares-chat-form button {
+  background: var(--red);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  padding: 0 18px;
+}
+.fairfares-chat-panel > p {
+  color: var(--muted);
+  font-weight: 800;
+  margin: 0;
+  min-height: 24px;
+  padding: 0 14px 12px;
+}
+.fairfares-chat-panel > p.is-error {
+  color: var(--red);
 }
 .details-panel .manage-grid {
   grid-template-columns: 1fr;

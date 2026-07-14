@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714housing-dashboard-expiry1"
+ASSET_VERSION = "20260714housing-chat1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -2212,6 +2212,57 @@ def send_student_verified_email(email: str, name: str, code: str, origin: str = 
     return outbox_file, delivery_status
 
 
+def send_accommodation_message_email(
+    email: str,
+    recipient_name: str,
+    sender_name: str,
+    post_title: str,
+    message_text: str,
+    conversation_url: str,
+) -> tuple[Path, str]:
+    load_env_file()
+    OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    subject = f"New accommodation message from {sender_name}"
+    preview = message_text[:240]
+    text_body = (
+        f"Hi {recipient_name or 'there'},\n\n"
+        f"{sender_name} sent you a message about {post_title or 'your accommodation request'}:\n\n"
+        f"{preview}\n\n"
+        f"Reply in FairFares: {conversation_url}\n"
+    )
+    html_body = (
+        f"<p>Hi {html.escape(recipient_name or 'there')},</p>"
+        f"<p><b>{html.escape(sender_name)}</b> sent you a message about <b>{html.escape(post_title or 'your accommodation request')}</b>.</p>"
+        f"<blockquote>{html.escape(preview)}</blockquote>"
+        f'<p><a href="{html.escape(conversation_url)}">Open FairFares chat</a></p>'
+    )
+    outbox_file = OUTBOX_DIR / f"accommodation-message-{secrets.token_hex(8)}.txt"
+    delivery_status = send_with_resend(email, subject, text_body, html_body)
+    smtp_host = os.environ.get("SMTP_HOST")
+    if delivery_status == "not configured" and smtp_host:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = os.environ.get("SMTP_FROM", "hello@fairfares.com")
+        message["To"] = email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            if os.environ.get("SMTP_TLS", "1") != "0":
+                smtp.starttls()
+            smtp_user = os.environ.get("SMTP_USER")
+            smtp_password = os.environ.get("SMTP_PASSWORD")
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        delivery_status = "sent through SMTP"
+    outbox_file.write_text(
+        f"To: {email}\nSubject: {subject}\nDelivery: {delivery_status}\n\n{text_body}",
+        encoding="utf-8",
+    )
+    return outbox_file, delivery_status
+
+
 def send_booking_confirmation_email(email: str, name: str, booking: sqlite3.Row, origin: str) -> tuple[Path, str]:
     load_env_file()
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
@@ -3448,6 +3499,50 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                accommodation_post_id INTEGER,
+                booking_id INTEGER,
+                subject TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_message_at TEXT,
+                FOREIGN KEY(accommodation_post_id) REFERENCES accommodation_posts(id),
+                FOREIGN KEY(booking_id) REFERENCES bookings(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                last_read_message_id INTEGER NOT NULL DEFAULT 0,
+                joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                muted_at TEXT,
+                blocked_at TEXT,
+                reported_at TEXT,
+                UNIQUE(conversation_id, user_id),
+                FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
+                message_type TEXT NOT NULL DEFAULT 'TEXT',
+                message_text TEXT NOT NULL DEFAULT '',
+                attachment_url TEXT NOT NULL DEFAULT '',
+                client_message_id TEXT NOT NULL DEFAULT '',
+                reply_to_message_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                edited_at TEXT,
+                deleted_at TEXT,
+                FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
+                FOREIGN KEY(sender_id) REFERENCES users(id),
+                FOREIGN KEY(reply_to_message_id) REFERENCES chat_messages(id)
+            );
+
             CREATE TABLE IF NOT EXISTS accommodation_metros (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 metro_key TEXT NOT NULL UNIQUE,
@@ -4205,6 +4300,23 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
+        ensure_column(con, "chat_conversations", "accommodation_post_id", "accommodation_post_id INTEGER")
+        ensure_column(con, "chat_conversations", "booking_id", "booking_id INTEGER")
+        ensure_column(con, "chat_conversations", "subject", "subject TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_conversations", "last_message_at", "last_message_at TEXT")
+        ensure_column(con, "chat_participants", "last_read_message_id", "last_read_message_id INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "chat_participants", "muted_at", "muted_at TEXT")
+        ensure_column(con, "chat_participants", "blocked_at", "blocked_at TEXT")
+        ensure_column(con, "chat_participants", "reported_at", "reported_at TEXT")
+        ensure_column(con, "chat_messages", "message_type", "message_type TEXT NOT NULL DEFAULT 'TEXT'")
+        ensure_column(con, "chat_messages", "attachment_url", "attachment_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "client_message_id", "client_message_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "reply_to_message_id", "reply_to_message_id INTEGER")
+        ensure_column(con, "chat_messages", "edited_at", "edited_at TEXT")
+        ensure_column(con, "chat_messages", "deleted_at", "deleted_at TEXT")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute(
             """
             UPDATE accommodation_posts
@@ -10862,6 +10974,7 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
             if row_value(post, key) == "1":
                 chips.append(label)
         chips_html = "".join(f"<span>{escape(chip)}</span>" for chip in chips[:5])
+        public_id = row_value(post, "public_id")
         cards.append(
             f"""
             <article class="housing-post-card">
@@ -10878,11 +10991,249 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
                 <div><dt>Fit</dt><dd>{escape(fit)}</dd></div>
               </dl>
               <div class="housing-chips">{chips_html}</div>
-              <a class="housing-card-action" href="/accommodations#housing-posts">View details</a>
+              <button class="housing-card-action" type="button" data-chat-open data-post-id="{escape(public_id)}" data-chat-subject="{escape(row_value(post, "title"))}">Message</button>
             </article>
             """
         )
     return "\n".join(cards)
+
+
+def chat_public_id() -> str:
+    return f"FFC-{secrets.token_hex(5).upper()}"
+
+
+def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
+    last_message_id = int(row_value(row, "last_message_id") or 0)
+    last_read_id = int(row_value(row, "last_read_message_id") or 0)
+    return {
+        "id": row_value(row, "public_id"),
+        "conversationId": int(row_value(row, "id") or 0),
+        "postId": row_value(row, "post_public_id"),
+        "subject": row_value(row, "subject") or row_value(row, "post_title") or "Accommodation chat",
+        "postTitle": row_value(row, "post_title"),
+        "postCategory": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "post_category"), "Housing"),
+        "otherName": row_value(row, "other_name") or "FairFares member",
+        "otherUserId": int(row_value(row, "other_user_id") or 0),
+        "lastMessage": row_value(row, "last_message"),
+        "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
+        "unread": max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0,
+    }
+
+
+def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int, user_id: int) -> sqlite3.Row | None:
+    return con.execute(
+        """
+        SELECT conversations.*, posts.public_id AS post_public_id, posts.title AS post_title, posts.category AS post_category
+        FROM chat_conversations conversations
+        JOIN chat_participants participant ON participant.conversation_id = conversations.id
+        LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        WHERE conversations.id = ? AND participant.user_id = ?
+        LIMIT 1
+        """,
+        (conversation_id, user_id),
+    ).fetchone()
+
+
+def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, user_id: int) -> sqlite3.Row | None:
+    return con.execute(
+        """
+        SELECT conversations.*, posts.public_id AS post_public_id, posts.title AS post_title, posts.category AS post_category
+        FROM chat_conversations conversations
+        JOIN chat_participants participant ON participant.conversation_id = conversations.id
+        LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        WHERE conversations.public_id = ? AND participant.user_id = ?
+        LIMIT 1
+        """,
+        (public_id, user_id),
+    ).fetchone()
+
+
+def get_accommodation_post_message_recipient(con: sqlite3.Connection, post: sqlite3.Row, sender_id: int) -> sqlite3.Row | None:
+    owner_id = int(row_value(post, "user_id") or 0)
+    if owner_id and owner_id != sender_id:
+        return con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (owner_id,)).fetchone()
+    contact_email = normalize_email(row_value(post, "contact_email"))
+    if contact_email:
+        recipient = find_user_by_email(con, contact_email)
+        if recipient and int(row_value(recipient, "id") or 0) != sender_id:
+            return recipient
+    return None
+
+
+def get_or_create_accommodation_conversation(
+    con: sqlite3.Connection,
+    post_public_id: str,
+    sender: sqlite3.Row,
+) -> tuple[sqlite3.Row | None, str]:
+    post = con.execute(
+        "SELECT * FROM accommodation_posts WHERE public_id = ? LIMIT 1",
+        (post_public_id,),
+    ).fetchone()
+    if not post:
+        return None, "Housing post was not found."
+    if row_value(post, "visibility_status") != "ACTIVE":
+        return None, "That housing post is no longer active."
+    sender_id = int(row_value(sender, "id") or 0)
+    recipient = get_accommodation_post_message_recipient(con, post, sender_id)
+    if not recipient:
+        return None, "This post cannot receive chat messages yet because the poster does not have an active FairFares account."
+    recipient_id = int(row_value(recipient, "id") or 0)
+    existing = con.execute(
+        """
+        SELECT conversations.*
+        FROM chat_conversations conversations
+        JOIN chat_participants p1 ON p1.conversation_id = conversations.id AND p1.user_id = ?
+        JOIN chat_participants p2 ON p2.conversation_id = conversations.id AND p2.user_id = ?
+        WHERE conversations.accommodation_post_id = ?
+        LIMIT 1
+        """,
+        (sender_id, recipient_id, post["id"]),
+    ).fetchone()
+    if existing:
+        return existing, ""
+    public_id = chat_public_id()
+    con.execute(
+        """
+        INSERT INTO chat_conversations (public_id, accommodation_post_id, subject, last_message_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (public_id, post["id"], row_value(post, "title")),
+    )
+    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, sender_id),
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, recipient_id),
+    )
+    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
+
+
+def save_chat_message(
+    con: sqlite3.Connection,
+    conversation_id: int,
+    sender: sqlite3.Row,
+    message_text: str,
+    client_message_id: str = "",
+) -> sqlite3.Row:
+    sender_id = int(row_value(sender, "id") or 0)
+    if client_message_id:
+        existing = con.execute(
+            """
+            SELECT messages.*, users.name AS sender_name
+            FROM chat_messages messages
+            JOIN users ON users.id = messages.sender_id
+            WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ?
+            LIMIT 1
+            """,
+            (conversation_id, sender_id, client_message_id),
+        ).fetchone()
+        if existing:
+            return existing
+    con.execute(
+        """
+        INSERT INTO chat_messages (conversation_id, sender_id, message_text, client_message_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        (conversation_id, sender_id, message_text, client_message_id),
+    )
+    message_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.execute(
+        """
+        UPDATE chat_conversations
+        SET updated_at = CURRENT_TIMESTAMP, last_message_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (conversation_id,),
+    )
+    con.execute(
+        """
+        UPDATE chat_participants
+        SET last_read_message_id = MAX(last_read_message_id, ?)
+        WHERE conversation_id = ? AND user_id = ?
+        """,
+        (message_id, conversation_id, sender_id),
+    )
+    return con.execute(
+        """
+        SELECT messages.*, users.name AS sender_name
+        FROM chat_messages messages
+        JOIN users ON users.id = messages.sender_id
+        WHERE messages.id = ?
+        """,
+        (message_id,),
+    ).fetchone()
+
+
+def chat_message_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
+    sender_id = int(row_value(row, "sender_id") or 0)
+    return {
+        "id": int(row_value(row, "id") or 0),
+        "senderId": sender_id,
+        "senderName": row_value(row, "sender_name"),
+        "mine": sender_id == current_user_id,
+        "text": row_value(row, "message_text"),
+        "createdAt": row_value(row, "created_at"),
+    }
+
+
+def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT conversations.*,
+                   posts.public_id AS post_public_id,
+                   posts.title AS post_title,
+                   posts.category AS post_category,
+                   participant.last_read_message_id,
+                   last_message.id AS last_message_id,
+                   last_message.sender_id AS last_sender_id,
+                   last_message.message_text AS last_message,
+                   other_user.id AS other_user_id,
+                   other_user.name AS other_name
+            FROM chat_conversations conversations
+            JOIN chat_participants participant ON participant.conversation_id = conversations.id AND participant.user_id = ?
+            LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+            LEFT JOIN chat_messages last_message ON last_message.id = (
+                SELECT id FROM chat_messages
+                WHERE conversation_id = conversations.id AND deleted_at IS NULL
+                ORDER BY id DESC LIMIT 1
+            )
+            LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
+            LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+            ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
+            LIMIT 100
+            """,
+            (user_id, user_id),
+        ).fetchall()
+    return [chat_row_payload(row, user_id) for row in rows]
+
+
+def render_dashboard_chat_rows(conversations: list[dict[str, object]]) -> str:
+    if not conversations:
+        return """
+        <div class="housing-dashboard-empty">
+          <b>No messages yet</b>
+          <span>When someone messages you about a room, rental, or roommate post, it will appear here.</span>
+        </div>
+        """
+    rows = []
+    for conversation in conversations:
+        unread = int(conversation.get("unread") or 0)
+        unread_badge = f'<strong>{unread} new</strong>' if unread else "<small>Read</small>"
+        rows.append(
+            f"""
+            <button class="chat-inbox-row" type="button" data-chat-open data-conversation-id="{escape(str(conversation.get("id") or ""))}">
+              <span>{escape(str(conversation.get("otherName") or "FairFares member"))}</span>
+              <b>{escape(str(conversation.get("subject") or "Accommodation chat"))}</b>
+              <small>{escape(str(conversation.get("lastMessage") or "No messages yet"))}</small>
+              {unread_badge}
+            </button>
+            """
+        )
+    return "\n".join(rows)
 
 
 def get_accommodation_posts_for_user(user_id: int) -> list[sqlite3.Row]:
@@ -12205,6 +12556,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/accommodations/locations":
             self.api_accommodation_locations(parsed)
             return
+        if parsed.path == "/api/chat/conversations":
+            self.api_chat_conversations(parsed)
+            return
+        if parsed.path == "/api/chat/messages":
+            self.api_chat_messages(parsed)
+            return
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
             return
@@ -12298,6 +12655,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/quests": self.api_create_explorer_quest,
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
+            "/api/chat/conversations": self.api_create_chat_conversation,
+            "/api/chat/messages": self.api_send_chat_message,
+            "/api/chat/read": self.api_mark_chat_read,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -12990,6 +13350,174 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (post_id, image_url, index, now),
                 )
         self.redirect("/accommodations?posted=1#housing-posts")
+
+    def api_chat_conversations(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
+            return
+        self.send_json({"ok": True, "conversations": get_chat_conversations_for_user(int(user["id"]))})
+
+    def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
+        if not conversation_public_id:
+            self.send_json({"ok": False, "message": "Conversation is required."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            messages = con.execute(
+                """
+                SELECT messages.*, users.name AS sender_name
+                FROM chat_messages messages
+                JOIN users ON users.id = messages.sender_id
+                WHERE messages.conversation_id = ? AND messages.deleted_at IS NULL
+                ORDER BY messages.id ASC
+                LIMIT 200
+                """,
+                (conversation["id"],),
+            ).fetchall()
+            last_message_id = int(row_value(messages[-1], "id") or 0) if messages else 0
+            if last_message_id:
+                con.execute(
+                    """
+                    UPDATE chat_participants
+                    SET last_read_message_id = MAX(last_read_message_id, ?)
+                    WHERE conversation_id = ? AND user_id = ?
+                    """,
+                    (last_message_id, conversation["id"], current_user_id),
+                )
+        self.send_json(
+            {
+                "ok": True,
+                "conversation": {
+                    "id": row_value(conversation, "public_id"),
+                    "subject": row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
+                    "postId": row_value(conversation, "post_public_id"),
+                },
+                "messages": [chat_message_payload(message, current_user_id) for message in messages],
+            }
+        )
+
+    def notify_chat_recipients(self, con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, message: sqlite3.Row) -> None:
+        recipients = con.execute(
+            """
+            SELECT users.*
+            FROM chat_participants participants
+            JOIN users ON users.id = participants.user_id
+            WHERE participants.conversation_id = ? AND users.id != ?
+            """,
+            (conversation["id"], sender["id"]),
+        ).fetchall()
+        conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
+        post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
+        for recipient in recipients:
+            email = normalize_email(row_value(recipient, "email"))
+            if not email:
+                continue
+            try:
+                send_accommodation_message_email(
+                    email,
+                    row_value(recipient, "name"),
+                    row_value(sender, "name") or "FairFares member",
+                    post_title,
+                    row_value(message, "message_text"),
+                    conversation_url,
+                )
+            except Exception as exc:
+                print(f"Chat email notification failed: {exc}")
+
+    def api_create_chat_conversation(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to message this user."}, 401)
+            return
+        form = self.read_form()
+        post_public_id = (form.get("post_id") or "").strip()
+        message_text = (form.get("message") or "").strip() or "Hi, I am interested in this accommodation post."
+        client_message_id = (form.get("client_message_id") or "").strip()
+        if not post_public_id:
+            self.send_json({"ok": False, "message": "Choose a housing post first."}, 400)
+            return
+        if len(message_text) > 2000:
+            self.send_json({"ok": False, "message": "Message is too long."}, 400)
+            return
+        with db() as con:
+            conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
+            if not conversation:
+                self.send_json({"ok": False, "message": error or "Could not start chat."}, 400)
+                return
+            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
+            full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
+            self.notify_chat_recipients(con, full_conversation, user, message)
+        self.send_json(
+            {
+                "ok": True,
+                "conversation": {"id": row_value(conversation, "public_id"), "subject": row_value(conversation, "subject")},
+                "message": chat_message_payload(message, int(user["id"])),
+            }
+        )
+
+    def api_send_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to send messages."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        message_text = (form.get("message") or "").strip()
+        client_message_id = (form.get("client_message_id") or "").strip()
+        if not conversation_public_id or not message_text:
+            self.send_json({"ok": False, "message": "Conversation and message are required."}, 400)
+            return
+        if len(message_text) > 2000:
+            self.send_json({"ok": False, "message": "Message is too long."}, 400)
+            return
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
+            self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))})
+
+    def api_mark_chat_read(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to update messages."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        last_message_id = int_from_form(form, "last_message_id", 0)
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            if not last_message_id:
+                row = con.execute(
+                    "SELECT id FROM chat_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1",
+                    (conversation["id"],),
+                ).fetchone()
+                last_message_id = int(row_value(row, "id") or 0)
+            con.execute(
+                """
+                UPDATE chat_participants
+                SET last_read_message_id = MAX(last_read_message_id, ?)
+                WHERE conversation_id = ? AND user_id = ?
+                """,
+                (last_message_id, conversation["id"], user["id"]),
+            )
+        self.send_json({"ok": True})
 
     def blog_index_page(self) -> None:
         user = self.current_user()
@@ -18774,6 +19302,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         saved_cars = get_saved_cars_for_user(user["id"]) if user else []
         support_tickets = get_support_tickets_for_user(user["id"]) if user else []
         housing_posts = get_accommodation_posts_for_user(user["id"]) if user else []
+        chat_conversations = get_chat_conversations_for_user(int(user["id"])) if user else []
+        chat_unread_count = sum(int(conversation.get("unread") or 0) for conversation in chat_conversations)
         housing_active_count = sum(
             1
             for row in housing_posts
@@ -19359,6 +19889,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             housing_rows=render_dashboard_housing_rows(housing_posts),
             housing_active_count=escape(str(housing_active_count)),
             housing_expired_count=escape(str(housing_expired_count)),
+            chat_rows=render_dashboard_chat_rows(chat_conversations),
+            chat_unread_count=escape(str(chat_unread_count)),
             live_status_title=escape(live_status["title"]),
             live_status_body=escape(live_status["body"]),
             live_status_instructions=escape(live_status["instructions"]),

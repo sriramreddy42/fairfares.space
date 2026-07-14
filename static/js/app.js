@@ -1902,6 +1902,12 @@ detailTabs.forEach((tab) => {
   tab.addEventListener("click", () => showDetailPanel(tab.dataset.detailTab));
 });
 
+if (window.location.hash === "#housing" && document.querySelector('[data-detail-tab="housing"]')) {
+  showManagePanel("details", { centerAction: false });
+  showDetailPanel("housing");
+  syncManageDetailJumpState(document.querySelector('[data-detail-jump="housing"]'));
+}
+
 document.getElementById("studentForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1924,6 +1930,145 @@ document.getElementById("studentForm")?.addEventListener("submit", (event) => {
     .catch((payload) => {
       document.getElementById("studentStatus").textContent = payload?.message || "Sign in to update student verification.";
     });
+});
+
+const chatDrawer = document.querySelector("[data-chat-drawer]");
+const chatMessages = chatDrawer?.querySelector("[data-chat-messages]");
+const chatForm = chatDrawer?.querySelector("[data-chat-form]");
+const chatStatus = chatDrawer?.querySelector("[data-chat-status]");
+const chatTitle = chatDrawer?.querySelector("#fairfaresChatTitle");
+let activeChatConversationId = "";
+let activeChatPostId = "";
+let chatPollTimer = 0;
+
+function chatEscape(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function setChatStatus(message, isError = false) {
+  if (!chatStatus) return;
+  chatStatus.textContent = message || "";
+  chatStatus.classList.toggle("is-error", Boolean(isError));
+}
+
+function renderChatMessages(messages) {
+  if (!chatMessages) return;
+  chatMessages.innerHTML = messages?.length ? messages.map((message) => `
+    <article class="${message.mine ? "mine" : ""}">
+      <span>${chatEscape(message.senderName || "FairFares member")}</span>
+      <p>${chatEscape(message.text || "")}</p>
+      <small>${chatEscape(message.createdAt || "")}</small>
+    </article>
+  `).join("") : "<div class=\"chat-empty\">No messages yet.</div>";
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function loadChatMessages() {
+  if (!activeChatConversationId) return;
+  const response = await fetch(`/api/chat/messages?conversation_id=${encodeURIComponent(activeChatConversationId)}`, {
+    headers: { Accept: "application/json" }
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not load messages.");
+  if (chatTitle && payload.conversation?.subject) chatTitle.textContent = payload.conversation.subject;
+  renderChatMessages(payload.messages || []);
+}
+
+function openChatDrawer() {
+  if (!chatDrawer) return;
+  chatDrawer.classList.add("is-open");
+  chatDrawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("chat-open");
+}
+
+function closeChatDrawer() {
+  if (!chatDrawer) return;
+  chatDrawer.classList.remove("is-open");
+  chatDrawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("chat-open");
+  window.clearInterval(chatPollTimer);
+}
+
+async function openConversation(conversationId, subject = "") {
+  activeChatConversationId = conversationId || "";
+  activeChatPostId = "";
+  if (chatTitle) chatTitle.textContent = subject || "Accommodation messages";
+  openChatDrawer();
+  setChatStatus("Loading messages...");
+  try {
+    await loadChatMessages();
+    setChatStatus("");
+    window.clearInterval(chatPollTimer);
+    chatPollTimer = window.setInterval(() => loadChatMessages().catch(() => {}), 8000);
+  } catch (error) {
+    setChatStatus(error.message || "Could not load messages.", true);
+  }
+}
+
+function openPostChat(postId, subject = "") {
+  activeChatConversationId = "";
+  activeChatPostId = postId || "";
+  if (chatTitle) chatTitle.textContent = subject || "Accommodation messages";
+  openChatDrawer();
+  renderChatMessages([]);
+  setChatStatus("Send a message to start the conversation.");
+  chatForm?.querySelector("input[name='message']")?.focus();
+}
+
+document.addEventListener("click", (event) => {
+  const trigger = event.target.closest("[data-chat-open]");
+  if (!trigger) return;
+  event.preventDefault();
+  const conversationId = trigger.dataset.conversationId || "";
+  if (conversationId) {
+    openConversation(conversationId, trigger.dataset.chatSubject || "");
+  } else {
+    openPostChat(trigger.dataset.postId || "", trigger.dataset.chatSubject || "");
+  }
+});
+
+chatDrawer?.querySelectorAll("[data-chat-close]").forEach((button) => {
+  button.addEventListener("click", closeChatDrawer);
+});
+
+chatForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = chatForm.querySelector("input[name='message']");
+  const text = (input?.value || "").trim();
+  if (!text) return;
+  const params = new URLSearchParams();
+  params.set("message", text);
+  params.set("client_message_id", crypto?.randomUUID?.() || String(Date.now()));
+  const endpoint = activeChatConversationId ? "/api/chat/messages" : "/api/chat/conversations";
+  if (activeChatConversationId) params.set("conversation_id", activeChatConversationId);
+  if (activeChatPostId) params.set("post_id", activeChatPostId);
+  setChatStatus("Sending...");
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: params
+    });
+    const payload = await response.json();
+    if (payload.login_required) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "Message could not be sent.");
+    input.value = "";
+    if (payload.conversation?.id) activeChatConversationId = payload.conversation.id;
+    activeChatPostId = "";
+    await loadChatMessages();
+    setChatStatus("");
+  } catch (error) {
+    setChatStatus(error.message || "Message could not be sent.", true);
+  }
 });
 
 function selectedExplorerMoods() {
@@ -3002,7 +3147,15 @@ document.getElementById("textStatus")?.addEventListener("click", () => {
   document.getElementById("statusMessage").textContent = "Text updates enabled for this booking.";
 });
 
-if (detailTabs.length) showDetailPanel("student");
+if (detailTabs.length) {
+  if (window.location.hash === "#housing" && document.querySelector('[data-detail-tab="housing"]')) {
+    showManagePanel("details", { centerAction: false });
+    showDetailPanel("housing");
+    syncManageDetailJumpState(document.querySelector('[data-detail-jump="housing"]'));
+  } else {
+    showDetailPanel("student");
+  }
+}
 if (tripFilterButtons.length) filterTrips("upcoming");
 
 const supportSummary = document.getElementById("supportSummary");

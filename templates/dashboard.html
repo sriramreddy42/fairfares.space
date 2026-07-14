@@ -246,8 +246,14 @@
               <div class="housing-dashboard-summary">
                 <span><b>$housing_active_count</b>Active</span>
                 <span><b>$housing_expired_count</b>Expired</span>
+                <span><b>$chat_unread_count</b>Unread</span>
                 <a class="light-button" href="/accommodations">Post or browse housing</a>
               </div>
+              <h3 class="housing-dashboard-subhead">Messages</h3>
+              <div class="chat-inbox-list">
+                $chat_rows
+              </div>
+              <h3 class="housing-dashboard-subhead">Posts</h3>
               <div class="housing-dashboard-list">
                 $housing_rows
               </div>
@@ -288,5 +294,32 @@
     <button class="modal-close" type="button" id="closeTripDetail" aria-label="Close trip details">x</button>
     <div id="tripDetailContent"></div>
   </dialog>
+  <section class="fairfares-chat-drawer" data-chat-drawer aria-hidden="true">
+    <div class="fairfares-chat-panel" role="dialog" aria-modal="true" aria-labelledby="fairfaresChatTitle">
+      <header>
+        <div><span>FairFares chat</span><h2 id="fairfaresChatTitle">Accommodation messages</h2></div>
+        <button type="button" data-chat-close aria-label="Close chat">x</button>
+      </header>
+      <div class="fairfares-chat-messages" data-chat-messages></div>
+      <form class="fairfares-chat-form" data-chat-form>
+        <input name="message" placeholder="Type a message" maxlength="2000" required>
+        <button type="submit">Send</button>
+      </form>
+      <p data-chat-status></p>
+    </div>
+  </section>
+  <script>
+    (() => {
+      const openHousing = () => {
+        const params = new URLSearchParams(window.location.search);
+        if (window.location.hash !== "#housing" && params.get("tab") !== "housing") return;
+        const trigger = document.querySelector('.trip-actions [data-detail-jump="housing"], .manage-sidebar [data-detail-jump="housing"]');
+        trigger?.click();
+        document.querySelector("#housing")?.scrollIntoView({ block: "start" });
+      };
+      window.setTimeout(openHousing, 0);
+      window.addEventListener("load", () => window.setTimeout(openHousing, 50), { once: true });
+    })();
+  </script>
 </body>
 </html>

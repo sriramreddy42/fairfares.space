@@ -346,6 +346,20 @@
   </div>
 
   <script type="application/json" id="housingMapPayload">$map_payload_json</script>
+  <section class="fairfares-chat-drawer" data-chat-drawer aria-hidden="true">
+    <div class="fairfares-chat-panel" role="dialog" aria-modal="true" aria-labelledby="fairfaresChatTitle">
+      <header>
+        <div><span>FairFares chat</span><h2 id="fairfaresChatTitle">Accommodation messages</h2></div>
+        <button type="button" data-chat-close aria-label="Close chat">×</button>
+      </header>
+      <div class="fairfares-chat-messages" data-chat-messages></div>
+      <form class="fairfares-chat-form" data-chat-form>
+        <input name="message" placeholder="Type a message" maxlength="2000" required>
+        <button type="submit">Send</button>
+      </form>
+      <p data-chat-status></p>
+    </div>
+  </section>
   $maps_loader
   <script>
     (() => {
