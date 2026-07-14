@@ -664,7 +664,7 @@
 .support-options {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 .doc-actions button,
 .detail-tabs button,
@@ -751,6 +751,69 @@
 }
 .detail-card.active {
   display: block;
+}
+.housing-dashboard-summary {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 16px;
+}
+.housing-dashboard-summary span,
+.housing-dashboard-empty,
+.housing-dashboard-row {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px;
+}
+.housing-dashboard-summary span {
+  color: var(--muted);
+  display: grid;
+  font-weight: 800;
+}
+.housing-dashboard-summary b {
+  color: var(--navy);
+  font-size: 1.4rem;
+}
+.housing-dashboard-list {
+  display: grid;
+  gap: 10px;
+}
+.housing-dashboard-row {
+  align-items: center;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.housing-dashboard-row div {
+  display: grid;
+  gap: 5px;
+}
+.housing-dashboard-row span,
+.housing-dashboard-row small,
+.housing-dashboard-empty span {
+  color: var(--muted);
+  font-weight: 800;
+}
+.housing-dashboard-row b,
+.housing-dashboard-empty b {
+  color: var(--navy);
+}
+.housing-dashboard-row strong {
+  background: rgba(12, 159, 105, 0.12);
+  border-radius: 999px;
+  color: #08764d;
+  padding: 6px 10px;
+  text-align: center;
+}
+.housing-dashboard-row.is-expired strong {
+  background: rgba(98, 107, 128, 0.14);
+  color: var(--muted);
+}
+.housing-dashboard-empty {
+  display: grid;
+  gap: 10px;
 }
 .details-panel .manage-grid {
   grid-template-columns: 1fr;
@@ -1310,6 +1373,9 @@
     padding-left: 18px;
     padding-right: 18px;
   }
+  .manage-content {
+    padding-left: 18px;
+  }
   .main-nav, .nav-links, .nav-actions, .login-footer {
     align-items: flex-start;
     flex-direction: column;
@@ -1357,6 +1423,10 @@
     grid-template-columns: 1fr;
   }
   .price-box {
+    grid-template-columns: 1fr;
+  }
+  .housing-dashboard-summary,
+  .housing-dashboard-row {
     grid-template-columns: 1fr;
   }
   .login-poster h1 {

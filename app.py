@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714accommodation-location-display1"
+ASSET_VERSION = "20260714housing-dashboard-expiry1"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -380,6 +380,7 @@ ACCOMMODATION_MODES = (
     ("NEED_PLACE", "I need a place"),
     ("HAVE_PLACE", "I have a place"),
 )
+ACCOMMODATION_POST_LIFETIME_DAYS = 30
 ACCOMMODATION_CATEGORIES = (
     ("single_room", "Single Room"),
     ("shared_room", "Shared Room"),
@@ -1139,6 +1140,10 @@ def normalize_email(value: object) -> str:
     return re.sub(r"\s+", "", str(value or "")).lower()
 
 
+def normalize_phone(value: object) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
 def normalized_email_sql(column: str = "email") -> str:
     return f"LOWER(REPLACE(REPLACE(REPLACE(REPLACE({column}, ' ', ''), char(9), ''), char(10), ''), char(13), ''))"
 
@@ -1154,6 +1159,22 @@ def find_user_by_email(con: sqlite3.Connection, email: object) -> sqlite3.Row | 
         f"SELECT * FROM users WHERE {normalized_email_sql('email')} = ? LIMIT 1",
         (clean_email,),
     ).fetchone()
+
+
+def find_user_by_login_identifier(con: sqlite3.Connection, identifier: object) -> sqlite3.Row | None:
+    value = str(identifier or "").strip()
+    if not value:
+        return None
+    if "@" in value:
+        return find_user_by_email(con, value)
+    target_phone = normalize_phone(value)
+    if not target_phone:
+        return None
+    rows = con.execute("SELECT * FROM users WHERE phone IS NOT NULL AND phone != '' ORDER BY id DESC").fetchall()
+    for row in rows:
+        if normalize_phone(row_value(row, "phone")) == target_phone:
+            return row
+    return None
 
 
 def log_login_failure(email: str, reason: str) -> None:
@@ -3395,6 +3416,9 @@ def init_db() -> None:
                 contact_email TEXT NOT NULL DEFAULT '',
                 visibility_status TEXT NOT NULL DEFAULT 'ACTIVE',
                 source_label TEXT NOT NULL DEFAULT 'fairfares_web',
+                expires_at TEXT,
+                expired_at TEXT,
+                renewed_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
@@ -4178,6 +4202,18 @@ def init_db() -> None:
         ensure_column(con, "explorer_stops", "source", "source TEXT NOT NULL DEFAULT 'LOCAL'")
         ensure_column(con, "accommodation_posts", "lat", "lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "lng", "lng REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
+        ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
+        ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
+        con.execute(
+            """
+            UPDATE accommodation_posts
+            SET expires_at = datetime(created_at, ?)
+            WHERE expires_at IS NULL OR expires_at = ''
+            """,
+            (f"+{ACCOMMODATION_POST_LIFETIME_DAYS} days",),
+        )
+        expire_accommodation_posts_in_connection(con)
 
         for badge in (
             ("First Explorer", "compass", "Complete your first FairFares city quest.", 0),
@@ -10118,6 +10154,18 @@ def row_value(row: sqlite3.Row | dict[str, object] | None, key: str, default: st
     return str(row[key] if key in row.keys() and row[key] is not None else default)
 
 
+def parse_sql_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for candidate in (text, text.replace("Z", ""), text.replace(" ", "T")):
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            continue
+    return None
+
+
 def accommodation_public_id() -> str:
     return f"FFH-{secrets.token_hex(4).upper()}"
 
@@ -10126,6 +10174,47 @@ def normalize_accommodation_mode(value: str) -> str:
     value = (value or "").strip().upper()
     valid_modes = {mode for mode, _ in ACCOMMODATION_MODES}
     return value if value in valid_modes else "NEED_PLACE"
+
+
+def accommodation_expiry_timestamp(created_at: str | None = None) -> str:
+    base = parse_sql_datetime(created_at) or datetime.utcnow()
+    return (base + timedelta(days=ACCOMMODATION_POST_LIFETIME_DAYS)).isoformat(timespec="seconds")
+
+
+def accommodation_days_left(row: sqlite3.Row | dict[str, object]) -> int:
+    expires_at = parse_sql_datetime(row_value(row, "expires_at"))
+    if not expires_at:
+        return 0
+    remaining_seconds = (expires_at - datetime.utcnow()).total_seconds()
+    return max(0, math.ceil(remaining_seconds / 86400))
+
+
+def accommodation_expiry_label(row: sqlite3.Row | dict[str, object]) -> str:
+    status = row_value(row, "visibility_status") or "ACTIVE"
+    days_left = accommodation_days_left(row)
+    if status == "EXPIRED" or days_left <= 0:
+        return "Expired"
+    return f"{days_left} day{'s' if days_left != 1 else ''} left"
+
+
+def expire_accommodation_posts_in_connection(con: sqlite3.Connection) -> None:
+    con.execute(
+        """
+        UPDATE accommodation_posts
+        SET visibility_status = 'EXPIRED',
+            expired_at = COALESCE(expired_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE visibility_status = 'ACTIVE'
+          AND expires_at IS NOT NULL
+          AND expires_at != ''
+          AND datetime(expires_at) <= datetime('now')
+        """
+    )
+
+
+def expire_accommodation_posts() -> None:
+    with db() as con:
+        expire_accommodation_posts_in_connection(con)
 
 
 def option_label(options: tuple[tuple[str, str], ...], value: str, default: str = "") -> str:
@@ -10794,6 +10883,58 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
             """
         )
     return "\n".join(cards)
+
+
+def get_accommodation_posts_for_user(user_id: int) -> list[sqlite3.Row]:
+    expire_accommodation_posts()
+    with db() as con:
+        return con.execute(
+            """
+            SELECT *
+            FROM accommodation_posts
+            WHERE user_id = ?
+            ORDER BY
+                CASE visibility_status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+                datetime(created_at) DESC
+            LIMIT 80
+            """,
+            (user_id,),
+        ).fetchall()
+
+
+def render_dashboard_housing_rows(posts: list[sqlite3.Row]) -> str:
+    if not posts:
+        return """
+        <div class="housing-dashboard-empty">
+          <b>No housing posts yet</b>
+          <span>Post a room, roommate need, rental, or short stay from Housing.</span>
+          <a class="light-button" href="/accommodations">Open Housing</a>
+        </div>
+        """
+    rows: list[str] = []
+    for post in posts:
+        mode_label = "Need a place" if row_value(post, "post_mode") == "NEED_PLACE" else "Place available"
+        category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
+        status = row_value(post, "visibility_status") or "ACTIVE"
+        expiry_label = accommodation_expiry_label(post)
+        expiry_class = "is-expired" if expiry_label == "Expired" else ""
+        location = row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Location open"
+        rows.append(
+            f"""
+            <article class="housing-dashboard-row {escape(expiry_class)}">
+              <div>
+                <span>{escape(mode_label)} · {escape(category)}</span>
+                <b>{escape(row_value(post, "title"))}</b>
+                <small>{escape(location)} · {escape(format_accommodation_rent(post))} · #{escape(row_value(post, "public_id"))}</small>
+              </div>
+              <div>
+                <strong>{escape(expiry_label)}</strong>
+                <small>{escape(status.title())}</small>
+              </div>
+            </article>
+            """
+        )
+    return "\n".join(rows)
 
 
 def optimized_static_image_url(url: str) -> str:
@@ -12627,6 +12768,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def accommodations_page(self) -> None:
         user = self.current_user()
+        expire_accommodation_posts()
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         raw_search_need = (params.get("need", [""])[0] or "").strip()
@@ -12638,7 +12780,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         search_area = (params.get("area", [""])[0] or "").strip()
         search_move_in = (params.get("move_in", [""])[0] or "").strip()
         search_budget = (params.get("price", params.get("budget", [""]))[0] or "").strip()
-        clauses = ["visibility_status = 'ACTIVE'"]
+        clauses = ["visibility_status = 'ACTIVE'", "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))"]
         values: list[object] = []
         if search_need in {"room_for_rent", "shared_room", "roommate_match"}:
             search_need = "need_room_share"
@@ -12780,6 +12922,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         now = datetime.utcnow().isoformat(timespec="seconds")
+        expires_at = accommodation_expiry_timestamp(now)
         with db() as con:
             cursor = con.execute(
                 """
@@ -12790,8 +12933,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  roommate_count, gender_preference, commute_preference, lease_term, amenities,
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
-                 created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?)
+                 expires_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -12824,6 +12967,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     contact_name,
                     contact_phone,
                     contact_email,
+                    expires_at,
                     now,
                     now,
                 ),
@@ -13297,6 +13441,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 intro_text="Sign in to continue your journey.",
                 error=escape(error),
                 name_field="",
+                identifier_label="Email or phone",
+                identifier_type="text",
+                identifier_autocomplete="username",
+                identifier_placeholder="Enter your email or phone",
                 password_autocomplete="current-password",
             )
         )
@@ -13311,8 +13459,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <input name="name" autocomplete="name">
         </label>
         <label>
-          <span>Phone Number <small>(optional)</small></span>
-          <input name="phone" autocomplete="tel" placeholder="Used to find guest bookings">
+          <span>Phone Number</span>
+          <input name="phone" autocomplete="tel" placeholder="Used for login and housing contact" required>
         </label>
         <label>
           <span>Referral Code <small>(optional)</small></span>
@@ -13330,21 +13478,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 intro_text="Create your account to start booking.",
                 error=escape(error),
                 name_field=name_field,
+                identifier_label="Email Address",
+                identifier_type="email",
+                identifier_autocomplete="email",
+                identifier_placeholder="Enter your email",
                 password_autocomplete="new-password",
             )
         )
 
     def login(self) -> None:
         form = self.read_form()
-        email = normalize_email(form.get("email", ""))
+        identifier = (form.get("email", "") or "").strip()
         with db() as con:
-            user = find_user_by_email(con, email)
+            user = find_user_by_login_identifier(con, identifier)
         if not user:
-            log_login_failure(email, "user_not_found")
+            log_login_failure(identifier, "user_not_found")
             self.login_page("That email and password did not match.")
             return
         if not verify_password(form.get("password", ""), user["password_hash"]):
-            log_login_failure(email, "password_mismatch")
+            log_login_failure(identifier, "password_mismatch")
             self.login_page("That email and password did not match.")
             return
         if not user["is_verified"]:
@@ -13366,10 +13518,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name = form.get("name") or "FairFares Member"
         email = normalize_email(form.get("email", ""))
         phone = form.get("phone", "").strip()
+        clean_phone = normalize_phone(phone)
         referral_code = form.get("referral_code", "").strip()
         password = form.get("password", "")
-        if "@" not in email or len(password) < 8:
-            self.signup_page("Use a valid email and a password with at least 8 characters.")
+        if "@" not in email or len(password) < 8 or len(clean_phone) < 7:
+            self.signup_page("Use a valid email, phone number, and a password with at least 8 characters.")
             return
         try:
             with db() as con:
@@ -18620,6 +18773,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_bookings = get_bookings_for_user(user["id"]) if user else []
         saved_cars = get_saved_cars_for_user(user["id"]) if user else []
         support_tickets = get_support_tickets_for_user(user["id"]) if user else []
+        housing_posts = get_accommodation_posts_for_user(user["id"]) if user else []
+        housing_active_count = sum(
+            1
+            for row in housing_posts
+            if row_value(row, "visibility_status") == "ACTIVE" and accommodation_days_left(row) > 0
+        )
+        housing_expired_count = len(housing_posts) - housing_active_count
         is_first_time_user = bool(user and not user_bookings)
         is_guest_checkout = bool(not user and booking and selected_car_id)
         show_start_experience = bool(user and is_first_time_user and not selected_car_id)
@@ -19142,7 +19302,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             support_ticket_message=support_ticket_message,
             support_history=support_history,
             support_provider_summary=escape(support_provider_summary),
-            manage_panels_class="manage-panels" if (user and booking and not show_start_experience) else "manage-panels is-hidden",
+            manage_panels_class="manage-panels" if (user and not is_guest_checkout) else "manage-panels is-hidden",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),
@@ -19196,6 +19356,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             upcoming_count=upcoming_count,
             past_count=past_count,
             favorite_count=sum(1 for row in user_bookings if row_value(row, "saved_by_user")) + len(saved_cars),
+            housing_rows=render_dashboard_housing_rows(housing_posts),
+            housing_active_count=escape(str(housing_active_count)),
+            housing_expired_count=escape(str(housing_expired_count)),
             live_status_title=escape(live_status["title"]),
             live_status_body=escape(live_status["body"]),
             live_status_instructions=escape(live_status["instructions"]),

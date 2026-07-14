@@ -45,6 +45,7 @@
       <a class="$booking_link_class" href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
       <a href="#student" data-manage-tab="details" data-detail-jump="student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
       <a href="#saved" data-manage-tab="details" data-detail-jump="saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
+      <a href="#housing" data-manage-tab="details" data-detail-jump="housing"><b>Housing Posts</b><span>Rooms, rentals, roommates & expiry</span></a>
       <a href="#support" data-manage-tab="support"><b>Support</b><span>Chat, help center & emergency support</span></a>
       <div class="student-promo">
         <strong>Exclusive for Students</strong>
@@ -94,6 +95,7 @@
           <button type="button" data-manage-tab="cancel">Cancel Reservation</button>
           <button class="active" type="button" data-manage-tab="documents">Download Invoice</button>
           <button type="button" data-manage-tab="details">View Details</button>
+          <button type="button" data-manage-tab="details" data-detail-jump="housing">Housing</button>
           <button type="button" data-manage-tab="support">Support Center</button>
         </div>
         <article class="manage-card manage-panel is-hidden" id="modify" data-manage-panel="modify">
@@ -198,6 +200,7 @@
             <button class="active" type="button" data-detail-tab="student">Student Verification</button>
             <button type="button" data-detail-tab="saved">Saved Trips</button>
             <button type="button" data-detail-tab="status">Live Status</button>
+            <button type="button" data-detail-tab="housing">Housing Posts</button>
           </div>
           <div class="manage-grid">
             <article class="manage-card detail-card active" id="student" data-detail-panel="student">
@@ -235,6 +238,19 @@
                 <button type="button" id="textStatus">Text Me Updates</button>
               </div>
               <p class="modify-status" id="statusMessage" aria-live="polite"></p>
+            </article>
+
+            <article class="manage-card detail-card is-hidden" id="housing" data-detail-panel="housing">
+              <h2>Housing Posts</h2>
+              <p>Your rooms, rentals, roommate needs, and housing leads stay live for 30 days.</p>
+              <div class="housing-dashboard-summary">
+                <span><b>$housing_active_count</b>Active</span>
+                <span><b>$housing_expired_count</b>Expired</span>
+                <a class="light-button" href="/accommodations">Post or browse housing</a>
+              </div>
+              <div class="housing-dashboard-list">
+                $housing_rows
+              </div>
             </article>
           </div>
         </article>

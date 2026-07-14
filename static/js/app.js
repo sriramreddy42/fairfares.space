@@ -1520,6 +1520,20 @@ function selectCenteredTripAction() {
   }
 }
 
+function syncManageDetailJumpState(activeTab) {
+  if (!activeTab?.dataset.detailJump) return;
+  manageTabs.forEach((tab) => {
+    if (tab.dataset.manageTab !== activeTab.dataset.manageTab) return;
+    if (!tab.dataset.detailJump) {
+      if (tab.closest(".trip-actions")) tab.classList.remove("active");
+      return;
+    }
+    const active = tab.dataset.detailJump === activeTab.dataset.detailJump;
+    tab.classList.toggle("active", active);
+    tab.classList.toggle("side-active", active && tab.closest(".manage-sidebar"));
+  });
+}
+
 document.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-manage-tab]");
   if (!tab) return;
@@ -1527,6 +1541,7 @@ document.addEventListener("click", (event) => {
   showManagePanel(tab.dataset.manageTab);
   if (tab.dataset.detailJump) {
     showDetailPanel(tab.dataset.detailJump);
+    syncManageDetailJumpState(tab);
   }
 });
 
