@@ -13797,9 +13797,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.redirect("/login")
             return
-        if is_staff_user(user):
-            self.redirect("/admin")
-            return
         form, files = self.read_form_with_files()
         body = (form.get("body") or "").strip()
         location_label = (form.get("location_label") or posts_location_for_user(int(row_value(user, "id") or 0))).strip()
@@ -16184,9 +16181,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.current_user()
         if not user:
             self.redirect("/login")
-            return
-        if is_staff_user(user):
-            self.redirect("/admin")
             return
         location_label = posts_location_for_user(int(row_value(user, "id") or 0))
         housing_posts = get_posts_housing_items(location_label, limit=12)
