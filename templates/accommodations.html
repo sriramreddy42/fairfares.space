@@ -44,11 +44,13 @@
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE">I have a place available</button>
     </div>
     <div class="housing-subnav-actions" aria-label="Housing account actions">
-      <button class="housing-subnav-account-link housing-messenger-link" type="button" data-chat-open title="Open Fair Messenger" aria-label="Open Fair Messenger">
-        <span class="housing-action-icon">💬</span>
-        <span>Fair Messenger</span>
+      <button class="housing-subnav-account-link housing-messenger-link fb-icon-button" type="button" data-chat-open data-tooltip="Fair Messenger" aria-label="Open Fair Messenger">
+        <img src="/static/img/icons8-message.gif" alt="" aria-hidden="true">
         <b class="$chat_unread_badge_class">$chat_unread_count</b>
       </button>
+      <a class="housing-subnav-account-link housing-profile-link fb-icon-button" href="/dashboard" data-tooltip="Profile" aria-label="Open profile">
+        <img src="/static/img/icons8-profile.gif" alt="" aria-hidden="true">
+      </a>
     </div>
   </div>
 
