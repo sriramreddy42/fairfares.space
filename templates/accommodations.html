@@ -223,7 +223,6 @@
           <span data-summary-about>Choose about you</span>
           <span data-summary-location>$selected_location</span>
         </div>
-        <div class="housing-form-mode-summary" data-form-mode-summary></div>
         <div class="housing-mode-tabs" aria-label="Post type" hidden>
           <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
           <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
@@ -653,7 +652,6 @@
       const wizard = document.querySelector("[data-post-wizard]");
       const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
-      const modeSummary = form.querySelector("[data-form-mode-summary]");
       const descriptionField = form.querySelector("[data-description-field]");
       const wizardLocationInput = document.querySelector("[data-wizard-location]");
       const selectedChoices = {
@@ -838,9 +836,6 @@
         form.classList.toggle("is-have", mode === "HAVE_PLACE");
         form.classList.toggle("is-roommate", roommateIntent);
         form.classList.toggle("is-need-place", mode === "NEED_PLACE" && !roommateIntent);
-        if (modeSummary) {
-          modeSummary.innerHTML = `<b>${copy.title}</b><span>${copy.body}</span>`;
-        }
         if (descriptionField) descriptionField.placeholder = copy.placeholder;
       };
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));

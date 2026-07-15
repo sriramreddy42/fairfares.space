@@ -948,27 +948,6 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   gap: 14px;
 }
 
-.housing-form-mode-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  align-items: center;
-  padding: 12px 14px;
-  border: 1px solid #d7e2f0;
-  border-radius: 8px;
-  background: #f6fbff;
-  color: #4f5a6d;
-  font-weight: 900;
-}
-
-.housing-form-mode-summary b {
-  color: #071943;
-}
-
-.housing-form-mode-summary span {
-  color: #5d6470;
-}
-
 .housing-mode-tabs label {
   display: inline-flex;
   cursor: pointer;
