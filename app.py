@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-search-any"
+ASSET_VERSION = "20260715housing-search-intent"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -13376,19 +13376,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         elif search_need == "short_stay":
             clauses.append("(lease_term = 'short_stay' OR description LIKE '%short%' OR description LIKE '%temporary%')")
         if search_need == "need_room_share":
-            clauses.append("post_mode = 'NEED_PLACE'")
+            clauses.append("post_mode = 'HAVE_PLACE'")
             clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
         elif search_need == "need_roommates":
             clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("roommate_intent = 1")
         elif search_need == "need_property_rent":
-            clauses.append("post_mode = 'NEED_PLACE'")
+            clauses.append("post_mode = 'HAVE_PLACE'")
             clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home', 'basement_apartment')")
         elif search_need == "have_room_share":
-            clauses.append("post_mode = 'HAVE_PLACE'")
+            clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
         elif search_need == "have_property_rent":
-            clauses.append("post_mode = 'HAVE_PLACE'")
+            clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home', 'basement_apartment')")
         elif search_need == "have_commercial_rent":
             clauses.append("post_mode = 'HAVE_PLACE'")
