@@ -520,7 +520,7 @@
   </div>
 
   <script type="application/json" id="housingMapPayload">$map_payload_json</script>
-  <section class="housing-map-detail-modal" data-map-detail-modal aria-hidden="true">
+  <section class="housing-map-detail-modal" data-map-detail-modal aria-hidden="true" hidden>
     <div class="housing-map-detail-panel" role="dialog" aria-modal="true" aria-labelledby="housingMapDetailTitle">
       <header>
         <div>
@@ -812,6 +812,7 @@
         if (!mapDetailModal || !mapDetailBody || !post) return;
         if (mapDetailTitle) mapDetailTitle.textContent = post.title || "Housing listing details";
         mapDetailBody.innerHTML = renderMapDetail(post, mapDistanceText(post));
+        mapDetailModal.hidden = false;
         mapDetailModal.classList.add("is-open");
         mapDetailModal.setAttribute("aria-hidden", "false");
         document.body.classList.add("housing-detail-open");
@@ -821,6 +822,7 @@
         if (!mapDetailModal) return;
         mapDetailModal.classList.remove("is-open");
         mapDetailModal.setAttribute("aria-hidden", "true");
+        mapDetailModal.hidden = true;
         document.body.classList.remove("housing-detail-open");
       };
       const renderMapResults = (posts, emptyMessage = "No active housing leads match this search yet.") => {

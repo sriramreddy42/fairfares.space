@@ -1479,9 +1479,13 @@ body.housing-map-full-open {
   background: rgba(7, 25, 67, 0.58);
 }
 
+.housing-map-detail-modal[hidden] {
+  display: none !important;
+}
+
 .housing-map-detail-modal.is-open {
   display: grid;
-  place-items: start center;
+  place-items: center;
 }
 
 body.housing-detail-open {
