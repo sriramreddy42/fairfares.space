@@ -713,6 +713,26 @@
         const button = selector ? document.querySelector(selector) : null;
         if (button) markChoice(button);
       };
+      const markNeedChoice = (mode, roommateIntent = false, category = "") => {
+        let selector = "";
+        if (roommateIntent) {
+          selector = '[data-choice-group="need"][data-roommate-intent="1"]';
+        } else if (mode === "HAVE_PLACE" && category === "apartment") {
+          selector = '[data-choice-group="need"][data-need-preset="HAVE_PLACE"][data-category-preset="apartment"]';
+        } else if (mode === "NEED_PLACE" && category === "apartment") {
+          selector = '[data-choice-group="need"][data-need-preset="NEED_PLACE"][data-category-preset="apartment"]';
+        } else if (mode === "HAVE_PLACE") {
+          selector = '[data-choice-group="need"][data-need-preset="HAVE_PLACE"]:not([data-category-preset])';
+        } else {
+          selector = '[data-choice-group="need"][data-need-preset="NEED_PLACE"]:not([data-roommate-intent]):not([data-category-preset])';
+        }
+        const button = document.querySelector(selector);
+        if (button) {
+          markChoice(button);
+          return button.dataset.choiceLabel || button.textContent.trim();
+        }
+        return "";
+      };
       const setNeedChoiceLabel = (label) => {
         selectedChoices.need = label;
         updateSelectionSummary();
@@ -749,9 +769,11 @@
         if (category && categorySelect) categorySelect.value = category;
         setRoommateIntent(roommateIntent);
         if (mode) setMode(mode);
-        if (roommateIntent) setNeedChoiceLabel("I need roommates");
-        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a place available");
-        else if (mode === "NEED_PLACE") setNeedChoiceLabel("I need a place to live");
+        const needLabel = (mode || roommateIntent) ? markNeedChoice(mode || "NEED_PLACE", roommateIntent, category) : "";
+        if (needLabel) setNeedChoiceLabel(needLabel);
+        else if (roommateIntent) setNeedChoiceLabel("I need roommates");
+        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a room to rent");
+        else if (mode === "NEED_PLACE") setNeedChoiceLabel("I need a room for rent");
         if (category) markChoiceByValue("category", category);
         if (modal) {
           modal.classList.add("is-open");
@@ -770,9 +792,11 @@
         if (category && categorySelect) categorySelect.value = category;
         setRoommateIntent(roommateIntent);
         setMode(mode || "NEED_PLACE");
-        if (roommateIntent) setNeedChoiceLabel("I need roommates");
-        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a place available");
-        else setNeedChoiceLabel("I need a place to live");
+        const needLabel = markNeedChoice(mode || "NEED_PLACE", roommateIntent, category);
+        if (needLabel) setNeedChoiceLabel(needLabel);
+        else if (roommateIntent) setNeedChoiceLabel("I need roommates");
+        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a room to rent");
+        else setNeedChoiceLabel("I need a room for rent");
         if (category) markChoiceByValue("category", category);
         if (modal) {
           modal.classList.add("is-open");
@@ -813,10 +837,15 @@
       document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
       document.querySelectorAll("[data-wizard-intent]").forEach((button) => {
         button.addEventListener("click", () => {
-          markChoice(button);
-          setRoommateIntent(button.dataset.roommateIntent === "1");
-          setMode(button.dataset.wizardIntent || "NEED_PLACE");
-          if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
+          const roommateIntent = button.dataset.roommateIntent === "1";
+          const mode = button.dataset.wizardIntent || "NEED_PLACE";
+          const category = button.dataset.categoryPreset || "";
+          setRoommateIntent(roommateIntent);
+          setMode(mode);
+          const needLabel = markNeedChoice(mode, roommateIntent, category);
+          if (needLabel) setNeedChoiceLabel(needLabel);
+          if (category && categorySelect) categorySelect.value = category;
+          if (category) markChoiceByValue("category", category);
           setWizardStep("category");
         });
       });
