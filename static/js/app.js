@@ -1937,9 +1937,16 @@ const chatMessages = chatDrawer?.querySelector("[data-chat-messages]");
 const chatForm = chatDrawer?.querySelector("[data-chat-form]");
 const chatStatus = chatDrawer?.querySelector("[data-chat-status]");
 const chatTitle = chatDrawer?.querySelector("#fairfaresChatTitle");
+const chatList = chatDrawer?.querySelector("[data-chat-list]");
+const chatSearch = chatDrawer?.querySelector("[data-chat-search]");
+const chatTabs = chatDrawer?.querySelectorAll("[data-chat-tab]");
 let activeChatConversationId = "";
 let activeChatPostId = "";
 let chatPollTimer = 0;
+let activeChatTab = "all";
+let chatConversations = [];
+let chatCommunities = [];
+let chatInboxLoaded = false;
 
 function chatEscape(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -1949,6 +1956,22 @@ function chatEscape(value) {
     '"': "&quot;",
     "'": "&#39;"
   }[char]));
+}
+
+function chatInitials(value) {
+  const parts = String(value || "FairFares").trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  return parts.map((part) => part[0]?.toUpperCase() || "").join("") || "F";
+}
+
+function chatTimeLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  const days = Math.floor((Date.now() - date.getTime()) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "1d";
+  if (days < 14) return `${days}d`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function setChatStatus(message, isError = false) {
@@ -1969,6 +1992,82 @@ function renderChatMessages(messages) {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+function renderChatList() {
+  if (!chatList) return;
+  const query = (chatSearch?.value || "").trim().toLowerCase();
+  if (activeChatTab === "groups" || activeChatTab === "communities") {
+    const kind = activeChatTab === "groups" ? "GROUP" : "COMMUNITY";
+    const rows = chatCommunities
+      .filter((community) => String(community.kind || "").toUpperCase() === kind)
+      .filter((community) => {
+        const haystack = `${community.name || ""} ${community.description || ""} ${community.area || ""}`.toLowerCase();
+        return !query || haystack.includes(query);
+      });
+    chatList.innerHTML = rows.length ? rows.map((community) => `
+      <button class="fairfares-chat-row" type="button" data-community-join="${chatEscape(community.id || "")}">
+        <span class="fairfares-chat-avatar">${chatEscape(chatInitials(community.name))}</span>
+        <div>
+          <b>${chatEscape(community.name || "FairFares group")}</b>
+          <span>${chatEscape(community.description || community.area || "Join the conversation")}</span>
+        </div>
+        <small class="fairfares-chat-community-action">${community.joined ? "Joined" : "Join"}</small>
+      </button>
+    `).join("") : `<div class="fairfares-chat-empty-list">No ${activeChatTab} match your search.</div>`;
+    return;
+  }
+
+  const rows = chatConversations
+    .filter((conversation) => activeChatTab !== "unread" || Number(conversation.unread || 0) > 0)
+    .filter((conversation) => {
+      const haystack = `${conversation.otherName || ""} ${conversation.subject || ""} ${conversation.lastMessage || ""}`.toLowerCase();
+      return !query || haystack.includes(query);
+    });
+  chatList.innerHTML = rows.length ? rows.map((conversation) => {
+    const unread = Number(conversation.unread || 0);
+    const active = conversation.id === activeChatConversationId ? " is-active" : "";
+    return `
+      <button class="fairfares-chat-row${active}" type="button" data-chat-open data-conversation-id="${chatEscape(conversation.id || "")}" data-chat-subject="${chatEscape(conversation.subject || "")}">
+        <span class="fairfares-chat-avatar">${chatEscape(chatInitials(conversation.otherName || conversation.subject))}</span>
+        <div>
+          <b>${chatEscape(conversation.otherName || "FairFares member")}</b>
+          <span>${chatEscape(conversation.lastMessage || conversation.subject || "No messages yet")}</span>
+        </div>
+        ${unread ? `<em>${unread}</em>` : `<small>${chatEscape(chatTimeLabel(conversation.lastMessageAt))}</small>`}
+      </button>
+    `;
+  }).join("") : `<div class="fairfares-chat-empty-list">${activeChatTab === "unread" ? "No unread messages." : "No chats yet. Message a listing to start one."}</div>`;
+}
+
+async function loadChatInbox() {
+  if (!chatDrawer) return;
+  const communityPromise = fetch("/api/chat/communities", { headers: { Accept: "application/json" } })
+    .then((response) => response.json())
+    .then((payload) => {
+      if (payload.ok) chatCommunities = payload.communities || [];
+    })
+    .catch(() => {});
+  try {
+    const response = await fetch("/api/chat/conversations", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (payload.login_required) {
+      chatConversations = [];
+      await communityPromise;
+      renderChatList();
+      setChatStatus("Sign in to view and send private messages.", true);
+      return;
+    }
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not load chats.");
+    chatConversations = payload.conversations || [];
+    chatInboxLoaded = true;
+    await communityPromise;
+    renderChatList();
+  } catch (error) {
+    await communityPromise;
+    renderChatList();
+    setChatStatus(error.message || "Could not load chats.", true);
+  }
+}
+
 async function loadChatMessages() {
   if (!activeChatConversationId) return;
   const response = await fetch(`/api/chat/messages?conversation_id=${encodeURIComponent(activeChatConversationId)}`, {
@@ -1985,6 +2084,7 @@ function openChatDrawer() {
   chatDrawer.classList.add("is-open");
   chatDrawer.setAttribute("aria-hidden", "false");
   document.body.classList.add("chat-open");
+  if (!chatInboxLoaded) loadChatInbox();
 }
 
 function closeChatDrawer() {
@@ -1995,17 +2095,32 @@ function closeChatDrawer() {
   window.clearInterval(chatPollTimer);
 }
 
+function openChatHome() {
+  activeChatConversationId = "";
+  activeChatPostId = "";
+  if (chatTitle) chatTitle.textContent = "Select a conversation";
+  openChatDrawer();
+  renderChatMessages([]);
+  setChatStatus("Choose a chat, group, or listing conversation.");
+  loadChatInbox();
+}
+
 async function openConversation(conversationId, subject = "") {
   activeChatConversationId = conversationId || "";
   activeChatPostId = "";
   if (chatTitle) chatTitle.textContent = subject || "Accommodation messages";
   openChatDrawer();
+  renderChatList();
   setChatStatus("Loading messages...");
   try {
     await loadChatMessages();
+    loadChatInbox();
     setChatStatus("");
     window.clearInterval(chatPollTimer);
-    chatPollTimer = window.setInterval(() => loadChatMessages().catch(() => {}), 8000);
+    chatPollTimer = window.setInterval(() => {
+      loadChatMessages().catch(() => {});
+      loadChatInbox();
+    }, 8000);
   } catch (error) {
     setChatStatus(error.message || "Could not load messages.", true);
   }
@@ -2017,24 +2132,62 @@ function openPostChat(postId, subject = "") {
   if (chatTitle) chatTitle.textContent = subject || "Accommodation messages";
   openChatDrawer();
   renderChatMessages([]);
-  setChatStatus("Send a message to start the conversation.");
+  loadChatInbox();
+  setChatStatus(activeChatPostId ? "Send a message to start the conversation. Sign in is required before sending." : "Choose a chat or message a listing.");
   chatForm?.querySelector("input[name='message']")?.focus();
 }
 
 document.addEventListener("click", (event) => {
+  const communityJoin = event.target.closest("[data-community-join]");
+  if (communityJoin) {
+    event.preventDefault();
+    const communityId = communityJoin.dataset.communityJoin || "";
+    const params = new URLSearchParams({ community_id: communityId });
+    setChatStatus("Joining...");
+    fetch("/api/chat/communities/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: params
+    })
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => {
+        if (payload.login_required) {
+          window.location.href = "/login";
+          return;
+        }
+        if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not join.");
+        chatCommunities = chatCommunities.map((community) => community.id === payload.community.id ? payload.community : community);
+        renderChatList();
+        setChatStatus(`Joined ${payload.community.name}.`);
+      })
+      .catch((error) => setChatStatus(error.message || "Could not join.", true));
+    return;
+  }
   const trigger = event.target.closest("[data-chat-open]");
   if (!trigger) return;
   event.preventDefault();
   const conversationId = trigger.dataset.conversationId || "";
   if (conversationId) {
     openConversation(conversationId, trigger.dataset.chatSubject || "");
-  } else {
+  } else if (trigger.dataset.postId) {
     openPostChat(trigger.dataset.postId || "", trigger.dataset.chatSubject || "");
+  } else {
+    openChatHome();
   }
 });
 
 chatDrawer?.querySelectorAll("[data-chat-close]").forEach((button) => {
   button.addEventListener("click", closeChatDrawer);
+});
+
+chatSearch?.addEventListener("input", renderChatList);
+
+chatTabs?.forEach((button) => {
+  button.addEventListener("click", () => {
+    activeChatTab = button.dataset.chatTab || "all";
+    chatTabs.forEach((tab) => tab.classList.toggle("is-active", tab === button));
+    renderChatList();
+  });
 });
 
 chatForm?.addEventListener("submit", async (event) => {

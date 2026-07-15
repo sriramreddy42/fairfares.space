@@ -296,16 +296,35 @@
   </dialog>
   <section class="fairfares-chat-drawer" data-chat-drawer aria-hidden="true">
     <div class="fairfares-chat-panel" role="dialog" aria-modal="true" aria-labelledby="fairfaresChatTitle">
-      <header>
-        <div><span>FairFares chat</span><h2 id="fairfaresChatTitle">Accommodation messages</h2></div>
-        <button type="button" data-chat-close aria-label="Close chat">x</button>
-      </header>
-      <div class="fairfares-chat-messages" data-chat-messages></div>
-      <form class="fairfares-chat-form" data-chat-form>
-        <input name="message" placeholder="Type a message" maxlength="2000" required>
-        <button type="submit">Send</button>
-      </form>
-      <p data-chat-status></p>
+      <aside class="fairfares-chat-sidebar">
+        <header>
+          <div><span>Fair Messenger</span><h2>Chats</h2></div>
+          <button type="button" data-chat-close aria-label="Close chat">x</button>
+        </header>
+        <label class="fairfares-chat-search">
+          <span aria-hidden="true">⌕</span>
+          <input type="search" data-chat-search placeholder="Search Messenger">
+        </label>
+        <nav class="fairfares-chat-tabs" aria-label="Chat filters">
+          <button type="button" class="is-active" data-chat-tab="all">All</button>
+          <button type="button" data-chat-tab="unread">Unread</button>
+          <button type="button" data-chat-tab="groups">Groups</button>
+          <button type="button" data-chat-tab="communities">Communities</button>
+        </nav>
+        <div class="fairfares-chat-list" data-chat-list></div>
+      </aside>
+      <section class="fairfares-chat-thread">
+        <header>
+          <div><span>FairFares chat</span><h2 id="fairfaresChatTitle">Select a conversation</h2></div>
+          <button type="button" data-chat-close aria-label="Close chat">x</button>
+        </header>
+        <div class="fairfares-chat-messages" data-chat-messages></div>
+        <form class="fairfares-chat-form" data-chat-form>
+          <input name="message" placeholder="Type a message" maxlength="2000" required>
+          <button type="submit">Send</button>
+        </form>
+        <p data-chat-status></p>
+      </section>
     </div>
   </section>
   <script>

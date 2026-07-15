@@ -1256,40 +1256,186 @@
   border-left: 1px solid var(--line);
   box-shadow: -20px 0 50px rgba(5, 12, 32, 0.22);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: 360px minmax(0, 1fr);
   height: 100%;
   margin-left: auto;
-  max-width: min(420px, 100vw);
+  max-width: min(820px, 100vw);
   position: relative;
   width: 100%;
   z-index: 1;
 }
-.fairfares-chat-panel header {
+.fairfares-chat-sidebar,
+.fairfares-chat-thread {
+  min-height: 0;
+}
+.fairfares-chat-sidebar {
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  padding: 14px;
+}
+.fairfares-chat-thread {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+.fairfares-chat-panel header,
+.fairfares-chat-thread header,
+.fairfares-chat-sidebar header {
   align-items: center;
-  border-bottom: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
+  padding: 0;
+}
+.fairfares-chat-thread header {
+  border-bottom: 1px solid var(--line);
   padding: 18px;
 }
-.fairfares-chat-panel header span {
+.fairfares-chat-panel header span,
+.fairfares-chat-thread header span,
+.fairfares-chat-sidebar header span {
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 900;
   text-transform: uppercase;
 }
-.fairfares-chat-panel h2 {
+.fairfares-chat-panel h2,
+.fairfares-chat-thread h2,
+.fairfares-chat-sidebar h2 {
   color: var(--navy);
-  font-size: 1.1rem;
+  font-size: 1.35rem;
   margin: 2px 0 0;
 }
-.fairfares-chat-panel header button {
+.fairfares-chat-panel header button,
+.fairfares-chat-thread header button,
+.fairfares-chat-sidebar header button {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--navy);
+  cursor: pointer;
   font-weight: 900;
   height: 40px;
   width: 40px;
+}
+.fairfares-chat-search {
+  align-items: center;
+  background: #eef1f5;
+  border-radius: 999px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 40px;
+  padding: 0 12px;
+}
+.fairfares-chat-search input {
+  background: transparent;
+  border: 0;
+  min-height: 40px;
+  min-width: 0;
+  padding: 0;
+}
+.fairfares-chat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fairfares-chat-tabs button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  font-weight: 900;
+  min-height: 36px;
+  padding: 0 12px;
+}
+.fairfares-chat-tabs button.is-active {
+  background: #e8f3ff;
+  color: #1266f1;
+}
+.fairfares-chat-list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+.fairfares-chat-row {
+  align-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--navy);
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  min-height: 64px;
+  padding: 8px;
+  text-align: left;
+}
+.fairfares-chat-row:hover,
+.fairfares-chat-row.is-active {
+  background: #f0f2f5;
+}
+.fairfares-chat-avatar {
+  align-items: center;
+  background: #e8f3ff;
+  border-radius: 999px;
+  color: #1266f1;
+  display: inline-flex;
+  font-weight: 900;
+  height: 48px;
+  justify-content: center;
+  overflow: hidden;
+  width: 48px;
+}
+.fairfares-chat-row > div,
+.fairfares-chat-row > div span,
+.fairfares-chat-row b,
+.fairfares-chat-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fairfares-chat-row b {
+  display: block;
+  font-size: 0.98rem;
+}
+.fairfares-chat-row > div span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.86rem;
+  font-weight: 700;
+  margin-top: 3px;
+}
+.fairfares-chat-row small {
+  color: var(--muted);
+  font-weight: 800;
+}
+.fairfares-chat-row em {
+  align-self: start;
+  background: var(--red);
+  border-radius: 999px;
+  color: #fff;
+  font-style: normal;
+  font-weight: 900;
+  min-width: 22px;
+  padding: 2px 7px;
+  text-align: center;
+}
+.fairfares-chat-notice,
+.fairfares-chat-empty-list {
+  background: #f5f7fb;
+  border-radius: 10px;
+  color: var(--muted);
+  font-weight: 800;
+  padding: 12px;
+}
+.fairfares-chat-community-action {
+  color: #1266f1 !important;
+  font-weight: 900 !important;
 }
 .fairfares-chat-messages {
   align-content: end;
@@ -1352,6 +1498,7 @@
   font-weight: 900;
   padding: 0 18px;
 }
+.fairfares-chat-thread > p,
 .fairfares-chat-panel > p {
   color: var(--muted);
   font-weight: 800;
@@ -1359,8 +1506,23 @@
   min-height: 24px;
   padding: 0 14px 12px;
 }
+.fairfares-chat-thread > p.is-error,
 .fairfares-chat-panel > p.is-error {
   color: var(--red);
+}
+@media (max-width: 760px) {
+  .fairfares-chat-panel {
+    grid-template-columns: 1fr;
+    max-width: 100vw;
+  }
+  .fairfares-chat-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 46vh;
+  }
+  .fairfares-chat-thread {
+    min-height: 54vh;
+  }
 }
 .details-panel .manage-grid {
   grid-template-columns: 1fr;

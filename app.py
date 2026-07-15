@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-detail-modal"
+ASSET_VERSION = "20260715messenger-communities"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3559,6 +3559,27 @@ def init_db() -> None:
                 FOREIGN KEY(reply_to_message_id) REFERENCES chat_messages(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_communities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL DEFAULT 'COMMUNITY',
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                area_label TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_community_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                community_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(community_id, user_id),
+                FOREIGN KEY(community_id) REFERENCES chat_communities(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS accommodation_metros (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 metro_key TEXT NOT NULL UNIQUE,
@@ -4351,9 +4372,16 @@ def init_db() -> None:
         ensure_column(con, "chat_messages", "reply_to_message_id", "reply_to_message_id INTEGER")
         ensure_column(con, "chat_messages", "edited_at", "edited_at TEXT")
         ensure_column(con, "chat_messages", "deleted_at", "deleted_at TEXT")
+        ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
+        ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_communities", "area_label", "area_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
+        seed_chat_communities(con)
         con.execute(
             """
             UPDATE accommodation_posts
@@ -11184,6 +11212,76 @@ def chat_public_id() -> str:
     return f"FFC-{secrets.token_hex(5).upper()}"
 
 
+DEFAULT_CHAT_COMMUNITIES = [
+    ("FFG-DENVER-ROOMMATES", "GROUP", "Denver Roommates", "Roommate matching, sublets, and shared-house leads.", "Denver, CO"),
+    ("FFG-DU-HOUSING", "GROUP", "DU Housing Board", "Rooms and apartment leads near University of Denver.", "Denver, CO"),
+    ("FFG-DENVER-RIDES", "GROUP", "Denver Ride Share", "Need a ride, provide a ride, and campus commute coordination.", "Denver, CO"),
+    ("FFC-INDIAN-HOUSING-DENVER", "COMMUNITY", "Indian Housing Denver", "Community posts for rooms, rentals, roommates, and local help.", "Denver, CO"),
+    ("FFC-FAIRFARES-HOUSING", "COMMUNITY", "FairFares Housing Help", "Questions, alerts, and housing help from nearby FairFares members.", "United States"),
+]
+
+
+def seed_chat_communities(con: sqlite3.Connection) -> None:
+    for public_id, kind, name, description, area_label in DEFAULT_CHAT_COMMUNITIES:
+        con.execute(
+            """
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(public_id) DO UPDATE SET
+                kind = excluded.kind,
+                name = excluded.name,
+                description = excluded.description,
+                area_label = excluded.area_label,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (public_id, kind, name, description, area_label),
+        )
+
+
+def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, object]]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT communities.*,
+                   COUNT(members.id) AS member_count,
+                   MAX(CASE WHEN members.user_id = ? THEN 1 ELSE 0 END) AS joined
+            FROM chat_communities communities
+            LEFT JOIN chat_community_members members ON members.community_id = communities.id
+            GROUP BY communities.id
+            ORDER BY CASE communities.kind WHEN 'GROUP' THEN 0 ELSE 1 END, communities.name
+            """,
+            (int(user_id or 0),),
+        ).fetchall()
+    return [
+        {
+            "id": row_value(row, "public_id"),
+            "kind": row_value(row, "kind"),
+            "name": row_value(row, "name"),
+            "description": row_value(row, "description"),
+            "area": row_value(row, "area_label"),
+            "memberCount": int(row_value(row, "member_count") or 0),
+            "joined": int(row_value(row, "joined") or 0) > 0,
+        }
+        for row in rows
+    ]
+
+
+def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+    with db() as con:
+        community = con.execute(
+            "SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1",
+            (public_id,),
+        ).fetchone()
+        if not community:
+            return None, "Community not found."
+        con.execute(
+            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+            (community["id"], user_id),
+        )
+    joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
+    return (joined[0] if joined else None), ""
+
+
 def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
     last_message_id = int(row_value(row, "last_message_id") or 0)
     last_read_id = int(row_value(row, "last_read_message_id") or 0)
@@ -12915,6 +13013,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
             return
+        if parsed.path == "/api/chat/communities":
+            self.api_chat_communities(parsed)
+            return
         if parsed.path == "/api/chat/messages":
             self.api_chat_messages(parsed)
             return
@@ -13011,6 +13112,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
             "/api/chat/conversations": self.api_create_chat_conversation,
+            "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
             "/profile/update": self.update_user_profile,
@@ -13806,6 +13908,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.send_json({"ok": True, "conversations": get_chat_conversations_for_user(int(user["id"]))})
 
+    def api_chat_communities(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        user_id = int(user["id"]) if user else None
+        self.send_json({"ok": True, "communities": get_chat_communities_for_user(user_id)})
+
     def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -13913,6 +14020,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "message": chat_message_payload(message, int(user["id"])),
             }
         )
+
+    def api_join_chat_community(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to join groups and communities."}, 401)
+            return
+        form = self.read_form()
+        public_id = (form.get("community_id") or "").strip()
+        if not public_id:
+            self.send_json({"ok": False, "message": "Choose a group or community first."}, 400)
+            return
+        community, error = join_chat_community(public_id, int(user["id"]))
+        if not community:
+            self.send_json({"ok": False, "message": error or "Could not join this community."}, 404)
+            return
+        self.send_json({"ok": True, "community": community})
 
     def api_send_chat_message(self) -> None:
         user = self.current_user()
