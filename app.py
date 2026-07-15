@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-about-sync"
+ASSET_VERSION = "20260715housing-need-room-fields"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -13552,7 +13552,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         mode = normalize_accommodation_mode(form.get("post_mode", ""))
         category = (form.get("category") or "").strip()
         description = (form.get("description") or "").strip()
+        contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
+        contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
+        contact_phone = (form.get("contact_phone") or row_value(user, "phone")).strip()
         if not category or not description:
+            self.redirect("/accommodations?error=missing")
+            return
+        if not contact_name or not contact_email or not contact_phone:
             self.redirect("/accommodations?error=missing")
             return
         if mode == "HAVE_PLACE":
@@ -13571,14 +13577,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if any(not (form.get(field) or "").strip() for field in required_listing_fields):
                 self.redirect("/accommodations?error=missing")
                 return
+        if mode == "NEED_PLACE":
+            required_request_fields = (
+                "title",
+                "city_area_zip",
+                "zip_code",
+                "move_in_date",
+                "rent_min",
+                "rent_period",
+                "accommodates",
+                "bathroom_type",
+                "lease_term",
+            )
+            if any(not (form.get(field) or "").strip() for field in required_request_fields):
+                self.redirect("/accommodations?error=missing")
+                return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
         roommate_intent = 1 if (form.get("roommate_intent") or "").strip() == "1" else 0
         title = accommodation_title_from_form(form, mode, category_label, bool(roommate_intent))
         user_id = int(row_value(user, "id") or 0) if user else None
-        contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
-        contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
-        contact_phone = (form.get("contact_phone") or row_value(user, "phone")).strip()
         location_query = (
             (form.get("street_address") or "").strip()
             or (form.get("city") or "").strip()

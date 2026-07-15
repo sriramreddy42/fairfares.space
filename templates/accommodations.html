@@ -237,7 +237,7 @@
 
         <label class="wide">
           <span>Title</span>
-          <input name="title" data-required-have placeholder="Enter your title">
+          <input name="title" data-required-have data-required-need placeholder="Enter your title">
         </label>
 
         <label class="wide">
@@ -254,11 +254,11 @@
             <span>City</span>
             <input name="city" data-required-have placeholder="Denver, CO">
           </label>
-          <label class="listing-field">
+          <label>
             <span>Zip code</span>
-            <input name="zip_code" inputmode="numeric" pattern="[0-9]{5}" data-required-have placeholder="80264">
+            <input name="zip_code" inputmode="numeric" pattern="[0-9]{5}" data-required-have data-required-need placeholder="80264">
           </label>
-          <label class="listing-field">
+          <label>
             <span>Primary neighborhood</span>
             <input name="primary_neighborhood" placeholder="Capitol Hill, DU, Platt Park">
           </label>
@@ -267,8 +267,8 @@
             <select name="category" required>$category_options</select>
           </label>
           <label class="need-only">
-            <span>City, area, or ZIP</span>
-            <input name="city_area_zip" placeholder="Denver, Lone Tree, 80231">
+            <span>Preferred location</span>
+            <input name="city_area_zip" data-required-need placeholder="Denver, Lone Tree, 80231">
           </label>
           <label class="need-only">
             <span>Area or apartment</span>
@@ -288,11 +288,11 @@
           </label>
           <label>
             <span>Move-in / available date</span>
-            <input name="move_in_date" type="date" data-required-have>
+            <input name="move_in_date" type="date" data-required-have data-required-need>
           </label>
           <label>
             <span>Rent minimum</span>
-            <input name="rent_min" type="number" min="0" step="1" data-required-have placeholder="700">
+            <input name="rent_min" type="number" min="0" step="1" data-required-have data-required-need placeholder="700">
           </label>
           <label>
             <span>Rent maximum</span>
@@ -300,7 +300,7 @@
           </label>
           <label>
             <span>Rent period</span>
-            <select name="rent_period">$rent_period_options</select>
+            <select name="rent_period" data-required-have data-required-need>$rent_period_options</select>
           </label>
           <label class="listing-field">
             <span>Bedrooms</span>
@@ -310,13 +310,13 @@
             <span>Bathrooms</span>
             <input name="bathroom_count" type="number" min="0" step="1" placeholder="2">
           </label>
-          <label class="listing-field">
+          <label>
             <span>Accommodates</span>
-            <input name="accommodates" type="number" min="1" step="1" data-required-have placeholder="1">
+            <input name="accommodates" type="number" min="1" step="1" data-required-have data-required-need placeholder="1">
           </label>
-          <label class="listing-field">
-            <span>Bathroom type</span>
-            <select name="bathroom_type" data-required-have>
+          <label>
+            <span>Bath preference</span>
+            <select name="bathroom_type" data-required-have data-required-need>
               <option value="">Select</option>
               <option value="shared">Shared Bath</option>
               <option value="private">Private Bath</option>
@@ -337,7 +337,7 @@
           </label>
           <label>
             <span>Lease term</span>
-            <select name="lease_term" data-required-have>$lease_term_options</select>
+            <select name="lease_term" data-required-have data-required-need>$lease_term_options</select>
           </label>
           <label class="listing-field">
             <span>Security deposit</span>
@@ -428,15 +428,15 @@
           </label>
           <label>
             <span>Contact name</span>
-            <input name="contact_name" placeholder="Your name">
+            <input name="contact_name" data-required-contact placeholder="Your name">
           </label>
           <label>
             <span>Contact phone</span>
-            <input name="contact_phone" placeholder="Phone number">
+            <input name="contact_phone" data-required-contact placeholder="Phone number">
           </label>
           <label>
             <span>Contact email</span>
-            <input name="contact_email" type="email" placeholder="Email">
+            <input name="contact_email" type="email" data-required-contact placeholder="Email">
           </label>
           <label class="image-input listing-field"><span>Image 1</span><input name="image_1" type="file" accept="image/*"></label>
           <label class="image-input listing-field"><span>Image 2</span><input name="image_2" type="file" accept="image/*"></label>
@@ -768,7 +768,8 @@
       const aboutInput = form.querySelector('input[name="about_you"]');
       const aboutButtons = document.querySelectorAll("[data-about-for]");
       const roommateIntentInput = form.querySelector("[data-roommate-intent-field]");
-      const haveRequiredFields = form.querySelectorAll("[data-required-have]");
+      const modeRequiredFields = form.querySelectorAll("[data-required-have], [data-required-need]");
+      const contactRequiredFields = form.querySelectorAll("[data-required-contact]");
       const wizard = document.querySelector("[data-post-wizard]");
       const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
@@ -972,8 +973,12 @@
         form.classList.toggle("is-roommate", roommateIntent);
         form.classList.toggle("is-need-place", mode === "NEED_PLACE" && !roommateIntent);
         syncAboutOptions(mode);
-        haveRequiredFields.forEach((field) => {
-          field.required = mode === "HAVE_PLACE";
+        modeRequiredFields.forEach((field) => {
+          field.required = (mode === "HAVE_PLACE" && field.hasAttribute("data-required-have"))
+            || (mode === "NEED_PLACE" && field.hasAttribute("data-required-need"));
+        });
+        contactRequiredFields.forEach((field) => {
+          field.required = true;
         });
         if (descriptionField) descriptionField.placeholder = copy.placeholder;
       };
