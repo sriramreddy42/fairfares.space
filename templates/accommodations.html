@@ -115,9 +115,19 @@
 
     <section class="housing-map-section" aria-label="Housing results map">
       <div class="housing-map-copy">
-        <p class="eyebrow">Map view</p>
-        <h2>Listings around $selected_location</h2>
-        <p>See each lead by rent, radius, and distance from your selected location.</p>
+        <div>
+          <p class="eyebrow">Map view</p>
+          <h2 data-map-heading>Listings around $selected_location</h2>
+        </div>
+        <form class="housing-map-point-search" data-map-point-form>
+          <label>
+            <span>Distance from</span>
+            <input name="map_point" data-map-point-input value="$selected_location" placeholder="Union Station, DU, apartment, neighborhood">
+          </label>
+          <button type="submit">Find nearest</button>
+          <button type="button" data-map-fullscreen>Full view</button>
+        </form>
+        <p data-map-help>See each lead by rent, radius, and distance from your selected location.</p>
       </div>
       <div class="housing-map-layout">
         <div id="housingMapCanvas" class="housing-map-canvas">
@@ -642,6 +652,19 @@
         "'": "&#39;"
       }[char]));
       const mapSortState = { key: "distance", direction: "asc" };
+      const mapPointForm = document.querySelector("[data-map-point-form]");
+      const mapPointInput = document.querySelector("[data-map-point-input]");
+      const mapHeading = document.querySelector("[data-map-heading]");
+      const mapHelp = document.querySelector("[data-map-help]");
+      const mapSection = document.querySelector(".housing-map-section");
+      const mapFullButton = document.querySelector("[data-map-fullscreen]");
+      let mapCenterOverride = null;
+      let mapGeocoder = null;
+      const updateMapPointCopy = (label) => {
+        const pointLabel = label || "your selected location";
+        if (mapHeading) mapHeading.textContent = `Listings around ${pointLabel}`;
+        if (mapHelp) mapHelp.textContent = `See each lead by rent, radius, and distance from ${pointLabel}.`;
+      };
       const comparableMapValue = (post, key) => {
         const value = key === "rent" ? Number(post.rentValue || 0) : Number(post.distance);
         return Number.isFinite(value) && value > 0 ? value : Number.POSITIVE_INFINITY;
@@ -657,7 +680,10 @@
         if (!results) return;
         const orderedPosts = sortedMapPosts(posts);
         results.innerHTML = orderedPosts.length ? orderedPosts.map((post, index) => {
-          const distanceText = post.distance !== null && post.distance !== undefined ? `${escapeMapHtml(post.distance)} mi away` : "Distance pending";
+          const fromLabel = mapCenterOverride?.label || "";
+          const distanceText = post.distance !== null && post.distance !== undefined
+            ? `${escapeMapHtml(post.distance)} mi${fromLabel ? ` from ${escapeMapHtml(fromLabel)}` : " away"}`
+            : "Distance pending";
           const radiusText = `${escapeMapHtml(post.radius || 0)} mi radius`;
           return `
             <article>
@@ -680,12 +706,31 @@
           renderHousingMap();
         });
       });
+      mapFullButton?.addEventListener("click", () => {
+        if (!mapSection) return;
+        const expanded = !mapSection.classList.contains("is-full-view");
+        mapSection.classList.toggle("is-full-view", expanded);
+        document.body.classList.toggle("housing-map-full-open", expanded);
+        mapFullButton.textContent = expanded ? "Exit full view" : "Full view";
+        window.setTimeout(() => renderHousingMap(), 120);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && mapSection?.classList.contains("is-full-view")) {
+          mapSection.classList.remove("is-full-view");
+          document.body.classList.remove("housing-map-full-open");
+          if (mapFullButton) mapFullButton.textContent = "Full view";
+          window.setTimeout(() => renderHousingMap(), 120);
+        }
+      });
       const renderMapFallbackList = (payload, message) => {
         const mapCanvas = document.getElementById("housingMapCanvas");
         if (mapCanvas) {
           mapCanvas.innerHTML = `<b>${message || "Map preview"}</b><span>Live pins render when Google Maps is available. The listings below still show saved location, rent, and radius.</span>`;
         }
-        renderMapResults(payload.posts || [], "No active housing leads match this search yet.");
+        const fallbackPosts = mapCenterOverride
+          ? (payload.posts || []).map((post) => ({ ...post, distance: null }))
+          : (payload.posts || []);
+        renderMapResults(fallbackPosts, "No active housing leads match this search yet.");
       };
       const renderHousingMap = (attempt = 0) => {
         const payloadNode = document.getElementById("housingMapPayload");
@@ -700,7 +745,7 @@
           return;
         }
         const posts = Array.isArray(payload.posts) ? payload.posts : [];
-        const center = payload.center || {};
+        const center = { ...(payload.center || {}), ...(mapCenterOverride || {}) };
         if (!window.google?.maps) {
           if (payload.mapsEnabled && attempt < 20) {
             mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Connecting housing pins and distance circles.</span>";
@@ -710,7 +755,8 @@
           renderMapFallbackList(payload, payload.mapsEnabled ? "Map could not load" : "Map ready when Google Maps key is enabled");
           return;
         }
-        const geocoder = new google.maps.Geocoder();
+        const geocoder = mapGeocoder || new google.maps.Geocoder();
+        mapGeocoder = geocoder;
         const geocodePost = (post) => new Promise((resolve) => {
           if (Number(post.lat) && Number(post.lng)) {
             resolve(post);
@@ -767,7 +813,7 @@
           });
           visiblePosts.forEach((post, index) => {
             const position = { lat: Number(post.lat), lng: Number(post.lng) };
-            const distance = post.distance ?? milesBetween(centerPosition, position);
+            const distance = milesBetween(centerPosition, position);
             post.distance = distance === null ? null : Math.round(distance * 10) / 10;
             bounds.extend(position);
             const marker = new google.maps.Marker({
@@ -798,6 +844,31 @@
           renderMapResults(visiblePosts, "No mappable housing leads match this search yet.");
         });
       };
+      mapPointForm?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const query = (mapPointInput?.value || "").trim();
+        if (!query) return;
+        mapCenterOverride = { label: query, lat: 0, lng: 0 };
+        updateMapPointCopy(query);
+        if (!window.google?.maps) {
+          renderHousingMap();
+          return;
+        }
+        const geocoder = mapGeocoder || new google.maps.Geocoder();
+        mapGeocoder = geocoder;
+        geocoder.geocode({ address: query }, (results, status) => {
+          const match = results?.[0];
+          if (status === "OK" && match?.geometry?.location) {
+            mapCenterOverride = {
+              label: query,
+              lat: match.geometry.location.lat(),
+              lng: match.geometry.location.lng(),
+            };
+          }
+          updateMapPointCopy(query);
+          renderHousingMap();
+        });
+      });
       renderHousingMap();
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");

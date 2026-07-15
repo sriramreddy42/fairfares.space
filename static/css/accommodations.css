@@ -1072,8 +1072,8 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 }
 
 .housing-map-copy {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1fr) minmax(280px, 0.7fr);
   gap: 18px;
   align-items: end;
   margin-bottom: 14px;
@@ -1084,6 +1084,10 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   margin: 0;
 }
 
+.housing-map-copy h2 {
+  line-height: 1.05;
+}
+
 .housing-map-copy p:last-child {
   max-width: 420px;
   color: #5d6470;
@@ -1091,11 +1095,82 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   line-height: 1.35;
 }
 
+.housing-map-point-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.housing-map-point-search label {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  color: #5d6470;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.housing-map-point-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #c7d7e8;
+  border-radius: 8px;
+  color: #071943;
+  font: inherit;
+  font-weight: 900;
+}
+
+.housing-map-point-search button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid #d7e2f0;
+  border-radius: 8px;
+  background: #071943;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.housing-map-point-search button[type="button"] {
+  background: #fff;
+  color: #071943;
+}
+
 .housing-map-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.36fr);
   gap: 14px;
   min-height: 430px;
+}
+
+.housing-map-section.is-full-view {
+  position: fixed;
+  inset: 18px;
+  z-index: 1200;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  margin: 0;
+  overflow: hidden;
+}
+
+.housing-map-section.is-full-view .housing-map-layout {
+  min-height: 0;
+  height: 100%;
+}
+
+.housing-map-section.is-full-view .housing-map-canvas,
+.housing-map-section.is-full-view .housing-map-rail {
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+}
+
+body.housing-map-full-open {
+  overflow: hidden;
 }
 
 .housing-map-canvas {
@@ -1639,9 +1714,14 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
   .housing-map-copy {
     display: grid;
+    grid-template-columns: 1fr;
   }
 
   .housing-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .housing-map-point-search {
     grid-template-columns: 1fr;
   }
 
