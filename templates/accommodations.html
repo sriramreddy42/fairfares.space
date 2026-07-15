@@ -644,6 +644,7 @@
       renderHousingMap();
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");
+      const postPanel = document.querySelector(".housing-post-panel");
       const categorySelect = form.querySelector('select[name="category"]');
       const modeInputs = form.querySelectorAll('input[name="post_mode"]');
       const cityInput = form.querySelector('input[name="city_area_zip"]');
@@ -739,6 +740,16 @@
         }
         return "";
       };
+      const syncNeedFromCategory = (category = "") => {
+        const checked = form.querySelector('input[name="post_mode"]:checked');
+        const mode = checked ? checked.value : "NEED_PLACE";
+        const roommateIntent = roommateIntentInput && roommateIntentInput.value === "1";
+        if (roommateIntent) return;
+        if (category === "apartment") {
+          const needLabel = markNeedChoice(mode, false, "apartment");
+          if (needLabel) setNeedChoiceLabel(needLabel);
+        }
+      };
       const setNeedChoiceLabel = (label) => {
         selectedChoices.need = label;
         updateSelectionSummary();
@@ -760,12 +771,14 @@
         form.hidden = true;
         if (formIntro) formIntro.hidden = true;
         setWizardStep(step);
+        window.requestAnimationFrame(() => postPanel?.scrollTo({ top: 0, behavior: "smooth" }));
       };
       const showForm = () => {
         if (wizard) wizard.hidden = true;
         form.hidden = false;
         if (formIntro) formIntro.hidden = false;
-        window.setTimeout(() => firstField && firstField.focus(), 80);
+        window.requestAnimationFrame(() => postPanel?.scrollTo({ top: 0, behavior: "smooth" }));
+        window.setTimeout(() => firstField && firstField.focus({ preventScroll: true }), 120);
       };
       const openModal = (options = {}) => {
         if (typeof options === "string") options = { category: options };
@@ -857,8 +870,10 @@
       });
       document.querySelectorAll("[data-wizard-category]").forEach((button) => {
         button.addEventListener("click", () => {
-          if (categorySelect) categorySelect.value = button.dataset.wizardCategory || "";
-          markChoiceByValue("category", button.dataset.wizardCategory || "");
+          const category = button.dataset.wizardCategory || "";
+          if (categorySelect) categorySelect.value = category;
+          markChoiceByValue("category", category);
+          syncNeedFromCategory(category);
           if (!selectedChoices.category) {
             selectedChoices.category = button.textContent.trim();
             updateSelectionSummary();
@@ -881,6 +896,7 @@
         button.addEventListener("click", () => {
           markChoice(button);
           if (categorySelect) categorySelect.value = button.dataset.categoryPreset || "";
+          syncNeedFromCategory(button.dataset.categoryPreset || "");
         });
       });
       document.querySelectorAll("[data-about-preset]").forEach((button) => {
@@ -904,6 +920,7 @@
       categorySelect?.addEventListener("change", () => {
         const selected = categorySelect.options[categorySelect.selectedIndex];
         selectedChoices.category = selected ? selected.textContent.trim() : "";
+        syncNeedFromCategory(categorySelect.value || "");
         updateSelectionSummary();
       });
       document.querySelector("[data-edit-wizard]")?.addEventListener("click", () => showWizard("summary"));
