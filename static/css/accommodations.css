@@ -1118,12 +1118,62 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   font-size: 0.9rem;
 }
 
+.housing-map-rail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+  max-height: 430px;
+  min-height: 0;
+}
+
+.housing-map-sort {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #d7e2f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(7, 25, 67, 0.06);
+}
+
+.housing-map-sort span {
+  color: #5d6470;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.housing-map-sort button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #d7e2f0;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #071943;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.housing-map-sort button.is-active {
+  border-color: #071943;
+  background: #071943;
+  color: #fff;
+}
+
 .housing-map-results {
   display: grid;
   align-content: start;
   gap: 10px;
-  max-height: 430px;
+  min-height: 0;
   overflow: auto;
+  padding-right: 4px;
+  scroll-snap-type: y proximity;
 }
 
 .housing-map-results article,
@@ -1138,16 +1188,43 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 .housing-map-results article {
   display: grid;
   gap: 5px;
+  scroll-snap-align: start;
 }
 
 .housing-map-results b {
   color: #071943;
 }
 
-.housing-map-results span,
-.housing-map-results small {
+.housing-map-results span {
   color: #5d6470;
   font-weight: 800;
+}
+
+.housing-map-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.housing-map-metrics small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: #4f5a6d;
+  font-weight: 900;
+}
+
+.housing-map-metrics .rent {
+  background: #fff1d9;
+  color: #9a5200;
+}
+
+.housing-map-metrics .distance {
+  background: #e8f8ef;
+  color: #11772e;
 }
 
 .housing-section-heading {
@@ -1552,6 +1629,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
     grid-template-columns: 1fr;
   }
 
+  .housing-map-rail,
   .housing-map-results {
     max-height: none;
   }

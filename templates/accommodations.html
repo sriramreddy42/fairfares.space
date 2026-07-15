@@ -124,7 +124,16 @@
           <b>Loading map</b>
           <span>Housing pins appear here when location data is available.</span>
         </div>
-        <div class="housing-map-results" data-map-results></div>
+        <aside class="housing-map-rail" aria-label="Mapped housing leads">
+          <div class="housing-map-sort" data-map-sort-controls>
+            <span>Sort by</span>
+            <button type="button" class="is-active" data-map-sort="distance" data-map-direction="asc">Distance ↑</button>
+            <button type="button" data-map-sort="distance" data-map-direction="desc">Distance ↓</button>
+            <button type="button" data-map-sort="rent" data-map-direction="asc">Rent ↑</button>
+            <button type="button" data-map-sort="rent" data-map-direction="desc">Rent ↓</button>
+          </div>
+          <div class="housing-map-results" data-map-results></div>
+        </aside>
       </div>
     </section>
 
@@ -624,22 +633,51 @@
         '"': "&quot;",
         "'": "&#39;"
       }[char]));
+      const mapSortState = { key: "distance", direction: "asc" };
+      const comparableMapValue = (post, key) => {
+        const value = key === "rent" ? Number(post.rentValue || 0) : Number(post.distance);
+        return Number.isFinite(value) && value > 0 ? value : Number.POSITIVE_INFINITY;
+      };
+      const sortedMapPosts = (posts) => [...posts].sort((a, b) => {
+        const aValue = comparableMapValue(a, mapSortState.key);
+        const bValue = comparableMapValue(b, mapSortState.key);
+        const result = aValue === bValue ? String(a.title || "").localeCompare(String(b.title || "")) : aValue - bValue;
+        return mapSortState.direction === "desc" ? -result : result;
+      });
+      const renderMapResults = (posts, emptyMessage = "No active housing leads match this search yet.") => {
+        const results = document.querySelector("[data-map-results]");
+        if (!results) return;
+        const orderedPosts = sortedMapPosts(posts);
+        results.innerHTML = orderedPosts.length ? orderedPosts.map((post, index) => {
+          const distanceText = post.distance !== null && post.distance !== undefined ? `${escapeMapHtml(post.distance)} mi away` : "Distance pending";
+          const radiusText = `${escapeMapHtml(post.radius || 0)} mi radius`;
+          return `
+            <article>
+              <b>${index + 1}. ${escapeMapHtml(post.title || "Housing lead")}</b>
+              <span>${escapeMapHtml(post.location || "Location pending")}</span>
+              <div class="housing-map-metrics">
+                <small class="rent">${escapeMapHtml(post.rent || "Rent open")}</small>
+                <small>${radiusText}</small>
+                <small class="distance">${distanceText}</small>
+              </div>
+            </article>
+          `;
+        }).join("") : `<p>${emptyMessage}</p>`;
+      };
+      document.querySelectorAll("[data-map-sort]").forEach((button) => {
+        button.addEventListener("click", () => {
+          mapSortState.key = button.dataset.mapSort || "distance";
+          mapSortState.direction = button.dataset.mapDirection || "asc";
+          document.querySelectorAll("[data-map-sort]").forEach((item) => item.classList.toggle("is-active", item === button));
+          renderHousingMap();
+        });
+      });
       const renderMapFallbackList = (payload, message) => {
         const mapCanvas = document.getElementById("housingMapCanvas");
-        const results = document.querySelector("[data-map-results]");
         if (mapCanvas) {
           mapCanvas.innerHTML = `<b>${message || "Map preview"}</b><span>Live pins render when Google Maps is available. The listings below still show saved location, rent, and radius.</span>`;
         }
-        if (results) {
-          const posts = payload.posts || [];
-          results.innerHTML = posts.length ? posts.map((post) => `
-            <article>
-              <b>${escapeMapHtml(post.title || "Housing lead")}</b>
-              <span>${escapeMapHtml(post.location || "Location pending")}</span>
-              <small>${escapeMapHtml(post.rent || "Rent open")} · ${escapeMapHtml(post.radius || 0)} mi radius</small>
-            </article>
-          `).join("") : "<p>No active housing leads match this search yet.</p>";
-        }
+        renderMapResults(payload.posts || [], "No active housing leads match this search yet.");
       };
       const renderHousingMap = (attempt = 0) => {
         const payloadNode = document.getElementById("housingMapPayload");
@@ -697,7 +735,7 @@
           });
         });
         geocodeCenter().then(() => Promise.all(posts.map(geocodePost))).then((resolvedPosts) => {
-          const visiblePosts = resolvedPosts.filter((post) => Number(post.lat) && Number(post.lng));
+          const visiblePosts = sortedMapPosts(resolvedPosts.filter((post) => Number(post.lat) && Number(post.lng)));
           if (!Number(center.lat) || !Number(center.lng)) {
             renderMapFallbackList(payload, "Choose a location to map results");
             return;
@@ -749,13 +787,7 @@
             marker.addListener("click", () => info.open({ map, anchor: marker }));
           });
           if (visiblePosts.length) map.fitBounds(bounds);
-          results.innerHTML = visiblePosts.length ? visiblePosts.map((post, index) => `
-            <article>
-              <b>${index + 1}. ${escapeMapHtml(post.title || "Housing lead")}</b>
-              <span>${escapeMapHtml(post.location || "Location pending")}</span>
-              <small>${escapeMapHtml(post.rent || "Rent open")} · ${escapeMapHtml(post.radius || 0)} mi radius${post.distance !== null ? ` · ${escapeMapHtml(post.distance)} mi away` : ""}</small>
-            </article>
-          `).join("") : "<p>No mappable housing leads match this search yet.</p>";
+          renderMapResults(visiblePosts, "No mappable housing leads match this search yet.");
         });
       };
       renderHousingMap();

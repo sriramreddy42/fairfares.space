@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-need-room-fields"
+ASSET_VERSION = "20260715housing-map-sort"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -10905,6 +10905,7 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
                 "lng": lng,
                 "radius": int(float(row_value(row, "radius_miles") or 0)),
                 "rent": format_accommodation_rent(row),
+                "rentValue": float(row_value(row, "rent_min") or row_value(row, "rent_max") or 0),
                 "distance": round(distance, 1) if distance is not None else None,
                 "source": point_source,
             }
