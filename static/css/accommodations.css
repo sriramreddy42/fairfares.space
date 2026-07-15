@@ -735,6 +735,12 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
     url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/3a/08/cb9e317507fed19b25acedecad6955fbd2358374299065b18c1240d8a3b1.jpeg") center/cover;
 }
 
+.housing-post-wizard[hidden],
+.housing-post-form[hidden],
+.housing-modal-intro[hidden] {
+  display: none !important;
+}
+
 .housing-wizard-step {
   display: none;
   padding: clamp(18px, 3vw, 34px);
