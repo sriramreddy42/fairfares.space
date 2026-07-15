@@ -127,10 +127,18 @@
         <aside class="housing-map-rail" aria-label="Mapped housing leads">
           <div class="housing-map-sort" data-map-sort-controls>
             <span>Sort by</span>
-            <button type="button" class="is-active" data-map-sort="distance" data-map-direction="asc">Distance ↑</button>
-            <button type="button" data-map-sort="distance" data-map-direction="desc">Distance ↓</button>
-            <button type="button" data-map-sort="rent" data-map-direction="asc">Rent ↑</button>
-            <button type="button" data-map-sort="rent" data-map-direction="desc">Rent ↓</button>
+            <button type="button" class="is-active" data-map-sort="distance" data-map-direction="asc" title="Sort distance low to high">
+              <span>Distance</span><img src="/static/img/icons8-up-94.png?v=$asset_version" alt="" aria-hidden="true">
+            </button>
+            <button type="button" data-map-sort="distance" data-map-direction="desc" title="Sort distance high to low">
+              <span>Distance</span><img src="/static/img/icons8-arrow-down-94.png?v=$asset_version" alt="" aria-hidden="true">
+            </button>
+            <button type="button" data-map-sort="rent" data-map-direction="asc" title="Sort rent low to high">
+              <span>Rent</span><img src="/static/img/icons8-up-94.png?v=$asset_version" alt="" aria-hidden="true">
+            </button>
+            <button type="button" data-map-sort="rent" data-map-direction="desc" title="Sort rent high to low">
+              <span>Rent</span><img src="/static/img/icons8-arrow-down-94.png?v=$asset_version" alt="" aria-hidden="true">
+            </button>
           </div>
           <div class="housing-map-results" data-map-results></div>
         </aside>

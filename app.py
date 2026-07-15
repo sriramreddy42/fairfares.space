@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-map-sort"
+ASSET_VERSION = "20260715housing-map-sort-icons"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -13544,6 +13544,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             posts_html=render_accommodation_posts(posts),
             map_payload_json=map_payload_json,
             maps_loader=explorer_maps_loader(),
+            asset_version=ASSET_VERSION,
         )
         self.send_html(body)
 

@@ -1150,6 +1150,10 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 }
 
 .housing-map-sort button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   padding: 7px 10px;
   border: 1px solid #d7e2f0;
@@ -1158,6 +1162,18 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   color: #071943;
   font-weight: 900;
   cursor: pointer;
+}
+
+.housing-map-sort button span {
+  color: inherit;
+  font-size: 0.9rem;
+  text-transform: none;
+}
+
+.housing-map-sort button img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
 }
 
 .housing-map-sort button.is-active {
