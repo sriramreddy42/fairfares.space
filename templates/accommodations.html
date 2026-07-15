@@ -194,9 +194,9 @@
             </div>
             <div>
               <h4>About You</h4>
-              <button type="button" data-about-for="have" data-about-preset="owner" data-choice-group="about" data-choice-label="I am the property owner">I am the property owner</button>
-              <button type="button" data-about-for="have" data-about-preset="tenant" data-choice-group="about" data-choice-label="I am an existing tenant">I am an existing tenant</button>
-              <button type="button" data-about-for="have" data-about-preset="agent" data-choice-group="about" data-choice-label="I am an agent">I am an agent</button>
+              <button type="button" data-about-for="have" data-about-preset="owner" data-choice-group="about" data-choice-label="I am the property owner" hidden>I am the property owner</button>
+              <button type="button" data-about-for="have" data-about-preset="tenant" data-choice-group="about" data-choice-label="I am an existing tenant" hidden>I am an existing tenant</button>
+              <button type="button" data-about-for="have" data-about-preset="agent" data-choice-group="about" data-choice-label="I am an agent" hidden>I am an agent</button>
               <button type="button" data-about-for="need" data-about-preset="individual" data-choice-group="about" data-choice-label="I am an individual">I am an individual</button>
               <button type="button" data-about-for="need" data-about-preset="couple_family" data-choice-group="about" data-choice-label="I am a couple / family">I am a couple / family</button>
               <button type="button" data-about-for="need" data-about-preset="group" data-choice-group="about" data-choice-label="I am a group">I am a group</button>
@@ -995,6 +995,7 @@
           const category = button.dataset.categoryPreset || "";
           setRoommateIntent(roommateIntent);
           setMode(mode);
+          syncAboutOptions(mode);
           const needLabel = markNeedChoice(mode, roommateIntent, category);
           if (needLabel) setNeedChoiceLabel(needLabel);
           if (category && categorySelect) categorySelect.value = category;
@@ -1022,7 +1023,9 @@
         button.addEventListener("click", () => {
           markChoice(button);
           setRoommateIntent(button.dataset.roommateIntent === "1");
-          setMode(button.dataset.needPreset || "NEED_PLACE");
+          const mode = button.dataset.needPreset || "NEED_PLACE";
+          setMode(mode);
+          syncAboutOptions(mode);
           if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
         });
       });
