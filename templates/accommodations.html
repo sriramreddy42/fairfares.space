@@ -121,8 +121,12 @@
         </div>
         <form class="housing-map-point-search" data-map-point-form>
           <label>
-            <span>Distance from</span>
-            <input name="map_point" data-map-point-input value="$selected_location" placeholder="Union Station, DU, apartment, neighborhood">
+            <span>City</span>
+            <input name="map_city" data-map-city-input value="$selected_location" placeholder="Denver">
+          </label>
+          <label>
+            <span>Area / building</span>
+            <input name="map_point" data-map-point-input placeholder="Union Station, DU, apartment, neighborhood">
           </label>
           <button type="submit">Find nearest</button>
           <button type="button" data-map-fullscreen>Full view</button>
@@ -653,6 +657,7 @@
       }[char]));
       const mapSortState = { key: "distance", direction: "asc" };
       const mapPointForm = document.querySelector("[data-map-point-form]");
+      const mapCityInput = document.querySelector("[data-map-city-input]");
       const mapPointInput = document.querySelector("[data-map-point-input]");
       const mapHeading = document.querySelector("[data-map-heading]");
       const mapHelp = document.querySelector("[data-map-help]");
@@ -664,6 +669,21 @@
         const pointLabel = label || "your selected location";
         if (mapHeading) mapHeading.textContent = `Listings around ${pointLabel}`;
         if (mapHelp) mapHelp.textContent = `See each lead by rent, radius, and distance from ${pointLabel}.`;
+      };
+      const mapPointQuery = () => {
+        const city = (mapCityInput?.value || "").trim();
+        const point = (mapPointInput?.value || "").trim();
+        if (city && point) {
+          return {
+            label: `${point}, ${city}`,
+            query: `${point}, ${city}`,
+          };
+        }
+        const fallback = point || city;
+        return {
+          label: fallback,
+          query: fallback,
+        };
       };
       const comparableMapValue = (post, key) => {
         const value = key === "rent" ? Number(post.rentValue || 0) : Number(post.distance);
@@ -846,10 +866,10 @@
       };
       mapPointForm?.addEventListener("submit", (event) => {
         event.preventDefault();
-        const query = (mapPointInput?.value || "").trim();
+        const { query, label } = mapPointQuery();
         if (!query) return;
-        mapCenterOverride = { label: query, lat: 0, lng: 0 };
-        updateMapPointCopy(query);
+        mapCenterOverride = { label, lat: 0, lng: 0 };
+        updateMapPointCopy(label);
         if (!window.google?.maps) {
           renderHousingMap();
           return;
@@ -865,7 +885,8 @@
               lng: match.geometry.location.lng(),
             };
           }
-          updateMapPointCopy(query);
+          if (mapCenterOverride) mapCenterOverride.label = label;
+          updateMapPointCopy(label);
           renderHousingMap();
         });
       });

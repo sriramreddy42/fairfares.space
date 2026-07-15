@@ -1073,7 +1073,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-map-copy {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1fr) minmax(280px, 0.7fr);
+  grid-template-columns: minmax(240px, 0.65fr) minmax(520px, 1.25fr) minmax(240px, 0.6fr);
   gap: 18px;
   align-items: end;
   margin-bottom: 14px;
@@ -1097,7 +1097,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-map-point-search {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 120px minmax(220px, 1fr) 106px 92px;
   gap: 8px;
   align-items: end;
 }
@@ -1125,13 +1125,15 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-map-point-search button {
   min-height: 42px;
-  padding: 0 14px;
+  padding: 0 10px;
   border: 1px solid #d7e2f0;
   border-radius: 8px;
   background: #071943;
   color: #fff;
   font: inherit;
+  font-size: 0.92rem;
   font-weight: 900;
+  white-space: nowrap;
   cursor: pointer;
 }
 
