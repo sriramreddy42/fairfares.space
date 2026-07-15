@@ -328,6 +328,17 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   font-size: 0.92rem;
 }
 
+.housing-ride-pill {
+  background: linear-gradient(90deg, #5967e8, #22b8cf);
+}
+
+.housing-ride-pill img {
+  display: block;
+  height: 22px;
+  object-fit: contain;
+  width: 22px;
+}
+
 .housing-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
