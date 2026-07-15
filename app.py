@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-listing-required"
+ASSET_VERSION = "20260715housing-about-options"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3456,6 +3456,7 @@ def init_db() -> None:
                 accommodates INTEGER NOT NULL DEFAULT 0,
                 roommate_count INTEGER NOT NULL DEFAULT 0,
                 roommate_intent INTEGER NOT NULL DEFAULT 0,
+                about_you TEXT NOT NULL DEFAULT '',
                 bathroom_type TEXT NOT NULL DEFAULT '',
                 gender_preference TEXT NOT NULL DEFAULT '',
                 commute_preference TEXT NOT NULL DEFAULT '',
@@ -4319,6 +4320,7 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "primary_neighborhood", "primary_neighborhood TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "apartment_name", "apartment_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "accommodates", "accommodates INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "about_you", "about_you TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "bathroom_type", "bathroom_type TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "deposit", "deposit REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "days_available", "days_available TEXT NOT NULL DEFAULT ''")
@@ -13614,14 +13616,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  street_address, city, zip_code, primary_neighborhood, apartment_name,
                  city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
-                 accommodates, roommate_count, roommate_intent, bathroom_type, gender_preference,
+                 accommodates, roommate_count, roommate_intent, about_you, bathroom_type, gender_preference,
                  commute_preference, lease_term, deposit, days_available, vegetarian_preference,
                  smoking_policy, pet_friendly, open_house_date, open_house_start, open_house_end,
                  social_facebook, social_x, social_instagram, social_youtube, amenities,
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -13650,6 +13652,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     int_from_form(form, "accommodates"),
                     int_from_form(form, "roommate_count"),
                     roommate_intent,
+                    (form.get("about_you") or "").strip(),
                     (form.get("bathroom_type") or "").strip(),
                     (form.get("gender_preference") or "open").strip(),
                     (form.get("commute_preference") or "").strip(),

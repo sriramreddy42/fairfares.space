@@ -194,9 +194,12 @@
             </div>
             <div>
               <h4>About You</h4>
-              <button type="button" data-about-preset="owner" data-choice-group="about" data-choice-label="I am the property owner">I am the property owner</button>
-              <button type="button" data-about-preset="tenant" data-choice-group="about" data-choice-label="I am an existing tenant">I am an existing tenant</button>
-              <button type="button" data-about-preset="agent" data-choice-group="about" data-choice-label="I am an agent">I am an agent</button>
+              <button type="button" data-about-for="have" data-about-preset="owner" data-choice-group="about" data-choice-label="I am the property owner">I am the property owner</button>
+              <button type="button" data-about-for="have" data-about-preset="tenant" data-choice-group="about" data-choice-label="I am an existing tenant">I am an existing tenant</button>
+              <button type="button" data-about-for="have" data-about-preset="agent" data-choice-group="about" data-choice-label="I am an agent">I am an agent</button>
+              <button type="button" data-about-for="need" data-about-preset="individual" data-choice-group="about" data-choice-label="I am an individual">I am an individual</button>
+              <button type="button" data-about-for="need" data-about-preset="couple_family" data-choice-group="about" data-choice-label="I am a couple / family">I am a couple / family</button>
+              <button type="button" data-about-for="need" data-about-preset="group" data-choice-group="about" data-choice-label="I am a group">I am a group</button>
             </div>
             <label>
               <h4>Location</h4>
@@ -763,6 +766,7 @@
       const modeInputs = form.querySelectorAll('input[name="post_mode"]');
       const cityInput = form.querySelector('input[name="city_area_zip"]');
       const aboutInput = form.querySelector('input[name="about_you"]');
+      const aboutButtons = document.querySelectorAll("[data-about-for]");
       const roommateIntentInput = form.querySelector("[data-roommate-intent-field]");
       const haveRequiredFields = form.querySelectorAll("[data-required-have]");
       const wizard = document.querySelector("[data-post-wizard]");
@@ -833,6 +837,21 @@
           : "";
         const button = selector ? document.querySelector(selector) : null;
         if (button) markChoice(button);
+      };
+      const syncAboutOptions = (mode = "NEED_PLACE") => {
+        const target = mode === "HAVE_PLACE" ? "have" : "need";
+        let selectedStillVisible = false;
+        aboutButtons.forEach((button) => {
+          const visible = button.dataset.aboutFor === target;
+          button.hidden = !visible;
+          if (!visible) button.classList.remove("is-selected");
+          if (visible && button.classList.contains("is-selected")) selectedStillVisible = true;
+        });
+        if (!selectedStillVisible) {
+          selectedChoices.about = "";
+          if (aboutInput) aboutInput.value = "";
+          updateSelectionSummary();
+        }
       };
       const markNeedChoice = (mode, roommateIntent = false, category = "") => {
         let selector = "";
@@ -952,6 +971,7 @@
         form.classList.toggle("is-have", mode === "HAVE_PLACE");
         form.classList.toggle("is-roommate", roommateIntent);
         form.classList.toggle("is-need-place", mode === "NEED_PLACE" && !roommateIntent);
+        syncAboutOptions(mode);
         haveRequiredFields.forEach((field) => {
           field.required = mode === "HAVE_PLACE";
         });

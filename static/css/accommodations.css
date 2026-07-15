@@ -871,6 +871,10 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   padding: 0 16px;
 }
 
+.housing-setup-columns button[hidden] {
+  display: none !important;
+}
+
 .housing-setup-columns button:hover,
 .housing-setup-columns button:focus-visible {
   background: #ff9800;
