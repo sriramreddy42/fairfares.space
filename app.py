@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-hidden-flow"
+ASSET_VERSION = "20260715housing-search-any"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -392,13 +392,13 @@ ACCOMMODATION_CATEGORIES = (
     ("basement_apartment", "Basement Apartment"),
 )
 ACCOMMODATION_SEARCH_NEEDS = (
+    ("", "Any housing lead"),
     ("need_room_share", "Need a Room for Share"),
     ("need_roommates", "Need Roommates"),
     ("need_property_rent", "Need a Property for Rent"),
     ("have_room_share", "Have a Room to Share"),
     ("have_property_rent", "Have a Property to Rent"),
     ("have_commercial_rent", "Have a Commercial Space to Rent"),
-    ("", "Any housing lead"),
 )
 ACCOMMODATION_SUBNAV_LINKS = (
     ("", "Near me", ""),
@@ -13465,7 +13465,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
             status_message=status_message,
             post_modal_hidden=post_modal_hidden,
-            search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need or "need_room_share"),
+            search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
             search_property_type_options=render_select_options(ACCOMMODATION_PROPERTY_TYPE_FILTERS, search_property_type),
             search_metro_options=render_select_options(accommodation_metro_filter_options(), search_metro),
             search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),
