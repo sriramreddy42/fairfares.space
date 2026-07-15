@@ -8,21 +8,35 @@
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
 <body class="posts-page public-header-compact">
-  <header class="posts-topbar">
-    <a class="posts-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
-    <nav class="posts-nav" aria-label="FairFares navigation">
-      <a class="active" href="/posts">Posts</a>
-      <a href="/">Car Rentals</a>
-      <a href="/accommodations">Housing</a>
-      <a href="/dashboard">Dashboard</a>
-      <a href="/deals">Deals</a>
-      <a href="/explorer">Explorer</a>
-    </nav>
-    <div class="posts-top-actions">
-      <button type="button" data-chat-open>Fair Messenger <b class="$chat_unread_badge_class">$chat_unread_count</b></button>
-      <a href="/logout">Log out</a>
+  <header class="top-brand">
+    <a class="logo-lockup" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    <div class="top-benefits">
+      <div class="benefit-pill"><span class="circle-icon">post</span><strong>Posts</strong><span>Needs & places</span></div>
+      <div class="benefit-pill"><span class="circle-icon">home</span><strong>Housing</strong><span>Rooms & rentals</span></div>
+      <div class="benefit-pill"><span class="circle-icon">chat</span><strong>Messenger</strong><span>Accommodation replies</span></div>
     </div>
   </header>
+
+  <nav class="main-nav posts-main-nav">
+    <div class="nav-links">
+      <a class="active" href="/posts">Posts</a>
+      <a href="/">Book</a>
+      <a href="/manage-booking">Manage Booking</a>
+      <a href="/deals">Deals</a>
+      <a href="/accommodations">Accommodations</a>
+      <a href="/blog">Blog</a>
+      <a href="/wiki">FAQ</a>
+      <a href="/about">About Us</a>
+      <a href="/contact">Contact Us</a>
+      <a href="/explorer">Explorer</a>
+    </div>
+    <div class="nav-actions">
+      <span>EN</span>
+      <button class="posts-nav-chat" type="button" data-chat-open>Fair Messenger <b class="$chat_unread_badge_class">$chat_unread_count</b></button>
+      <a href="/logout">Log out</a>
+      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </nav>
 
   <main class="posts-shell">
     <aside class="posts-left-rail" aria-label="Member info and shortcuts">
