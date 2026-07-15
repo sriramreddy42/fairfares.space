@@ -4207,6 +4207,36 @@ function initAppFeedbackWidget() {
 
 initAppFeedbackWidget();
 
+function initFairFaresFixedFooter() {
+  if (document.getElementById("fairfaresFixedFooter")) return;
+  const footer = document.createElement("aside");
+  footer.className = "fairfares-fixed-footer";
+  footer.id = "fairfaresFixedFooter";
+  footer.innerHTML = `
+    <button type="button" data-fixed-feedback-open><span aria-hidden="true">✎</span>Feedback</button>
+    <button type="button" data-fixed-share><span aria-hidden="true">↗</span>Share</button>
+    <a href="tel:+19372518688"><span aria-hidden="true">☎</span>+1 9372518688</a>
+    <a href="mailto:fairfaresltd@gmail.com"><span aria-hidden="true">✉</span>fairfaresltd@gmail.com</a>
+  `;
+  document.body.appendChild(footer);
+  footer.querySelector("[data-fixed-feedback-open]")?.addEventListener("click", () => {
+    document.querySelector(".app-feedback-tab")?.click();
+  });
+  footer.querySelector("[data-fixed-share]")?.addEventListener("click", async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: document.title || "FairFares", url: window.location.href });
+      } else {
+        await copyTextToClipboard(window.location.href);
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") console.info("Share skipped", error);
+    }
+  });
+}
+
+initFairFaresFixedFooter();
+
 function initWikiAgentWidget() {
   if (document.getElementById("wikiAgentWidget")) return;
   const prompts = [

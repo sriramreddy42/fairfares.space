@@ -1,10 +1,60 @@
 /* Site-wide application rating and feedback tab. */
+body {
+  padding-bottom: max(44px, env(safe-area-inset-bottom));
+}
+
 .app-feedback-widget {
   left: 0;
   position: fixed;
   top: 50%;
   transform: translateY(-50%);
   z-index: 120;
+}
+
+.fairfares-fixed-footer {
+  align-items: center;
+  background: rgba(12, 20, 29, 0.96);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  bottom: 0;
+  box-shadow: 0 -12px 34px rgba(3, 10, 24, 0.24);
+  color: #d7dee8;
+  display: flex;
+  gap: clamp(18px, 3vw, 36px);
+  left: 0;
+  min-height: 44px;
+  padding: 7px clamp(14px, 2.6vw, 36px) calc(7px + env(safe-area-inset-bottom));
+  position: fixed;
+  right: 0;
+  z-index: 125;
+}
+
+.fairfares-fixed-footer a,
+.fairfares-fixed-footer button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 0;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.fairfares-fixed-footer a:hover,
+.fairfares-fixed-footer button:hover {
+  color: #ffffff;
+}
+
+.fairfares-fixed-footer span {
+  color: #aeb8c6;
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .app-feedback-tab {
@@ -149,6 +199,27 @@
 }
 
 @media (max-width: 760px) {
+  body {
+    padding-bottom: max(66px, calc(env(safe-area-inset-bottom) + 66px));
+  }
+
+  .fairfares-fixed-footer {
+    gap: 10px;
+    min-height: 58px;
+    overflow-x: auto;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .fairfares-fixed-footer a,
+  .fairfares-fixed-footer button {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    flex: 0 0 auto;
+    font-size: 0.84rem;
+    min-height: 36px;
+    padding: 8px 12px;
+  }
+
   .app-feedback-widget {
     left: 0;
     top: 50%;
@@ -181,7 +252,7 @@
 /* Site-wide FairFares ask agent. */
 .wiki-agent-widget {
   align-items: flex-end;
-  bottom: 24px;
+  bottom: 72px;
   display: flex;
   gap: 12px;
   pointer-events: none;
@@ -534,7 +605,7 @@
 
 @media (max-width: 760px) {
   .wiki-agent-widget {
-    bottom: max(72px, calc(env(safe-area-inset-bottom) + 72px));
+    bottom: 84px !important;
     right: 14px;
     top: auto;
     transform: none;
