@@ -1469,6 +1469,115 @@ body.housing-map-full-open {
   color: #fff;
 }
 
+.housing-map-detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: none;
+  padding: 28px;
+  overflow: auto;
+  background: rgba(7, 25, 67, 0.58);
+}
+
+.housing-map-detail-modal.is-open {
+  display: grid;
+  place-items: start center;
+}
+
+body.housing-detail-open {
+  overflow: hidden;
+}
+
+.housing-map-detail-panel {
+  display: grid;
+  gap: 16px;
+  width: min(980px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow: auto;
+  padding: 18px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(7, 25, 67, 0.28);
+}
+
+.housing-map-detail-panel header {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: start;
+  padding: 0 0 14px;
+  border-bottom: 1px solid #d7e2f0;
+  background: #fff;
+}
+
+.housing-map-detail-panel header span {
+  color: #e4001b;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.housing-map-detail-panel header h2 {
+  margin: 4px 0 0;
+  color: #071943;
+  font-size: clamp(1.4rem, 2.8vw, 2.2rem);
+  line-height: 1.1;
+}
+
+.housing-map-detail-panel header button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #d7e2f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #071943;
+  font-size: 1.8rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.housing-map-detail-modal-body .housing-map-result-detail {
+  display: grid;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.housing-map-detail-modal-body .housing-map-detail-photos {
+  grid-template-columns: 1.4fr 0.8fr;
+  grid-auto-rows: 150px;
+}
+
+.housing-map-detail-modal-body .housing-map-detail-placeholder {
+  min-height: 220px;
+}
+
+.housing-map-detail-modal-body .housing-map-detail-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.housing-map-detail-modal-body .housing-map-detail-location {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.housing-map-detail-modal-body .housing-map-result-actions {
+  position: sticky;
+  bottom: -18px;
+  padding: 12px 0 0;
+  background: #fff;
+}
+
+.housing-map-detail-modal-body .housing-map-result-actions button {
+  min-height: 46px;
+  font-size: 1rem;
+}
+
 .housing-map-results b {
   color: #071943;
 }
@@ -1915,6 +2024,33 @@ body.housing-map-full-open {
   .housing-map-rail,
   .housing-map-results {
     max-height: none;
+  }
+
+  .housing-map-detail-modal {
+    padding: 12px;
+  }
+
+  .housing-map-detail-panel {
+    max-height: calc(100vh - 24px);
+    padding: 14px;
+  }
+
+  .housing-map-detail-panel header {
+    top: -14px;
+  }
+
+  .housing-map-detail-modal-body .housing-map-detail-photos,
+  .housing-map-detail-modal-body .housing-map-detail-facts,
+  .housing-map-detail-modal-body .housing-map-detail-location {
+    grid-template-columns: 1fr;
+  }
+
+  .housing-map-detail-modal-body .housing-map-detail-photos {
+    grid-auto-rows: 180px;
+  }
+
+  .housing-map-detail-modal-body .housing-map-detail-photos img:first-child {
+    grid-row: span 1;
   }
 
   .housing-category-strip,

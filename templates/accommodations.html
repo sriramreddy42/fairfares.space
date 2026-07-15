@@ -520,6 +520,18 @@
   </div>
 
   <script type="application/json" id="housingMapPayload">$map_payload_json</script>
+  <section class="housing-map-detail-modal" data-map-detail-modal aria-hidden="true">
+    <div class="housing-map-detail-panel" role="dialog" aria-modal="true" aria-labelledby="housingMapDetailTitle">
+      <header>
+        <div>
+          <span>Housing listing details</span>
+          <h2 id="housingMapDetailTitle" data-map-detail-title>Listing details</h2>
+        </div>
+        <button type="button" data-map-detail-close aria-label="Close listing details">×</button>
+      </header>
+      <div class="housing-map-detail-modal-body" data-map-detail-body></div>
+    </div>
+  </section>
   <section class="fairfares-chat-drawer" data-chat-drawer aria-hidden="true">
     <div class="fairfares-chat-panel" role="dialog" aria-modal="true" aria-labelledby="fairfaresChatTitle">
       <header>
@@ -664,11 +676,15 @@
       const mapSection = document.querySelector(".housing-map-section");
       const mapFullButton = document.querySelector("[data-map-fullscreen]");
       const mapResults = document.querySelector("[data-map-results]");
+      const mapDetailModal = document.querySelector("[data-map-detail-modal]");
+      const mapDetailTitle = document.querySelector("[data-map-detail-title]");
+      const mapDetailBody = document.querySelector("[data-map-detail-body]");
       let mapCenterOverride = null;
       let mapGeocoder = null;
       let activeMapPostId = "";
       let activeHousingMap = null;
       let activeMapMarkers = new Map();
+      let lastRenderedMapPosts = [];
       const updateMapPointCopy = (label) => {
         const pointLabel = label || "your selected location";
         if (mapHeading) mapHeading.textContent = `Listings around ${pointLabel}`;
@@ -716,6 +732,12 @@
       const compactMapDetailValue = (value, fallback = "-") => {
         if (value === null || value === undefined || value === "") return fallback;
         return escapeMapHtml(value);
+      };
+      const mapDistanceText = (post) => {
+        const fromLabel = mapCenterOverride?.label || "";
+        return post.distance !== null && post.distance !== undefined
+          ? `${escapeMapHtml(post.distance)} mi${fromLabel ? ` from ${escapeMapHtml(fromLabel)}` : " away"}`
+          : "Distance pending";
       };
       const renderMapPhotoStrip = (post) => {
         const images = Array.isArray(post.images) ? post.images.filter(Boolean).slice(0, 3) : [];
@@ -786,16 +808,29 @@
           </div>
         `;
       };
+      const openMapDetailModal = (post) => {
+        if (!mapDetailModal || !mapDetailBody || !post) return;
+        if (mapDetailTitle) mapDetailTitle.textContent = post.title || "Housing listing details";
+        mapDetailBody.innerHTML = renderMapDetail(post, mapDistanceText(post));
+        mapDetailModal.classList.add("is-open");
+        mapDetailModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("housing-detail-open");
+        mapDetailModal.querySelector("[data-map-detail-close]")?.focus();
+      };
+      const closeMapDetailModal = () => {
+        if (!mapDetailModal) return;
+        mapDetailModal.classList.remove("is-open");
+        mapDetailModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("housing-detail-open");
+      };
       const renderMapResults = (posts, emptyMessage = "No active housing leads match this search yet.") => {
         const results = document.querySelector("[data-map-results]");
         if (!results) return;
         const orderedPosts = sortedMapPosts(posts);
+        lastRenderedMapPosts = orderedPosts;
         if (activeMapPostId && !orderedPosts.some((post) => post.id === activeMapPostId)) activeMapPostId = "";
         results.innerHTML = orderedPosts.length ? orderedPosts.map((post, index) => {
-          const fromLabel = mapCenterOverride?.label || "";
-          const distanceText = post.distance !== null && post.distance !== undefined
-            ? `${escapeMapHtml(post.distance)} mi${fromLabel ? ` from ${escapeMapHtml(fromLabel)}` : " away"}`
-            : "Distance pending";
+          const distanceText = mapDistanceText(post);
           const radiusText = `${escapeMapHtml(post.radius || 0)} mi radius`;
           const selected = post.id === activeMapPostId;
           return `
@@ -809,7 +844,6 @@
                   <small class="distance">${distanceText}</small>
                 </div>
               </button>
-              ${renderMapDetail(post, distanceText)}
             </article>
           `;
         }).join("") : `<p>${emptyMessage}</p>`;
@@ -819,7 +853,22 @@
         const focusButton = event.target.closest("[data-map-focus-post]");
         if (!selectButton && !focusButton) return;
         event.preventDefault();
-        focusMapPost((selectButton || focusButton).dataset.mapSelectPost || (selectButton || focusButton).dataset.mapFocusPost || "", false);
+        const postId = (selectButton || focusButton).dataset.mapSelectPost || (selectButton || focusButton).dataset.mapFocusPost || "";
+        focusMapPost(postId, false);
+        const post = lastRenderedMapPosts.find((item) => item.id === postId);
+        if (selectButton) openMapDetailModal(post);
+      });
+      mapDetailModal?.addEventListener("click", (event) => {
+        if (event.target === mapDetailModal || event.target.closest("[data-map-detail-close]")) {
+          closeMapDetailModal();
+          return;
+        }
+        const focusButton = event.target.closest("[data-map-focus-post]");
+        if (focusButton) {
+          event.preventDefault();
+          focusMapPost(focusButton.dataset.mapFocusPost || "", true);
+          closeMapDetailModal();
+        }
       });
       document.querySelectorAll("[data-map-sort]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -967,6 +1016,7 @@
             marker.addListener("click", () => {
               activeMapPostId = post.id || activeMapPostId;
               renderMapResults(visiblePosts, "No mappable housing leads match this search yet.");
+              openMapDetailModal(post);
               info.open({ map, anchor: marker });
             });
           });
@@ -999,6 +1049,11 @@
           updateMapPointCopy(label);
           renderHousingMap();
         });
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && mapDetailModal?.classList.contains("is-open")) {
+          closeMapDetailModal();
+        }
       });
       renderHousingMap();
       if (!form) return;
