@@ -402,12 +402,6 @@ ACCOMMODATION_SEARCH_NEEDS = (
 )
 ACCOMMODATION_SUBNAV_LINKS = (
     ("", "Near me", ""),
-    ("", "Single Rooms", "single_room"),
-    ("", "Shared Rooms", "shared_room"),
-    ("", "Paying Guest", "paying_guest"),
-    ("", "Apartments", "apartment"),
-    ("", "Condos", "condo"),
-    ("", "Town Houses", "town_house"),
 )
 ACCOMMODATION_METRO_GROUPS = {
     "Denver Metro Area": {
