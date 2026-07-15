@@ -4323,6 +4323,7 @@ def init_db() -> None:
             (f"+{ACCOMMODATION_POST_LIFETIME_DAYS} days",),
         )
         expire_accommodation_posts_in_connection(con)
+        seed_sample_accommodation_posts(con)
 
         for badge in (
             ("First Explorer", "compass", "Complete your first FairFares city quest.", 0),
@@ -10324,6 +10325,47 @@ def expire_accommodation_posts_in_connection(con: sqlite3.Connection) -> None:
 def expire_accommodation_posts() -> None:
     with db() as con:
         expire_accommodation_posts_in_connection(con)
+
+
+def seed_sample_accommodation_posts(con: sqlite3.Connection) -> None:
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    expires_at = accommodation_expiry_timestamp(now)
+    con.execute(
+        """
+        INSERT OR IGNORE INTO accommodation_posts
+        (public_id, post_mode, category, title, description,
+         city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
+         move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
+         roommate_count, roommate_intent, gender_preference, commute_preference, lease_term, amenities,
+         private_bath, furnished, parking, utilities_included,
+         contact_name, contact_phone, contact_email, visibility_status, source_label,
+         expires_at, created_at, updated_at)
+        VALUES
+        ('FFH-SAMPLE-HAVE-PLACE', 'HAVE_PLACE', 'single_room',
+         'Furnished private room available near DU',
+         'Private furnished room in a quiet shared home near University of Denver. Good for students or professionals looking for a clean month-to-month place with parking, utilities, and light rail access nearby.',
+         'Denver, CO', 'University Park, DU, Platt Park', 'University of Denver',
+         0, 39.6781, -104.9618, '', 900, 1100, 'MONTH',
+         1, 1, 1, 0, 'open', 'Near DU light rail, 20 min to DTC',
+         'month_to_month', 'Attached bath, parking, utilities, WiFi, laundry',
+         1, 1, 1, 1,
+         'FairFares Sample Host', '7205550142', 'housing@fairfares.com',
+         'ACTIVE', 'SAMPLE_DATA', ?, ?, ?)
+        """,
+        (expires_at, now, now),
+    )
+    con.execute(
+        """
+        UPDATE accommodation_posts
+        SET visibility_status = 'ACTIVE',
+            expired_at = NULL,
+            expires_at = ?,
+            updated_at = ?
+        WHERE public_id = 'FFH-SAMPLE-HAVE-PLACE'
+          AND source_label = 'SAMPLE_DATA'
+        """,
+        (expires_at, now),
+    )
 
 
 def option_label(options: tuple[tuple[str, str], ...], value: str, default: str = "") -> str:
