@@ -821,6 +821,31 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   color: #fff;
 }
 
+.housing-setup-columns button.is-selected {
+  background: #626262;
+  border-color: #626262;
+  color: #fff;
+  padding-right: 46px;
+  position: relative;
+}
+
+.housing-setup-columns button.is-selected::after {
+  align-items: center;
+  background: #ff9800;
+  border-radius: 50%;
+  color: #fff;
+  content: "✓";
+  display: inline-flex;
+  font-size: 0.95rem;
+  height: 24px;
+  justify-content: center;
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+}
+
 .housing-setup-columns input {
   margin: 18px;
   min-height: 48px;
@@ -835,6 +860,29 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   justify-self: end;
   min-width: 180px;
   background: #ff9800;
+}
+
+.housing-selected-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0 0;
+}
+
+.housing-selected-summary span {
+  border: 1px solid #d5e0ed;
+  border-radius: 999px;
+  background: #fff;
+  color: #596272;
+  font-weight: 900;
+  padding: 8px 12px;
+}
+
+.housing-selected-summary span.is-filled {
+  border-color: #ff9800;
+  background: #fff8e8;
+  color: #071943;
 }
 
 .housing-post-form {
@@ -923,7 +971,12 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 }
 
 .housing-post-form:not(.is-have) .have-only,
-.housing-post-form.is-have .need-only {
+.housing-post-form.is-have .need-only,
+.housing-post-form:not(.is-have) .listing-field,
+.housing-post-form.is-have .shared-need-field,
+.housing-post-form.is-have .roommate-field,
+.housing-post-form:not(.is-roommate) .roommate-field,
+.housing-post-form.is-roommate .listing-field {
   display: none;
 }
 

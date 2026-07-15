@@ -175,29 +175,35 @@
           <div class="housing-setup-columns">
             <div>
               <h4>What is your need?</h4>
-              <button type="button" data-need-preset="HAVE_PLACE">I have a room to rent</button>
-              <button type="button" data-need-preset="NEED_PLACE">I need a room for rent</button>
-              <button type="button" data-need-preset="NEED_PLACE" data-roommate-intent="1" data-category-preset="shared_room">I need roommates</button>
-              <button type="button" data-need-preset="HAVE_PLACE" data-category-preset="apartment">I have a property to rent</button>
-              <button type="button" data-need-preset="NEED_PLACE" data-category-preset="apartment">I need a property for rent</button>
+              <button type="button" data-need-preset="HAVE_PLACE" data-choice-group="need" data-choice-label="I have a room to rent">I have a room to rent</button>
+              <button type="button" data-need-preset="NEED_PLACE" data-choice-group="need" data-choice-label="I need a room for rent">I need a room for rent</button>
+              <button type="button" data-need-preset="NEED_PLACE" data-roommate-intent="1" data-category-preset="shared_room" data-choice-group="need" data-choice-label="I need roommates">I need roommates</button>
+              <button type="button" data-need-preset="HAVE_PLACE" data-category-preset="apartment" data-choice-group="need" data-choice-label="I have a property to rent">I have a property to rent</button>
+              <button type="button" data-need-preset="NEED_PLACE" data-category-preset="apartment" data-choice-group="need" data-choice-label="I need a property for rent">I need a property for rent</button>
             </div>
             <div>
               <h4>Property Type</h4>
-              <button type="button" data-category-preset="shared_room">Shared Room</button>
-              <button type="button" data-category-preset="single_room">Single Room</button>
-              <button type="button" data-category-preset="paying_guest">Paying Guest</button>
-              <button type="button" data-category-preset="apartment">Apartment</button>
+              <button type="button" data-category-preset="shared_room" data-choice-group="category" data-choice-label="Shared Room">Shared Room</button>
+              <button type="button" data-category-preset="single_room" data-choice-group="category" data-choice-label="Single Room">Single Room</button>
+              <button type="button" data-category-preset="paying_guest" data-choice-group="category" data-choice-label="Paying Guest">Paying Guest</button>
+              <button type="button" data-category-preset="apartment" data-choice-group="category" data-choice-label="Apartment">Apartment</button>
             </div>
             <div>
               <h4>About You</h4>
-              <button type="button" data-about-preset="owner">I am the property owner</button>
-              <button type="button" data-about-preset="tenant">I am an existing tenant</button>
-              <button type="button" data-about-preset="agent">I am an agent</button>
+              <button type="button" data-about-preset="owner" data-choice-group="about" data-choice-label="I am the property owner">I am the property owner</button>
+              <button type="button" data-about-preset="tenant" data-choice-group="about" data-choice-label="I am an existing tenant">I am an existing tenant</button>
+              <button type="button" data-about-preset="agent" data-choice-group="about" data-choice-label="I am an agent">I am an agent</button>
             </div>
             <label>
               <h4>Location</h4>
               <input data-wizard-location value="$selected_location" placeholder="Denver, CO">
             </label>
+          </div>
+          <div class="housing-selected-summary" data-selection-summary>
+            <span data-summary-need>Choose your need</span>
+            <span data-summary-category>Choose property type</span>
+            <span data-summary-about>Choose about you</span>
+            <span data-summary-location>$selected_location</span>
           </div>
           <button class="select-button housing-wizard-continue" type="button" data-wizard-continue>Continue</button>
         </div>
@@ -235,11 +241,11 @@
             <span>Area or apartment</span>
             <input name="area_or_apartment" placeholder="DU, IMT Dayton, Platt Park">
           </label>
-          <label class="need-only">
+          <label class="shared-need-field">
             <span>Work / school location</span>
             <input name="work_school_location" placeholder="DU, DTC, downtown office">
           </label>
-          <label class="need-only">
+          <label class="shared-need-field">
             <span>Search radius</span>
             <select name="radius_miles">$radius_options</select>
           </label>
@@ -259,15 +265,15 @@
             <span>Rent period</span>
             <select name="rent_period">$rent_period_options</select>
           </label>
-          <label class="have-only">
+          <label class="listing-field">
             <span>Bedrooms</span>
             <input name="bedroom_count" type="number" min="0" step="1" placeholder="2">
           </label>
-          <label class="have-only">
+          <label class="listing-field">
             <span>Bathrooms</span>
             <input name="bathroom_count" type="number" min="0" step="1" placeholder="2">
           </label>
-          <label class="need-only">
+          <label class="roommate-field">
             <span>Roommates needed</span>
             <input name="roommate_count" type="number" min="0" step="1" placeholder="1">
           </label>
@@ -275,7 +281,7 @@
             <span>Gender / roommate preference</span>
             <select name="gender_preference">$gender_options</select>
           </label>
-          <label class="need-only">
+          <label class="shared-need-field">
             <span>Commute preference</span>
             <input name="commute_preference" placeholder="Near RTD, 20 min to DTC">
           </label>
@@ -287,7 +293,7 @@
             <span>Amenities / notes</span>
             <input name="amenities" placeholder="Attached bath, parking, gym, near RTD, grocery nearby">
           </label>
-          <div class="housing-checks have-only">
+          <div class="housing-checks listing-field">
             <label><input type="checkbox" name="private_bath"> Private bath</label>
             <label><input type="checkbox" name="furnished"> Furnished</label>
             <label><input type="checkbox" name="parking"> Parking</label>
@@ -305,9 +311,9 @@
             <span>Contact email</span>
             <input name="contact_email" type="email" placeholder="Email">
           </label>
-          <label class="image-input"><span>Image 1</span><input name="image_1" type="file" accept="image/*"></label>
-          <label class="image-input"><span>Image 2</span><input name="image_2" type="file" accept="image/*"></label>
-          <label class="image-input"><span>Image 3</span><input name="image_3" type="file" accept="image/*"></label>
+          <label class="image-input listing-field"><span>Image 1</span><input name="image_1" type="file" accept="image/*"></label>
+          <label class="image-input listing-field"><span>Image 2</span><input name="image_2" type="file" accept="image/*"></label>
+          <label class="image-input listing-field"><span>Image 3</span><input name="image_3" type="file" accept="image/*"></label>
         </div>
 
         <div class="housing-submit-row">
@@ -638,6 +644,19 @@
       const firstField = form.querySelector('textarea, input, select, button');
       const modeSummary = form.querySelector("[data-form-mode-summary]");
       const descriptionField = form.querySelector("[data-description-field]");
+      const wizardLocationInput = document.querySelector("[data-wizard-location]");
+      const selectedChoices = {
+        need: "",
+        category: "",
+        about: "",
+        location: wizardLocationInput ? wizardLocationInput.value.trim() : ""
+      };
+      const summaryTargets = {
+        need: document.querySelector("[data-summary-need]"),
+        category: document.querySelector("[data-summary-category]"),
+        about: document.querySelector("[data-summary-about]"),
+        location: document.querySelector("[data-summary-location]")
+      };
       const modeCopy = {
         NEED_PLACE: {
           title: "Finding a place",
@@ -658,7 +677,44 @@
       const setRoommateIntent = (enabled) => {
         if (roommateIntentInput) roommateIntentInput.value = enabled ? "1" : "0";
       };
+      const updateSelectionSummary = () => {
+        const fallback = {
+          need: "Choose your need",
+          category: "Choose property type",
+          about: "Choose about you",
+          location: "Choose location"
+        };
+        Object.keys(summaryTargets).forEach((key) => {
+          const target = summaryTargets[key];
+          if (!target) return;
+          const value = selectedChoices[key] || fallback[key];
+          target.textContent = value;
+          target.classList.toggle("is-filled", Boolean(selectedChoices[key]));
+        });
+      };
+      const markChoice = (button) => {
+        const group = button?.dataset?.choiceGroup;
+        if (!group) return;
+        document.querySelectorAll(`[data-choice-group="${group}"]`).forEach((item) => {
+          item.classList.toggle("is-selected", item === button);
+        });
+        selectedChoices[group] = button.dataset.choiceLabel || button.textContent.trim();
+        updateSelectionSummary();
+      };
+      const markChoiceByValue = (group, value) => {
+        if (!value) return;
+        const selector = group === "category"
+          ? `[data-choice-group="category"][data-category-preset="${value}"]`
+          : "";
+        const button = selector ? document.querySelector(selector) : null;
+        if (button) markChoice(button);
+      };
+      const setNeedChoiceLabel = (label) => {
+        selectedChoices.need = label;
+        updateSelectionSummary();
+      };
       const setMode = (mode) => {
+        if (mode === "HAVE_PLACE") setRoommateIntent(false);
         modeInputs.forEach((input) => {
           input.checked = input.value === mode;
         });
@@ -689,6 +745,10 @@
         if (category && categorySelect) categorySelect.value = category;
         setRoommateIntent(roommateIntent);
         if (mode) setMode(mode);
+        if (roommateIntent) setNeedChoiceLabel("I need roommates");
+        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a place available");
+        else if (mode === "NEED_PLACE") setNeedChoiceLabel("I need a place to live");
+        if (category) markChoiceByValue("category", category);
         if (modal) {
           modal.classList.add("is-open");
           modal.setAttribute("aria-hidden", "false");
@@ -706,6 +766,10 @@
         if (category && categorySelect) categorySelect.value = category;
         setRoommateIntent(roommateIntent);
         setMode(mode || "NEED_PLACE");
+        if (roommateIntent) setNeedChoiceLabel("I need roommates");
+        else if (mode === "HAVE_PLACE") setNeedChoiceLabel("I have a place available");
+        else setNeedChoiceLabel("I need a place to live");
+        if (category) markChoiceByValue("category", category);
         if (modal) {
           modal.classList.add("is-open");
           modal.setAttribute("aria-hidden", "false");
@@ -725,6 +789,8 @@
         const roommateIntent = roommateIntentInput && roommateIntentInput.value === "1";
         const copy = roommateIntent ? modeCopy.NEED_ROOMMATE : (modeCopy[mode] || modeCopy.NEED_PLACE);
         form.classList.toggle("is-have", mode === "HAVE_PLACE");
+        form.classList.toggle("is-roommate", roommateIntent);
+        form.classList.toggle("is-need-place", mode === "NEED_PLACE" && !roommateIntent);
         if (modeSummary) {
           modeSummary.innerHTML = `<b>${copy.title}</b><span>${copy.body}</span>`;
         }
@@ -743,6 +809,7 @@
       document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
       document.querySelectorAll("[data-wizard-intent]").forEach((button) => {
         button.addEventListener("click", () => {
+          markChoice(button);
           setRoommateIntent(button.dataset.roommateIntent === "1");
           setMode(button.dataset.wizardIntent || "NEED_PLACE");
           if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
@@ -752,6 +819,11 @@
       document.querySelectorAll("[data-wizard-category]").forEach((button) => {
         button.addEventListener("click", () => {
           if (categorySelect) categorySelect.value = button.dataset.wizardCategory || "";
+          markChoiceByValue("category", button.dataset.wizardCategory || "");
+          if (!selectedChoices.category) {
+            selectedChoices.category = button.textContent.trim();
+            updateSelectionSummary();
+          }
           setWizardStep("summary");
         });
       });
@@ -760,6 +832,7 @@
       });
       document.querySelectorAll("[data-need-preset]").forEach((button) => {
         button.addEventListener("click", () => {
+          markChoice(button);
           setRoommateIntent(button.dataset.roommateIntent === "1");
           setMode(button.dataset.needPreset || "NEED_PLACE");
           if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
@@ -767,18 +840,32 @@
       });
       document.querySelectorAll("[data-category-preset]").forEach((button) => {
         button.addEventListener("click", () => {
+          markChoice(button);
           if (categorySelect) categorySelect.value = button.dataset.categoryPreset || "";
         });
       });
       document.querySelectorAll("[data-about-preset]").forEach((button) => {
         button.addEventListener("click", () => {
+          markChoice(button);
           if (aboutInput) aboutInput.value = button.dataset.aboutPreset || "";
         });
       });
       document.querySelector("[data-wizard-continue]")?.addEventListener("click", () => {
-        const wizardLocation = document.querySelector("[data-wizard-location]");
-        if (cityInput && wizardLocation && wizardLocation.value) cityInput.value = wizardLocation.value;
+        if (cityInput && wizardLocationInput && wizardLocationInput.value) {
+          cityInput.value = wizardLocationInput.value;
+          selectedChoices.location = wizardLocationInput.value;
+          updateSelectionSummary();
+        }
         showForm();
+      });
+      wizardLocationInput?.addEventListener("input", (event) => {
+        selectedChoices.location = event.target.value.trim();
+        updateSelectionSummary();
+      });
+      categorySelect?.addEventListener("change", () => {
+        const selected = categorySelect.options[categorySelect.selectedIndex];
+        selectedChoices.category = selected ? selected.textContent.trim() : "";
+        updateSelectionSummary();
       });
       document.querySelector("[data-edit-wizard]")?.addEventListener("click", () => showWizard("summary"));
       document.addEventListener("keydown", (event) => {
@@ -788,6 +875,7 @@
         }
       });
       sync();
+      updateSelectionSummary();
       if (modal && modal.getAttribute("aria-hidden") === "false") {
         modal.classList.add("is-open");
         document.body.classList.add("housing-modal-open");
