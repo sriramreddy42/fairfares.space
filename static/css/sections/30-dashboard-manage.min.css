@@ -11,6 +11,7 @@
 .posts-story-card{align-content:stretch;grid-template-rows:auto minmax(0,1fr) auto}.posts-story-card>span:first-child{background:linear-gradient(160deg,#b7d8ea,#071338);border-radius:50%}.posts-story-card b{align-self:end}
 .posts-main-nav .posts-nav-chat{align-items:center;background:var(--navy);border:0;border-radius:999px;color:#fff;cursor:pointer;display:inline-flex;font:inherit;font-weight:950;gap:8px;min-height:40px;padding:0 14px;white-space:nowrap}.posts-main-nav .posts-nav-chat b{align-items:center;background:rgba(255,255,255,.22);border-radius:999px;display:inline-flex;font-size:.78rem;height:22px;justify-content:center;min-width:22px}
 .posts-page .top-benefits{display:none}
+.posts-composer textarea{font-size:1rem;min-height:52px;padding:12px 18px}.posts-story-strip{grid-auto-columns:136px;justify-content:start}.posts-story-card{aspect-ratio:auto;height:210px}.posts-create-story{background:linear-gradient(180deg,rgba(255,255,255,0) 0 58%,#fff 58%),linear-gradient(160deg,#dbeafe,#f8fafc)}.posts-create-story b{color:var(--navy)}
 .member-workspace-rail,
 .member-workspace-feed,
 .member-workspace-messenger {
