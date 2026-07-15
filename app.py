@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260714posts-page1"
+ASSET_VERSION = "20260714housing-nav-icons"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3499,32 +3499,6 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
-            CREATE TABLE IF NOT EXISTS community_posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                author_id INTEGER NOT NULL,
-                post_type TEXT NOT NULL DEFAULT 'THOUGHT',
-                body TEXT NOT NULL DEFAULT '',
-                location_label TEXT NOT NULL DEFAULT '',
-                feeling_label TEXT NOT NULL DEFAULT '',
-                checkin_label TEXT NOT NULL DEFAULT '',
-                visibility TEXT NOT NULL DEFAULT 'PUBLIC',
-                reaction_count INTEGER NOT NULL DEFAULT 0,
-                comment_count INTEGER NOT NULL DEFAULT 0,
-                share_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(author_id) REFERENCES users(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS community_post_images (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                image_url TEXT NOT NULL DEFAULT '',
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(post_id) REFERENCES community_posts(id)
-            );
-
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -4296,22 +4270,6 @@ def init_db() -> None:
         ensure_column(con, "referral_rewards", "referrer_phone", "referrer_phone TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "referral_rewards", "discount_id", "discount_id INTEGER")
         ensure_column(con, "referral_rewards", "claimed_at", "claimed_at TEXT")
-        ensure_column(con, "community_posts", "author_id", "author_id INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_posts", "post_type", "post_type TEXT NOT NULL DEFAULT 'THOUGHT'")
-        ensure_column(con, "community_posts", "body", "body TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "community_posts", "location_label", "location_label TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "community_posts", "feeling_label", "feeling_label TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "community_posts", "checkin_label", "checkin_label TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "community_posts", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
-        ensure_column(con, "community_posts", "reaction_count", "reaction_count INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_posts", "comment_count", "comment_count INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_posts", "share_count", "share_count INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_posts", "created_at", "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
-        ensure_column(con, "community_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
-        ensure_column(con, "community_post_images", "post_id", "post_id INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_post_images", "image_url", "image_url TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "community_post_images", "sort_order", "sort_order INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "community_post_images", "created_at", "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "workspace_posts", "post_type", "post_type TEXT NOT NULL DEFAULT 'UPDATE'")
         ensure_column(con, "workspace_posts", "media_url", "media_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_posts", "image_data", "image_data TEXT NOT NULL DEFAULT ''")
@@ -11498,222 +11456,6 @@ def public_upload_url(value: str) -> str:
     return optimized_static_image_url(value)
 
 
-def posts_location_for_user(user_id: int) -> str:
-    with db() as con:
-        row = con.execute(
-            """
-            SELECT city_area_zip, area_or_apartment, work_school_location
-            FROM accommodation_posts
-            WHERE user_id = ?
-            ORDER BY datetime(created_at) DESC
-            LIMIT 1
-            """,
-            (user_id,),
-        ).fetchone()
-    for key in ("city_area_zip", "area_or_apartment", "work_school_location"):
-        value = row_value(row, key).strip()
-        if value:
-            return value
-    return "Denver, CO"
-
-
-def community_post_time_label(value: str) -> str:
-    if not value:
-        return "Just now"
-    try:
-        created = datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
-    except ValueError:
-        return value[:16]
-    minutes = max(0, int((datetime.utcnow() - created).total_seconds() // 60))
-    if minutes < 1:
-        return "Just now"
-    if minutes < 60:
-        return f"{minutes}m"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h"
-    days = hours // 24
-    if days < 7:
-        return f"{days}d"
-    return created.strftime("%b %-d") if os.name != "nt" else created.strftime("%b %#d")
-
-
-def get_community_posts(location_label: str, limit: int = 40) -> list[dict[str, object]]:
-    terms = accommodation_location_terms(location_label)[:8] or [location_label]
-    filters = ["community_posts.visibility = 'PUBLIC'"]
-    values: list[object] = []
-    if terms:
-        filters.append("(" + " OR ".join("community_posts.location_label LIKE ?" for _ in terms) + " OR community_posts.location_label = ''" + ")")
-        values.extend([f"%{term}%" for term in terms])
-    with db() as con:
-        rows = con.execute(
-            f"""
-            SELECT community_posts.*, users.name AS author_name, users.profile_photo_url
-            FROM community_posts
-            JOIN users ON users.id = community_posts.author_id
-            WHERE {" AND ".join(filters)}
-            ORDER BY datetime(community_posts.created_at) DESC
-            LIMIT ?
-            """,
-            (*values, limit),
-        ).fetchall()
-        if not rows:
-            return []
-        post_ids = [int(row["id"]) for row in rows]
-        image_rows = con.execute(
-            f"""
-            SELECT *
-            FROM community_post_images
-            WHERE post_id IN ({",".join("?" for _ in post_ids)})
-            ORDER BY sort_order ASC, id ASC
-            """,
-            post_ids,
-        ).fetchall()
-    images_by_post: dict[int, list[str]] = {}
-    for image in image_rows:
-        images_by_post.setdefault(int(row_value(image, "post_id") or 0), []).append(row_value(image, "image_url"))
-    return [{"row": row, "images": images_by_post.get(int(row_value(row, "id") or 0), [])} for row in rows]
-
-
-def get_posts_housing_items(location_label: str, limit: int = 40) -> list[sqlite3.Row]:
-    expire_accommodation_posts()
-    terms = accommodation_location_terms(location_label)[:8] or [location_label]
-    location_sql = " OR ".join(
-        "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
-        for _ in terms
-    )
-    values: list[object] = []
-    for term in terms:
-        pattern = f"%{term}%"
-        values.extend([pattern, pattern, pattern, pattern])
-    with db() as con:
-        return con.execute(
-            f"""
-            SELECT accommodation_posts.*,
-                   users.name AS author_name,
-                   users.profile_photo_url,
-                   (SELECT image_url FROM accommodation_post_images
-                    WHERE accommodation_post_images.post_id = accommodation_posts.id
-                    ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
-            FROM accommodation_posts
-            LEFT JOIN users ON users.id = accommodation_posts.user_id
-            WHERE visibility_status = 'ACTIVE'
-              AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
-              AND ({location_sql or "1=1"})
-            ORDER BY datetime(accommodation_posts.created_at) DESC
-            LIMIT ?
-            """,
-            (*values, limit),
-        ).fetchall()
-
-
-def render_posts_story_strip(user: sqlite3.Row, housing_posts: list[sqlite3.Row]) -> str:
-    items = [
-        f"""
-        <article class="posts-story-card posts-create-story">
-          {user_avatar_span(user)}
-          <b>Share update</b>
-          <span>+</span>
-        </article>
-        """
-    ]
-    for post in housing_posts[:5]:
-        image = public_upload_url(row_value(post, "preview_image_url"))
-        style = f' style="background-image:url(&quot;{escape(image)}&quot;)"' if image else ""
-        label = row_value(post, "author_name") or row_value(post, "title") or "FairFares member"
-        items.append(
-            f"""
-            <a class="posts-story-card" href="/accommodations?ad_id={escape(row_value(post, "public_id"))}"{style}>
-              {user_avatar_span({"profile_photo_url": row_value(post, "profile_photo_url")})}
-              <b>{escape(label)}</b>
-            </a>
-            """
-        )
-    return "".join(items)
-
-
-def render_posts_feed_cards(user: sqlite3.Row, location_label: str) -> str:
-    feed_items: list[dict[str, object]] = []
-    for item in get_community_posts(location_label):
-        row = item["row"]
-        feed_items.append({"kind": "community", "created_at": row_value(row, "created_at"), "row": row, "images": item["images"]})
-    for post in get_posts_housing_items(location_label):
-        feed_items.append({"kind": "housing", "created_at": row_value(post, "created_at"), "row": post, "images": []})
-    feed_items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
-    if not feed_items:
-        return """
-        <article class="posts-feed-card">
-          <div class="posts-card-head">
-            <span class="posts-avatar-fallback">FF</span>
-            <div><b>No posts yet</b><span>Public · now</span></div>
-          </div>
-          <p>Share a thought, photo, housing need, or available place for nearby FairFares members.</p>
-        </article>
-        """
-    cards: list[str] = []
-    for item in feed_items[:80]:
-        row = item["row"]
-        if item["kind"] == "community":
-            images = [public_upload_url(src) for src in item["images"] if src]
-            image_html = ""
-            if images:
-                image_html = '<div class="posts-photo-grid">' + "".join(
-                    f'<img src="{escape(src)}" alt="Post photo" loading="lazy" decoding="async">'
-                    for src in images[:6]
-                ) + "</div>"
-            location = row_value(row, "checkin_label") or row_value(row, "location_label") or location_label
-            feeling = row_value(row, "feeling_label")
-            meta = f"{community_post_time_label(row_value(row, 'created_at'))} · Public"
-            if location:
-                meta += f" · {location}"
-            feeling_html = f'<span class="posts-feeling">feeling {escape(feeling)}</span>' if feeling else ""
-            cards.append(
-                f"""
-                <article class="posts-feed-card">
-                  <div class="posts-card-head">
-                    {user_avatar_span({"profile_photo_url": row_value(row, "profile_photo_url")})}
-                    <div><b>{escape(row_value(row, "author_name") or "FairFares member")}</b>{feeling_html}<span>{escape(meta)}</span></div>
-                    <button type="button" aria-label="More post actions">...</button>
-                  </div>
-                  <p>{escape(row_value(row, "body"))}</p>
-                  {image_html}
-                  <div class="posts-card-stats"><span>{escape(str(row_value(row, "reaction_count") or 0))} likes</span><span>{escape(str(row_value(row, "comment_count") or 0))} comments</span><span>{escape(str(row_value(row, "share_count") or 0))} shares</span></div>
-                  <div class="posts-card-actions"><button type="button">Like</button><button type="button">Comment</button><button type="button">Share</button></div>
-                </article>
-                """
-            )
-            continue
-        mode_label = "Need a place" if row_value(row, "post_mode") == "NEED_PLACE" else "Have a place"
-        category = option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing")
-        image = public_upload_url(row_value(row, "preview_image_url"))
-        image_html = f'<img class="posts-housing-photo" src="{escape(image)}" alt="{escape(row_value(row, "title") or category)}" loading="lazy" decoding="async">' if image else ""
-        cards.append(
-            f"""
-            <article class="posts-feed-card posts-housing-card">
-              <div class="posts-card-head">
-                {user_avatar_span({"profile_photo_url": row_value(row, "profile_photo_url")})}
-                <div><b>{escape(row_value(row, "author_name") or "FairFares member")}</b><span>{escape(community_post_time_label(row_value(row, "created_at")))} · Public · {escape(mode_label)}</span></div>
-                <button type="button" aria-label="More post actions">...</button>
-              </div>
-              <p><b>{escape(mode_label)} · {escape(category)}</b></p>
-              <h3>{escape(row_value(row, "title") or category)}</h3>
-              <p>{escape(row_value(row, "description") or "Housing lead shared with nearby members.")}</p>
-              {image_html}
-              <div class="posts-housing-meta">
-                <span>{escape(row_value(row, "city_area_zip") or location_label)}</span>
-                <strong>{escape(format_accommodation_rent(row))}</strong>
-              </div>
-              <div class="posts-card-actions">
-                <a href="/accommodations?ad_id={escape(row_value(row, "public_id"))}">View details</a>
-                <button type="button" data-chat-open data-post-id="{escape(row_value(row, "public_id"))}" data-chat-subject="{escape(row_value(row, "title") or category)}">Message</button>
-                <button type="button">Share</button>
-              </div>
-            </article>
-            """
-        )
-    return "\n".join(cards)
-
-
 def optimized_static_image_url(url: str) -> str:
     if not url.startswith("/static/img/"):
         return url
@@ -13016,7 +12758,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/sitemap.xml": self.sitemap_xml,
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
-            "/posts": self.posts_page,
             "/accommodations": self.accommodations_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
@@ -13095,7 +12836,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
             "/wiki/ask": self.ask_wiki_agent,
-            "/posts/create": self.create_community_post,
             "/accommodations/post": self.create_accommodation_post,
             "/student-verification": self.update_student_verification,
             "/referrals/generate": self.generate_referral_code,
@@ -13359,7 +13099,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
             user = con.execute("SELECT is_admin, role FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_response(303)
-        self.send_header("Location", "/admin" if is_staff_user(user) else "/posts")
+        self.send_header("Location", "/admin" if is_staff_user(user) else "/dashboard")
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
         self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
@@ -13791,58 +13531,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (post_id, image_url, index, now),
                 )
         self.redirect("/accommodations?posted=1#housing-posts")
-
-    def create_community_post(self) -> None:
-        user = self.current_user()
-        if not user:
-            self.redirect("/login")
-            return
-        form, files = self.read_form_with_files()
-        body = (form.get("body") or "").strip()
-        location_label = (form.get("location_label") or posts_location_for_user(int(row_value(user, "id") or 0))).strip()
-        feeling_label = (form.get("feeling_label") or "").strip()[:80]
-        checkin_label = (form.get("checkin_label") or "").strip()[:120]
-        if len(body) > 1800:
-            body = body[:1800].strip()
-        has_photo = any(files.get(f"post_image_{index}") for index in range(1, 7))
-        if not body and not has_photo:
-            self.redirect("/posts?error=empty")
-            return
-        now = datetime.utcnow().isoformat(timespec="seconds")
-        with db() as con:
-            cursor = con.execute(
-                """
-                INSERT INTO community_posts
-                (author_id, post_type, body, location_label, feeling_label, checkin_label, visibility, created_at, updated_at)
-                VALUES (?, 'THOUGHT', ?, ?, ?, ?, 'PUBLIC', ?, ?)
-                """,
-                (
-                    int(row_value(user, "id") or 0),
-                    body or "Shared photos with nearby FairFares members.",
-                    location_label,
-                    feeling_label,
-                    checkin_label,
-                    now,
-                    now,
-                ),
-            )
-            post_id = int(cursor.lastrowid)
-            for index in range(1, 7):
-                image_url = save_file_payload_locally(
-                    folder_name="posts",
-                    file_data=files.get(f"post_image_{index}"),
-                    fallback_name=f"post-{post_id}-{index}",
-                )
-                if not image_url:
-                    continue
-                con.execute(
-                    """
-                    INSERT INTO community_post_images (post_id, image_url, sort_order, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (post_id, image_url, index, now),
-                )
-        self.redirect("/posts?posted=1")
 
     def api_chat_conversations(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
@@ -16176,32 +15864,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/admin")
             return
         self.render_manage_booking(user)
-
-    def posts_page(self) -> None:
-        user = self.current_user()
-        if not user:
-            self.redirect("/login")
-            return
-        location_label = posts_location_for_user(int(row_value(user, "id") or 0))
-        housing_posts = get_posts_housing_items(location_label, limit=12)
-        chat_unread_count = sum(
-            int(conversation.get("unread") or 0)
-            for conversation in get_chat_conversations_for_user(int(row_value(user, "id") or 0))
-        )
-        body = render_template(
-            "posts.html",
-            member_avatar=user_avatar_span(user),
-            member_first_name=escape(row_value(user, "name").split()[0] if row_value(user, "name") else "there"),
-            member_full_name=escape(row_value(user, "name") or "FairFares Member"),
-            member_email=escape(row_value(user, "email") or "Add email"),
-            member_phone=escape(row_value(user, "phone") or "Add phone number"),
-            member_location=escape(location_label),
-            post_story_cards=render_posts_story_strip(user, housing_posts),
-            posts_feed_cards=render_posts_feed_cards(user, location_label),
-            chat_unread_count=escape(str(chat_unread_count)),
-            chat_unread_badge_class="" if chat_unread_count else "is-empty",
-        )
-        self.send_html(body)
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.current_user()
