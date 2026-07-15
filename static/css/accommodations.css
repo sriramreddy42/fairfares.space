@@ -160,7 +160,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   z-index: 20;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   border-top: 1px solid #d7e2f0;
   border-bottom: 1px solid #d7e2f0;
   background: rgba(255, 255, 255, 0.98);
@@ -199,20 +199,20 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 .housing-subnav-scroll {
   display: flex;
   flex: 1 1 auto;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
   overflow-x: auto;
-  padding: 8px 10px;
+  padding: 6px 10px;
 }
 
 .housing-subnav-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 9px;
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
   margin-left: auto;
-  padding: 8px 12px 8px 0;
+  padding: 6px 12px 6px 0;
 }
 
 .housing-subnav-account-link {
@@ -352,24 +352,30 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
 
 .housing-live-pill {
   flex: 0 0 auto;
-  min-height: 36px;
-  margin-left: 4px;
-  padding: 0 12px;
+  min-height: 34px;
+  max-height: 34px;
+  margin-left: 0;
+  padding: 0 11px;
   border-radius: 6px;
   background: linear-gradient(90deg, #cc47b2, #f05b80);
   color: #fff;
-  font-size: 0.92rem;
+  font-size: 0.84rem;
+  line-height: 1;
+  overflow: hidden;
 }
 
 .housing-ride-pill {
   background: linear-gradient(90deg, #5967e8, #22b8cf);
 }
 
-.housing-live-pill img {
+.housing-live-pill > img {
+  flex: 0 0 19px;
   display: block;
-  height: 22px;
+  height: 19px !important;
+  max-height: 19px;
+  max-width: 19px;
   object-fit: contain;
-  width: 22px;
+  width: 19px !important;
 }
 
 .housing-hero {
