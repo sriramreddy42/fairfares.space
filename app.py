@@ -393,6 +393,7 @@ ACCOMMODATION_CATEGORIES = (
 )
 ACCOMMODATION_SEARCH_NEEDS = (
     ("need_room_share", "Need a Room for Share"),
+    ("need_roommates", "Need Roommates"),
     ("need_property_rent", "Need a Property for Rent"),
     ("have_room_share", "Have a Room to Share"),
     ("have_property_rent", "Have a Property to Rent"),
@@ -3454,6 +3455,7 @@ def init_db() -> None:
                 bedroom_count INTEGER NOT NULL DEFAULT 0,
                 bathroom_count INTEGER NOT NULL DEFAULT 0,
                 roommate_count INTEGER NOT NULL DEFAULT 0,
+                roommate_intent INTEGER NOT NULL DEFAULT 0,
                 gender_preference TEXT NOT NULL DEFAULT '',
                 commute_preference TEXT NOT NULL DEFAULT '',
                 lease_term TEXT NOT NULL DEFAULT '',
@@ -4297,6 +4299,7 @@ def init_db() -> None:
         ensure_column(con, "explorer_stops", "source", "source TEXT NOT NULL DEFAULT 'LOCAL'")
         ensure_column(con, "accommodation_posts", "lat", "lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "lng", "lng REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "roommate_intent", "roommate_intent INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
@@ -10943,8 +10946,22 @@ def format_accommodation_rent(row: sqlite3.Row | dict[str, object]) -> str:
     return "Rent open"
 
 
-def accommodation_title_from_form(form: dict[str, str], mode: str, category_label: str) -> str:
+def accommodation_mode_label(row: sqlite3.Row | dict[str, object]) -> str:
+    if row_value(row, "roommate_intent") == "1":
+        return "Need roommates"
+    return "Need a place" if row_value(row, "post_mode") == "NEED_PLACE" else "Place available"
+
+
+def accommodation_feed_action_label(row: sqlite3.Row | dict[str, object]) -> str:
+    if row_value(row, "roommate_intent") == "1":
+        return "Roommate request"
+    return "Request made" if row_value(row, "post_mode") == "NEED_PLACE" else "Listing posted"
+
+
+def accommodation_title_from_form(form: dict[str, str], mode: str, category_label: str, roommate_intent: bool = False) -> str:
     area = (form.get("area_or_apartment") or form.get("city_area_zip") or form.get("work_school_location") or "").strip()
+    if roommate_intent:
+        return f"Looking for roommates{f' near {area}' if area else ''}"
     if mode == "HAVE_PLACE":
         return f"{category_label} available{f' in {area}' if area else ''}"
     target = area or "your preferred area"
@@ -10962,8 +10979,7 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
         """
     cards: list[str] = []
     for post in posts:
-        mode = row_value(post, "post_mode")
-        mode_label = "Need a place" if mode == "NEED_PLACE" else "Place available"
+        mode_label = accommodation_mode_label(post)
         category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
         city = row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Area open"
         move_in = row_value(post, "move_in_date") or "Flexible"
@@ -11264,7 +11280,7 @@ def render_dashboard_housing_rows(posts: list[sqlite3.Row]) -> str:
         """
     rows: list[str] = []
     for post in posts:
-        mode_label = "Need a place" if row_value(post, "post_mode") == "NEED_PLACE" else "Place available"
+        mode_label = accommodation_mode_label(post)
         category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
         status = row_value(post, "visibility_status") or "ACTIVE"
         expiry_label = accommodation_expiry_label(post)
@@ -11316,7 +11332,7 @@ def render_member_workspace_feed(
             )
     if housing_posts:
         for post in housing_posts[:2]:
-            mode_label = "Request made" if row_value(post, "post_mode") == "NEED_PLACE" else "Listing posted"
+            mode_label = accommodation_feed_action_label(post)
             cards.append(
                 f"""
                 <article class="member-feed-card">
@@ -13315,7 +13331,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         search_budget = (params.get("price", params.get("budget", [""]))[0] or "").strip()
         clauses = ["visibility_status = 'ACTIVE'", "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))"]
         values: list[object] = []
-        if search_need in {"room_for_rent", "shared_room", "roommate_match"}:
+        if search_need == "roommate_match":
+            search_need = "need_roommates"
+        elif search_need in {"room_for_rent", "shared_room"}:
             search_need = "need_room_share"
         elif search_need == "apartment":
             search_need = "need_property_rent"
@@ -13324,6 +13342,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if search_need == "need_room_share":
             clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
+        elif search_need == "need_roommates":
+            clauses.append("post_mode = 'NEED_PLACE'")
+            clauses.append("roommate_intent = 1")
         elif search_need == "need_property_rent":
             clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("category IN ('apartment', 'condo', 'town_house', 'single_family_home', 'basement_apartment')")
@@ -13449,7 +13470,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
-        title = accommodation_title_from_form(form, mode, category_label)
+        roommate_intent = 1 if (form.get("roommate_intent") or "").strip() == "1" else 0
+        title = accommodation_title_from_form(form, mode, category_label, bool(roommate_intent))
         user_id = int(row_value(user, "id") or 0) if user else None
         contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
         contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
@@ -13471,11 +13493,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (public_id, user_id, post_mode, category, title, description,
                  city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
-                 roommate_count, gender_preference, commute_preference, lease_term, amenities,
+                 roommate_count, roommate_intent, gender_preference, commute_preference, lease_term, amenities,
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -13497,6 +13519,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     int_from_form(form, "bedroom_count"),
                     int_from_form(form, "bathroom_count"),
                     int_from_form(form, "roommate_count"),
+                    roommate_intent,
                     (form.get("gender_preference") or "open").strip(),
                     (form.get("commute_preference") or "").strip(),
                     (form.get("lease_term") or "flexible").strip(),

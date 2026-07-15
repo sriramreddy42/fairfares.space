@@ -40,6 +40,7 @@
     <div class="housing-subnav-scroll" aria-label="Housing categories">
       $housing_subnav_links
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE">I need a place to live</button>
+      <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE" data-roommate-intent="1" data-category="shared_room">I need roommates</button>
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE">I have a place available</button>
     </div>
     <div class="housing-subnav-actions" aria-label="Housing account actions">
@@ -153,6 +154,7 @@
           <div class="housing-intent-actions">
             <button type="button" data-wizard-intent="HAVE_PLACE">List my room</button>
             <button type="button" data-wizard-intent="NEED_PLACE">Find a room</button>
+            <button type="button" data-wizard-intent="NEED_PLACE" data-roommate-intent="1" data-category-preset="shared_room">Need roommates</button>
           </div>
         </div>
 
@@ -175,6 +177,7 @@
               <h4>What is your need?</h4>
               <button type="button" data-need-preset="HAVE_PLACE">I have a room to rent</button>
               <button type="button" data-need-preset="NEED_PLACE">I need a room for rent</button>
+              <button type="button" data-need-preset="NEED_PLACE" data-roommate-intent="1" data-category-preset="shared_room">I need roommates</button>
               <button type="button" data-need-preset="HAVE_PLACE" data-category-preset="apartment">I have a property to rent</button>
               <button type="button" data-need-preset="NEED_PLACE" data-category-preset="apartment">I need a property for rent</button>
             </div>
@@ -210,6 +213,7 @@
           <label><input type="radio" name="post_mode" value="HAVE_PLACE"><span>I have a place</span></label>
         </div>
         <input type="hidden" name="about_you" value="">
+        <input type="hidden" name="roommate_intent" value="0" data-roommate-intent-field>
 
         $status_message
 
@@ -628,6 +632,7 @@
       const modeInputs = form.querySelectorAll('input[name="post_mode"]');
       const cityInput = form.querySelector('input[name="city_area_zip"]');
       const aboutInput = form.querySelector('input[name="about_you"]');
+      const roommateIntentInput = form.querySelector("[data-roommate-intent-field]");
       const wizard = document.querySelector("[data-post-wizard]");
       const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
@@ -643,7 +648,15 @@
           title: "Listing a place",
           body: "Share the room or property you have, availability, rent, amenities, and who it fits.",
           placeholder: "Example: Private room available in Littleton from August, furnished, parking included, 1050 monthly."
+        },
+        NEED_ROOMMATE: {
+          title: "Finding roommates",
+          body: "Share where you want to live, how many roommates you need, budget split, timing, and roommate preferences.",
+          placeholder: "Example: Need 1 roommate to share an apartment near DU from August, budget around 900 monthly, prefer clean non-smoking roommate."
         }
+      };
+      const setRoommateIntent = (enabled) => {
+        if (roommateIntentInput) roommateIntentInput.value = enabled ? "1" : "0";
       };
       const setMode = (mode) => {
         modeInputs.forEach((input) => {
@@ -672,7 +685,9 @@
         if (typeof options === "string") options = { category: options };
         const category = options.category || "";
         const mode = options.mode || "";
+        const roommateIntent = options.roommateIntent === "1" || options.roommateIntent === 1 || options.roommateIntent === true;
         if (category && categorySelect) categorySelect.value = category;
+        setRoommateIntent(roommateIntent);
         if (mode) setMode(mode);
         if (modal) {
           modal.classList.add("is-open");
@@ -687,7 +702,9 @@
           showWizard("intent");
         }
       };
-      const openDirectForm = (mode) => {
+      const openDirectForm = (mode, roommateIntent = false, category = "") => {
+        if (category && categorySelect) categorySelect.value = category;
+        setRoommateIntent(roommateIntent);
         setMode(mode || "NEED_PLACE");
         if (modal) {
           modal.classList.add("is-open");
@@ -705,7 +722,8 @@
       const sync = () => {
         const checked = form.querySelector('input[name="post_mode"]:checked');
         const mode = checked ? checked.value : "NEED_PLACE";
-        const copy = modeCopy[mode] || modeCopy.NEED_PLACE;
+        const roommateIntent = roommateIntentInput && roommateIntentInput.value === "1";
+        const copy = roommateIntent ? modeCopy.NEED_ROOMMATE : (modeCopy[mode] || modeCopy.NEED_PLACE);
         form.classList.toggle("is-have", mode === "HAVE_PLACE");
         if (modeSummary) {
           modeSummary.innerHTML = `<b>${copy.title}</b><span>${copy.body}</span>`;
@@ -715,17 +733,19 @@
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
       document.querySelectorAll("[data-open-housing-post]").forEach((button) => {
         button.addEventListener("click", () => {
-          if (button.dataset.mode && !button.dataset.category) {
-            openDirectForm(button.dataset.mode);
+          if (button.dataset.mode) {
+            openDirectForm(button.dataset.mode, button.dataset.roommateIntent === "1", button.dataset.category || "");
             return;
           }
-          openModal({ category: button.dataset.category, mode: button.dataset.mode });
+          openModal({ category: button.dataset.category, mode: button.dataset.mode, roommateIntent: button.dataset.roommateIntent });
         });
       });
       document.querySelectorAll("[data-close-housing-post]").forEach((button) => button.addEventListener("click", closeModal));
       document.querySelectorAll("[data-wizard-intent]").forEach((button) => {
         button.addEventListener("click", () => {
+          setRoommateIntent(button.dataset.roommateIntent === "1");
           setMode(button.dataset.wizardIntent || "NEED_PLACE");
+          if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
           setWizardStep("category");
         });
       });
@@ -740,6 +760,7 @@
       });
       document.querySelectorAll("[data-need-preset]").forEach((button) => {
         button.addEventListener("click", () => {
+          setRoommateIntent(button.dataset.roommateIntent === "1");
           setMode(button.dataset.needPreset || "NEED_PLACE");
           if (button.dataset.categoryPreset && categorySelect) categorySelect.value = button.dataset.categoryPreset;
         });
