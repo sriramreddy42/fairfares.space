@@ -10387,7 +10387,7 @@ def seed_sample_accommodation_posts(con: sqlite3.Connection) -> None:
          'Denver, CO', 'University Park, DU, Platt Park', 'University of Denver',
          0, 39.6781, -104.9618, '', 900, 1100, 'MONTH',
          1, 1, 1, 0, 'open', 'Near DU light rail, 20 min to DTC',
-         'month_to_month', 'Attached bath, parking, utilities, WiFi, laundry',
+         'flexible', 'Attached bath, parking, utilities, WiFi, laundry',
          1, 1, 1, 1,
          'FairFares Sample Host', '7205550142', 'housing@fairfares.com',
          'ACTIVE', 'SAMPLE_DATA', ?, ?, ?)
@@ -10399,6 +10399,32 @@ def seed_sample_accommodation_posts(con: sqlite3.Connection) -> None:
         UPDATE accommodation_posts
         SET visibility_status = 'ACTIVE',
             expired_at = NULL,
+            post_mode = 'HAVE_PLACE',
+            category = 'single_room',
+            title = 'Furnished private room available near DU',
+            description = 'Private furnished room in a quiet shared home near University of Denver. Good for students or professionals looking for a clean month-to-month place with parking, utilities, and light rail access nearby.',
+            city_area_zip = 'Denver, CO',
+            area_or_apartment = 'University Park, DU, Platt Park',
+            work_school_location = 'University of Denver',
+            radius_miles = 0,
+            lat = 39.6781,
+            lng = -104.9618,
+            rent_min = 900,
+            rent_max = 1100,
+            rent_period = 'MONTH',
+            bedroom_count = 1,
+            bathroom_count = 1,
+            accommodates = 1,
+            roommate_count = 1,
+            roommate_intent = 0,
+            gender_preference = 'open',
+            commute_preference = 'Near DU light rail, 20 min to DTC',
+            lease_term = 'flexible',
+            amenities = 'Attached bath, parking, utilities, WiFi, laundry',
+            private_bath = 1,
+            furnished = 1,
+            parking = 1,
+            utilities_included = 1,
             expires_at = ?,
             updated_at = ?
         WHERE public_id = 'FFH-SAMPLE-HAVE-PLACE'
@@ -10879,7 +10905,34 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
     payload_posts: list[dict[str, object]] = []
     center_lat = float(center.get("lat") or 0)
     center_lng = float(center.get("lng") or 0)
+    post_ids = [int(row_value(row, "id") or 0) for row in posts[:80] if int(row_value(row, "id") or 0)]
+    images_by_post: dict[int, list[str]] = {post_id: [] for post_id in post_ids}
+    if post_ids:
+        placeholders = ",".join("?" for _ in post_ids)
+        try:
+            with db() as con:
+                image_rows = con.execute(
+                    f"""
+                    SELECT post_id, image_url
+                    FROM accommodation_post_images
+                    WHERE post_id IN ({placeholders})
+                    ORDER BY post_id ASC, sort_order ASC, id ASC
+                    """,
+                    post_ids,
+                ).fetchall()
+            for image_row in image_rows:
+                image_url = row_value(image_row, "image_url")
+                post_id = int(row_value(image_row, "post_id") or 0)
+                if image_url and post_id in images_by_post:
+                    images_by_post[post_id].append(image_url)
+        except sqlite3.Error:
+            images_by_post = {post_id: [] for post_id in post_ids}
     for row in posts[:80]:
+        post_id = int(row_value(row, "id") or 0)
+        image_urls = images_by_post.get(post_id, [])
+        preview_image = row_value(row, "preview_image_url")
+        if preview_image and preview_image not in image_urls:
+            image_urls.insert(0, preview_image)
         location_label = (
             row_value(row, "city_area_zip")
             or row_value(row, "area_or_apartment")
@@ -10903,6 +10956,29 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
                 "mode": accommodation_mode_label(row),
                 "category": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
                 "location": location_label,
+                "area": row_value(row, "area_or_apartment"),
+                "workLocation": row_value(row, "work_school_location"),
+                "moveIn": row_value(row, "move_in_date"),
+                "bedrooms": int(row_value(row, "bedroom_count") or 0),
+                "bathrooms": int(row_value(row, "bathroom_count") or 0),
+                "accommodates": int(row_value(row, "accommodates") or 0),
+                "roommates": int(row_value(row, "roommate_count") or 0),
+                "bathroomType": option_label((("shared", "Shared Bath"), ("private", "Private Bath"), ("private_shared", "Private/Shared Bath")), row_value(row, "bathroom_type"), row_value(row, "bathroom_type")),
+                "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(row, "gender_preference"), "Open"),
+                "leaseTerm": option_label(ACCOMMODATION_LEASE_TERMS, row_value(row, "lease_term"), "Flexible"),
+                "deposit": float(row_value(row, "deposit") or 0),
+                "daysAvailable": row_value(row, "days_available"),
+                "vegetarianPreference": row_value(row, "vegetarian_preference"),
+                "smokingPolicy": row_value(row, "smoking_policy"),
+                "petFriendly": row_value(row, "pet_friendly"),
+                "amenities": [item.strip() for item in row_value(row, "amenities").split(",") if item.strip()],
+                "flags": {
+                    "privateBath": bool(int(row_value(row, "private_bath") or 0)),
+                    "furnished": bool(int(row_value(row, "furnished") or 0)),
+                    "parking": bool(int(row_value(row, "parking") or 0)),
+                    "utilitiesIncluded": bool(int(row_value(row, "utilities_included") or 0)),
+                },
+                "images": image_urls[:6],
                 "lat": lat,
                 "lng": lng,
                 "radius": int(float(row_value(row, "radius_miles") or 0)),

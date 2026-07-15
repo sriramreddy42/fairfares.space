@@ -713,6 +713,79 @@
           google.maps.event.trigger(marker, "click");
         }
       };
+      const compactMapDetailValue = (value, fallback = "-") => {
+        if (value === null || value === undefined || value === "") return fallback;
+        return escapeMapHtml(value);
+      };
+      const renderMapPhotoStrip = (post) => {
+        const images = Array.isArray(post.images) ? post.images.filter(Boolean).slice(0, 3) : [];
+        if (!images.length) {
+          return `
+            <div class="housing-map-detail-placeholder">
+              <b>No photos uploaded yet</b>
+              <span>Message the poster for current room photos.</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="housing-map-detail-photos">
+            ${images.map((image, index) => `<img src="${escapeMapHtml(image)}" alt="${escapeMapHtml(post.title || "Housing listing photo")} ${index + 1}">`).join("")}
+          </div>
+        `;
+      };
+      const renderMapDetailChips = (post) => {
+        const flags = post.flags || {};
+        const chips = [
+          ...(Array.isArray(post.amenities) ? post.amenities : []),
+          flags.privateBath ? "Private bath" : "",
+          flags.furnished ? "Furnished" : "",
+          flags.parking ? "Parking" : "",
+          flags.utilitiesIncluded ? "Utilities included" : "",
+          post.smokingPolicy ? post.smokingPolicy : "",
+          post.petFriendly ? post.petFriendly : "",
+        ].filter(Boolean).slice(0, 10);
+        return chips.length
+          ? `<div class="housing-map-detail-chips">${chips.map((chip) => `<span>${escapeMapHtml(chip)}</span>`).join("")}</div>`
+          : "";
+      };
+      const renderMapDetail = (post, distanceText) => {
+        const depositText = Number(post.deposit || 0) > 0 ? `$${Number(post.deposit).toLocaleString()}` : "Open";
+        const factRows = [
+          ["Available", post.moveIn || "Flexible"],
+          ["Bedrooms", post.bedrooms || "Open"],
+          ["Bathrooms", post.bathrooms || post.bathroomType || "Open"],
+          ["Accommodates", post.accommodates || "Open"],
+          ["Lease", post.leaseTerm || "Flexible"],
+          ["Deposit", depositText],
+          ["Fit", post.genderPreference || "Open"],
+          ["Distance", distanceText],
+        ];
+        const locationRows = [
+          ["Area", post.area || post.location || "Location pending"],
+          ["Nearby", post.workLocation || "Not specified"],
+          ["Radius", `${post.radius || 0} mi radius`],
+        ];
+        return `
+          <div class="housing-map-result-detail">
+            ${renderMapPhotoStrip(post)}
+            <div class="housing-map-detail-overview">
+              <span>${escapeMapHtml(post.mode || "Housing lead")}</span>
+              <p>${escapeMapHtml(post.description || "Open this listing to see the saved housing details and message the poster.")}</p>
+            </div>
+            <dl class="housing-map-detail-facts">
+              ${factRows.map(([label, value]) => `<div><dt>${escapeMapHtml(label)}</dt><dd>${compactMapDetailValue(value)}</dd></div>`).join("")}
+            </dl>
+            <dl class="housing-map-detail-location">
+              ${locationRows.map(([label, value]) => `<div><dt>${escapeMapHtml(label)}</dt><dd>${compactMapDetailValue(value)}</dd></div>`).join("")}
+            </dl>
+            ${renderMapDetailChips(post)}
+            <div class="housing-map-result-actions">
+              <button type="button" data-map-focus-post="${escapeMapHtml(post.id || "")}">View on map</button>
+              <button type="button" data-chat-open data-post-id="${escapeMapHtml(post.id || "")}" data-chat-subject="${escapeMapHtml(post.title || "Housing lead")}">Message</button>
+            </div>
+          </div>
+        `;
+      };
       const renderMapResults = (posts, emptyMessage = "No active housing leads match this search yet.") => {
         const results = document.querySelector("[data-map-results]");
         if (!results) return;
@@ -736,18 +809,7 @@
                   <small class="distance">${distanceText}</small>
                 </div>
               </button>
-              <div class="housing-map-result-detail">
-                <p>${escapeMapHtml(post.description || "Open this listing to see the saved housing details and message the poster.")}</p>
-                <dl>
-                  <div><dt>Type</dt><dd>${escapeMapHtml(post.mode || post.category || "Housing")}</dd></div>
-                  <div><dt>Category</dt><dd>${escapeMapHtml(post.category || "Housing")}</dd></div>
-                  <div><dt>Distance</dt><dd>${distanceText}</dd></div>
-                </dl>
-                <div class="housing-map-result-actions">
-                  <button type="button" data-map-focus-post="${escapeMapHtml(post.id || "")}">View on map</button>
-                  <button type="button" data-chat-open data-post-id="${escapeMapHtml(post.id || "")}" data-chat-subject="${escapeMapHtml(post.title || "Housing lead")}">Message</button>
-                </div>
-              </div>
+              ${renderMapDetail(post, distanceText)}
             </article>
           `;
         }).join("") : `<p>${emptyMessage}</p>`;

@@ -1314,7 +1314,7 @@ body.housing-map-full-open {
 
 .housing-map-result-detail {
   display: none;
-  gap: 10px;
+  gap: 12px;
   padding-top: 10px;
   border-top: 1px solid #d7e2f0;
 }
@@ -1323,20 +1323,94 @@ body.housing-map-full-open {
   display: grid;
 }
 
-.housing-map-result-detail p {
+.housing-map-detail-photos {
+  display: grid;
+  grid-template-columns: 1.25fr 0.9fr;
+  grid-auto-rows: 86px;
+  gap: 4px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #eaf1fa;
+}
+
+.housing-map-detail-photos img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.housing-map-detail-photos img:first-child {
+  grid-row: span 2;
+}
+
+.housing-map-detail-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  min-height: 130px;
+  padding: 16px;
+  border: 1px dashed #c7d7e8;
+  border-radius: 8px;
+  background: #f8fbff;
+  text-align: center;
+}
+
+.housing-map-detail-placeholder b {
+  color: #071943;
+}
+
+.housing-map-detail-placeholder span {
+  color: #5d6470;
+  font-size: 0.82rem;
+}
+
+.housing-map-detail-overview {
+  display: grid;
+  gap: 6px;
+}
+
+.housing-map-detail-overview span {
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #e9f9ee;
+  color: #11772e;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.housing-map-detail-overview p {
   padding: 0;
   border: 0;
   background: transparent;
+  font-size: 0.94rem;
   color: #4f5a6d;
   font-weight: 800;
   line-height: 1.35;
 }
 
-.housing-map-result-detail dl {
+.housing-map-detail-facts,
+.housing-map-detail-location {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
   margin: 0;
+  overflow: hidden;
+  border: 1px solid #d7e2f0;
+  border-radius: 8px;
+  background: #d7e2f0;
+}
+
+.housing-map-detail-facts div,
+.housing-map-detail-location div {
+  min-width: 0;
+  padding: 9px;
+  background: #fff;
+}
+
+.housing-map-result-detail dt,
+.housing-map-result-detail dd {
+  overflow-wrap: anywhere;
 }
 
 .housing-map-result-detail dt {
@@ -1350,6 +1424,24 @@ body.housing-map-full-open {
   margin: 2px 0 0;
   color: #4f5a6d;
   font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.housing-map-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.housing-map-detail-chips span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: #071943;
+  font-size: 0.78rem;
   font-weight: 900;
 }
 
