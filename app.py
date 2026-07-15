@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715housing-search-intent"
+ASSET_VERSION = "20260715housing-listing-required"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3436,6 +3436,11 @@ def init_db() -> None:
                 category TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 description TEXT NOT NULL DEFAULT '',
+                street_address TEXT NOT NULL DEFAULT '',
+                city TEXT NOT NULL DEFAULT '',
+                zip_code TEXT NOT NULL DEFAULT '',
+                primary_neighborhood TEXT NOT NULL DEFAULT '',
+                apartment_name TEXT NOT NULL DEFAULT '',
                 city_area_zip TEXT NOT NULL DEFAULT '',
                 area_or_apartment TEXT NOT NULL DEFAULT '',
                 work_school_location TEXT NOT NULL DEFAULT '',
@@ -3448,11 +3453,25 @@ def init_db() -> None:
                 rent_period TEXT NOT NULL DEFAULT 'MONTH',
                 bedroom_count INTEGER NOT NULL DEFAULT 0,
                 bathroom_count INTEGER NOT NULL DEFAULT 0,
+                accommodates INTEGER NOT NULL DEFAULT 0,
                 roommate_count INTEGER NOT NULL DEFAULT 0,
                 roommate_intent INTEGER NOT NULL DEFAULT 0,
+                bathroom_type TEXT NOT NULL DEFAULT '',
                 gender_preference TEXT NOT NULL DEFAULT '',
                 commute_preference TEXT NOT NULL DEFAULT '',
                 lease_term TEXT NOT NULL DEFAULT '',
+                deposit REAL NOT NULL DEFAULT 0,
+                days_available TEXT NOT NULL DEFAULT '',
+                vegetarian_preference TEXT NOT NULL DEFAULT '',
+                smoking_policy TEXT NOT NULL DEFAULT '',
+                pet_friendly TEXT NOT NULL DEFAULT '',
+                open_house_date TEXT NOT NULL DEFAULT '',
+                open_house_start TEXT NOT NULL DEFAULT '',
+                open_house_end TEXT NOT NULL DEFAULT '',
+                social_facebook TEXT NOT NULL DEFAULT '',
+                social_x TEXT NOT NULL DEFAULT '',
+                social_instagram TEXT NOT NULL DEFAULT '',
+                social_youtube TEXT NOT NULL DEFAULT '',
                 amenities TEXT NOT NULL DEFAULT '',
                 private_bath INTEGER NOT NULL DEFAULT 0,
                 furnished INTEGER NOT NULL DEFAULT 0,
@@ -4294,6 +4313,25 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "lat", "lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "lng", "lng REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "roommate_intent", "roommate_intent INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "street_address", "street_address TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "city", "city TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "zip_code", "zip_code TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "primary_neighborhood", "primary_neighborhood TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "apartment_name", "apartment_name TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "accommodates", "accommodates INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "bathroom_type", "bathroom_type TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "deposit", "deposit REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "accommodation_posts", "days_available", "days_available TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "vegetarian_preference", "vegetarian_preference TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "smoking_policy", "smoking_policy TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "pet_friendly", "pet_friendly TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "open_house_date", "open_house_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "open_house_start", "open_house_start TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "open_house_end", "open_house_end TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "social_facebook", "social_facebook TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "social_x", "social_x TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "social_instagram", "social_instagram TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "social_youtube", "social_youtube TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
@@ -10995,7 +11033,18 @@ def accommodation_feed_action_label(row: sqlite3.Row | dict[str, object]) -> str
 
 
 def accommodation_title_from_form(form: dict[str, str], mode: str, category_label: str, roommate_intent: bool = False) -> str:
-    area = (form.get("area_or_apartment") or form.get("city_area_zip") or form.get("work_school_location") or "").strip()
+    custom_title = (form.get("title") or "").strip()
+    if custom_title:
+        return custom_title
+    area = (
+        form.get("primary_neighborhood")
+        or form.get("apartment_name")
+        or form.get("area_or_apartment")
+        or form.get("city")
+        or form.get("city_area_zip")
+        or form.get("work_school_location")
+        or ""
+    ).strip()
     if roommate_intent:
         return f"Looking for roommates{f' near {area}' if area else ''}"
     if mode == "HAVE_PLACE":
@@ -13402,14 +13451,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if search_metro:
             metro_terms = accommodation_location_terms(search_metro)
             metro_sql = " OR ".join(
-                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
+                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ? OR street_address LIKE ? OR city LIKE ? OR zip_code LIKE ? OR primary_neighborhood LIKE ? OR apartment_name LIKE ?)"
                 for _ in metro_terms
             )
             if metro_sql:
                 clauses.append(f"({metro_sql})")
                 for term in metro_terms:
                     metro_pattern = f"%{term}%"
-                    values.extend([metro_pattern, metro_pattern, metro_pattern, metro_pattern])
+                    values.extend([metro_pattern] * 9)
         if search_gender:
             clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
             values.append(search_gender)
@@ -13420,9 +13469,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if search_area:
             pattern = f"%{search_area}%"
             clauses.append(
-                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ?)"
+                "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ? OR street_address LIKE ? OR city LIKE ? OR zip_code LIKE ? OR primary_neighborhood LIKE ? OR apartment_name LIKE ?)"
             )
-            values.extend([pattern, pattern, pattern, pattern])
+            values.extend([pattern] * 9)
         if search_move_in:
             clauses.append("(move_in_date = '' OR move_in_date <= ?)")
             values.append(search_move_in)
@@ -13504,6 +13553,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not category or not description:
             self.redirect("/accommodations?error=missing")
             return
+        if mode == "HAVE_PLACE":
+            required_listing_fields = (
+                "title",
+                "street_address",
+                "city",
+                "zip_code",
+                "move_in_date",
+                "rent_min",
+                "rent_period",
+                "accommodates",
+                "bathroom_type",
+                "lease_term",
+            )
+            if any(not (form.get(field) or "").strip() for field in required_listing_fields):
+                self.redirect("/accommodations?error=missing")
+                return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
         roommate_intent = 1 if (form.get("roommate_intent") or "").strip() == "1" else 0
@@ -13513,13 +13578,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
         contact_phone = (form.get("contact_phone") or row_value(user, "phone")).strip()
         location_query = (
-            (form.get("city_area_zip") or "").strip()
+            (form.get("street_address") or "").strip()
+            or (form.get("city") or "").strip()
+            or (form.get("zip_code") or "").strip()
+            or (form.get("primary_neighborhood") or "").strip()
+            or (form.get("apartment_name") or "").strip()
+            or (form.get("city_area_zip") or "").strip()
             or (form.get("area_or_apartment") or "").strip()
             or (form.get("work_school_location") or "").strip()
         )
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
+        city_area_value = (form.get("city_area_zip") or "").strip()
+        if mode == "HAVE_PLACE":
+            city_bits = [
+                (form.get("city") or "").strip(),
+                (form.get("zip_code") or "").strip(),
+            ]
+            city_area_value = ", ".join(bit for bit in city_bits if bit) or city_area_value
+        area_value = (form.get("area_or_apartment") or "").strip()
+        if mode == "HAVE_PLACE":
+            area_value = (
+                (form.get("primary_neighborhood") or "").strip()
+                or (form.get("apartment_name") or "").strip()
+                or area_value
+            )
         now = datetime.utcnow().isoformat(timespec="seconds")
         expires_at = accommodation_expiry_timestamp(now)
         with db() as con:
@@ -13527,13 +13611,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description,
+                 street_address, city, zip_code, primary_neighborhood, apartment_name,
                  city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
-                 roommate_count, roommate_intent, gender_preference, commute_preference, lease_term, amenities,
+                 accommodates, roommate_count, roommate_intent, bathroom_type, gender_preference,
+                 commute_preference, lease_term, deposit, days_available, vegetarian_preference,
+                 smoking_policy, pet_friendly, open_house_date, open_house_start, open_house_end,
+                 social_facebook, social_x, social_instagram, social_youtube, amenities,
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -13542,8 +13630,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     category,
                     title,
                     description,
-                    (form.get("city_area_zip") or "").strip(),
-                    (form.get("area_or_apartment") or "").strip(),
+                    (form.get("street_address") or "").strip(),
+                    (form.get("city") or "").strip(),
+                    (form.get("zip_code") or "").strip(),
+                    (form.get("primary_neighborhood") or "").strip(),
+                    (form.get("apartment_name") or "").strip(),
+                    city_area_value,
+                    area_value,
                     (form.get("work_school_location") or "").strip(),
                     int_from_form(form, "radius_miles", 10 if mode == "NEED_PLACE" else 0),
                     post_lat,
@@ -13554,14 +13647,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (form.get("rent_period") or "MONTH").strip(),
                     int_from_form(form, "bedroom_count"),
                     int_from_form(form, "bathroom_count"),
+                    int_from_form(form, "accommodates"),
                     int_from_form(form, "roommate_count"),
                     roommate_intent,
+                    (form.get("bathroom_type") or "").strip(),
                     (form.get("gender_preference") or "open").strip(),
                     (form.get("commute_preference") or "").strip(),
                     (form.get("lease_term") or "flexible").strip(),
+                    float_from_form(form, "deposit"),
+                    (form.get("days_available") or "").strip(),
+                    (form.get("vegetarian_preference") or "").strip(),
+                    (form.get("smoking_policy") or "").strip(),
+                    (form.get("pet_friendly") or "").strip(),
+                    (form.get("open_house_date") or "").strip(),
+                    (form.get("open_house_start") or "").strip(),
+                    (form.get("open_house_end") or "").strip(),
+                    (form.get("social_facebook") or "").strip(),
+                    (form.get("social_x") or "").strip(),
+                    (form.get("social_instagram") or "").strip(),
+                    (form.get("social_youtube") or "").strip(),
                     (form.get("amenities") or "").strip(),
                     checked_from_form(form, "private_bath"),
-                    checked_from_form(form, "furnished"),
+                    1 if (form.get("furnished_select") or "").strip() == "1" else checked_from_form(form, "furnished"),
                     checked_from_form(form, "parking"),
                     checked_from_form(form, "utilities_included"),
                     contact_name,

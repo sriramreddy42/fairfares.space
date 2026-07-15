@@ -233,22 +233,47 @@
         $status_message
 
         <label class="wide">
-          <span>Describe the lead</span>
+          <span>Title</span>
+          <input name="title" data-required-have placeholder="Enter your title">
+        </label>
+
+        <label class="wide">
+          <span>Description</span>
           <textarea name="description" required rows="4" data-description-field placeholder="Example: Looking for a private room near DU from August, budget around 900 monthly, prefer female roommates."></textarea>
         </label>
 
         <div class="housing-form-grid">
+          <label class="listing-field">
+            <span>Street address</span>
+            <input name="street_address" data-required-have placeholder="Street Address">
+          </label>
+          <label class="listing-field">
+            <span>City</span>
+            <input name="city" data-required-have placeholder="Denver, CO">
+          </label>
+          <label class="listing-field">
+            <span>Zip code</span>
+            <input name="zip_code" inputmode="numeric" pattern="[0-9]{5}" data-required-have placeholder="80264">
+          </label>
+          <label class="listing-field">
+            <span>Primary neighborhood</span>
+            <input name="primary_neighborhood" placeholder="Capitol Hill, DU, Platt Park">
+          </label>
           <label>
             <span>Category</span>
             <select name="category" required>$category_options</select>
           </label>
-          <label>
+          <label class="need-only">
             <span>City, area, or ZIP</span>
             <input name="city_area_zip" placeholder="Denver, Lone Tree, 80231">
           </label>
-          <label>
+          <label class="need-only">
             <span>Area or apartment</span>
             <input name="area_or_apartment" placeholder="DU, IMT Dayton, Platt Park">
+          </label>
+          <label class="listing-field">
+            <span>Apartment / building</span>
+            <input name="apartment_name" placeholder="IMT Dayton, The Ridge, Elm at Panorama">
           </label>
           <label class="shared-need-field">
             <span>Work / school location</span>
@@ -260,11 +285,11 @@
           </label>
           <label>
             <span>Move-in / available date</span>
-            <input name="move_in_date" type="date">
+            <input name="move_in_date" type="date" data-required-have>
           </label>
           <label>
             <span>Rent minimum</span>
-            <input name="rent_min" type="number" min="0" step="1" placeholder="700">
+            <input name="rent_min" type="number" min="0" step="1" data-required-have placeholder="700">
           </label>
           <label>
             <span>Rent maximum</span>
@@ -282,6 +307,19 @@
             <span>Bathrooms</span>
             <input name="bathroom_count" type="number" min="0" step="1" placeholder="2">
           </label>
+          <label class="listing-field">
+            <span>Accommodates</span>
+            <input name="accommodates" type="number" min="1" step="1" data-required-have placeholder="1">
+          </label>
+          <label class="listing-field">
+            <span>Bathroom type</span>
+            <select name="bathroom_type" data-required-have>
+              <option value="">Select</option>
+              <option value="shared">Shared Bath</option>
+              <option value="private">Private Bath</option>
+              <option value="private_shared">Private/Shared Bath</option>
+            </select>
+          </label>
           <label class="roommate-field">
             <span>Roommates needed</span>
             <input name="roommate_count" type="number" min="0" step="1" placeholder="1">
@@ -296,7 +334,20 @@
           </label>
           <label>
             <span>Lease term</span>
-            <select name="lease_term">$lease_term_options</select>
+            <select name="lease_term" data-required-have>$lease_term_options</select>
+          </label>
+          <label class="listing-field">
+            <span>Security deposit</span>
+            <input name="deposit" type="number" min="0" step="1" placeholder="Deposit optional">
+          </label>
+          <label class="listing-field">
+            <span>Days available</span>
+            <select name="days_available">
+              <option value="">Select</option>
+              <option value="7_days">7 days a week</option>
+              <option value="weekends">Weekends only</option>
+              <option value="mon_fri">Monday to Friday only</option>
+            </select>
           </label>
           <label class="wide">
             <span>Amenities / notes</span>
@@ -308,6 +359,70 @@
             <label><input type="checkbox" name="parking"> Parking</label>
             <label><input type="checkbox" name="utilities_included"> Utilities included</label>
           </div>
+          <label class="listing-field">
+            <span>Furnished?</span>
+            <select name="furnished_select">
+              <option value="">Select</option>
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </label>
+          <label class="listing-field">
+            <span>Vegetarian preference</span>
+            <select name="vegetarian_preference">
+              <option value="">Select</option>
+              <option value="mandatory">Yes, vegetarian mandatory</option>
+              <option value="not_ok">No, non-veg is ok</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label class="listing-field">
+            <span>Smoking policy</span>
+            <select name="smoking_policy">
+              <option value="">Select</option>
+              <option value="no_smoking">No Smoking</option>
+              <option value="ok">Smoking is Ok</option>
+              <option value="outside_only">Smoke outside only</option>
+            </select>
+          </label>
+          <label class="listing-field">
+            <span>Pet friendly</span>
+            <select name="pet_friendly">
+              <option value="">Select</option>
+              <option value="no_pets">No Pets</option>
+              <option value="dogs">Only Dogs</option>
+              <option value="cats">Only Cats</option>
+              <option value="any">Any Pet is Ok</option>
+            </select>
+          </label>
+          <label class="listing-field">
+            <span>Open house date</span>
+            <input name="open_house_date" type="date">
+          </label>
+          <label class="listing-field">
+            <span>Open house start</span>
+            <input name="open_house_start" type="time">
+          </label>
+          <label class="listing-field">
+            <span>Open house end</span>
+            <input name="open_house_end" type="time">
+          </label>
+          <label class="listing-field">
+            <span>Facebook profile</span>
+            <input name="social_facebook" type="url" placeholder="https://facebook.com/...">
+          </label>
+          <label class="listing-field">
+            <span>X profile</span>
+            <input name="social_x" type="url" placeholder="https://x.com/...">
+          </label>
+          <label class="listing-field">
+            <span>Instagram profile</span>
+            <input name="social_instagram" type="url" placeholder="https://instagram.com/...">
+          </label>
+          <label class="listing-field">
+            <span>YouTube profile</span>
+            <input name="social_youtube" type="url" placeholder="https://youtube.com/...">
+          </label>
           <label>
             <span>Contact name</span>
             <input name="contact_name" placeholder="Your name">
@@ -649,6 +764,7 @@
       const cityInput = form.querySelector('input[name="city_area_zip"]');
       const aboutInput = form.querySelector('input[name="about_you"]');
       const roommateIntentInput = form.querySelector("[data-roommate-intent-field]");
+      const haveRequiredFields = form.querySelectorAll("[data-required-have]");
       const wizard = document.querySelector("[data-post-wizard]");
       const formIntro = document.querySelector("[data-post-form-intro]");
       const firstField = form.querySelector('textarea, input, select, button');
@@ -836,6 +952,9 @@
         form.classList.toggle("is-have", mode === "HAVE_PLACE");
         form.classList.toggle("is-roommate", roommateIntent);
         form.classList.toggle("is-need-place", mode === "NEED_PLACE" && !roommateIntent);
+        haveRequiredFields.forEach((field) => {
+          field.required = mode === "HAVE_PLACE";
+        });
         if (descriptionField) descriptionField.placeholder = copy.placeholder;
       };
       form.querySelectorAll('input[name="post_mode"]').forEach((input) => input.addEventListener("change", sync));
