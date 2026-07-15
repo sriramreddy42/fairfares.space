@@ -10899,6 +10899,8 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
             {
                 "id": row_value(row, "public_id"),
                 "title": row_value(row, "title"),
+                "description": row_value(row, "description"),
+                "mode": accommodation_mode_label(row),
                 "category": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
                 "location": location_label,
                 "lat": lat,
