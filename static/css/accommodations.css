@@ -332,7 +332,7 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   background: linear-gradient(90deg, #5967e8, #22b8cf);
 }
 
-.housing-ride-pill img {
+.housing-live-pill img {
   display: block;
   height: 22px;
   object-fit: contain;
