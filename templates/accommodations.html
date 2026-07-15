@@ -217,6 +217,12 @@
 
       <form class="housing-post-form" data-accommodation-form action="/accommodations/post" method="post" enctype="multipart/form-data" hidden>
         <button class="housing-wizard-back" type="button" data-edit-wizard>‹ Edit setup</button>
+        <div class="housing-selected-summary housing-form-selected-summary" data-form-selection-summary>
+          <span data-summary-need>Choose your need</span>
+          <span data-summary-category>Choose property type</span>
+          <span data-summary-about>Choose about you</span>
+          <span data-summary-location>$selected_location</span>
+        </div>
         <div class="housing-form-mode-summary" data-form-mode-summary></div>
         <div class="housing-mode-tabs" aria-label="Post type" hidden>
           <label><input type="radio" name="post_mode" value="NEED_PLACE" checked><span>I need a place</span></label>
@@ -656,10 +662,10 @@
         location: wizardLocationInput ? wizardLocationInput.value.trim() : ""
       };
       const summaryTargets = {
-        need: document.querySelector("[data-summary-need]"),
-        category: document.querySelector("[data-summary-category]"),
-        about: document.querySelector("[data-summary-about]"),
-        location: document.querySelector("[data-summary-location]")
+        need: document.querySelectorAll("[data-summary-need]"),
+        category: document.querySelectorAll("[data-summary-category]"),
+        about: document.querySelectorAll("[data-summary-about]"),
+        location: document.querySelectorAll("[data-summary-location]")
       };
       const modeCopy = {
         NEED_PLACE: {
@@ -689,11 +695,11 @@
           location: "Choose location"
         };
         Object.keys(summaryTargets).forEach((key) => {
-          const target = summaryTargets[key];
-          if (!target) return;
           const value = selectedChoices[key] || fallback[key];
-          target.textContent = value;
-          target.classList.toggle("is-filled", Boolean(selectedChoices[key]));
+          summaryTargets[key].forEach((target) => {
+            target.textContent = value;
+            target.classList.toggle("is-filled", Boolean(selectedChoices[key]));
+          });
         });
       };
       const markChoice = (button) => {

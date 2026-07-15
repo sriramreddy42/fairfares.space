@@ -935,6 +935,14 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   color: #071943;
 }
 
+.housing-form-selected-summary {
+  padding: 0;
+}
+
+.housing-form-selected-summary span {
+  background: #fff;
+}
+
 .housing-post-form {
   display: grid;
   gap: 14px;
