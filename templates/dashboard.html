@@ -7,7 +7,7 @@
   $stylesheet_links
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
-<body class="manage-screen public-header-compact $manage_flow_class">
+<body class="manage-screen public-header-compact $manage_flow_class" data-authenticated="$is_authenticated">
   <header class="top-brand">
     <a class="logo-lockup" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
     <div class="top-benefits">
@@ -311,6 +311,21 @@
           <button type="button" data-chat-tab="groups">Groups</button>
           <button type="button" data-chat-tab="communities">Communities</button>
         </nav>
+        <div class="fairfares-chat-create">
+          <button type="button" data-chat-create-toggle>+ Create group</button>
+          <form data-chat-create-form hidden>
+            <div>
+              <input name="name" placeholder="Group name" maxlength="80" required>
+              <select name="kind" aria-label="Group type">
+                <option value="GROUP">Group</option>
+                <option value="COMMUNITY">Community</option>
+              </select>
+            </div>
+            <input name="area" placeholder="Area, city, or campus" maxlength="80">
+            <textarea name="description" placeholder="What is this group for?" maxlength="220"></textarea>
+            <button type="submit">Create and share</button>
+          </form>
+        </div>
         <div class="fairfares-chat-list" data-chat-list></div>
       </aside>
       <section class="fairfares-chat-thread">

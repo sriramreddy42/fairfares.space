@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715messenger-communities"
+ASSET_VERSION = "20260715messenger-groups"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -3566,8 +3566,10 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 area_label TEXT NOT NULL DEFAULT '',
+                created_by_user_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_community_members (
@@ -4376,6 +4378,7 @@ def init_db() -> None:
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "area_label", "area_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_communities", "created_by_user_id", "created_by_user_id INTEGER")
         ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
@@ -11212,6 +11215,11 @@ def chat_public_id() -> str:
     return f"FFC-{secrets.token_hex(5).upper()}"
 
 
+def chat_group_public_id(kind: str = "GROUP") -> str:
+    prefix = "FFG" if kind == "GROUP" else "FFC"
+    return f"{prefix}-{secrets.token_hex(5).upper()}"
+
+
 DEFAULT_CHAT_COMMUNITIES = [
     ("FFG-DENVER-ROOMMATES", "GROUP", "Denver Roommates", "Roommate matching, sublets, and shared-house leads.", "Denver, CO"),
     ("FFG-DU-HOUSING", "GROUP", "DU Housing Board", "Rooms and apartment leads near University of Denver.", "Denver, CO"),
@@ -11261,9 +11269,41 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
             "area": row_value(row, "area_label"),
             "memberCount": int(row_value(row, "member_count") or 0),
             "joined": int(row_value(row, "joined") or 0) > 0,
+            "createdByUserId": int(row_value(row, "created_by_user_id") or 0),
         }
         for row in rows
     ]
+
+
+def create_chat_community(
+    creator_id: int,
+    name: str,
+    kind: str = "GROUP",
+    description: str = "",
+    area_label: str = "",
+) -> tuple[dict[str, object] | None, str]:
+    name = " ".join((name or "").split())[:80]
+    description = " ".join((description or "").split())[:220]
+    area_label = " ".join((area_label or "").split())[:80]
+    kind = "COMMUNITY" if kind == "COMMUNITY" else "GROUP"
+    if len(name) < 3:
+        return None, "Group name is required."
+    public_id = chat_group_public_id(kind)
+    with db() as con:
+        con.execute(
+            """
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (public_id, kind, name, description, area_label, creator_id),
+        )
+        community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        con.execute(
+            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+            (community_id, creator_id),
+        )
+    created = [item for item in get_chat_communities_for_user(creator_id) if item.get("id") == public_id]
+    return (created[0] if created else None), ""
 
 
 def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object] | None, str]:
@@ -13112,6 +13152,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
             "/api/chat/conversations": self.api_create_chat_conversation,
+            "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
@@ -13274,6 +13315,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Location", path)
         self.end_headers()
 
+    def safe_next_path(self, value: str = "") -> str:
+        raw_value = (value or "").strip()
+        parsed = urllib.parse.urlparse(raw_value)
+        if not raw_value or parsed.scheme or parsed.netloc or not raw_value.startswith("/"):
+            return ""
+        if raw_value.startswith("//"):
+            return ""
+        return raw_value[:500]
+
+    def current_path_with_query(self) -> str:
+        return self.path if self.path.startswith("/") and not self.path.startswith("//") else "/"
+
+    def login_url(self, next_path: str = "") -> str:
+        safe_next = self.safe_next_path(next_path)
+        if not safe_next:
+            return "/login"
+        return f"/login?next={urllib.parse.quote(safe_next, safe='')}"
+
+    def community_join_url(self, public_id: str) -> str:
+        return f"{self.public_origin()}/accommodations?join_group={urllib.parse.quote(public_id)}"
+
     def healthz(self) -> None:
         body = b"ok"
         self.send_response(200)
@@ -13377,13 +13439,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def sitemap_xml(self) -> None:
         self.send_text(self.sitemap_xml_body(), "application/xml; charset=utf-8")
 
-    def set_session(self, user_id: int) -> None:
+    def set_session(self, user_id: int, next_path: str = "") -> None:
         token = secrets.token_urlsafe(32)
         with db() as con:
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
             user = con.execute("SELECT is_admin, role FROM users WHERE id = ?", (user_id,)).fetchone()
+        redirect_to = self.safe_next_path(next_path) or ("/admin" if is_staff_user(user) else "/dashboard")
         self.send_response(303)
-        self.send_header("Location", "/admin" if is_staff_user(user) else "/dashboard")
+        self.send_header("Location", redirect_to)
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
         self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
@@ -13695,6 +13758,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "accommodations.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            is_authenticated="true" if user else "false",
             status_message=status_message,
             post_modal_hidden=post_modal_hidden,
             search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
@@ -13911,7 +13975,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_chat_communities(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         user_id = int(user["id"]) if user else None
-        self.send_json({"ok": True, "communities": get_chat_communities_for_user(user_id)})
+        communities = get_chat_communities_for_user(user_id)
+        for community in communities:
+            community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
+        self.send_json({"ok": True, "communities": communities})
 
     def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
@@ -14021,6 +14088,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_create_chat_community(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to create a group."}, 401)
+            return
+        form = self.read_form()
+        community, error = create_chat_community(
+            int(user["id"]),
+            form.get("name", ""),
+            form.get("kind", "GROUP"),
+            form.get("description", ""),
+            form.get("area", ""),
+        )
+        if not community:
+            self.send_json({"ok": False, "message": error or "Could not create this group."}, 400)
+            return
+        community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
+        self.send_json({"ok": True, "community": community})
+
     def api_join_chat_community(self) -> None:
         user = self.current_user()
         if not user:
@@ -14035,6 +14121,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not community:
             self.send_json({"ok": False, "message": error or "Could not join this community."}, 404)
             return
+        community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "community": community})
 
     def api_send_chat_message(self) -> None:
@@ -14528,17 +14615,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         </article>
         """
 
-    def login_page(self, error: str = "") -> None:
+    def login_page(self, error: str = "", next_path: str = "") -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        next_path = self.safe_next_path(next_path or query.get("next", [""])[0])
+        next_field = f'<input type="hidden" name="next" value="{escape(next_path)}">' if next_path else ""
         self.send_html(
             render_template(
                 "auth.html",
                 mode="Welcome Back!",
                 submit_label="Sign In",
-                action="/login",
+                action=escape(self.login_url(next_path)),
                 switch_url="/signup",
                 switch_label="Sign Up",
                 intro_text="Sign in to continue your journey.",
                 error=escape(error),
+                next_field=next_field,
                 name_field="",
                 identifier_label="Email or phone",
                 identifier_type="text",
@@ -14576,6 +14668,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 switch_label="Log in",
                 intro_text="Create your account to start booking.",
                 error=escape(error),
+                next_field="",
                 name_field=name_field,
                 identifier_label="Email Address",
                 identifier_type="email",
@@ -14588,15 +14681,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def login(self) -> None:
         form = self.read_form()
         identifier = (form.get("email", "") or "").strip()
+        next_path = self.safe_next_path(form.get("next", ""))
         with db() as con:
             user = find_user_by_login_identifier(con, identifier)
         if not user:
             log_login_failure(identifier, "user_not_found")
-            self.login_page("That email and password did not match.")
+            self.login_page("That email and password did not match.", next_path)
             return
         if not verify_password(form.get("password", ""), user["password_hash"]):
             log_login_failure(identifier, "password_mismatch")
-            self.login_page("That email and password did not match.")
+            self.login_page("That email and password did not match.", next_path)
             return
         if not user["is_verified"]:
             token = create_verification(user["id"], user["email"])
@@ -14610,7 +14704,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 delivery_status,
             )
             return
-        self.set_session(user["id"])
+        self.set_session(user["id"], next_path)
 
     def signup(self) -> None:
         form = self.read_form()
@@ -20378,6 +20472,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         body = render_template(
             "dashboard.html",
+            is_authenticated="true" if user else "false",
             name=escape(user["name"] if user else "FairFares Member"),
             role="Admin" if user and user["is_admin"] else "Student",
             admin_panel=admin_panel,

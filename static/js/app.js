@@ -1940,6 +1940,9 @@ const chatTitle = chatDrawer?.querySelector("#fairfaresChatTitle");
 const chatList = chatDrawer?.querySelector("[data-chat-list]");
 const chatSearch = chatDrawer?.querySelector("[data-chat-search]");
 const chatTabs = chatDrawer?.querySelectorAll("[data-chat-tab]");
+const chatCreateToggle = chatDrawer?.querySelector("[data-chat-create-toggle]");
+const chatCreateForm = chatDrawer?.querySelector("[data-chat-create-form]");
+const fairfaresLoggedIn = document.body?.dataset.authenticated === "true";
 let activeChatConversationId = "";
 let activeChatPostId = "";
 let chatPollTimer = 0;
@@ -1974,6 +1977,31 @@ function chatTimeLabel(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function loginRedirectUrl() {
+  return `/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}${window.location.hash}`)}`;
+}
+
+function chatJoinUrl(community) {
+  return community?.joinUrl || `${window.location.origin}/accommodations?join_group=${encodeURIComponent(community?.id || "")}`;
+}
+
+async function copyTextToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  const input = document.createElement("input");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  input.select();
+  const ok = document.execCommand("copy");
+  input.remove();
+  return ok;
+}
+
 function setChatStatus(message, isError = false) {
   if (!chatStatus) return;
   chatStatus.textContent = message || "";
@@ -2004,14 +2032,17 @@ function renderChatList() {
         return !query || haystack.includes(query);
       });
     chatList.innerHTML = rows.length ? rows.map((community) => `
-      <button class="fairfares-chat-row" type="button" data-community-join="${chatEscape(community.id || "")}">
+      <article class="fairfares-chat-row">
         <span class="fairfares-chat-avatar">${chatEscape(chatInitials(community.name))}</span>
         <div>
           <b>${chatEscape(community.name || "FairFares group")}</b>
           <span>${chatEscape(community.description || community.area || "Join the conversation")}</span>
         </div>
-        <small class="fairfares-chat-community-action">${community.joined ? "Joined" : "Join"}</small>
-      </button>
+        <span class="fairfares-chat-community-actions">
+          ${community.joined ? "<small class=\"fairfares-chat-community-action\">Joined</small>" : `<button type="button" data-community-join="${chatEscape(community.id || "")}">Join</button>`}
+          ${community.joined ? `<button type="button" data-community-share="${chatEscape(community.id || "")}">Share</button>` : ""}
+        </span>
+      </article>
     `).join("") : `<div class="fairfares-chat-empty-list">No ${activeChatTab} match your search.</div>`;
     return;
   }
@@ -2066,6 +2097,61 @@ async function loadChatInbox() {
     renderChatList();
     setChatStatus(error.message || "Could not load chats.", true);
   }
+}
+
+async function createChatCommunity(form) {
+  if (!fairfaresLoggedIn) {
+    window.location.href = loginRedirectUrl();
+    return;
+  }
+  const params = new URLSearchParams(new FormData(form));
+  setChatStatus("Creating group...");
+  const response = await fetch("/api/chat/communities", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: params
+  });
+  const payload = await response.json();
+  if (payload.login_required) {
+    window.location.href = loginRedirectUrl();
+    return;
+  }
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not create group.");
+  chatCommunities = [payload.community, ...chatCommunities.filter((community) => community.id !== payload.community.id)];
+  activeChatTab = payload.community.kind === "COMMUNITY" ? "communities" : "groups";
+  chatTabs?.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.chatTab === activeChatTab));
+  form.reset();
+  form.hidden = true;
+  renderChatList();
+  setChatStatus(`Created ${payload.community.name}. Share link copied.`);
+  copyTextToClipboard(chatJoinUrl(payload.community)).catch(() => {});
+}
+
+async function joinCommunityById(communityId) {
+  if (!communityId) return;
+  if (!fairfaresLoggedIn) {
+    window.location.href = loginRedirectUrl();
+    return;
+  }
+  const params = new URLSearchParams({ community_id: communityId });
+  const response = await fetch("/api/chat/communities/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: params
+  });
+  const payload = await response.json();
+  if (payload.login_required) {
+    window.location.href = loginRedirectUrl();
+    return;
+  }
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not join.");
+  chatCommunities = chatCommunities.map((community) => community.id === payload.community.id ? payload.community : community);
+  if (!chatCommunities.some((community) => community.id === payload.community.id)) chatCommunities.unshift(payload.community);
+  activeChatTab = payload.community.kind === "COMMUNITY" ? "communities" : "groups";
+  chatTabs?.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.chatTab === activeChatTab));
+  openChatDrawer();
+  renderChatList();
+  setChatStatus(`Joined ${payload.community.name}.`);
 }
 
 async function loadChatMessages() {
@@ -2138,28 +2224,21 @@ function openPostChat(postId, subject = "") {
 }
 
 document.addEventListener("click", (event) => {
+  const communityShare = event.target.closest("[data-community-share]");
+  if (communityShare) {
+    event.preventDefault();
+    const community = chatCommunities.find((item) => item.id === communityShare.dataset.communityShare);
+    copyTextToClipboard(chatJoinUrl(community))
+      .then(() => setChatStatus("Group join link copied."))
+      .catch(() => setChatStatus(chatJoinUrl(community)));
+    return;
+  }
   const communityJoin = event.target.closest("[data-community-join]");
   if (communityJoin) {
     event.preventDefault();
     const communityId = communityJoin.dataset.communityJoin || "";
-    const params = new URLSearchParams({ community_id: communityId });
     setChatStatus("Joining...");
-    fetch("/api/chat/communities/join", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: params
-    })
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (payload.login_required) {
-          window.location.href = "/login";
-          return;
-        }
-        if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not join.");
-        chatCommunities = chatCommunities.map((community) => community.id === payload.community.id ? payload.community : community);
-        renderChatList();
-        setChatStatus(`Joined ${payload.community.name}.`);
-      })
+    joinCommunityById(communityId)
       .catch((error) => setChatStatus(error.message || "Could not join.", true));
     return;
   }
@@ -2170,6 +2249,10 @@ document.addEventListener("click", (event) => {
   if (conversationId) {
     openConversation(conversationId, trigger.dataset.chatSubject || "");
   } else if (trigger.dataset.postId) {
+    if (!fairfaresLoggedIn) {
+      window.location.href = loginRedirectUrl();
+      return;
+    }
     openPostChat(trigger.dataset.postId || "", trigger.dataset.chatSubject || "");
   } else {
     openChatHome();
@@ -2188,6 +2271,21 @@ chatTabs?.forEach((button) => {
     chatTabs.forEach((tab) => tab.classList.toggle("is-active", tab === button));
     renderChatList();
   });
+});
+
+chatCreateToggle?.addEventListener("click", () => {
+  if (!fairfaresLoggedIn) {
+    window.location.href = loginRedirectUrl();
+    return;
+  }
+  if (!chatCreateForm) return;
+  chatCreateForm.hidden = !chatCreateForm.hidden;
+  if (!chatCreateForm.hidden) chatCreateForm.querySelector("input[name='name']")?.focus();
+});
+
+chatCreateForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  createChatCommunity(chatCreateForm).catch((error) => setChatStatus(error.message || "Could not create group.", true));
 });
 
 chatForm?.addEventListener("submit", async (event) => {
@@ -2210,7 +2308,7 @@ chatForm?.addEventListener("submit", async (event) => {
     });
     const payload = await response.json();
     if (payload.login_required) {
-      window.location.href = "/login";
+      window.location.href = loginRedirectUrl();
       return;
     }
     if (!response.ok || !payload.ok) throw new Error(payload.message || "Message could not be sent.");
@@ -2223,6 +2321,13 @@ chatForm?.addEventListener("submit", async (event) => {
     setChatStatus(error.message || "Message could not be sent.", true);
   }
 });
+
+if (chatDrawer) {
+  const joinGroupId = new URLSearchParams(window.location.search).get("join_group");
+  if (joinGroupId) {
+    loadChatInbox().then(() => joinCommunityById(joinGroupId).catch((error) => setChatStatus(error.message || "Could not join.", true)));
+  }
+}
 
 function selectedExplorerMoods() {
   return [...document.querySelectorAll("#moodGrid input[name='moods']:checked")].map((input) => input.value);
