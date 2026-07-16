@@ -105,10 +105,12 @@ function ServiceGrid({
 
 function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car) => void }) {
   const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
+  const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
+  const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
   return (
     <View style={styles.section}>
       <SectionHeader eyebrow="Car Rentals" title="Today's cheapest rate" />
-      <ImageBackground source={appAssets.rentalPromo} style={styles.rateHero} imageStyle={styles.rateHeroImage}>
+      <ImageBackground source={heroSource} style={styles.rateHero} imageStyle={styles.rateHeroImage}>
         <View style={styles.rateShade}>
           <Text style={styles.rateEyebrow}>Rental cars</Text>
           <Text style={styles.rateHeroTitle}>Today's cheapest rate</Text>

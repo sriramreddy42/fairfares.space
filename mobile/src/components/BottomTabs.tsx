@@ -17,16 +17,17 @@ type Props = {
   active: TabKey;
   unreadCount: number;
   onChange: (tab: TabKey) => void;
+  hidden?: boolean;
 };
 
-export function BottomTabs({ active, unreadCount, onChange }: Props) {
+export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
   return (
-    <View style={styles.bar}>
+    <View style={[styles.bar, hidden && styles.hidden]}>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
-          <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.active]} onPress={() => onChange(tab.key)}>
-            <View style={[styles.icon, isActive && styles.activeIcon]}>
+          <TouchableOpacity key={tab.key} style={styles.item} onPress={() => onChange(tab.key)}>
+            <View style={styles.icon}>
               {tab.icon ? (
                 <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
               ) : tab.custom === "home" ? (
@@ -82,6 +83,10 @@ function ActivityIcon({ active }: { active: boolean }) {
 
 const styles = StyleSheet.create({
   bar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     marginHorizontal: 18,
     marginTop: 4,
     marginBottom: 14,
@@ -102,10 +107,11 @@ const styles = StyleSheet.create({
     minWidth: 54
   },
   active: {
-    backgroundColor: "#242424",
-    borderRadius: 28,
-    paddingHorizontal: 8,
-    paddingVertical: 7
+    borderRadius: 28
+  },
+  hidden: {
+    opacity: 0,
+    transform: [{ translateY: 92 }]
   },
   icon: {
     width: 28,
@@ -113,10 +119,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  activeIcon: {
-    backgroundColor: theme.colors.blue,
-    borderRadius: 16
-  },
+  activeIcon: {},
   iconImage: {
     width: 23,
     height: 23

@@ -7,12 +7,14 @@ import { HousingPost } from "../types";
 type Props = {
   post: HousingPost;
   onMessage: (post: HousingPost) => void;
+  onOpen?: (post: HousingPost) => void;
+  distanceLabel?: string;
 };
 
-export function HousingCard({ post, onMessage }: Props) {
+export function HousingCard({ post, onMessage, onOpen, distanceLabel }: Props) {
   const imageUrl = absoluteAssetUrl(post.imageUrl);
   return (
-    <View style={styles.card}>
+    <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
       <View style={styles.imageWrap}>
         {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.image} /> : <View style={styles.fallback} />}
         <Text style={styles.badge}>{post.modeLabel}</Text>
@@ -30,8 +32,11 @@ export function HousingCard({ post, onMessage }: Props) {
         <Text style={styles.meta}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
         <Text style={styles.meta}>{post.moveIn || "Date open"}</Text>
         <View style={styles.pillRow}>
-          {post.distanceMiles !== null ? <Text style={styles.distance}>{post.distanceMiles} mi away</Text> : null}
-          <Text style={styles.radius}>{post.radiusMiles || 0} mi radius</Text>
+          {post.distanceMiles !== null ? (
+            <Text style={styles.distance}>
+              {post.distanceMiles} mi{distanceLabel ? ` from ${distanceLabel}` : " away"}
+            </Text>
+          ) : null}
         </View>
       </View>
       <View style={styles.footer}>
@@ -43,7 +48,7 @@ export function HousingCard({ post, onMessage }: Props) {
           <Text style={styles.respondText}>Message</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -118,16 +123,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     fontSize: 15,
-    fontWeight: "900"
-  },
-  radius: {
-    color: theme.colors.soft,
-    backgroundColor: theme.colors.panel2,
-    borderRadius: theme.radius.pill,
-    overflow: "hidden",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    fontSize: 13,
     fontWeight: "900"
   },
   footer: {

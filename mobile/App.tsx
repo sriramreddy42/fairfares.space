@@ -143,6 +143,7 @@ export default function App() {
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
   const [listingOpen, setListingOpen] = useState(false);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
+  const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -163,6 +164,10 @@ export default function App() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    setBottomTabsHidden(false);
+  }, [activeTab]);
 
   function openMessage(post: HousingPost) {
     setPendingPost(post);
@@ -213,7 +218,7 @@ export default function App() {
   }
 
   async function selectArea(nextArea: string) {
-    const lookup = await lookupAccommodationLocation(nextArea || city);
+    const lookup = await lookupAccommodationLocation(nextArea ? `${nextArea}, ${city}` : city);
     const resolvedArea = nextArea ? lookup?.selectedLocation || nextArea : "";
     const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
     setArea(resolvedArea);
@@ -248,7 +253,7 @@ export default function App() {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-    const lookup = await lookupAccommodationLocation(cleanArea || cleanCity);
+    const lookup = await lookupAccommodationLocation(cleanArea ? `${cleanArea}, ${cleanCity}` : cleanCity);
     const resolvedArea = cleanArea ? lookup?.selectedLocation || cleanArea : "";
     const resolvedCity = cleanArea ? cleanCity : normalizeCityInput(lookup?.selectedLocation || cleanCity);
     setCity(resolvedCity);
@@ -414,6 +419,7 @@ export default function App() {
       aurora: "Aurora, CO",
       englewood: "Englewood, CO",
       littleton: "Littleton, CO",
+      dayton: "Dayton, OH",
       chicago: "Chicago, IL",
       austin: "Austin, TX",
       dallas: "Dallas, TX"
@@ -489,6 +495,7 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onBottomTabsHiddenChange={setBottomTabsHidden}
       />
     ) : (
       <HousingScreen
@@ -516,6 +523,7 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onBottomTabsHiddenChange={setBottomTabsHidden}
       />
     );
 
@@ -530,7 +538,7 @@ export default function App() {
       ) : (
         screen
       )}
-      <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} />
+      <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} hidden={bottomTabsHidden} />
       <Modal visible={loginOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setLoginOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
@@ -711,12 +719,12 @@ export default function App() {
             <TextInput
               value={searchArea}
               onChangeText={setSearchArea}
-              placeholder="Search neighborhood, building, campus, or landmark"
+              placeholder="Area, building, campus"
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />
             <View style={styles.miniGroup}>
-              <Text style={styles.miniLabel}>Fill this if looking for a place near an area or building</Text>
+              <Text style={styles.miniLabel}>Optional when searching near a place</Text>
               <TextInput
                 value={searchRadius}
                 onChangeText={setSearchRadius}
@@ -757,8 +765,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 24 : 18, paddingHorizontal: 8 },
-  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 68 : 34, paddingHorizontal: 8 },
+  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },

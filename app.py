@@ -14779,16 +14779,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Enter a city, zip code, or area."}, 400)
             return
         is_zip_query = bool(re.fullmatch(r"\d{5}", query))
+        cached_metro_name = cached_accommodation_metro_for_place(query)
         metro_name = (
-            refresh_accommodation_location_cache(query) or cached_accommodation_metro_for_place(query)
+            refresh_accommodation_location_cache(query) or cached_metro_name
             if is_zip_query
-            else cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+            else cached_metro_name or refresh_accommodation_location_cache(query)
         )
+        denver_terms = {str(item).lower() for item in ACCOMMODATION_METRO_GROUPS.get("Denver Metro Area", {}).get("suggested", ())}
+        denver_terms.update({"denver", "denver, co", "denver metro area"})
+        query_is_denver_context = any(term and term in query.lower() for term in denver_terms)
+        if not metro_name and not is_zip_query and query_is_denver_context:
+            metro_name = "Denver Metro Area"
+        if (
+            not cached_metro_name
+            and not is_zip_query
+            and metro_name == "Denver Metro Area"
+            and not query_is_denver_context
+        ):
+            metro_name = ""
         context = accommodation_metro_context(metro_name, query)
         point = accommodation_location_point(query, metro_name, allow_refresh=False)
         suggested_location = dedupe_repeated_location_label(context["suggested_location"])
         display_location = dedupe_repeated_location_label(str(point.get("label") or ""))
         point_source = str(point.get("source") or "")
+        if not metro_name and not is_zip_query and point_source == "needs_geocode":
+            display_location = query
+            suggested_location = query
         if is_zip_query and point_source == "needs_geocode":
             display_location = query
         elif is_zip_query and (not display_location or display_location == query):
@@ -14800,7 +14816,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "metro": metro_name or "Denver Metro Area",
+                "metro": metro_name or (f"{query} Metro Area" if not is_zip_query else "Denver Metro Area"),
                 "selectedLocation": display_location,
                 "rawLocation": query,
                 "suggestedLocation": suggested_location,
