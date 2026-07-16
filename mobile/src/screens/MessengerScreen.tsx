@@ -18,7 +18,14 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
           <Text style={styles.eyebrow}>Fair Messenger</Text>
           <Text style={styles.title}>Chats</Text>
         </View>
-        <TouchableOpacity style={styles.newButton}>
+        <TouchableOpacity
+          style={styles.newButton}
+          onPress={() =>
+            signedIn
+              ? Alert.alert("Create group", "Group creation will save to FairFares communities in the next mobile slice.")
+              : onRequireLogin()
+          }
+        >
           <Text style={styles.newButtonText}>New group</Text>
         </TouchableOpacity>
       </View>
@@ -56,24 +63,32 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
       ) : null}
       <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
         {(data?.chat.conversations || []).map((chat) => (
-          <View key={chat.id} style={styles.chatRow}>
+          <TouchableOpacity key={chat.id} style={styles.chatRow} onPress={() => Alert.alert(chat.subject, chat.lastMessage || "No messages yet.")}>
             <View style={styles.avatar}><Text style={styles.avatarText}>{chat.otherName.slice(0, 1)}</Text></View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{chat.otherName}</Text>
               <Text style={styles.chatLast}>{chat.lastMessage || chat.subject}</Text>
             </View>
             {chat.unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
-          </View>
+          </TouchableOpacity>
         ))}
         {(data?.communities || []).map((community) => (
-          <View key={community.id} style={styles.chatRow}>
+          <TouchableOpacity
+            key={community.id}
+            style={styles.chatRow}
+            onPress={() =>
+              signedIn
+                ? Alert.alert(community.name, community.joined ? "You are already joined." : "Join community will be wired to the backend next.")
+                : onRequireLogin()
+            }
+          >
             <View style={styles.avatar}><Text style={styles.avatarText}>G</Text></View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{community.name}</Text>
               <Text style={styles.chatLast}>{community.description}</Text>
             </View>
             <Text style={styles.memberCount}>{community.memberCount}</Text>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </View>

@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload } from "../types";
@@ -24,13 +24,13 @@ export function DashboardScreen({ data }: Props) {
       </View>
       <SectionHeader title="Recent housing activity" />
       {(data?.housing || []).slice(0, 4).map((post) => (
-        <View key={post.id} style={styles.row}>
+        <TouchableOpacity key={post.id} style={styles.row} onPress={() => Alert.alert(post.title, post.description || "No description yet.")}>
           <View>
             <Text style={styles.rowTitle}>{post.title}</Text>
             <Text style={styles.rowMeta}>{post.location} · {post.expiryLabel}</Text>
           </View>
           <Text style={styles.rowPrice}>{post.rent}</Text>
-        </View>
+        </TouchableOpacity>
       ))}
     </ScrollView>
   );

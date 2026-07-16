@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload } from "../types";
@@ -26,10 +26,10 @@ export function ProfileScreen({ data, onLogin }: Props) {
         ) : null}
       </View>
       {["Notifications", "Roommates", "Rentals", "Rides", "Fair Messenger", "Support"].map((item) => (
-        <View key={item} style={styles.menuRow}>
+        <TouchableOpacity key={item} style={styles.menuRow} onPress={() => Alert.alert(item, `${item} details will open here as the native dashboard fills in.`)}>
           <Text style={styles.menuTitle}>{item}</Text>
           <Text style={styles.chevron}>{">"}</Text>
-        </View>
+        </TouchableOpacity>
       ))}
     </ScrollView>
   );

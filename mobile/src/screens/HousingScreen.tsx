@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
@@ -7,8 +7,14 @@ import { BootstrapPayload, HousingPost } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
+  posts: HousingPost[];
+  selectedNeed: string;
   onMessage: (post: HousingPost) => void;
   onOpenMessenger: () => void;
+  onNeedSelect: (need: string) => void;
+  onAreaSelect: (area: string) => void;
+  onPostNeed: () => void;
+  onTopAction: (action: string) => void;
 };
 
 const quickActions = [
@@ -21,9 +27,19 @@ const quickActions = [
 
 const roomTypes = ["Shared Room", "Single Room", "Paying Guest"];
 
-export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
+export function HousingScreen({
+  data,
+  posts,
+  selectedNeed,
+  onMessage,
+  onOpenMessenger,
+  onNeedSelect,
+  onAreaSelect,
+  onPostNeed,
+  onTopAction
+}: Props) {
   const [mode, setMode] = useState<"roommates" | "rentals">("roommates");
-  const posts = data?.housing || [];
+  const [selectedCategory, setSelectedCategory] = useState("");
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const localities = useMemo(
     () => [
@@ -38,16 +54,16 @@ export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.topTabs}>
         {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
-          <TouchableOpacity key={item} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
+          <TouchableOpacity key={item} onPress={() => onTopAction(item)} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
             <Text style={[styles.topTabText, item === "Housing" && styles.topTabTextActive]}>{item}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <TouchableOpacity style={styles.searchBar} onPress={() => Alert.alert("Search", "City, area, and building search will use FairFares location APIs.")}>
+      <TouchableOpacity style={styles.searchBar} onPress={() => onAreaSelect("Union Station")}>
         <Text style={styles.searchIcon}>Q</Text>
-        <Text style={styles.searchText}>Where do you need accommodation?</Text>
-        <Text style={styles.later}>Later</Text>
+        <Text style={styles.searchText}>Try Union Station, DU, Aurora</Text>
+        <Text style={styles.later}>Search</Text>
       </TouchableOpacity>
 
       <View style={styles.locationCard}>
@@ -60,22 +76,36 @@ export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
       </View>
 
       <View style={styles.segment}>
-        <TouchableOpacity style={[styles.segmentButton, mode === "roommates" && styles.segmentActive]} onPress={() => setMode("roommates")}>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "roommates" && styles.segmentActive]}
+          onPress={() => {
+            setMode("roommates");
+            onNeedSelect("need_roommates");
+          }}
+        >
           <Text style={[styles.segmentText, mode === "roommates" && styles.segmentTextActive]}>Roommates</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.segmentButton, mode === "rentals" && styles.segmentActive]} onPress={() => setMode("rentals")}>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "rentals" && styles.segmentActive]}
+          onPress={() => {
+            setMode("rentals");
+            onNeedSelect("need_place");
+          }}
+        >
           <Text style={[styles.segmentText, mode === "rentals" && styles.segmentTextActive]}>Rentals</Text>
         </TouchableOpacity>
       </View>
 
-      <SectionHeader title="For you" action="See all" />
+      <TouchableOpacity onPress={() => onNeedSelect("")}>
+        <SectionHeader title="For you" action="See all" />
+      </TouchableOpacity>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
         {quickActions.map((action) => (
-          <TouchableOpacity key={action.label} style={styles.quickAction}>
-            <View style={styles.quickBubble}>
+          <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => onNeedSelect(action.need)}>
+            <View style={[styles.quickBubble, selectedNeed === action.need && styles.quickBubbleActive]}>
               <Text style={styles.quickIcon}>{action.icon}</Text>
             </View>
-            <Text style={styles.quickLabel}>{action.label}</Text>
+            <Text style={[styles.quickLabel, selectedNeed === action.need && styles.quickLabelActive]}>{action.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -85,7 +115,7 @@ export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
           <Text style={styles.postNeedTitle}>List your room / property for rent</Text>
           <Text style={styles.postNeedMeta}>Need a place to stay? Get matched today.</Text>
         </View>
-        <TouchableOpacity style={styles.postNeedButton}>
+        <TouchableOpacity style={styles.postNeedButton} onPress={onPostNeed}>
           <Text style={styles.postNeedButtonText}>Post</Text>
         </TouchableOpacity>
       </View>
@@ -118,7 +148,7 @@ export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
           <Text style={styles.promoTitle}>Need a place to stay / have a rental to offer?</Text>
           <Text style={styles.promoMeta}>Answer a few questions and we will help find the closest match.</Text>
         </View>
-        <TouchableOpacity style={styles.promoButton}>
+        <TouchableOpacity style={styles.promoButton} onPress={() => onNeedSelect("need_place")}>
           <Text style={styles.promoButtonText}>Get matched</Text>
         </TouchableOpacity>
       </View>
@@ -126,24 +156,32 @@ export function HousingScreen({ data, onMessage, onOpenMessenger }: Props) {
       <SectionHeader title={`Room Types in ${data?.location.city || "Denver, CO"}`} />
       <View style={styles.roomTypeRow}>
         {roomTypes.map((type) => (
-          <View key={type} style={styles.roomType}>
-            <View style={styles.roomCircle}><Text style={styles.roomIcon}>BED</Text></View>
+          <TouchableOpacity
+            key={type}
+            style={styles.roomType}
+            onPress={() => {
+              const category = type.toLowerCase().replace(" ", "_");
+              setSelectedCategory(selectedCategory === category ? "" : category);
+              Alert.alert("Room type selected", `${type} filtering will use the housing API category filter in the next slice.`);
+            }}
+          >
+            <View style={[styles.roomCircle, selectedCategory === type.toLowerCase().replace(" ", "_") && styles.roomCircleActive]}><Text style={styles.roomIcon}>BED</Text></View>
             <Text style={styles.roomLabel}>{type}</Text>
-          </View>
+          </TouchableOpacity>
         ))}
       </View>
 
       <SectionHeader title="Explore localities" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {localities.map((locality) => (
-          <View key={locality.name} style={styles.localityCard}>
+          <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
             <Text style={styles.localityTitle}>{locality.name}</Text>
             <View style={styles.localityStats}>
               <Text style={styles.localityChip}>Owner {locality.owner}</Text>
               <Text style={styles.localityChip}>Tenant {locality.tenant}</Text>
             </View>
             <Text style={styles.avgRent}>Avg Rent: {locality.rent}</Text>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </ScrollView>
@@ -177,8 +215,10 @@ const styles = StyleSheet.create({
   quickRow: { gap: theme.spacing.md },
   quickAction: { width: 92, alignItems: "center", gap: 9 },
   quickBubble: { width: 78, height: 78, borderRadius: 39, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  quickBubbleActive: { backgroundColor: theme.colors.brand },
   quickIcon: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   quickLabel: { color: theme.colors.soft, fontSize: 13, textAlign: "center", fontWeight: "800" },
+  quickLabelActive: { color: theme.colors.text },
   postNeed: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 14 },
   postNeedTitle: { color: "#111", fontSize: 18, fontWeight: "900" },
   postNeedMeta: { color: "#5b5148", marginTop: 4, fontSize: 14 },
@@ -200,6 +240,7 @@ const styles = StyleSheet.create({
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },
   roomCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
   roomIcon: { color: theme.colors.text, fontWeight: "900" },
   roomLabel: { color: theme.colors.soft, fontWeight: "900", fontSize: 16 },
   localityCard: { width: 270, borderRadius: theme.radius.lg, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, marginRight: theme.spacing.md, padding: theme.spacing.md, gap: 14 },

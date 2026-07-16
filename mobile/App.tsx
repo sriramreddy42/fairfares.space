@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { getBootstrap, mobileLogin } from "./src/api/client";
+import { getBootstrap, getHousing, mobileLogin } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -19,11 +19,17 @@ export default function App() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
+  const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
+  const [selectedNeed, setSelectedNeed] = useState("");
+  const [city, setCity] = useState("Denver, CO");
+  const [area, setArea] = useState("");
 
   async function load() {
     setLoading(true);
     try {
-      setData(await getBootstrap("Denver, CO"));
+      const payload = await getBootstrap(city);
+      setData(payload);
+      setVisiblePosts(payload.housing);
     } catch (error) {
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
@@ -40,6 +46,57 @@ export default function App() {
     setActiveTab("messenger");
     if (!data?.user) {
       setLoginOpen(true);
+    }
+  }
+
+  async function selectNeed(need: string) {
+    if (need === "ride_need" || need === "ride_offer") {
+      Alert.alert("Rides", need === "ride_need" ? "Ride request flow is next. For now, use FairFares car rentals." : "Ride provider flow is next.");
+      setActiveTab("services");
+      return;
+    }
+    setSelectedNeed(need);
+    setLoading(true);
+    try {
+      setVisiblePosts(await getHousing(city, area, need));
+    } catch (error) {
+      Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function selectArea(nextArea: string) {
+    setArea(nextArea);
+    setLoading(true);
+    try {
+      setVisiblePosts(await getHousing(city, nextArea, selectedNeed));
+      Alert.alert("Location updated", `Showing listings around ${nextArea}.`);
+    } catch (error) {
+      Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function postNeed() {
+    if (!data?.user) {
+      setLoginOpen(true);
+      return;
+    }
+    Alert.alert("Post your need", "Native posting is next. For now, create the listing from the Housing page on the website so it saves to the same database.");
+  }
+
+  function topAction(action: string) {
+    if (action === "Housing") {
+      setActiveTab("housing");
+      void selectNeed("");
+    } else if (action === "Ride") {
+      Alert.alert("Ride", "Ride request/provider flow is next. Opening services for now.");
+      setActiveTab("services");
+    } else if (action === "Explorer" || action === "Deals") {
+      Alert.alert(action, `${action} mobile screen is next. Opening services for now.`);
+      setActiveTab("services");
     }
   }
 
@@ -63,9 +120,29 @@ export default function App() {
     ) : activeTab === "services" ? (
       <ServicesScreen />
     ) : activeTab === "housing" ? (
-      <HousingScreen data={data} onMessage={openMessage} onOpenMessenger={() => setActiveTab("messenger")} />
+      <HousingScreen
+        data={data}
+        posts={visiblePosts}
+        selectedNeed={selectedNeed}
+        onMessage={openMessage}
+        onOpenMessenger={() => setActiveTab("messenger")}
+        onNeedSelect={selectNeed}
+        onAreaSelect={selectArea}
+        onPostNeed={postNeed}
+        onTopAction={topAction}
+      />
     ) : (
-      <HousingScreen data={data} onMessage={openMessage} onOpenMessenger={() => setActiveTab("messenger")} />
+      <HousingScreen
+        data={data}
+        posts={visiblePosts}
+        selectedNeed={selectedNeed}
+        onMessage={openMessage}
+        onOpenMessenger={() => setActiveTab("messenger")}
+        onNeedSelect={selectNeed}
+        onAreaSelect={selectArea}
+        onPostNeed={postNeed}
+        onTopAction={topAction}
+      />
     );
 
   return (

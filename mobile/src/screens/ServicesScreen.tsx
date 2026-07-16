@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 
@@ -11,10 +11,10 @@ export function ServicesScreen() {
       <SectionHeader eyebrow="More" title="FairFares services" />
       <View style={styles.grid}>
         {services.map((service) => (
-          <View key={service} style={styles.tile}>
+          <TouchableOpacity key={service} style={styles.tile} onPress={() => Alert.alert(service, `${service} native flow will open here.`)}>
             <View style={styles.icon}><Text style={styles.iconText}>{service.slice(0, 2).toUpperCase()}</Text></View>
             <Text style={styles.label}>{service}</Text>
-          </View>
+          </TouchableOpacity>
         ))}
       </View>
     </ScrollView>
