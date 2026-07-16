@@ -128,15 +128,13 @@ export default function App() {
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
-  const [selectedGender, setSelectedGender] = useState("");
-  const [selectedBudget, setSelectedBudget] = useState("");
+  const [selectedGender] = useState("");
+  const [selectedBudget] = useState("");
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
-  const [searchGender, setSearchGender] = useState("");
-  const [searchBudget, setSearchBudget] = useState("");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -220,12 +218,10 @@ export default function App() {
     const cleanArea = nextArea.trim();
     setCity(cleanCity);
     setArea(cleanArea);
-    setSelectedGender(searchGender);
-    setSelectedBudget(searchBudget);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, searchGender, searchBudget);
+      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, selectedGender, selectedBudget);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -409,8 +405,6 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
-          setSearchGender(selectedGender);
-          setSearchBudget(selectedBudget);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -431,8 +425,6 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
-          setSearchGender(selectedGender);
-          setSearchBudget(selectedBudget);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -642,22 +634,6 @@ export default function App() {
               {["Union Station", "DU", "Aurora", "Englewood"].map((chip) => (
                 <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
                   <Text style={styles.chipText}>{chip}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.miniLabel}>Gender preference</Text>
-            <View style={styles.chipRow}>
-              {[["", "Any"], ["female", "Female"], ["male", "Male"], ["couple", "Couple"], ["family", "Family"]].map(([value, label]) => (
-                <TouchableOpacity key={label} style={[styles.chip, searchGender === value && styles.chipActive]} onPress={() => setSearchGender(value)}>
-                  <Text style={[styles.chipText, searchGender === value && styles.chipTextActive]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.miniLabel}>Budget</Text>
-            <View style={styles.chipRow}>
-              {[["", "Any"], ["700", "$700"], ["900", "$900"], ["1200", "$1,200"], ["1600", "$1,600"], ["2000", "$2,000"]].map(([value, label]) => (
-                <TouchableOpacity key={label} style={[styles.chip, searchBudget === value && styles.chipActive]} onPress={() => setSearchBudget(value)}>
-                  <Text style={[styles.chipText, searchBudget === value && styles.chipTextActive]}>{label}</Text>
                 </TouchableOpacity>
               ))}
             </View>

@@ -23,7 +23,15 @@ function uniqueUrls(urls: string[]) {
   return urls.filter((url, index) => url && urls.indexOf(url) === index);
 }
 
-const EXPLICIT_API_URL = process.env.EXPO_PUBLIC_FAIRFARES_API_URL?.replace(/\/$/, "") || "";
+function normalizeExplicitApiUrl(value: string | undefined) {
+  const clean = (value || "").replace(/\/$/, "").trim();
+  if (!clean || clean.includes("something.loca.lt")) {
+    return "";
+  }
+  return clean;
+}
+
+const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL);
 const DEFAULT_API_URL = EXPLICIT_API_URL || metroHostApiUrl() || "http://127.0.0.1:8010";
 
 export const API_URL =

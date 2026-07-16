@@ -189,21 +189,6 @@ export function HousingScreen({
         </View>
       </View>
 
-      <View style={styles.carOverview}>
-        <View style={styles.carOverviewCopy}>
-          <Text style={styles.carEyebrow}>Rental cars</Text>
-          <Text style={styles.carTitle}>Today's cheapest rate</Text>
-          <Text style={styles.carMeta}>
-            {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "No active rental cars in this database yet."}
-          </Text>
-          <Text style={styles.carPhone}>Call / text: +1 9372518688</Text>
-        </View>
-        <View style={styles.carRateBox}>
-          <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "Open"}</Text>
-          <Text style={styles.carRateMeta}>per day</Text>
-        </View>
-      </View>
-
       <SectionHeader title={`Rooms for rent in ${data?.location.city || "Denver, CO"}`} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {posts.length ? (
@@ -255,6 +240,21 @@ export function HousingScreen({
           </ScrollView>
         </>
       ) : null}
+
+      <View style={styles.carOverview}>
+        <View style={styles.carOverviewCopy}>
+          <Text style={styles.carEyebrow}>Rental cars</Text>
+          <Text style={styles.carTitle}>Today's cheapest rate</Text>
+          <Text style={styles.carMeta}>
+            {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "No active rental cars in this database yet."}
+          </Text>
+          <Text style={styles.carPhone}>Call / text: +1 9372518688</Text>
+        </View>
+        <View style={styles.carRateBox}>
+          <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "Open"}</Text>
+          <Text style={styles.carRateMeta}>per day</Text>
+        </View>
+      </View>
     </ScrollView>
   );
 }
