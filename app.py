@@ -11110,7 +11110,7 @@ def mobile_housing_posts(
         clauses.append("(rent_max = 0 OR rent_max <= ? OR rent_min <= ?)")
         values.extend([budget_value, budget_value])
     search_term_groups: list[list[str]] = []
-    raw_search_terms = (area,) if (area or "").strip() else (city,)
+    raw_search_terms = () if (area or "").strip() else (city,)
     for raw_term in raw_search_terms:
         term = (raw_term or "").strip()
         if not term:
@@ -11132,6 +11132,12 @@ def mobile_housing_posts(
         "primary_neighborhood",
         "apartment_name",
     )
+    def row_matches_terms(row: sqlite3.Row, terms: list[str]) -> bool:
+        if not terms:
+            return False
+        haystack = " ".join(row_value(row, field) for field in search_fields).lower()
+        return any(term.lower() in haystack for term in terms if term)
+
     for group in search_term_groups:
         term_clauses = []
         for term in group:
@@ -11140,6 +11146,7 @@ def mobile_housing_posts(
             values.extend([pattern] * len(search_fields))
         clauses.append("(" + " OR ".join(term_clauses) + ")")
     limit = max(1, min(int(limit or 30), 100))
+    sql_limit = 100 if area else limit
     where_sql = " AND ".join(clauses)
     with db() as con:
         rows = con.execute(
@@ -11153,20 +11160,45 @@ def mobile_housing_posts(
             ORDER BY datetime(created_at) DESC
             LIMIT ?
             """,
-            (*values, limit),
+            (*values, sql_limit),
         ).fetchall()
-    center = accommodation_location_point(area or city, cached_accommodation_metro_for_place(area or city), allow_refresh=False)
+    focus_query = area or city
+    center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
     center_lat = float(center.get("lat") or 0)
     center_lng = float(center.get("lng") or 0)
-    payloads: list[dict[str, object]] = []
+    area_terms: list[str] = []
+    if area:
+        area_terms = [area, area.replace(", ", ","), area.replace(",", ", ")]
+        if "," in area:
+            area_terms.append(area.split(",", 1)[0].strip())
+        area_terms = [term for term in dict.fromkeys(term for term in area_terms if term)]
+    city_terms: list[str] = []
+    if city:
+        city_terms = [city, city.replace(", ", ","), city.replace(",", ", ")]
+        if "," in city:
+            city_terms.append(city.split(",", 1)[0].strip())
+        city_terms = [term for term in dict.fromkeys(term for term in city_terms if term)]
+    ranked_payloads: list[tuple[int, float, dict[str, object]]] = []
     for row in rows:
         item = mobile_housing_post_payload(row)
         lat = float(row_value(row, "lat") or 0)
         lng = float(row_value(row, "lng") or 0)
+        distance = None
         if center_lat and center_lng and lat and lng:
-            item["distanceMiles"] = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
-        payloads.append(item)
-    return payloads
+            distance = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
+            item["distanceMiles"] = distance
+        if area:
+            area_match = row_matches_terms(row, area_terms)
+            city_match = row_matches_terms(row, city_terms)
+            nearby_match = distance is not None and distance <= max(float(row_value(row, "radius_miles") or 0), 60)
+            if not (area_match or nearby_match or (not center_lat and city_match)):
+                continue
+            rank = 0 if area_match else 1 if nearby_match else 2
+        else:
+            rank = 0
+        ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
+    ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
+    return [item for _, _, item in ranked_payloads[:limit]]
 
 
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:

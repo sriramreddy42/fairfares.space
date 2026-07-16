@@ -192,7 +192,21 @@ export default function App() {
     setArea(nextArea);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget));
+      const posts = await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget);
+      setVisiblePosts(posts);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              location: {
+                ...current.location,
+                city,
+                selected: nextArea ? `${city} · ${nextArea}` : city
+              },
+              housing: posts
+            }
+          : current
+      );
       Alert.alert("Location updated", `Showing listings around ${nextArea}.`);
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
@@ -220,7 +234,7 @@ export default function App() {
               location: {
                 ...current.location,
                 city: cleanCity,
-                selected: cleanArea || cleanCity
+                selected: cleanArea ? `${cleanCity} · ${cleanArea}` : cleanCity
               },
               housing: posts
             }
@@ -439,7 +453,7 @@ export default function App() {
         screen
       )}
       <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} />
-      <Modal visible={loginOpen} transparent animationType="fade" onRequestClose={() => setLoginOpen(false)}>
+      <Modal visible={loginOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setLoginOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
@@ -495,9 +509,9 @@ export default function App() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      <Modal visible={listingOpen} transparent animationType="fade" onRequestClose={() => setListingOpen(false)}>
+      <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <ScrollView style={styles.modalCard} contentContainerStyle={styles.listingForm}>
+          <ScrollView style={[styles.modalCard, styles.listingModalCard]} contentContainerStyle={styles.listingForm} keyboardShouldPersistTaps="handled">
             <Text style={styles.modalTitle}>List room / property</Text>
             <Text style={styles.modalCopy}>This saves to the same FairFares housing database and expires in 30 days.</Text>
             {renderFormSection(
@@ -605,7 +619,7 @@ export default function App() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
-      <Modal visible={searchOpen} transparent animationType="fade" onRequestClose={() => setSearchOpen(false)}>
+      <Modal visible={searchOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setSearchOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Search housing</Text>
@@ -620,7 +634,7 @@ export default function App() {
             <TextInput
               value={searchArea}
               onChangeText={setSearchArea}
-              placeholder="Neighborhood, building, campus, or landmark"
+              placeholder="Search neighborhood, building, campus, or landmark"
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />
@@ -664,8 +678,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: 14, paddingHorizontal: 8 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: 6, paddingHorizontal: 8 },
   modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line },
+  listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
   modalCopy: { color: theme.colors.muted, fontSize: 16, lineHeight: 22 },

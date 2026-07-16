@@ -57,7 +57,8 @@ export function HousingScreen({
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [searchLetterCount, setSearchLetterCount] = useState(1);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
-  const animatedSearchText = searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
+  const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
+  const animatedSearchText = selectedLocationText || searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
   const cheapestCar = useMemo(
     () =>
       [...cars]
@@ -118,7 +119,7 @@ export function HousingScreen({
         <View style={styles.stickySearch}>
           <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-            <Text style={styles.searchText}>{animatedSearchText}</Text>
+            <Text style={styles.searchText} numberOfLines={1}>{animatedSearchText}</Text>
             <Text style={styles.later}>Search</Text>
           </TouchableOpacity>
         </View>
