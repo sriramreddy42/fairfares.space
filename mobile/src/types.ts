@@ -48,6 +48,35 @@ export type Community = {
   joined: boolean;
 };
 
+export type ServiceItem = {
+  title: string;
+  body: string;
+  icon: string;
+  sort_order?: number;
+};
+
+export type Car = {
+  id: number;
+  name: string;
+  brand: string;
+  model: string;
+  year: number | string;
+  category: string;
+  type: string;
+  fuel_type: string;
+  seats: number | string;
+  bags: number | string;
+  doors: number | string;
+  transmission: string;
+  daily_price: number | string;
+  badge: string;
+  features: string;
+  location: string;
+  image_url: string;
+  booked_until_date: string;
+  booked_until_time: string;
+};
+
 export type BootstrapPayload = {
   ok: boolean;
   user: FairFaresUser | null;

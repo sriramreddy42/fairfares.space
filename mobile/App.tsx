@@ -2,14 +2,14 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { getBootstrap, getHousing, mobileLogin, mobileSignup } from "./src/api/client";
+import { getBootstrap, getCars, getHousing, getSiteServices, mobileLogin, mobileSignup } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
-import { ServicesScreen } from "./src/screens/ServicesScreen";
+import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
-import { BootstrapPayload, HousingPost } from "./src/types";
+import { BootstrapPayload, Car, HousingPost, ServiceItem } from "./src/types";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
@@ -30,13 +30,19 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
+  const [cars, setCars] = useState<Car[]>([]);
+  const [services, setServices] = useState<ServiceItem[]>([]);
+  const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
 
   async function load() {
     setLoading(true);
     try {
       const payload = await getBootstrap(city);
+      const [carRows, serviceRows] = await Promise.all([getCars(), getSiteServices()]);
       setData(payload);
       setVisiblePosts(payload.housing);
+      setCars(carRows);
+      setServices(serviceRows);
     } catch (error) {
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
@@ -141,10 +147,10 @@ export default function App() {
       setActiveTab("housing");
       void selectNeed("");
     } else if (action === "Ride") {
-      Alert.alert("Ride", "Ride request/provider flow is next. Opening services for now.");
+      setSelectedService("cars");
       setActiveTab("services");
     } else if (action === "Explorer" || action === "Deals") {
-      Alert.alert(action, `${action} mobile screen is next. Opening services for now.`);
+      setSelectedService(action === "Explorer" ? "explorer" : "deals");
       setActiveTab("services");
     }
   }
@@ -177,8 +183,14 @@ export default function App() {
     ) : activeTab === "profile" ? (
       <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} />
     ) : activeTab === "services" ? (
-      <ServicesScreen />
-    ) : activeTab === "housing" ? (
+      <ServicesScreen
+        cars={cars}
+        services={services}
+        selected={selectedService}
+        onSelect={setSelectedService}
+        onOpenHousing={() => setActiveTab("housing")}
+      />
+    ) : activeTab === "housing" || activeTab === "home" ? (
       <HousingScreen
         data={data}
         posts={visiblePosts}

@@ -1,4 +1,4 @@
-import { BootstrapPayload, HousingPost } from "../types";
+import { BootstrapPayload, Car, HousingPost, ServiceItem } from "../types";
 
 declare const process: {
   env: {
@@ -47,6 +47,16 @@ export async function getHousing(city: string, area: string, need: string, categ
   const query = new URLSearchParams({ city, area, need, category, limit: "50" });
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
   return payload.posts;
+}
+
+export async function getCars() {
+  const payload = await request<{ cars: Car[] }>("/api/cars");
+  return payload.cars || [];
+}
+
+export async function getSiteServices() {
+  const payload = await request<{ services: ServiceItem[] }>("/api/site");
+  return payload.services || [];
 }
 
 export async function mobileLogin(identifier: string, password: string) {
