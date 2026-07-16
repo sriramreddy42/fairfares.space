@@ -202,7 +202,7 @@ export default function App() {
   }
 
   async function runSearch(nextCity = searchCity, nextArea = searchArea) {
-    const cleanCity = nextCity.trim() || "Denver, CO";
+    const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     setCity(cleanCity);
     setArea(cleanArea);
@@ -329,6 +329,21 @@ export default function App() {
     );
   }
 
+  function normalizeCityInput(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Denver, CO";
+    const known: Record<string, string> = {
+      denver: "Denver, CO",
+      aurora: "Aurora, CO",
+      englewood: "Englewood, CO",
+      littleton: "Littleton, CO",
+      chicago: "Chicago, IL",
+      austin: "Austin, TX",
+      dallas: "Dallas, TX"
+    };
+    return known[trimmed.toLowerCase()] || trimmed;
+  }
+
   async function submitLogin() {
     try {
       await mobileLogin(identifier, password);
@@ -424,7 +439,7 @@ export default function App() {
         screen
       )}
       <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} />
-      <Modal visible={loginOpen} transparent animationType="slide" onRequestClose={() => setLoginOpen(false)}>
+      <Modal visible={loginOpen} transparent animationType="fade" onRequestClose={() => setLoginOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
@@ -480,7 +495,7 @@ export default function App() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      <Modal visible={listingOpen} transparent animationType="slide" onRequestClose={() => setListingOpen(false)}>
+      <Modal visible={listingOpen} transparent animationType="fade" onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView style={styles.modalCard} contentContainerStyle={styles.listingForm}>
             <Text style={styles.modalTitle}>List room / property</Text>
@@ -590,11 +605,11 @@ export default function App() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
-      <Modal visible={searchOpen} transparent animationType="slide" onRequestClose={() => setSearchOpen(false)}>
+      <Modal visible={searchOpen} transparent animationType="fade" onRequestClose={() => setSearchOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Search housing</Text>
-            <Text style={styles.modalCopy}>Enter a metro city and optional area, building, campus, or neighborhood.</Text>
+            <Text style={styles.modalCopy}>Enter a metro city, then narrow results by neighborhood, building, campus, or nearby landmark.</Text>
             <TextInput
               value={searchCity}
               onChangeText={setSearchCity}
@@ -605,7 +620,7 @@ export default function App() {
             <TextInput
               value={searchArea}
               onChangeText={setSearchArea}
-              placeholder="Area/building, e.g. Union Station or DU"
+              placeholder="Neighborhood, building, campus, or landmark"
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />

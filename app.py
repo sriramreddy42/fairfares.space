@@ -11110,7 +11110,8 @@ def mobile_housing_posts(
         clauses.append("(rent_max = 0 OR rent_max <= ? OR rent_min <= ?)")
         values.extend([budget_value, budget_value])
     search_term_groups: list[list[str]] = []
-    for raw_term in (city, area):
+    raw_search_terms = (area,) if (area or "").strip() else (city,)
+    for raw_term in raw_search_terms:
         term = (raw_term or "").strip()
         if not term:
             continue
