@@ -28,7 +28,7 @@ export function ProfileScreen({ data, onLogin }: Props) {
       {["Notifications", "Roommates", "Rentals", "Rides", "Fair Messenger", "Support"].map((item) => (
         <View key={item} style={styles.menuRow}>
           <Text style={styles.menuTitle}>{item}</Text>
-          <Text style={styles.chevron}>></Text>
+          <Text style={styles.chevron}>{">"}</Text>
         </View>
       ))}
     </ScrollView>

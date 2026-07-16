@@ -7,10 +7,12 @@ This is the long-term native mobile app layer for FairFares. It is an Expo / Rea
 ```bash
 cd mobile
 npm install
-EXPO_PUBLIC_FAIRFARES_API_URL=http://127.0.0.1:8000 npm run start
+EXPO_PUBLIC_FAIRFARES_API_URL=http://127.0.0.1:8000 npm run start:go
 ```
 
 For a real device on the same Wi-Fi, replace `127.0.0.1` with your Mac's local IP address.
+
+Use `npm run start:go` for Expo Go. Use `npm run start:dev` only after adding `expo-dev-client` and creating a native development build.
 
 ## Implemented in this slice
 
