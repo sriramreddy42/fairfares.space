@@ -1,0 +1,63 @@
+import { BootstrapPayload, HousingPost } from "../types";
+
+declare const process: {
+  env: {
+    EXPO_PUBLIC_FAIRFARES_API_URL?: string;
+  };
+};
+
+const DEFAULT_API_URL = "http://127.0.0.1:8000";
+
+export const API_URL =
+  process.env.EXPO_PUBLIC_FAIRFARES_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
+
+let authToken = "";
+
+export function setAuthToken(token: string) {
+  authToken = token;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(init.headers as Record<string, string> | undefined)
+  };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  const response = await fetch(`${API_URL}${path}`, { ...init, headers });
+  const payload = (await response.json()) as T & { error?: string };
+  if (!response.ok) {
+    throw new Error(payload.error || `FairFares request failed: ${response.status}`);
+  }
+  return payload;
+}
+
+export function absoluteAssetUrl(value: string) {
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  return `${API_URL}${value.startsWith("/") ? value : `/${value}`}`;
+}
+
+export async function getBootstrap(city = "Denver, CO") {
+  return request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
+}
+
+export async function getHousing(city: string, area: string, need: string) {
+  const query = new URLSearchParams({ city, area, need, limit: "50" });
+  const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
+  return payload.posts;
+}
+
+export async function mobileLogin(identifier: string, password: string) {
+  const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>(
+    "/api/mobile/login",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password })
+    }
+  );
+  setAuthToken(payload.token);
+  return payload;
+}

@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "FairFares",
+    "slug": "fairfares-mobile",
+    "scheme": "fairfares",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.fairfares.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.fairfares.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#101010"
+      }
+    },
+    "extra": {
+      "apiUrl": "http://127.0.0.1:8000"
+    }
+  }
+}

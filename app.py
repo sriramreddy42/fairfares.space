@@ -11030,6 +11030,115 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
     }
 
 
+def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
+    if not user:
+        return None
+    return {
+        "id": int(row_value(user, "id") or 0),
+        "name": row_value(user, "name"),
+        "email": row_value(user, "email"),
+        "phone": row_value(user, "phone"),
+        "role": row_value(user, "role") or "CUSTOMER",
+        "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
+        "isVerified": bool(int(row_value(user, "is_verified") or 0)),
+    }
+
+
+def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
+    preview_image = public_upload_url(row_value(row, "preview_image_url"))
+    return {
+        "id": row_value(row, "public_id"),
+        "title": row_value(row, "title"),
+        "description": row_value(row, "description"),
+        "mode": row_value(row, "post_mode"),
+        "modeLabel": accommodation_mode_label(row),
+        "category": row_value(row, "category"),
+        "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
+        "location": row_value(row, "city_area_zip") or row_value(row, "city") or "Location open",
+        "area": row_value(row, "area_or_apartment") or row_value(row, "primary_neighborhood"),
+        "workLocation": row_value(row, "work_school_location"),
+        "moveIn": row_value(row, "move_in_date"),
+        "rent": format_accommodation_rent(row),
+        "rentValue": float(row_value(row, "rent_min") or row_value(row, "rent_max") or 0),
+        "radiusMiles": int(float(row_value(row, "radius_miles") or 0)),
+        "distanceMiles": None,
+        "lat": float(row_value(row, "lat") or 0),
+        "lng": float(row_value(row, "lng") or 0),
+        "imageUrl": preview_image,
+        "daysLeft": accommodation_days_left(row),
+        "expiryLabel": accommodation_expiry_label(row),
+        "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
+        "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(row, "gender_preference"), "Open"),
+        "amenities": [item.strip() for item in row_value(row, "amenities").split(",") if item.strip()],
+    }
+
+
+def mobile_housing_posts(
+    city: str = "",
+    area: str = "",
+    need: str = "",
+    limit: int = 30,
+) -> list[dict[str, object]]:
+    expire_accommodation_posts()
+    clauses = [
+        "visibility_status = 'ACTIVE'",
+        "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
+    ]
+    values: list[object] = []
+    if need == "need_place":
+        clauses.append("post_mode = 'HAVE_PLACE'")
+    elif need == "have_place":
+        clauses.append("post_mode = 'NEED_PLACE'")
+    elif need == "need_roommates":
+        clauses.append("roommate_intent = 1")
+    search_term_groups: list[list[str]] = []
+    for raw_term in (city, area):
+        term = (raw_term or "").strip()
+        if not term:
+            continue
+        candidates = {term, term.replace(", ", ","), term.replace(",", ", ")}
+        if "," in term:
+            candidates.add(term.split(",", 1)[0].strip())
+        group = [candidate for candidate in candidates if candidate]
+        if group:
+            search_term_groups.append(group)
+    search_fields = (
+        "city_area_zip",
+        "area_or_apartment",
+        "work_school_location",
+        "description",
+        "street_address",
+        "city",
+        "zip_code",
+        "primary_neighborhood",
+        "apartment_name",
+    )
+    for group in search_term_groups:
+        term_clauses = []
+        for term in group:
+            pattern = f"%{term}%"
+            term_clauses.append("(" + " OR ".join(f"{field} LIKE ?" for field in search_fields) + ")")
+            values.extend([pattern] * len(search_fields))
+        clauses.append("(" + " OR ".join(term_clauses) + ")")
+    limit = max(1, min(int(limit or 30), 100))
+    where_sql = " AND ".join(clauses)
+    with db() as con:
+        rows = con.execute(
+            f"""
+            SELECT accommodation_posts.*,
+                   (SELECT image_url FROM accommodation_post_images
+                    WHERE accommodation_post_images.post_id = accommodation_posts.id
+                    ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
+            FROM accommodation_posts
+            WHERE {where_sql}
+            ORDER BY datetime(created_at) DESC
+            LIMIT ?
+            """,
+            (*values, limit),
+        ).fetchall()
+    return [mobile_housing_post_payload(row) for row in rows]
+
+
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
     if search_area:
         refreshed = cached_accommodation_metro_for_place(search_area) or refresh_accommodation_location_cache(search_area)
@@ -13241,6 +13350,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/accommodations/locations":
             self.api_accommodation_locations(parsed)
             return
+        if parsed.path == "/api/mobile/bootstrap":
+            self.api_mobile_bootstrap(parsed)
+            return
+        if parsed.path == "/api/mobile/housing":
+            self.api_mobile_housing(parsed)
+            return
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
             return
@@ -13347,6 +13462,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
+            "/api/mobile/login": self.api_mobile_login,
+            "/api/mobile/logout": self.api_mobile_logout,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -13431,6 +13548,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.parse_qs(body)
         return {key: values[0].strip() for key, values in parsed.items()}
 
+    def read_json_body(self) -> dict[str, object]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
     def read_form_with_files(self) -> tuple[dict[str, str], dict[str, dict[str, object]]]:
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
@@ -13463,10 +13590,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return form, files
 
     def current_user(self) -> sqlite3.Row | None:
+        token = ""
         header = self.headers.get("Cookie", "")
         jar = cookies.SimpleCookie(header)
         morsel = jar.get(SESSION_COOKIE)
-        if not morsel:
+        if morsel:
+            token = morsel.value
+        if not token:
+            auth_header = (self.headers.get("Authorization") or "").strip()
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+        if not token:
             return None
         with db() as con:
             return con.execute(
@@ -13475,7 +13609,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 JOIN sessions ON sessions.user_id = users.id
                 WHERE sessions.token = ?
                 """,
-                (morsel.value,),
+                (token,),
             ).fetchone()
 
     def send_html(self, body: bytes, status: int = 200) -> None:
@@ -20820,6 +20954,90 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def api_mobile_login(self) -> None:
+        payload = self.read_json_body()
+        identifier = str(payload.get("identifier") or payload.get("email") or payload.get("phone") or "").strip()
+        password = str(payload.get("password") or "")
+        with db() as con:
+            user = find_user_by_login_identifier(con, identifier)
+            if not user or not verify_password(password, row_value(user, "password_hash")):
+                log_login_failure(identifier, "mobile_password_mismatch")
+                self.send_json({"ok": False, "error": "That email/phone and password did not match."}, 401)
+                return
+            if not int(row_value(user, "is_verified") or 0):
+                self.send_json(
+                    {
+                        "ok": False,
+                        "activationRequired": True,
+                        "error": "Please activate your account from the email link before using the mobile app.",
+                    },
+                    403,
+                )
+                return
+            token = secrets.token_urlsafe(32)
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, int(row_value(user, "id") or 0)))
+        self.send_json({"ok": True, "token": token, "user": mobile_user_payload(user)})
+
+    def api_mobile_logout(self) -> None:
+        auth_header = (self.headers.get("Authorization") or "").strip()
+        token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else ""
+        if token:
+            with db() as con:
+                con.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        self.send_json({"ok": True})
+
+    def api_mobile_bootstrap(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        params = urllib.parse.parse_qs(parsed.query)
+        city = (params.get("city", ["Denver, CO"])[0] or "").strip()
+        area = (params.get("area", [""])[0] or "").strip()
+        metro_context = accommodation_metro_context(city if "Metro" in city else "", area or city)
+        user_id = int(row_value(user, "id") or 0) if user else 0
+        chats = get_chat_conversations_for_user(user_id) if user_id else []
+        housing_posts = mobile_housing_posts(city=city, area=area, limit=12)
+        self.send_json(
+            {
+                "ok": True,
+                "user": mobile_user_payload(user),
+                "location": {
+                    "city": city or "Denver, CO",
+                    "selected": metro_context.get("selected_location") or city or "Denver, CO",
+                    "suggested": metro_context.get("suggested_location") or "",
+                },
+                "housing": housing_posts,
+                "communities": get_chat_communities_for_user(user_id if user_id else None),
+                "chat": {
+                    "unreadCount": sum(int(item.get("unread") or 0) for item in chats),
+                    "conversations": chats[:10],
+                },
+                "dashboard": {
+                    "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
+                    "messages": len(chats),
+                },
+            }
+        )
+
+    def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = (params.get("city", ["Denver, CO"])[0] or "").strip()
+        area = (params.get("area", [""])[0] or "").strip()
+        need = (params.get("need", [""])[0] or "").strip()
+        try:
+            limit = int(params.get("limit", ["30"])[0] or 30)
+        except ValueError:
+            limit = 30
+        posts = mobile_housing_posts(city=city, area=area, need=need, limit=limit)
+        self.send_json(
+            {
+                "ok": True,
+                "city": city,
+                "area": area,
+                "need": need,
+                "posts": posts,
+                "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
+            }
+        )
 
     def serve_upload(self, path: str) -> None:
         upload_root = (DB_PATH.parent / "uploads").resolve()
