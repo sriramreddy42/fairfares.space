@@ -11228,6 +11228,14 @@ def float_from_form(form: dict[str, str], key: str, default: float = 0.0) -> flo
         return default
 
 
+def float_from_value(value: object, default: float = 0.0) -> float:
+    try:
+        cleaned = str(value or "").strip().replace("$", "").replace(",", "")
+        return float(cleaned) if cleaned else default
+    except (TypeError, ValueError):
+        return default
+
+
 def checked_from_form(form: dict[str, str], key: str) -> int:
     return 1 if (form.get(key) or "").strip().lower() in {"1", "on", "true", "yes"} else 0
 
@@ -13469,6 +13477,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/login": self.api_mobile_login,
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
+            "/api/mobile/housing": self.api_mobile_create_housing,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -21088,6 +21097,109 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
+
+    def api_mobile_create_housing(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before posting a housing lead."}, 401)
+            return
+        payload = self.read_json_body()
+        mode = normalize_accommodation_mode(str(payload.get("postMode") or payload.get("post_mode") or "HAVE_PLACE"))
+        category = str(payload.get("category") or "single_room").strip()
+        title = str(payload.get("title") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        city = str(payload.get("city") or "").strip()
+        street_address = str(payload.get("streetAddress") or payload.get("street_address") or "").strip()
+        zip_code = str(payload.get("zipCode") or payload.get("zip_code") or "").strip()
+        area = str(payload.get("area") or payload.get("area_or_apartment") or "").strip()
+        move_in_date = str(payload.get("moveInDate") or payload.get("move_in_date") or "").strip()
+        contact_name = str(payload.get("contactName") or row_value(user, "name")).strip()
+        contact_email = str(payload.get("contactEmail") or row_value(user, "email")).strip()
+        contact_phone = str(payload.get("contactPhone") or row_value(user, "phone")).strip()
+        rent_min = float_from_value(payload.get("rentMin") or payload.get("rent_min") or "0")
+        rent_max = float_from_value(payload.get("rentMax") or payload.get("rent_max") or "0")
+        if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
+            self.send_json(
+                {
+                    "ok": False,
+                    "error": "Title, description, city, ZIP, move-in date, rent, contact name, email, and phone are required.",
+                },
+                400,
+            )
+            return
+        if mode == "HAVE_PLACE" and not street_address and not area:
+            self.send_json({"ok": False, "error": "Street address or area/apartment is required when listing a place."}, 400)
+            return
+        public_id = accommodation_public_id()
+        category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
+        roommate_intent = 1 if bool(payload.get("roommateIntent") or payload.get("roommate_intent")) else 0
+        location_query = street_address or area or city or zip_code
+        location_point = accommodation_location_point(location_query)
+        post_lat = float(location_point.get("lat") or 0)
+        post_lng = float(location_point.get("lng") or 0)
+        city_area_zip = city
+        if mode == "HAVE_PLACE":
+            city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        expires_at = accommodation_expiry_timestamp(now)
+        with db() as con:
+            cursor = con.execute(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description,
+                 street_address, city, zip_code, primary_neighborhood, apartment_name,
+                 city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
+                 move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
+                 accommodates, roommate_count, roommate_intent, about_you, bathroom_type, gender_preference,
+                 commute_preference, lease_term, deposit, days_available, vegetarian_preference,
+                 smoking_policy, pet_friendly, open_house_date, open_house_start, open_house_end,
+                 social_facebook, social_x, social_instagram, social_youtube, amenities,
+                 private_bath, furnished, parking, utilities_included,
+                 contact_name, contact_phone, contact_email, visibility_status, source_label,
+                 expires_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 'MONTH', 0, 0, 1, 0, ?, '', 'shared', 'open', '', 'flexible', 0, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0, 0, 0, ?, ?, ?, 'ACTIVE', 'MOBILE_POST', ?, ?, ?)
+                """,
+                (
+                    public_id,
+                    int(row_value(user, "id") or 0),
+                    mode,
+                    category,
+                    title or accommodation_title_from_form({"category": category}, mode, category_label, bool(roommate_intent)),
+                    description,
+                    street_address,
+                    city,
+                    zip_code,
+                    area,
+                    area,
+                    city_area_zip,
+                    area,
+                    10 if mode == "NEED_PLACE" else 0,
+                    post_lat,
+                    post_lng,
+                    move_in_date,
+                    rent_min,
+                    rent_max,
+                    roommate_intent,
+                    contact_name,
+                    contact_phone,
+                    contact_email,
+                    expires_at,
+                    now,
+                    now,
+                ),
+            )
+            row = con.execute(
+                """
+                SELECT accommodation_posts.*,
+                       (SELECT image_url FROM accommodation_post_images
+                        WHERE accommodation_post_images.post_id = accommodation_posts.id
+                        ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
+                FROM accommodation_posts
+                WHERE id = ?
+                """,
+                (int(cursor.lastrowid),),
+            ).fetchone()
+        self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 201)
 
     def serve_upload(self, path: str) -> None:
         upload_root = (DB_PATH.parent / "uploads").resolve()

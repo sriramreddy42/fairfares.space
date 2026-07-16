@@ -82,3 +82,29 @@ export async function mobileSignup(name: string, email: string, phone: string, p
     }
   );
 }
+
+export type MobileHousingPostInput = {
+  postMode: "HAVE_PLACE" | "NEED_PLACE";
+  category: string;
+  title: string;
+  description: string;
+  city: string;
+  streetAddress: string;
+  zipCode: string;
+  area: string;
+  moveInDate: string;
+  rentMin: string;
+  rentMax: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  roommateIntent?: boolean;
+};
+
+export async function createMobileHousingPost(input: MobileHousingPostInput) {
+  return request<{ ok: boolean; post: HousingPost }>("/api/mobile/housing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}

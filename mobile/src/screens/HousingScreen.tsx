@@ -4,11 +4,12 @@ import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, HousingPost } from "../types";
+import { BootstrapPayload, Car, HousingPost } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
   posts: HousingPost[];
+  cars: Car[];
   selectedNeed: string;
   selectedCategory: string;
   onMessage: (post: HousingPost) => void;
@@ -38,6 +39,7 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
 export function HousingScreen({
   data,
   posts,
+  cars,
   selectedNeed,
   selectedCategory,
   onMessage,
@@ -51,26 +53,40 @@ export function HousingScreen({
 }: Props) {
   const [mode, setMode] = useState<"roommates" | "rentals">("roommates");
   const displayName = data?.user?.name?.split(" ")[0] || "there";
-  const localities = useMemo(
-    () => [
-      { name: "Englewood, CO", owner: "23%", tenant: "46%", rent: "$773" },
-      { name: "Aurora, CO", owner: "18%", tenant: "51%", rent: "$820" },
-      { name: "Littleton, CO", owner: "20%", tenant: "39%", rent: "$895" }
-    ],
-    []
+  const cheapestCar = useMemo(
+    () =>
+      [...cars]
+        .filter((car) => Number(car.daily_price) > 0)
+        .sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0],
+    [cars]
   );
+  const localities = useMemo(() => {
+    const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
+    posts.forEach((post) => {
+      const name = (post.area || post.location || data?.location.city || "Area open").trim();
+      if (!name) return;
+      const current = groups.get(name) || { total: 0, count: 0, offered: 0, needed: 0 };
+      if (post.rentValue > 0) {
+        current.total += post.rentValue;
+        current.count += 1;
+      }
+      if (post.mode === "HAVE_PLACE") current.offered += 1;
+      if (post.mode === "NEED_PLACE") current.needed += 1;
+      groups.set(name, current);
+    });
+    return Array.from(groups.entries()).map(([name, value]) => ({
+      name,
+      offered: value.offered,
+      needed: value.needed,
+      rent: value.count ? `$${Math.round(value.total / value.count)}` : "Open"
+    }));
+  }, [data?.location.city, posts]);
+  const showRoomTypes = selectedNeed === "need_place" || selectedNeed === "need_roommates";
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.brandHeader}>
         <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
-        <TouchableOpacity style={styles.cityPill} onPress={onOpenSearch}>
-          <Text style={styles.cityPillText}>{data?.location.city || "Denver, CO"}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.headerIcon} onPress={onOpenMessenger}>
-          <Image source={appAssets.message} style={styles.headerIconImage} resizeMode="contain" />
-          {data?.chat.unreadCount ? <Text style={styles.headerBadge}>{data.chat.unreadCount}</Text> : null}
-        </TouchableOpacity>
       </View>
 
       <View style={styles.topTabs}>
@@ -86,17 +102,6 @@ export function HousingScreen({
         <Text style={styles.searchText}>Search city, area, building</Text>
         <Text style={styles.later}>Search</Text>
       </TouchableOpacity>
-
-      <View style={styles.locationCard}>
-        <View style={styles.locationIcon}>
-          <Image source={appAssets.explorer} style={styles.locationIconImage} resizeMode="cover" />
-        </View>
-        <View style={styles.locationCopy}>
-          <Text style={styles.locationTitle}>{data?.location.selected || "Denver, CO"}</Text>
-          <Text style={styles.locationMeta}>Search city, building, campus, or neighborhood</Text>
-          <Text style={styles.green}>Lower housing friction than usual</Text>
-        </View>
-      </View>
 
       <View style={styles.filterSummary}>
         <Text style={styles.filterText}>Showing {posts.length} result{posts.length === 1 ? "" : "s"}</Text>
@@ -159,6 +164,21 @@ export function HousingScreen({
         </View>
       </View>
 
+      <View style={styles.carOverview}>
+        <View style={styles.carOverviewCopy}>
+          <Text style={styles.carEyebrow}>Rental cars</Text>
+          <Text style={styles.carTitle}>Today's cheapest rate</Text>
+          <Text style={styles.carMeta}>
+            {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "No active rental cars in this database yet."}
+          </Text>
+          <Text style={styles.carPhone}>Call / text: +1 9372518688</Text>
+        </View>
+        <View style={styles.carRateBox}>
+          <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "Open"}</Text>
+          <Text style={styles.carRateMeta}>per day</Text>
+        </View>
+      </View>
+
       <SectionHeader title={`Rooms for rent in ${data?.location.city || "Denver, CO"}`} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {posts.length ? (
@@ -171,47 +191,45 @@ export function HousingScreen({
         )}
       </ScrollView>
 
-      <View style={styles.promo}>
-        <View>
-          <Text style={styles.promoTitle}>Need a place to stay / have a rental to offer?</Text>
-          <Text style={styles.promoMeta}>Answer a few questions and we will help find the closest match.</Text>
-        </View>
-        <TouchableOpacity style={styles.promoButton} onPress={() => onNeedSelect("need_place")}>
-          <Text style={styles.promoButtonText}>Get matched</Text>
-        </TouchableOpacity>
-      </View>
+      {showRoomTypes ? (
+        <>
+          <SectionHeader title={`Room Types in ${data?.location.city || "Denver, CO"}`} />
+          <View style={styles.roomTypeRow}>
+            {roomTypes.map((type) => (
+              <TouchableOpacity
+                key={type.category}
+                style={styles.roomType}
+                onPress={() => {
+                  onCategorySelect(selectedCategory === type.category ? "" : type.category);
+                }}
+              >
+                <View style={[styles.roomCircle, selectedCategory === type.category && styles.roomCircleActive]}>
+                  <Image source={type.icon} style={styles.roomIcon} resizeMode="contain" />
+                </View>
+                <Text style={styles.roomLabel}>{type.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      ) : null}
 
-      <SectionHeader title={`Room Types in ${data?.location.city || "Denver, CO"}`} />
-      <View style={styles.roomTypeRow}>
-        {roomTypes.map((type) => (
-          <TouchableOpacity
-            key={type.category}
-            style={styles.roomType}
-            onPress={() => {
-              onCategorySelect(selectedCategory === type.category ? "" : type.category);
-            }}
-          >
-            <View style={[styles.roomCircle, selectedCategory === type.category && styles.roomCircleActive]}>
-              <Image source={type.icon} style={styles.roomIcon} resizeMode="contain" />
-            </View>
-            <Text style={styles.roomLabel}>{type.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <SectionHeader title="Explore localities" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {localities.map((locality) => (
-          <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
-            <Text style={styles.localityTitle}>{locality.name}</Text>
-            <View style={styles.localityStats}>
-              <Text style={styles.localityChip}>Owner {locality.owner}</Text>
-              <Text style={styles.localityChip}>Tenant {locality.tenant}</Text>
-            </View>
-            <Text style={styles.avgRent}>Avg Rent: {locality.rent}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {localities.length ? (
+        <>
+          <SectionHeader title="Explore localities" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {localities.map((locality) => (
+              <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
+                <Text style={styles.localityTitle}>{locality.name}</Text>
+                <View style={styles.localityStats}>
+                  <Text style={styles.localityChip}>{locality.offered} offered</Text>
+                  <Text style={styles.localityChip}>{locality.needed} needed</Text>
+                </View>
+                <Text style={styles.avgRent}>Avg Rent: {locality.rent}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -219,13 +237,8 @@ export function HousingScreen({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
-  brandHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  brandHeader: { flexDirection: "row", alignItems: "center" },
   logo: { width: 122, height: 54 },
-  cityPill: { flex: 1, minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, justifyContent: "center", paddingHorizontal: 14 },
-  cityPillText: { color: theme.colors.text, fontWeight: "900", fontSize: 17 },
-  headerIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
-  headerIconImage: { width: 28, height: 28 },
-  headerBadge: { position: "absolute", top: -3, right: -3, backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, minWidth: 20, textAlign: "center", fontWeight: "900", overflow: "hidden" },
   topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   topTab: { paddingVertical: 12, paddingRight: 22 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
@@ -235,13 +248,6 @@ const styles = StyleSheet.create({
   searchIcon: { width: 30, height: 30 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 20, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, fontWeight: "900" },
-  locationCard: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", gap: theme.spacing.md },
-  locationIcon: { width: 60, height: 60, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, overflow: "hidden", alignItems: "center", justifyContent: "center" },
-  locationIconImage: { width: "100%", height: "100%" },
-  locationCopy: { flex: 1, gap: 4 },
-  locationTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
-  locationMeta: { color: theme.colors.muted, fontSize: 15 },
-  green: { color: theme.colors.green, fontSize: 15, fontWeight: "800" },
   filterSummary: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
   filterText: { color: theme.colors.soft, fontWeight: "800" },
   segment: { backgroundColor: "#252a7a", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5 },
@@ -269,11 +275,15 @@ const styles = StyleSheet.create({
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
-  promo: { backgroundColor: "#2b1719", borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: theme.spacing.md },
-  promoTitle: { color: "#ff8ea0", fontSize: 20, fontWeight: "900" },
-  promoMeta: { color: theme.colors.soft, fontSize: 16, marginTop: 5 },
-  promoButton: { backgroundColor: theme.colors.brand, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 18, paddingVertical: 12 },
-  promoButtonText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
+  carOverview: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
+  carOverviewCopy: { flex: 1, gap: 5 },
+  carEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  carTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  carMeta: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
+  carPhone: { color: theme.colors.green, fontWeight: "900" },
+  carRateBox: { minWidth: 92, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
+  carRate: { color: theme.colors.bg, fontSize: 24, fontWeight: "900" },
+  carRateMeta: { color: "#555", fontWeight: "900" },
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },
   roomCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
