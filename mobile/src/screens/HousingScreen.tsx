@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Image, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, ImageBackground, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
@@ -12,12 +12,18 @@ type Props = {
   cars: Car[];
   selectedNeed: string;
   selectedCategory: string;
+  selectedGender: string;
+  selectedBudget: string;
+  selectedSort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc";
   onMessage: (post: HousingPost) => void;
   onOpenMessenger: () => void;
   onNeedSelect: (need: string) => void;
   onAreaSelect: (area: string) => void;
   onOpenSearch: () => void;
   onCategorySelect: (category: string) => void;
+  onGenderSelect: (gender: string) => void;
+  onBudgetSelect: (budget: string) => void;
+  onSortSelect: (sort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc") => void;
   onPostNeed: () => void;
   onTopAction: (action: string) => void;
 };
@@ -37,6 +43,14 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
 ];
 
 const searchPhrases = ["Search city", "Search area", "Search building"];
+const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
+  { label: "Distance ↑", value: "distanceAsc" },
+  { label: "Distance ↓", value: "distanceDesc" },
+  { label: "Rent ↑", value: "rentAsc" },
+  { label: "Rent ↓", value: "rentDesc" }
+];
+const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
+const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
 
 export function HousingScreen({
   data,
@@ -44,12 +58,18 @@ export function HousingScreen({
   cars,
   selectedNeed,
   selectedCategory,
+  selectedGender,
+  selectedBudget,
+  selectedSort,
   onMessage,
   onOpenMessenger,
   onNeedSelect,
   onAreaSelect,
   onOpenSearch,
   onCategorySelect,
+  onGenderSelect,
+  onBudgetSelect,
+  onSortSelect,
   onPostNeed,
   onTopAction
 }: Props) {
@@ -66,6 +86,15 @@ export function HousingScreen({
         .sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0],
     [cars]
   );
+  const sortedPosts = useMemo(() => {
+    const distanceValue = (post: HousingPost) => (post.distanceMiles === null ? Number.MAX_SAFE_INTEGER : post.distanceMiles);
+    return [...posts].sort((a, b) => {
+      if (selectedSort === "distanceDesc") return distanceValue(b) - distanceValue(a);
+      if (selectedSort === "rentAsc") return (a.rentValue || Number.MAX_SAFE_INTEGER) - (b.rentValue || Number.MAX_SAFE_INTEGER);
+      if (selectedSort === "rentDesc") return (b.rentValue || 0) - (a.rentValue || 0);
+      return distanceValue(a) - distanceValue(b);
+    });
+  }, [posts, selectedSort]);
   const localities = useMemo(() => {
     const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
     posts.forEach((post) => {
@@ -87,7 +116,7 @@ export function HousingScreen({
       rent: value.count ? `$${Math.round(value.total / value.count)}` : "Open"
     }));
   }, [data?.location.city, posts]);
-  const showRoomTypes = selectedNeed === "need_place" || selectedNeed === "need_roommates";
+  const showRoomTypes = !selectedNeed || selectedNeed === "need_place" || selectedNeed === "need_roommates";
 
   useEffect(() => {
     const phrase = searchPhrases[searchPhraseIndex];
@@ -190,9 +219,41 @@ export function HousingScreen({
       </View>
 
       <SectionHeader title={`Rooms for rent in ${data?.location.city || "Denver, CO"}`} />
+      <View style={styles.filterPanel}>
+        <Text style={styles.filterTitle}>Sort by</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {sortOptions.map((option) => (
+            <TouchableOpacity key={option.value} style={[styles.filterChip, selectedSort === option.value && styles.filterChipActive]} onPress={() => onSortSelect(option.value)}>
+              <Text style={[styles.filterChipText, selectedSort === option.value && styles.filterChipTextActive]}>{option.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={styles.filterTitle}>Preference</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {genderOptions.map((option) => {
+            const value = option === "Any" ? "" : option;
+            return (
+              <TouchableOpacity key={option} style={[styles.filterChip, selectedGender === value && styles.filterChipActive]} onPress={() => onGenderSelect(value)}>
+                <Text style={[styles.filterChipText, selectedGender === value && styles.filterChipTextActive]}>{option}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <Text style={styles.filterTitle}>Budget</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {budgetOptions.map((option) => {
+            const value = option === "Any" ? "" : option.replace(/[$,]/g, "");
+            return (
+              <TouchableOpacity key={option} style={[styles.filterChip, selectedBudget === value && styles.filterChipActive]} onPress={() => onBudgetSelect(value)}>
+                <Text style={[styles.filterChipText, selectedBudget === value && styles.filterChipTextActive]}>{option}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {posts.length ? (
-          posts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} />)
+        {sortedPosts.length ? (
+          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} />)
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
@@ -241,20 +302,30 @@ export function HousingScreen({
         </>
       ) : null}
 
-      <View style={styles.carOverview}>
-        <View style={styles.carOverviewCopy}>
+      <ImageBackground source={appAssets.rentalPromo} style={styles.carOverview} imageStyle={styles.carOverviewImage}>
+        <View style={styles.carShade}>
           <Text style={styles.carEyebrow}>Rental cars</Text>
           <Text style={styles.carTitle}>Today's cheapest rate</Text>
           <Text style={styles.carMeta}>
-            {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "No active rental cars in this database yet."}
+            {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}
           </Text>
           <Text style={styles.carPhone}>Call / text: +1 9372518688</Text>
+          <View style={styles.carFeatureRow}>
+            <Text style={styles.carFeature}>Airport pickup</Text>
+            <Text style={styles.carFeature}>No hidden fees</Text>
+            <Text style={styles.carFeature}>24/7 support</Text>
+          </View>
+          <View style={styles.carBottomRow}>
+            <TouchableOpacity style={styles.bookNow} onPress={() => onTopAction("Ride")}>
+              <Text style={styles.bookNowText}>Book now</Text>
+            </TouchableOpacity>
+            <View style={styles.carRateBox}>
+              <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "$29.99"}</Text>
+              <Text style={styles.carRateMeta}>per day</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.carRateBox}>
-          <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "Open"}</Text>
-          <Text style={styles.carRateMeta}>per day</Text>
-        </View>
-      </View>
+      </ImageBackground>
     </ScrollView>
   );
 }
@@ -299,14 +370,27 @@ const styles = StyleSheet.create({
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
-  carOverview: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
-  carOverviewCopy: { flex: 1, gap: 5 },
+  filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
+  filterTitle: { color: theme.colors.muted, fontSize: 13, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  filterRow: { gap: 8, paddingRight: theme.spacing.md },
+  filterChip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 13, paddingVertical: 9, backgroundColor: theme.colors.bg },
+  filterChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  filterChipText: { color: theme.colors.soft, fontWeight: "900" },
+  filterChipTextActive: { color: theme.colors.bg },
+  carOverview: { minHeight: 360, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
+  carOverviewImage: { borderRadius: theme.radius.lg },
+  carShade: { flex: 1, padding: theme.spacing.lg, justifyContent: "space-between", backgroundColor: "rgba(0,0,0,0.48)", gap: theme.spacing.md },
   carEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  carTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
-  carMeta: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
-  carPhone: { color: theme.colors.green, fontWeight: "900" },
-  carRateBox: { minWidth: 92, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
-  carRate: { color: theme.colors.bg, fontSize: 24, fontWeight: "900" },
+  carTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900", maxWidth: 260 },
+  carMeta: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20, maxWidth: 280 },
+  carPhone: { color: theme.colors.green, fontWeight: "900", fontSize: 18 },
+  carFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  carFeature: { color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.22)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, overflow: "hidden", fontWeight: "900", fontSize: 12 },
+  carBottomRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
+  bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 20, paddingVertical: 13 },
+  bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
+  carRateBox: { minWidth: 108, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
+  carRate: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
   carRateMeta: { color: "#555", fontWeight: "900" },
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },

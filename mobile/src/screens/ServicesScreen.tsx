@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Image, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Image, ImageBackground, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
@@ -108,15 +108,23 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car) =>
   return (
     <View style={styles.section}>
       <SectionHeader eyebrow="Car Rentals" title="Today's cheapest rate" />
-      <View style={styles.rateCard}>
-        <Image source={appAssets.ride} style={styles.rateIcon} resizeMode="contain" />
-        <View style={styles.rateCopy}>
-          <Text style={styles.rateTitle}>{cheapest ? cheapest.name : "Car inventory open"}</Text>
-          <Text style={styles.rateMeta}>{cheapest ? `${cheapest.location || "Denver"} · ${cheapest.category}` : "Add cars in web admin to show live rates."}</Text>
-          <Text style={styles.ratePhone}>+1 9372518688</Text>
+      <ImageBackground source={appAssets.rentalPromo} style={styles.rateHero} imageStyle={styles.rateHeroImage}>
+        <View style={styles.rateShade}>
+          <Text style={styles.rateEyebrow}>Rental cars</Text>
+          <Text style={styles.rateHeroTitle}>Today's cheapest rate</Text>
+          <Text style={styles.rateMeta}>{cheapest ? `${cheapest.name} · ${cheapest.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}</Text>
+          <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
+          <View style={styles.rateHeroFooter}>
+            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && onBookCar(cheapest)}>
+              <Text style={styles.bookNowText}>Book now</Text>
+            </TouchableOpacity>
+            <View style={styles.priceBadge}>
+              <Text style={styles.ratePrice}>{cheapest ? `$${cheapest.daily_price}` : "$29.99"}</Text>
+              <Text style={styles.priceBadgeMeta}>per day</Text>
+            </View>
+          </View>
         </View>
-        <Text style={styles.ratePrice}>{cheapest ? `$${cheapest.daily_price}` : "Open"}</Text>
-      </View>
+      </ImageBackground>
       {cars.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
@@ -194,13 +202,19 @@ const styles = StyleSheet.create({
   badge: { position: "absolute", top: -10, left: 18, backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 6, overflow: "hidden", paddingHorizontal: 6, paddingVertical: 3, fontWeight: "900", zIndex: 2 },
   tileIcon: { width: 48, height: 48 },
   tileLabel: { color: theme.colors.soft, fontSize: 16, fontWeight: "800", textAlign: "center" },
-  rateCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
-  rateIcon: { width: 58, height: 58 },
-  rateCopy: { flex: 1, gap: 4 },
-  rateTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
-  rateMeta: { color: theme.colors.muted, fontWeight: "700" },
-  ratePhone: { color: theme.colors.green, fontWeight: "900" },
-  ratePrice: { color: theme.colors.green, fontSize: 23, fontWeight: "900" },
+  rateHero: { minHeight: 360, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
+  rateHeroImage: { borderRadius: theme.radius.lg },
+  rateShade: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", padding: theme.spacing.lg, justifyContent: "space-between", gap: theme.spacing.md },
+  rateEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  rateHeroTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900", maxWidth: 260 },
+  rateMeta: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20 },
+  ratePhone: { color: theme.colors.green, fontWeight: "900", fontSize: 18 },
+  rateHeroFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
+  bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, paddingVertical: 13 },
+  bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
+  priceBadge: { minWidth: 108, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, padding: theme.spacing.sm, alignItems: "center" },
+  ratePrice: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
+  priceBadgeMeta: { color: "#555", fontWeight: "900" },
   carCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
   carImage: { width: "100%", height: 150 },
   carBody: { padding: theme.spacing.md, gap: 8 },

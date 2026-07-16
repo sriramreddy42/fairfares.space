@@ -23,10 +23,16 @@ export function HousingCard({ post, onMessage }: Props) {
         </Text>
         <Text style={styles.meta}>{post.location}</Text>
         {post.area ? <Text style={styles.meta}>{post.area}</Text> : null}
-        <Text style={styles.meta}>{post.categoryLabel}</Text>
-        <Text style={styles.meta}>{post.genderPreference} · {post.bathroomType || "Bath open"}</Text>
-        <Text style={styles.meta}>{post.leaseTerm || "Flexible"} · {post.moveIn || "Date open"}</Text>
-        {post.distanceMiles !== null ? <Text style={styles.distance}>{post.distanceMiles} mi away</Text> : null}
+        <View style={styles.pillRow}>
+          <Text style={styles.infoPill}>{post.categoryLabel}</Text>
+          <Text style={styles.infoPill}>{post.genderPreference || "Open"}</Text>
+        </View>
+        <Text style={styles.meta}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
+        <Text style={styles.meta}>{post.moveIn || "Date open"}</Text>
+        <View style={styles.pillRow}>
+          {post.distanceMiles !== null ? <Text style={styles.distance}>{post.distanceMiles} mi away</Text> : null}
+          <Text style={styles.radius}>{post.radiusMiles || 0} mi radius</Text>
+        </View>
       </View>
       <View style={styles.footer}>
         <View style={styles.priceBlock}>
@@ -89,9 +95,39 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700"
   },
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7
+  },
+  infoPill: {
+    color: theme.colors.soft,
+    backgroundColor: theme.colors.panel2,
+    borderRadius: theme.radius.pill,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontSize: 13,
+    fontWeight: "900"
+  },
   distance: {
     color: theme.colors.green,
+    backgroundColor: "#173820",
+    borderRadius: theme.radius.pill,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     fontSize: 15,
+    fontWeight: "900"
+  },
+  radius: {
+    color: theme.colors.soft,
+    backgroundColor: theme.colors.panel2,
+    borderRadius: theme.radius.pill,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontSize: 13,
     fontWeight: "900"
   },
   footer: {

@@ -128,8 +128,9 @@ export default function App() {
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
-  const [selectedGender] = useState("");
-  const [selectedBudget] = useState("");
+  const [selectedGender, setSelectedGender] = useState("");
+  const [selectedBudget, setSelectedBudget] = useState("");
+  const [selectedSort, setSelectedSort] = useState<"distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc">("distanceAsc");
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -321,6 +322,30 @@ export default function App() {
     }
   }
 
+  async function selectGender(gender: string) {
+    setSelectedGender(gender);
+    setLoading(true);
+    try {
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget));
+    } catch (error) {
+      Alert.alert("Gender preference", error instanceof Error ? error.message : "Unable to filter by preference.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function selectBudget(budget: string) {
+    setSelectedBudget(budget);
+    setLoading(true);
+    try {
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget));
+    } catch (error) {
+      Alert.alert("Budget", error instanceof Error ? error.message : "Unable to filter by budget.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function topAction(action: string) {
     if (action === "Housing") {
       setActiveTab("housing");
@@ -422,6 +447,9 @@ export default function App() {
         cars={cars}
         selectedNeed={selectedNeed}
         selectedCategory={selectedCategory}
+        selectedGender={selectedGender}
+        selectedBudget={selectedBudget}
+        selectedSort={selectedSort}
         onMessage={openMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
@@ -432,6 +460,9 @@ export default function App() {
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
+        onGenderSelect={selectGender}
+        onBudgetSelect={selectBudget}
+        onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
       />
@@ -442,6 +473,9 @@ export default function App() {
         cars={cars}
         selectedNeed={selectedNeed}
         selectedCategory={selectedCategory}
+        selectedGender={selectedGender}
+        selectedBudget={selectedBudget}
+        selectedSort={selectedSort}
         onMessage={openMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
@@ -452,6 +486,9 @@ export default function App() {
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
+        onGenderSelect={selectGender}
+        onBudgetSelect={selectBudget}
+        onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
       />
@@ -678,7 +715,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: 6, paddingHorizontal: 8 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 24 : 18, paddingHorizontal: 8 },
   modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },

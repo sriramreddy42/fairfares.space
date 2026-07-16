@@ -11,5 +11,6 @@ export const appAssets = {
   search: require("../assets/icons8-magnifying-glass.png") as ImageSourcePropType,
   arrowUp: require("../assets/icons8-up-94.png") as ImageSourcePropType,
   arrowDown: require("../assets/icons8-arrow-down-94.png") as ImageSourcePropType,
-  carFallback: require("../assets/car-toyota-corolla.png") as ImageSourcePropType
+  carFallback: require("../assets/car-toyota-corolla.png") as ImageSourcePropType,
+  rentalPromo: require("../assets/rental-car-promo.png") as ImageSourcePropType
 };
