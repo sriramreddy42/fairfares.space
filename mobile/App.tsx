@@ -1,6 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
@@ -425,7 +425,7 @@ export default function App() {
       )}
       <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} />
       <Modal visible={loginOpen} transparent animationType="slide" onRequestClose={() => setLoginOpen(false)}>
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
             <Text style={styles.modalCopy}>
@@ -478,10 +478,10 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       <Modal visible={listingOpen} transparent animationType="slide" onRequestClose={() => setListingOpen(false)}>
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView style={styles.modalCard} contentContainerStyle={styles.listingForm}>
             <Text style={styles.modalTitle}>List room / property</Text>
             <Text style={styles.modalCopy}>This saves to the same FairFares housing database and expires in 30 days.</Text>
@@ -588,10 +588,10 @@ export default function App() {
               <Text style={styles.switchText}>Cancel</Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       <Modal visible={searchOpen} transparent animationType="slide" onRequestClose={() => setSearchOpen(false)}>
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Search housing</Text>
             <Text style={styles.modalCopy}>Enter a metro city and optional area, building, campus, or neighborhood.</Text>
@@ -639,7 +639,7 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -649,8 +649,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
-  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-start", paddingTop: 14, paddingHorizontal: 8 },
+  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
   modalCopy: { color: theme.colors.muted, fontSize: 16, lineHeight: 22 },
