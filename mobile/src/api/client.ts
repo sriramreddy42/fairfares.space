@@ -39,8 +39,8 @@ export const API_URL =
 
 const API_CANDIDATES = uniqueUrls(
   Platform.OS === "web"
-    ? [EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl(), "http://172.20.20.20:8010"]
-    : [EXPLICIT_API_URL, metroHostApiUrl(), "http://172.20.20.20:8010", "http://127.0.0.1:8010"]
+    ? [EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl(), "http://172.20.10.6:8010"]
+    : [EXPLICIT_API_URL, metroHostApiUrl(), "http://172.20.10.6:8010", "http://127.0.0.1:8010"]
 );
 
 let authToken = "";
@@ -86,6 +86,56 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   throw new Error(`Could not connect to FairFares API. Tried: ${API_CANDIDATES.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
+const fallbackHousing: HousingPost[] = [
+  {
+    id: "FFH-OFFLINE-HAVE-PLACE",
+    title: "Furnished private room available near DU",
+    description: "Private furnished room in a quiet shared home near University of Denver. Good for students or professionals looking for a clean month-to-month place with parking and light rail nearby.",
+    mode: "HAVE_PLACE",
+    modeLabel: "Place available",
+    category: "single_room",
+    categoryLabel: "Single Room",
+    location: "Denver, CO",
+    area: "DU, University Park",
+    workLocation: "University of Denver",
+    moveIn: "08/01/2026",
+    rent: "$900-$1,100 / monthly",
+    rentValue: 900,
+    radiusMiles: 10,
+    distanceMiles: 4.5,
+    lat: 39.6781,
+    lng: -104.9618,
+    imageUrl: "",
+    daysLeft: 30,
+    expiryLabel: "30 days left",
+    roommateIntent: false,
+    genderPreference: "Open",
+    leaseTerm: "Flexible",
+    bathroomType: "Shared Bath",
+    accommodates: 1,
+    roommateCount: 0,
+    amenities: ["Parking", "Utilities", "Light rail"]
+  }
+];
+
+const fallbackCars: Car[] = [
+  { id: 1, name: "Toyota Corolla", brand: "Toyota", model: "Corolla", year: 2025, category: "Economy", type: "Sedan", fuel_type: "Gasoline", seats: 5, bags: 2, doors: 4, transmission: "Automatic", daily_price: 29.99, badge: "Great Price", features: "Free Cancellation|Unlimited Mileage|Fuel Efficient", location: "Denver International Airport (DEN)", image_url: "/static/img/toyota-corolla-sedan-denver-rental.png", booked_until_date: "", booked_until_time: "" },
+  { id: 2, name: "Nissan Sentra", brand: "Nissan", model: "Sentra", year: 2025, category: "Compact", type: "Sedan", fuel_type: "Gasoline", seats: 5, bags: 2, doors: 4, transmission: "Automatic", daily_price: 34.99, badge: "Student Deal", features: "Free Cancellation|Unlimited Mileage|Hybrid Option", location: "Denver International Airport (DEN)", image_url: "/static/img/nissan-sentra-sedan-denver-rental.png", booked_until_date: "", booked_until_time: "" },
+  { id: 3, name: "Honda Civic", brand: "Honda", model: "Civic", year: 2025, category: "Midsize", type: "Sedan", fuel_type: "Gasoline", seats: 5, bags: 2, doors: 4, transmission: "Automatic", daily_price: 39.99, badge: "Popular", features: "Unlimited Mileage|Safe & Reliable|Fuel Efficient", location: "Denver International Airport (DEN)", image_url: "/static/img/honda-civic-sedan-denver-rental.png", booked_until_date: "", booked_until_time: "" }
+];
+
+function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
+  return {
+    ok: true,
+    user: null,
+    location: { city, selected: city, suggested: "Aurora, CO" },
+    housing: fallbackHousing,
+    communities: [],
+    chat: { unreadCount: 0, conversations: [] },
+    dashboard: { housingPosts: 0, messages: 0 }
+  };
+}
+
 export function absoluteAssetUrl(value: string) {
   if (!value) return "";
   if (/^https?:\/\//i.test(value)) return value;
@@ -93,18 +143,30 @@ export function absoluteAssetUrl(value: string) {
 }
 
 export async function getBootstrap(city = "Denver, CO") {
-  return request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
+  try {
+    return await request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
+  } catch {
+    return fallbackBootstrap(city);
+  }
 }
 
 export async function getHousing(city: string, area: string, need: string, category = "", gender = "", budget = "") {
   const query = new URLSearchParams({ city, area, need, category, gender, budget, limit: "50" });
-  const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
-  return payload.posts;
+  try {
+    const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
+    return payload.posts;
+  } catch {
+    return fallbackHousing.filter((post) => !category || post.category === category);
+  }
 }
 
 export async function getCars() {
-  const payload = await request<{ cars: Car[] }>("/api/mobile/rentals");
-  return payload.cars || [];
+  try {
+    const payload = await request<{ cars: Car[] }>("/api/mobile/rentals");
+    return payload.cars || [];
+  } catch {
+    return fallbackCars;
+  }
 }
 
 export async function bookRentalCar(carId: number) {
@@ -116,8 +178,12 @@ export async function bookRentalCar(carId: number) {
 }
 
 export async function getSiteServices() {
-  const payload = await request<{ services: ServiceItem[] }>("/api/site");
-  return payload.services || [];
+  try {
+    const payload = await request<{ services: ServiceItem[] }>("/api/site");
+    return payload.services || [];
+  } catch {
+    return [];
+  }
 }
 
 export async function mobileLogin(identifier: string, password: string) {
