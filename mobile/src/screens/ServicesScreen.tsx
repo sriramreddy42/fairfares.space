@@ -46,9 +46,10 @@ type Props = {
   selected: ServiceKey;
   onSelect: (service: ServiceKey) => void;
   onOpenHousing: () => void;
+  onBookCar: (car: Car) => void;
 };
 
-export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousing }: Props) {
+export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousing, onBookCar }: Props) {
   function openTile(tile: ServiceTile) {
     if (tile.action === "housing") {
       onOpenHousing();
@@ -63,7 +64,7 @@ export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousi
       <ServiceGrid title="Go anywhere" tiles={goAnywhere} selected={selected} onPress={openTile} />
       <ServiceGrid title="Get anything done" tiles={deliveryTiles} selected={selected} onPress={openTile} />
 
-      {selected === "cars" ? <CarRentals cars={cars} /> : null}
+      {selected === "cars" ? <CarRentals cars={cars} onBookCar={onBookCar} /> : null}
       {selected === "deals" ? <Deals /> : null}
       {selected === "explorer" ? <Explorer /> : null}
       {selected === "local" ? <LocalServices services={services} /> : null}
@@ -102,7 +103,7 @@ function ServiceGrid({
   );
 }
 
-function CarRentals({ cars }: { cars: Car[] }) {
+function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car) => void }) {
   const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
   return (
     <View style={styles.section}>
@@ -119,7 +120,7 @@ function CarRentals({ cars }: { cars: Car[] }) {
       {cars.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
-          <TouchableOpacity key={car.id} style={styles.carCard} onPress={() => Alert.alert(car.name, `${car.category} · ${car.location || "Location open"}`)}>
+          <TouchableOpacity key={car.id} style={styles.carCard} onPress={() => onBookCar(car)}>
             {image ? <Image source={{ uri: image }} style={styles.carImage} /> : <Image source={appAssets.carFallback} style={styles.carImage} />}
             <View style={styles.carBody}>
               <Text style={styles.cardTitle}>{car.name}</Text>

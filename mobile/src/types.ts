@@ -85,6 +85,28 @@ export type Car = {
   booked_until_time: string;
 };
 
+export type RentalBooking = {
+  id: string;
+  carId: number;
+  carName: string;
+  category: string;
+  pickupLocation: string;
+  pickupDate: string;
+  pickupTime: string;
+  returnLocation: string;
+  returnDate: string;
+  returnTime: string;
+  days: number;
+  dailyPrice: number;
+  total: number;
+  holdAmount: number;
+  dueAtPickup: number;
+  savings: number;
+  status: string;
+  paymentStatus: string;
+  holdRemainingSeconds: number;
+};
+
 export type BootstrapPayload = {
   ok: boolean;
   user: FairFaresUser | null;

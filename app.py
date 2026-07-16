@@ -4652,12 +4652,7 @@ def init_db() -> None:
                 (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission, daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [
-                    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-sedan-denver-rental.png", "AVAILABLE", 1),
-                    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-sedan-denver-rental.png", "AVAILABLE", 2),
-                    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-electric-suv-denver-rental.png", "AVAILABLE", 3),
-                    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-sedan-denver-rental.png", "AVAILABLE", 4),
-                ],
+                DEFAULT_PUBLIC_CARS,
             )
         con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-sedan-denver-rental.png' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png', '/static/img/toyota-corolla-denver-rental.png')")
         con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-sedan-denver-rental.png' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png', '/static/img/nissan-sentra-denver-rental.png')")
@@ -4823,8 +4818,33 @@ def get_services() -> list[sqlite3.Row]:
         return con.execute("SELECT * FROM services ORDER BY sort_order, id").fetchall()
 
 
+DEFAULT_PUBLIC_CARS = [
+    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-sedan-denver-rental.png", "AVAILABLE", 1),
+    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-sedan-denver-rental.png", "AVAILABLE", 2),
+    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-sedan-denver-rental.png", "AVAILABLE", 3),
+    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-electric-suv-denver-rental.png", "AVAILABLE", 4),
+]
+
+
+def ensure_default_car_inventory() -> None:
+    with db() as con:
+        car_count = con.execute("SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) != 'DELETED'").fetchone()["total"]
+        if car_count:
+            return
+        con.executemany(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            DEFAULT_PUBLIC_CARS,
+        )
+
+
 def get_cars() -> list[sqlite3.Row]:
     expire_stale_booking_holds()
+    ensure_default_car_inventory()
     with db() as con:
         return con.execute(
             """
@@ -11077,6 +11097,40 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    public_fields = (
+        "id", "name", "brand", "model", "year", "category", "type", "fuel_type",
+        "seats", "bags", "doors", "transmission", "daily_price", "badge",
+        "features", "location", "image_url", "booked_until_date", "booked_until_time",
+    )
+    return {field: row_value(row, field) for field in public_fields}
+
+
+def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    breakdown = booking_price_breakdown(row)
+    return {
+        "id": row_value(row, "booking_id") or row_value(row, "id"),
+        "carId": int(row_value(row, "car_id") or 0),
+        "carName": row_value(row, "car_name"),
+        "category": row_value(row, "category"),
+        "pickupLocation": row_value(row, "pickup_location"),
+        "pickupDate": row_value(row, "pickup_date"),
+        "pickupTime": row_value(row, "pickup_time"),
+        "returnLocation": row_value(row, "dropoff_location"),
+        "returnDate": row_value(row, "dropoff_date"),
+        "returnTime": row_value(row, "dropoff_time"),
+        "days": int(row_value(row, "days") or 0),
+        "dailyPrice": float(row_value(row, "daily_price") or 0),
+        "total": breakdown.get("total"),
+        "holdAmount": breakdown.get("booking_hold"),
+        "dueAtPickup": breakdown.get("due_at_pickup"),
+        "savings": breakdown.get("savings"),
+        "status": row_value(row, "booking_status"),
+        "paymentStatus": row_value(row, "payment_status"),
+        "holdRemainingSeconds": booking_hold_remaining_seconds(row),
+    }
+
+
 def mobile_housing_posts(
     city: str = "",
     area: str = "",
@@ -13426,6 +13480,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
             return
+        if parsed.path == "/api/mobile/rentals":
+            self.api_mobile_rentals(parsed)
+            return
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
             return
@@ -13536,6 +13593,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/housing": self.api_mobile_create_housing,
+            "/api/mobile/rentals/book": self.api_mobile_book_rental,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -21159,6 +21217,59 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
+
+    def api_mobile_rentals(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        location = (params.get("location", [""])[0] or "").strip()
+        category = (params.get("category", [""])[0] or "").strip()
+        cars = get_cars()
+        if location:
+            cars = [
+                car for car in cars
+                if location.lower() in row_value(car, "location").lower()
+                or location.lower() in row_value(car, "name").lower()
+                or location.lower() in row_value(car, "category").lower()
+            ]
+        if category:
+            cars = [car for car in cars if category.lower() in row_value(car, "category").lower()]
+        self.send_json(
+            {
+                "ok": True,
+                "cars": [mobile_car_payload(car) for car in cars],
+                "cheapest": mobile_car_payload(cars[0]) if cars else None,
+            }
+        )
+
+    def api_mobile_book_rental(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before booking a rental car."}, 401)
+            return
+        payload = self.read_json_body()
+        car_id = int(float_from_value(payload.get("carId") or payload.get("car_id") or "0"))
+        if not car_id:
+            self.send_json({"ok": False, "error": "Choose a rental car first."}, 400)
+            return
+        try:
+            booking = ensure_booking_for_user(
+                int(row_value(user, "id") or 0),
+                car_id=car_id,
+                discount_code=str(payload.get("discountCode") or payload.get("discount_code") or "").strip(),
+                days=int(float_from_value(payload.get("days") or "3") or 3),
+                pickup_date=str(payload.get("pickupDate") or payload.get("pickup_date") or "").strip(),
+                return_date=str(payload.get("returnDate") or payload.get("return_date") or "").strip(),
+                pickup_time=str(payload.get("pickupTime") or payload.get("pickup_time") or "10:00 AM").strip(),
+                return_time=str(payload.get("returnTime") or payload.get("return_time") or "10:00 AM").strip(),
+                pickup_location=str(payload.get("pickupLocation") or payload.get("pickup_location") or "").strip(),
+                return_location=str(payload.get("returnLocation") or payload.get("return_location") or "").strip(),
+            )
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc) or "Unable to start this rental booking."}, 400)
+            return
+        if not booking:
+            self.send_json({"ok": False, "error": "Selected car is not available for that pickup time."}, 409)
+            return
+        self.send_json({"ok": True, "booking": mobile_booking_payload(booking)})
 
     def api_mobile_create_housing(self) -> None:
         user = self.current_user()

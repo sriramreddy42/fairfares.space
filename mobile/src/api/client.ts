@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, HousingPost, ServiceItem } from "../types";
+import { BootstrapPayload, Car, HousingPost, RentalBooking, ServiceItem } from "../types";
 import { NativeModules } from "react-native";
 
 declare const process: {
@@ -100,8 +100,16 @@ export async function getHousing(city: string, area: string, need: string, categ
 }
 
 export async function getCars() {
-  const payload = await request<{ cars: Car[] }>("/api/cars");
+  const payload = await request<{ cars: Car[] }>("/api/mobile/rentals");
   return payload.cars || [];
+}
+
+export async function bookRentalCar(carId: number) {
+  return request<{ ok: boolean; booking: RentalBooking }>("/api/mobile/rentals/book", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ carId, days: 3 })
+  });
 }
 
 export async function getSiteServices() {

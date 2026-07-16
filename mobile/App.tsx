@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -169,9 +169,32 @@ export default function App() {
     }
   }
 
+  async function bookCar(car: Car) {
+    if (!data?.user) {
+      setActiveTab("profile");
+      setLoginOpen(true);
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = await bookRentalCar(Number(car.id));
+      Alert.alert(
+        "Rental hold started",
+        `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`
+      );
+      const [payloadData, carRows] = await Promise.all([getBootstrap(city), getCars()]);
+      setData(payloadData);
+      setCars(carRows);
+    } catch (error) {
+      Alert.alert("Rental booking failed", error instanceof Error ? error.message : "Unable to start this booking.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function selectNeed(need: string) {
     if (need === "ride_need" || need === "ride_offer") {
-      Alert.alert("Rides", need === "ride_need" ? "Ride request flow is next. For now, use FairFares car rentals." : "Ride provider flow is next.");
+      setSelectedService("cars");
       setActiveTab("services");
       return;
     }
@@ -390,6 +413,7 @@ export default function App() {
         selected={selectedService}
         onSelect={setSelectedService}
         onOpenHousing={() => setActiveTab("housing")}
+        onBookCar={bookCar}
       />
     ) : activeTab === "housing" || activeTab === "home" ? (
       <HousingScreen
