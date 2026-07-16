@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Image, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -36,6 +36,8 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
   { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
 ];
 
+const searchPhrases = ["Search city", "Search area", "Search building"];
+
 export function HousingScreen({
   data,
   posts,
@@ -51,8 +53,11 @@ export function HousingScreen({
   onPostNeed,
   onTopAction
 }: Props) {
-  const [mode, setMode] = useState<"roommates" | "rentals">("roommates");
+  const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
+  const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
+  const [searchLetterCount, setSearchLetterCount] = useState(1);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
+  const animatedSearchText = searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
   const cheapestCar = useMemo(
     () =>
       [...cars]
@@ -83,49 +88,70 @@ export function HousingScreen({
   }, [data?.location.city, posts]);
   const showRoomTypes = selectedNeed === "need_place" || selectedNeed === "need_roommates";
 
+  useEffect(() => {
+    const phrase = searchPhrases[searchPhraseIndex];
+    const timer = setTimeout(() => {
+      if (searchLetterCount < phrase.length) {
+        setSearchLetterCount((value) => value + 1);
+      } else {
+        setSearchPhraseIndex((value) => (value + 1) % searchPhrases.length);
+        setSearchLetterCount(1);
+      }
+    }, searchLetterCount < phrase.length ? 95 : 900);
+    return () => clearTimeout(timer);
+  }, [searchLetterCount, searchPhraseIndex]);
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.brandHeader}>
-        <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
+    <View style={styles.screen}>
+      <View style={styles.fixedHeader}>
+        <View style={styles.brandHeader}>
+          <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
+        </View>
+
+        <View style={styles.topTabs}>
+          {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
+            <TouchableOpacity key={item} onPress={() => onTopAction(item)} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
+              <Text style={[styles.topTabText, item === "Housing" && styles.topTabTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
+          <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
+          <Text style={styles.searchText}>{animatedSearchText}</Text>
+          <Text style={styles.later}>Search</Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={styles.topTabs}>
-        {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
-          <TouchableOpacity key={item} onPress={() => onTopAction(item)} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
-            <Text style={[styles.topTabText, item === "Housing" && styles.topTabTextActive]}>{item}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
-        <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-        <Text style={styles.searchText}>Search city, area, building</Text>
-        <Text style={styles.later}>Search</Text>
-      </TouchableOpacity>
-
-      <View style={styles.filterSummary}>
-        <Text style={styles.filterText}>Showing {posts.length} result{posts.length === 1 ? "" : "s"}</Text>
-        <Text style={styles.filterText}>{selectedNeed || "Any housing"} · {selectedCategory || "Any type"} · {data?.location.city || "Denver, CO"}</Text>
-      </View>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
       <View style={styles.segment}>
         <TouchableOpacity
-          style={[styles.segmentButton, mode === "roommates" && styles.segmentActive]}
+          style={[styles.segmentButton, mode === "housing" && styles.segmentActive]}
           onPress={() => {
-            setMode("roommates");
-            onNeedSelect("need_roommates");
-          }}
-        >
-          <Text style={[styles.segmentText, mode === "roommates" && styles.segmentTextActive]}>Roommates</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.segmentButton, mode === "rentals" && styles.segmentActive]}
-          onPress={() => {
-            setMode("rentals");
+            setMode("housing");
             onNeedSelect("need_place");
           }}
         >
-          <Text style={[styles.segmentText, mode === "rentals" && styles.segmentTextActive]}>Rentals</Text>
+          <Text style={[styles.segmentText, mode === "housing" && styles.segmentTextActive]}>Housing</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "ride" && styles.segmentActive]}
+          onPress={() => {
+            setMode("ride");
+            onTopAction("Ride");
+          }}
+        >
+          <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Ride</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "cheapCars" && styles.segmentActive]}
+          onPress={() => {
+            setMode("cheapCars");
+            onTopAction("Ride");
+          }}
+        >
+          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Cheap Cars</Text>
         </TouchableOpacity>
       </View>
 
@@ -230,15 +256,18 @@ export function HousingScreen({
           </ScrollView>
         </>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
+  fixedHeader: { backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.sm, paddingBottom: theme.spacing.md, gap: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  scroll: { flex: 1 },
   content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
-  brandHeader: { flexDirection: "row", alignItems: "center" },
-  logo: { width: 122, height: 54 },
+  brandHeader: { alignItems: "center" },
+  logo: { width: 150, height: 62 },
   topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   topTab: { paddingVertical: 12, paddingRight: 22 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
@@ -248,8 +277,6 @@ const styles = StyleSheet.create({
   searchIcon: { width: 30, height: 30 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 20, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, fontWeight: "900" },
-  filterSummary: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
-  filterText: { color: theme.colors.soft, fontWeight: "800" },
   segment: { backgroundColor: "#252a7a", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5 },
   segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   segmentActive: { backgroundColor: theme.colors.text },

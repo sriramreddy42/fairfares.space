@@ -7,10 +7,9 @@ export type TabKey = "home" | "housing" | "services" | "messenger" | "profile";
 
 const tabs: Array<{ key: TabKey; label: string; icon: ImageSourcePropType }> = [
   { key: "home", label: "Home", icon: appAssets.logo },
-  { key: "housing", label: "Housing", icon: appAssets.bed },
   { key: "services", label: "Services", icon: appAssets.ride },
-  { key: "messenger", label: "Chats", icon: appAssets.message },
-  { key: "profile", label: "Profile", icon: appAssets.profile }
+  { key: "messenger", label: "Activity", icon: appAssets.message },
+  { key: "profile", label: "Account", icon: appAssets.profile }
 ];
 
 type Props = {
