@@ -5,9 +5,9 @@ import { theme } from "../theme";
 
 export type TabKey = "home" | "housing" | "services" | "messenger" | "profile";
 
-const tabs: Array<{ key: TabKey; label: string; icon: ImageSourcePropType }> = [
-  { key: "home", label: "Home", icon: appAssets.logo },
-  { key: "services", label: "Services", icon: appAssets.ride },
+const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; symbol?: string }> = [
+  { key: "home", label: "Home", symbol: "⌂" },
+  { key: "services", label: "Services", symbol: "▦" },
   { key: "messenger", label: "Activity", icon: appAssets.message },
   { key: "profile", label: "Account", icon: appAssets.profile }
 ];
@@ -26,7 +26,11 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
         return (
           <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.active]} onPress={() => onChange(tab.key)}>
             <View style={[styles.icon, isActive && styles.activeIcon]}>
-              <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
+              {tab.icon ? (
+                <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
+              ) : (
+                <Text style={[styles.symbol, isActive && styles.symbolActive]}>{tab.symbol}</Text>
+              )}
               {tab.key === "messenger" && unreadCount > 0 ? <Text style={styles.badge}>{unreadCount}</Text> : null}
             </View>
             <Text style={[styles.label, isActive && styles.activeLabel]}>{tab.label}</Text>
@@ -78,6 +82,15 @@ const styles = StyleSheet.create({
   iconImage: {
     width: 23,
     height: 23
+  },
+  symbol: {
+    color: theme.colors.muted,
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 27
+  },
+  symbolActive: {
+    color: theme.colors.bg
   },
   label: {
     color: theme.colors.muted,
