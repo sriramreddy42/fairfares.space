@@ -21154,7 +21154,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "activationRequired": True,
                 "message": "Account created. Activate it from the email link, then log in.",
                 "activationLink": link if not delivery_status.startswith("sent") else "",
-                "outboxFile": outbox_file,
+                "outboxFile": str(outbox_file),
             },
             201,
         )

@@ -125,6 +125,7 @@ export default function App() {
   const [signupPhone, setSignupPhone] = useState("");
   const [password, setPassword] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
+  const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -279,11 +280,7 @@ export default function App() {
     }
   }
 
-  function postNeed() {
-    if (!data?.user) {
-      setLoginOpen(true);
-      return;
-    }
+  function openListingFormForUser(user: BootstrapPayload["user"]) {
     const nextMode: MobileHousingPostInput["postMode"] =
       selectedNeed === "need_place" || selectedNeed === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
     setListingForm({
@@ -291,11 +288,20 @@ export default function App() {
       postMode: nextMode,
       roommateIntent: selectedNeed === "need_roommates",
       city,
-      contactName: data.user.name || "",
-      contactEmail: data.user.email || "",
-      contactPhone: data.user.phone || ""
+      contactName: user?.name || "",
+      contactEmail: user?.email || "",
+      contactPhone: user?.phone || ""
     });
     setListingOpen(true);
+  }
+
+  function postNeed() {
+    if (!data?.user) {
+      setPendingListingAfterLogin(true);
+      setLoginOpen(true);
+      return;
+    }
+    openListingFormForUser(data.user);
   }
 
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
@@ -417,11 +423,15 @@ export default function App() {
 
   async function submitLogin() {
     try {
-      await mobileLogin(identifier, password);
+      const payload = await mobileLogin(identifier, password);
       setLoginOpen(false);
       setIdentifier("");
       setPassword("");
       await load();
+      if (pendingListingAfterLogin) {
+        setPendingListingAfterLogin(false);
+        openListingFormForUser(payload.user);
+      }
     } catch (error) {
       Alert.alert("Login failed", error instanceof Error ? error.message : "Please try again.");
     }
