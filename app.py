@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715fixed-footer"
+ASSET_VERSION = "20260715profile-drawer"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -11767,6 +11767,97 @@ def member_workspace_context(user: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def render_profile_drawer(user: sqlite3.Row | None) -> str:
+    if not user:
+        return """
+        <aside class="profile-drawer-shell" data-profile-drawer aria-hidden="true">
+          <button class="profile-drawer-backdrop" type="button" data-profile-drawer-close aria-label="Close profile"></button>
+          <section class="profile-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle">
+            <div class="profile-drawer-actions">
+              <a href="/accommodations#post">Post your need</a>
+              <a href="/login">Login</a>
+              <button type="button" data-profile-drawer-close>Close</button>
+            </div>
+            <div class="profile-drawer-head">
+              <div>
+                <h2 id="profileDrawerTitle">Welcome to FairFares</h2>
+                <p>Sign in to view notifications, housing posts, rides, and messages.</p>
+              </div>
+            </div>
+            <div class="profile-drawer-service-list">
+              <a href="/login"><span>👤</span><b>Login / Create account</b><small>Save listings, chat, and manage trips.</small></a>
+              <a href="/accommodations"><span>🏠</span><b>Roommates</b><small>Find rooms and shared places.</small></a>
+              <a href="/"><span>🚗</span><b>Car Rentals</b><small>Book and manage rentals.</small></a>
+            </div>
+          </section>
+        </aside>
+        """
+    context = member_workspace_context(user)
+    chat_count = context["member_chat_count"]
+    listing_count = context["member_listing_count"]
+    request_count = context["member_request_count"]
+    booking_count = context["member_booking_count"]
+    first_name = context["member_first_name"]
+    full_name = context["member_full_name"]
+    notifications = []
+    if str(chat_count) != "0":
+        notifications.append(f"{chat_count} unread Fair Messenger message(s)")
+    if str(listing_count) != "0":
+        notifications.append(f"{listing_count} housing post(s) in your dashboard")
+    if str(booking_count) != "0":
+        notifications.append(f"{booking_count} active rental booking(s)")
+    notification_body = "You have new notifications" if notifications else "No new messages or notifications right now."
+    notification_items = "".join(f"<li>{escape(item)}</li>" for item in notifications) or "<li>Check back later for updates.</li>"
+    return f"""
+    <aside class="profile-drawer-shell" data-profile-drawer aria-hidden="true">
+      <button class="profile-drawer-backdrop" type="button" data-profile-drawer-close aria-label="Close profile"></button>
+      <section class="profile-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle">
+        <div class="profile-drawer-actions">
+          <button type="button" data-open-housing-post>Post your need</button>
+          <a href="/logout">Logout</a>
+          <button type="button" data-profile-drawer-close>Close</button>
+        </div>
+        <div class="profile-drawer-head">
+          <div>
+            <h2 id="profileDrawerTitle">Hi {first_name}</h2>
+            <a href="/dashboard">Profile⌄</a>
+          </div>
+          <span class="profile-drawer-avatar">{context["member_avatar"]}</span>
+        </div>
+        <section class="profile-drawer-notice">
+          <h3>{escape(notification_body)}</h3>
+          <ul>{notification_items}</ul>
+        </section>
+        <div class="profile-drawer-feature is-active">
+          <span>🔔</span>
+          <div><b>Notifications</b><small>{escape(full_name)}</small></div>
+          <i>›</i>
+        </div>
+        <div class="profile-drawer-service-list">
+          <a href="/accommodations">
+            <span>🏠</span><b>Roommates</b><small>{listing_count} listings · {request_count} requests</small><em>Go to Website</em><em>Go to My Dashboard</em>
+          </a>
+          <a href="/dashboard?tab=housing#housing">
+            <span>📋</span><b>Housing Dashboard</b><small>Manage rooms, roommate needs, and listing expiry.</small><em>Open Dashboard</em>
+          </a>
+          <a href="/dashboard">
+            <span>🚗</span><b>Car Rentals</b><small>{booking_count} active booking(s)</small><em>Go to My Dashboard</em>
+          </a>
+          <a href="/dashboard?tab=messages#messages">
+            <span>💬</span><b>Fair Messenger</b><small>{chat_count} unread message(s)</small><em>Open Messages</em>
+          </a>
+          <a href="/explorer">
+            <span>🧭</span><b>Explorer</b><small>Find areas, routes, and nearby places.</small><em>Go to Website</em>
+          </a>
+          <a href="/contact">
+            <span>☎</span><b>Support</b><small>Contact FairFares for help.</small><em>Go to Website</em>
+          </a>
+        </div>
+      </section>
+    </aside>
+    """
+
+
 def public_upload_url(value: str) -> str:
     value = (value or "").strip()
     if not value:
@@ -13786,6 +13877,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             gender_options=render_select_options(ACCOMMODATION_GENDER_OPTIONS, "open"),
             lease_term_options=render_select_options(ACCOMMODATION_LEASE_TERMS, "flexible"),
             posts_html=render_accommodation_posts(posts),
+            profile_drawer_html=render_profile_drawer(user),
             map_payload_json=map_payload_json,
             maps_loader=explorer_maps_loader(),
             asset_version=ASSET_VERSION,
