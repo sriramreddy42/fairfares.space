@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -212,10 +212,14 @@ export default function App() {
   }
 
   async function selectArea(nextArea: string) {
-    setArea(nextArea);
+    const lookup = await lookupAccommodationLocation(nextArea || city);
+    const resolvedArea = nextArea ? lookup?.selectedLocation || nextArea : "";
+    const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
+    setArea(resolvedArea);
+    setCity(resolvedCity);
     setLoading(true);
     try {
-      const posts = await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
+      const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -223,14 +227,15 @@ export default function App() {
               ...current,
               location: {
                 ...current.location,
-                city,
-                selected: nextArea ? `${city} · ${nextArea}` : city
+                city: resolvedCity,
+                selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
+                suggested: lookup?.suggestedLocation || current.location.suggested
               },
               housing: posts
             }
           : current
       );
-      Alert.alert("Location updated", `Showing listings around ${nextArea}.`);
+      Alert.alert("Location updated", `Showing listings around ${resolvedArea || resolvedCity}.`);
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
     } finally {
@@ -242,13 +247,16 @@ export default function App() {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-    setCity(cleanCity);
-    setArea(cleanArea);
+    const lookup = await lookupAccommodationLocation(cleanArea || cleanCity);
+    const resolvedArea = cleanArea ? lookup?.selectedLocation || cleanArea : "";
+    const resolvedCity = cleanArea ? cleanCity : normalizeCityInput(lookup?.selectedLocation || cleanCity);
+    setCity(resolvedCity);
+    setArea(resolvedArea);
     setSearchRadius(cleanRadius);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
+      const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -256,8 +264,9 @@ export default function App() {
               ...current,
               location: {
                 ...current.location,
-                city: cleanCity,
-                selected: cleanArea ? `${cleanCity} · ${cleanArea}` : cleanCity
+                city: resolvedCity,
+                selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
+                suggested: lookup?.suggestedLocation || current.location.suggested
               },
               housing: posts
             }

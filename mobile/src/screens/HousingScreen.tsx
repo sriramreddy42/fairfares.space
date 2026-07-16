@@ -179,7 +179,7 @@ export function HousingScreen({
             onTopAction("Ride");
           }}
         >
-          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Cheap Cars</Text>
+          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Cheap Rental Cars</Text>
         </TouchableOpacity>
       </View>
 

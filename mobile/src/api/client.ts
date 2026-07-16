@@ -165,6 +165,27 @@ export async function getHousing(city: string, area: string, need: string, categ
   }
 }
 
+export type AccommodationLocationLookup = {
+  ok: boolean;
+  metro: string;
+  selectedLocation: string;
+  rawLocation: string;
+  suggestedLocation: string;
+  lat: number;
+  lng: number;
+  source: string;
+};
+
+export async function lookupAccommodationLocation(query: string) {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return null;
+  try {
+    return await request<AccommodationLocationLookup>(`/api/accommodations/locations?q=${encodeURIComponent(cleanQuery)}`);
+  } catch {
+    return null;
+  }
+}
+
 export async function getCars() {
   try {
     const payload = await request<{ cars: Car[] }>("/api/mobile/rentals");
