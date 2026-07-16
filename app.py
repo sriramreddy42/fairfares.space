@@ -11077,6 +11077,7 @@ def mobile_housing_posts(
     city: str = "",
     area: str = "",
     need: str = "",
+    category: str = "",
     limit: int = 30,
 ) -> list[dict[str, object]]:
     expire_accommodation_posts()
@@ -11091,6 +11092,9 @@ def mobile_housing_posts(
         clauses.append("post_mode = 'NEED_PLACE'")
     elif need == "need_roommates":
         clauses.append("roommate_intent = 1")
+    if category:
+        clauses.append("category = ?")
+        values.append(category)
     search_term_groups: list[list[str]] = []
     for raw_term in (city, area):
         term = (raw_term or "").strip()
@@ -13463,6 +13467,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
             "/api/mobile/login": self.api_mobile_login,
+            "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
@@ -20979,6 +20984,49 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, int(row_value(user, "id") or 0)))
         self.send_json({"ok": True, "token": token, "user": mobile_user_payload(user)})
 
+    def api_mobile_signup(self) -> None:
+        payload = self.read_json_body()
+        name = " ".join(str(payload.get("name") or "FairFares Member").split())[:120] or "FairFares Member"
+        email = normalize_email(payload.get("email") or payload.get("identifier") or "")
+        phone = str(payload.get("phone") or "").strip()
+        clean_phone = normalize_phone(phone)
+        password = str(payload.get("password") or "")
+        if "@" not in email or len(clean_phone) < 7 or len(password) < 8:
+            self.send_json(
+                {
+                    "ok": False,
+                    "error": "Use a valid email, phone number, and a password with at least 8 characters.",
+                },
+                400,
+            )
+            return
+        try:
+            with db() as con:
+                if find_user_by_email(con, email):
+                    self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
+                    return
+                con.execute(
+                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
+                    (name, email, phone, hash_password(password)),
+                )
+                user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        except sqlite3.IntegrityError:
+            self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
+            return
+        token = create_verification(user_id, email)
+        link = self.activation_url(token)
+        outbox_file, delivery_status = send_activation_email(email, name, link)
+        self.send_json(
+            {
+                "ok": True,
+                "activationRequired": True,
+                "message": "Account created. Activate it from the email link, then log in.",
+                "activationLink": link if not delivery_status.startswith("sent") else "",
+                "outboxFile": outbox_file,
+            },
+            201,
+        )
+
     def api_mobile_logout(self) -> None:
         auth_header = (self.headers.get("Authorization") or "").strip()
         token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else ""
@@ -21023,17 +21071,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         city = (params.get("city", ["Denver, CO"])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
         need = (params.get("need", [""])[0] or "").strip()
+        category = (params.get("category", [""])[0] or "").strip()
         try:
             limit = int(params.get("limit", ["30"])[0] or 30)
         except ValueError:
             limit = 30
-        posts = mobile_housing_posts(city=city, area=area, need=need, limit=limit)
+        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, limit=limit)
         self.send_json(
             {
                 "ok": True,
                 "city": city,
                 "area": area,
                 "need": need,
+                "category": category,
                 "posts": posts,
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }

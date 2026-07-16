@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
@@ -9,10 +9,13 @@ type Props = {
   data: BootstrapPayload | null;
   posts: HousingPost[];
   selectedNeed: string;
+  selectedCategory: string;
   onMessage: (post: HousingPost) => void;
   onOpenMessenger: () => void;
   onNeedSelect: (need: string) => void;
   onAreaSelect: (area: string) => void;
+  onOpenSearch: () => void;
+  onCategorySelect: (category: string) => void;
   onPostNeed: () => void;
   onTopAction: (action: string) => void;
 };
@@ -31,15 +34,17 @@ export function HousingScreen({
   data,
   posts,
   selectedNeed,
+  selectedCategory,
   onMessage,
   onOpenMessenger,
   onNeedSelect,
   onAreaSelect,
+  onOpenSearch,
+  onCategorySelect,
   onPostNeed,
   onTopAction
 }: Props) {
   const [mode, setMode] = useState<"roommates" | "rentals">("roommates");
-  const [selectedCategory, setSelectedCategory] = useState("");
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const localities = useMemo(
     () => [
@@ -60,9 +65,9 @@ export function HousingScreen({
         ))}
       </View>
 
-      <TouchableOpacity style={styles.searchBar} onPress={() => onAreaSelect("Union Station")}>
+      <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
         <Text style={styles.searchIcon}>Q</Text>
-        <Text style={styles.searchText}>Try Union Station, DU, Aurora</Text>
+        <Text style={styles.searchText}>Search city, area, building</Text>
         <Text style={styles.later}>Search</Text>
       </TouchableOpacity>
 
@@ -73,6 +78,11 @@ export function HousingScreen({
           <Text style={styles.locationMeta}>Search city, building, campus, or neighborhood</Text>
           <Text style={styles.green}>Lower housing friction than usual</Text>
         </View>
+      </View>
+
+      <View style={styles.filterSummary}>
+        <Text style={styles.filterText}>Showing {posts.length} result{posts.length === 1 ? "" : "s"}</Text>
+        <Text style={styles.filterText}>{selectedNeed || "Any housing"} · {selectedCategory || "Any type"} · {data?.location.city || "Denver, CO"}</Text>
       </View>
 
       <View style={styles.segment}>
@@ -161,8 +171,7 @@ export function HousingScreen({
             style={styles.roomType}
             onPress={() => {
               const category = type.toLowerCase().replace(" ", "_");
-              setSelectedCategory(selectedCategory === category ? "" : category);
-              Alert.alert("Room type selected", `${type} filtering will use the housing API category filter in the next slice.`);
+              onCategorySelect(selectedCategory === category ? "" : category);
             }}
           >
             <View style={[styles.roomCircle, selectedCategory === type.toLowerCase().replace(" ", "_") && styles.roomCircleActive]}><Text style={styles.roomIcon}>BED</Text></View>
@@ -207,6 +216,8 @@ const styles = StyleSheet.create({
   locationTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   locationMeta: { color: theme.colors.muted, fontSize: 15 },
   green: { color: theme.colors.green, fontSize: 15, fontWeight: "800" },
+  filterSummary: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
+  filterText: { color: theme.colors.soft, fontWeight: "800" },
   segment: { backgroundColor: "#252a7a", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5 },
   segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   segmentActive: { backgroundColor: theme.colors.text },

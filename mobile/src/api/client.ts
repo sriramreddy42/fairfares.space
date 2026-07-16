@@ -43,8 +43,8 @@ export async function getBootstrap(city = "Denver, CO") {
   return request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
 }
 
-export async function getHousing(city: string, area: string, need: string) {
-  const query = new URLSearchParams({ city, area, need, limit: "50" });
+export async function getHousing(city: string, area: string, need: string, category = "") {
+  const query = new URLSearchParams({ city, area, need, category, limit: "50" });
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
   return payload.posts;
 }
@@ -60,4 +60,15 @@ export async function mobileLogin(identifier: string, password: string) {
   );
   setAuthToken(payload.token);
   return payload;
+}
+
+export async function mobileSignup(name: string, email: string, phone: string, password: string) {
+  return request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string }>(
+    "/api/mobile/signup",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, phone, password })
+    }
+  );
 }

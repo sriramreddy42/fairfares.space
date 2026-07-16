@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { getBootstrap, getHousing, mobileLogin } from "./src/api/client";
+import { getBootstrap, getHousing, mobileLogin, mobileSignup } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -16,13 +16,20 @@ export default function App() {
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [identifier, setIdentifier] = useState("");
+  const [signupName, setSignupName] = useState("");
+  const [signupPhone, setSignupPhone] = useState("");
   const [password, setPassword] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchCity, setSearchCity] = useState("Denver, CO");
+  const [searchArea, setSearchArea] = useState("");
 
   async function load() {
     setLoading(true);
@@ -58,7 +65,7 @@ export default function App() {
     setSelectedNeed(need);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, need));
+      setVisiblePosts(await getHousing(city, area, need, selectedCategory));
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
@@ -70,10 +77,40 @@ export default function App() {
     setArea(nextArea);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, nextArea, selectedNeed));
+      setVisiblePosts(await getHousing(city, nextArea, selectedNeed, selectedCategory));
       Alert.alert("Location updated", `Showing listings around ${nextArea}.`);
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runSearch(nextCity = searchCity, nextArea = searchArea) {
+    const cleanCity = nextCity.trim() || "Denver, CO";
+    const cleanArea = nextArea.trim();
+    setCity(cleanCity);
+    setArea(cleanArea);
+    setSearchOpen(false);
+    setLoading(true);
+    try {
+      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory);
+      setVisiblePosts(posts);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              location: {
+                ...current.location,
+                city: cleanCity,
+                selected: cleanArea || cleanCity
+              },
+              housing: posts
+            }
+          : current
+      );
+    } catch (error) {
+      Alert.alert("Search failed", error instanceof Error ? error.message : "Unable to search this location.");
     } finally {
       setLoading(false);
     }
@@ -85,6 +122,18 @@ export default function App() {
       return;
     }
     Alert.alert("Post your need", "Native posting is next. For now, create the listing from the Housing page on the website so it saves to the same database.");
+  }
+
+  async function selectCategory(category: string) {
+    setSelectedCategory(category);
+    setLoading(true);
+    try {
+      setVisiblePosts(await getHousing(city, area, selectedNeed, category));
+    } catch (error) {
+      Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function topAction(action: string) {
@@ -112,6 +161,16 @@ export default function App() {
     }
   }
 
+  async function submitSignup() {
+    try {
+      const payload = await mobileSignup(signupName, identifier, signupPhone, password);
+      Alert.alert("Signup created", payload.activationLink ? `${payload.message}\n\nActivation link: ${payload.activationLink}` : payload.message);
+      setAuthMode("login");
+    } catch (error) {
+      Alert.alert("Signup failed", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
   const screen =
     activeTab === "messenger" ? (
       <MessengerScreen data={data} pendingPost={pendingPost} onRequireLogin={() => setLoginOpen(true)} />
@@ -124,10 +183,17 @@ export default function App() {
         data={data}
         posts={visiblePosts}
         selectedNeed={selectedNeed}
+        selectedCategory={selectedCategory}
         onMessage={openMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
         onAreaSelect={selectArea}
+        onOpenSearch={() => {
+          setSearchCity(city);
+          setSearchArea(area);
+          setSearchOpen(true);
+        }}
+        onCategorySelect={selectCategory}
         onPostNeed={postNeed}
         onTopAction={topAction}
       />
@@ -136,10 +202,17 @@ export default function App() {
         data={data}
         posts={visiblePosts}
         selectedNeed={selectedNeed}
+        selectedCategory={selectedCategory}
         onMessage={openMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
         onAreaSelect={selectArea}
+        onOpenSearch={() => {
+          setSearchCity(city);
+          setSearchArea(area);
+          setSearchOpen(true);
+        }}
+        onCategorySelect={selectCategory}
         onPostNeed={postNeed}
         onTopAction={topAction}
       />
@@ -160,16 +233,39 @@ export default function App() {
       <Modal visible={loginOpen} transparent animationType="slide" onRequestClose={() => setLoginOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Login to FairFares</Text>
-            <Text style={styles.modalCopy}>Email/phone and password are required before messaging posters or joining groups.</Text>
+            <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
+            <Text style={styles.modalCopy}>
+              {authMode === "login"
+                ? "Email/phone and password are required before messaging posters or joining groups."
+                : "Signup needs name, email, phone, and password. You will activate the account from email before login."}
+            </Text>
+            {authMode === "signup" ? (
+              <TextInput
+                value={signupName}
+                onChangeText={setSignupName}
+                placeholder="Full name"
+                placeholderTextColor={theme.colors.muted}
+                style={styles.input}
+              />
+            ) : null}
             <TextInput
               value={identifier}
               onChangeText={setIdentifier}
-              placeholder="Email or phone"
+              placeholder={authMode === "login" ? "Email or phone" : "Email"}
               placeholderTextColor={theme.colors.muted}
               autoCapitalize="none"
               style={styles.input}
             />
+            {authMode === "signup" ? (
+              <TextInput
+                value={signupPhone}
+                onChangeText={setSignupPhone}
+                placeholder="Phone number"
+                placeholderTextColor={theme.colors.muted}
+                keyboardType="phone-pad"
+                style={styles.input}
+              />
+            ) : null}
             <TextInput
               value={password}
               onChangeText={setPassword}
@@ -178,10 +274,48 @@ export default function App() {
               secureTextEntry
               style={styles.input}
             />
-            <TouchableOpacity style={styles.primaryButton} onPress={submitLogin}>
-              <Text style={styles.primaryButtonText}>Login</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={authMode === "login" ? submitLogin : submitSignup}>
+              <Text style={styles.primaryButtonText}>{authMode === "login" ? "Login" : "Sign up"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setAuthMode(authMode === "login" ? "signup" : "login")}>
+              <Text style={styles.secondaryButtonText}>{authMode === "login" ? "Need an account? Sign up" : "Already have an account? Login"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setLoginOpen(false)}>
+              <Text style={styles.secondaryButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={searchOpen} transparent animationType="slide" onRequestClose={() => setSearchOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Search housing</Text>
+            <Text style={styles.modalCopy}>Enter a metro city and optional area, building, campus, or neighborhood.</Text>
+            <TextInput
+              value={searchCity}
+              onChangeText={setSearchCity}
+              placeholder="City, e.g. Denver, CO"
+              placeholderTextColor={theme.colors.muted}
+              style={styles.input}
+            />
+            <TextInput
+              value={searchArea}
+              onChangeText={setSearchArea}
+              placeholder="Area/building, e.g. Union Station or DU"
+              placeholderTextColor={theme.colors.muted}
+              style={styles.input}
+            />
+            <View style={styles.chipRow}>
+              {["Union Station", "DU", "Aurora", "Englewood"].map((chip) => (
+                <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
+                  <Text style={styles.chipText}>{chip}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
+              <Text style={styles.primaryButtonText}>Search listings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setSearchOpen(false)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -203,5 +337,8 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 14 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },
-  secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" }
+  secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
+  chipText: { color: theme.colors.text, fontWeight: "800" }
 });
