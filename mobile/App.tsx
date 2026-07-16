@@ -232,6 +232,8 @@ export default function App() {
   const screen =
     activeTab === "messenger" ? (
       <MessengerScreen data={data} pendingPost={pendingPost} onRequireLogin={() => setLoginOpen(true)} />
+    ) : activeTab === "activity" ? (
+      <DashboardScreen data={data} />
     ) : activeTab === "profile" ? (
       <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} />
     ) : activeTab === "services" ? (

@@ -183,7 +183,7 @@ function LocalServices({ services }: { services: ServiceItem[] }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
+  content: { padding: theme.spacing.md, paddingBottom: 32, gap: theme.spacing.lg },
   title: { color: theme.colors.text, fontSize: 42, fontWeight: "900" },
   section: { gap: theme.spacing.md },
   sectionTitle: { color: theme.colors.text, fontSize: 25, fontWeight: "900" },

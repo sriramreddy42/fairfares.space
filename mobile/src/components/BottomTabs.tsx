@@ -3,12 +3,13 @@ import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } 
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 
-export type TabKey = "home" | "housing" | "services" | "messenger" | "profile";
+export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
-const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; custom?: "home" | "services" }> = [
+const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; custom?: "home" | "services" | "activity" }> = [
   { key: "home", label: "Home", custom: "home" },
   { key: "services", label: "Services", custom: "services" },
-  { key: "messenger", label: "Activity", icon: appAssets.message },
+  { key: "activity", label: "Activity", custom: "activity" },
+  { key: "messenger", label: "Chats", icon: appAssets.message },
   { key: "profile", label: "Account", icon: appAssets.profile }
 ];
 
@@ -30,8 +31,10 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
                 <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
               ) : tab.custom === "home" ? (
                 <HomeIcon active={isActive} />
-              ) : (
+              ) : tab.custom === "services" ? (
                 <ServicesIcon active={isActive} />
+              ) : (
+                <ActivityIcon active={isActive} />
               )}
               {tab.key === "messenger" && unreadCount > 0 ? <Text style={styles.badge}>{unreadCount}</Text> : null}
             </View>
@@ -44,7 +47,7 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
 }
 
 function HomeIcon({ active }: { active: boolean }) {
-  const color = active ? theme.colors.bg : theme.colors.muted;
+  const color = active ? theme.colors.text : theme.colors.muted;
   return (
     <View style={styles.homeIcon}>
       <View style={[styles.homeRoof, { borderBottomColor: color }]} />
@@ -56,7 +59,7 @@ function HomeIcon({ active }: { active: boolean }) {
 }
 
 function ServicesIcon({ active }: { active: boolean }) {
-  const color = active ? theme.colors.bg : theme.colors.muted;
+  const color = active ? theme.colors.text : theme.colors.muted;
   return (
     <View style={styles.dotsGrid}>
       {Array.from({ length: 9 }).map((_, index) => (
@@ -66,12 +69,22 @@ function ServicesIcon({ active }: { active: boolean }) {
   );
 }
 
+function ActivityIcon({ active }: { active: boolean }) {
+  const color = active ? theme.colors.text : theme.colors.muted;
+  return (
+    <View style={[styles.activityIcon, { borderColor: color }]}>
+      <View style={[styles.activityLine, { backgroundColor: color }]} />
+      <View style={[styles.activityLine, { backgroundColor: color }]} />
+      <View style={[styles.activityShortLine, { backgroundColor: color }]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   bar: {
-    position: "absolute",
-    left: 18,
-    right: 18,
-    bottom: 22,
+    marginHorizontal: 18,
+    marginTop: 4,
+    marginBottom: 14,
     height: 76,
     backgroundColor: "#191919",
     borderRadius: 36,
@@ -89,9 +102,9 @@ const styles = StyleSheet.create({
     minWidth: 54
   },
   active: {
-    backgroundColor: theme.colors.panel2,
+    backgroundColor: "#242424",
     borderRadius: 28,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 7
   },
   icon: {
@@ -101,7 +114,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   activeIcon: {
-    backgroundColor: theme.colors.text,
+    backgroundColor: theme.colors.blue,
     borderRadius: 16
   },
   iconImage: {
@@ -152,6 +165,24 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 3
+  },
+  activityIcon: {
+    width: 22,
+    height: 24,
+    borderWidth: 2,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingTop: 5,
+    gap: 3
+  },
+  activityLine: {
+    height: 2,
+    borderRadius: 2
+  },
+  activityShortLine: {
+    width: 8,
+    height: 2,
+    borderRadius: 2
   },
   label: {
     color: theme.colors.muted,

@@ -38,7 +38,7 @@ export function DashboardScreen({ data }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
+  content: { padding: theme.spacing.md, paddingBottom: 32, gap: theme.spacing.lg },
   hero: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.lg, borderWidth: 1, borderColor: theme.colors.line },
   heroTitle: { color: theme.colors.text, fontSize: 30, fontWeight: "900" },
   heroCopy: { color: theme.colors.muted, marginTop: 8, fontSize: 16, lineHeight: 23 },

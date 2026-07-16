@@ -37,7 +37,7 @@ export function ProfileScreen({ data, onLogin }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.md },
+  content: { padding: theme.spacing.md, paddingBottom: 32, gap: theme.spacing.md },
   card: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.lg, borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", gap: 10 },
   avatar: { width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   avatarText: { color: theme.colors.text, fontSize: 30, fontWeight: "900" },

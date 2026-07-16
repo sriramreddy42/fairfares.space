@@ -102,8 +102,7 @@ export function HousingScreen({
   }, [searchLetterCount, searchPhraseIndex]);
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.fixedHeader}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content} stickyHeaderIndices={[2]} showsVerticalScrollIndicator={false}>
         <View style={styles.brandHeader}>
           <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
         </View>
@@ -116,14 +115,13 @@ export function HousingScreen({
           ))}
         </View>
 
-        <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
-          <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-          <Text style={styles.searchText}>{animatedSearchText}</Text>
-          <Text style={styles.later}>Search</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.stickySearch}>
+          <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
+            <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
+            <Text style={styles.searchText}>{animatedSearchText}</Text>
+            <Text style={styles.later}>Search</Text>
+          </TouchableOpacity>
+        </View>
 
       <View style={styles.segment}>
         <TouchableOpacity
@@ -256,16 +254,13 @@ export function HousingScreen({
           </ScrollView>
         </>
       ) : null}
-      </ScrollView>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  fixedHeader: { backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.sm, paddingBottom: theme.spacing.md, gap: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  scroll: { flex: 1 },
-  content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
+  content: { padding: theme.spacing.md, paddingBottom: 32, gap: theme.spacing.lg },
   brandHeader: { alignItems: "center" },
   logo: { width: 150, height: 62 },
   topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
@@ -273,6 +268,7 @@ const styles = StyleSheet.create({
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
   topTabText: { color: theme.colors.muted, fontSize: 18, fontWeight: "900" },
   topTabTextActive: { color: theme.colors.text },
+  stickySearch: { backgroundColor: theme.colors.bg, paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   searchBar: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
   searchIcon: { width: 30, height: 30 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 20, fontWeight: "800" },
