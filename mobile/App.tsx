@@ -145,11 +145,11 @@ export default function App() {
     setLoading(true);
     try {
       const payload = await getBootstrap(city);
-      const [carRows, serviceRows] = await Promise.all([getCars(), getSiteServices()]);
       setData(payload);
       setVisiblePosts(payload.housing);
-      setCars(carRows);
-      setServices(serviceRows);
+      const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
+      setCars(carResult.status === "fulfilled" ? carResult.value : []);
+      setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
     } catch (error) {
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {

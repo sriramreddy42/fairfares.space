@@ -1,5 +1,5 @@
 import { BootstrapPayload, Car, HousingPost, RentalBooking, ServiceItem } from "../types";
-import { NativeModules } from "react-native";
+import { NativeModules, Platform } from "react-native";
 
 declare const process: {
   env: {
@@ -37,12 +37,11 @@ const DEFAULT_API_URL = EXPLICIT_API_URL || metroHostApiUrl() || "http://127.0.0
 export const API_URL =
   DEFAULT_API_URL;
 
-const API_CANDIDATES = uniqueUrls([
-  EXPLICIT_API_URL,
-  metroHostApiUrl(),
-  "http://172.20.20.20:8010",
-  "http://127.0.0.1:8010"
-]);
+const API_CANDIDATES = uniqueUrls(
+  Platform.OS === "web"
+    ? [EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl(), "http://172.20.20.20:8010"]
+    : [EXPLICIT_API_URL, metroHostApiUrl(), "http://172.20.20.20:8010", "http://127.0.0.1:8010"]
+);
 
 let authToken = "";
 
@@ -60,8 +59,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   let lastError = "";
   for (const baseUrl of API_CANDIDATES) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
     try {
-      const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+      const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
       const text = await response.text();
       let payload: T & { error?: string };
       try {
@@ -78,6 +79,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       if (EXPLICIT_API_URL) {
         break;
       }
+    } finally {
+      clearTimeout(timeout);
     }
   }
   throw new Error(`Could not connect to FairFares API. Tried: ${API_CANDIDATES.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
