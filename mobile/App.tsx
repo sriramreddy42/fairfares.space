@@ -284,7 +284,8 @@ export default function App() {
       setLoginOpen(true);
       return;
     }
-    const nextMode: MobileHousingPostInput["postMode"] = selectedNeed === "have_place" || selectedNeed === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
+    const nextMode: MobileHousingPostInput["postMode"] =
+      selectedNeed === "need_place" || selectedNeed === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
     setListingForm({
       ...emptyListingForm,
       postMode: nextMode,
@@ -609,7 +610,6 @@ export default function App() {
                   <>
                     <TextInput value={listingForm.area} onChangeText={(text) => updateListingForm("area", text)} placeholder="Preferred area / building / neighborhood*" placeholderTextColor={theme.colors.muted} style={styles.input} />
                     <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Work / school / commute target" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                    <TextInput value={listingForm.radiusMiles} onChangeText={(text) => updateListingForm("radiusMiles", text)} placeholder="Search radius miles" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
                   </>
                 )}
               </>

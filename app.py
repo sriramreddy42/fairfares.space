@@ -21348,10 +21348,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
+        resolved_location_label = dedupe_repeated_location_label(str(location_point.get("label") or ""))
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)
+        elif resolved_location_label:
+            city_area_zip = city or resolved_location_label
         area_value = primary_neighborhood or apartment_name or area
+        if mode == "NEED_PLACE" and not area_value and resolved_location_label:
+            area_value = resolved_location_label
         now = datetime.utcnow().isoformat(timespec="seconds")
         expires_at = accommodation_expiry_timestamp(now)
         with db() as con:
