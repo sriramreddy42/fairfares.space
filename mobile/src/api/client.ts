@@ -19,10 +19,22 @@ function metroHostApiUrl() {
   return `http://${host}:${API_PORT}`;
 }
 
-const DEFAULT_API_URL = metroHostApiUrl() || "http://127.0.0.1:8010";
+function uniqueUrls(urls: string[]) {
+  return urls.filter((url, index) => url && urls.indexOf(url) === index);
+}
+
+const EXPLICIT_API_URL = process.env.EXPO_PUBLIC_FAIRFARES_API_URL?.replace(/\/$/, "") || "";
+const DEFAULT_API_URL = EXPLICIT_API_URL || metroHostApiUrl() || "http://127.0.0.1:8010";
 
 export const API_URL =
-  process.env.EXPO_PUBLIC_FAIRFARES_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
+  DEFAULT_API_URL;
+
+const API_CANDIDATES = uniqueUrls([
+  EXPLICIT_API_URL,
+  metroHostApiUrl(),
+  "http://172.20.20.20:8010",
+  "http://127.0.0.1:8010"
+]);
 
 let authToken = "";
 
@@ -38,17 +50,29 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`;
   }
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}${path}`, { ...init, headers });
-  } catch (error) {
-    throw new Error(`Could not connect to FairFares server at ${API_URL}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then reload Expo.`);
+  let lastError = "";
+  for (const baseUrl of API_CANDIDATES) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+      const text = await response.text();
+      let payload: T & { error?: string };
+      try {
+        payload = JSON.parse(text) as T & { error?: string };
+      } catch {
+        throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
+      }
+      if (!response.ok) {
+        throw new Error(payload.error || `FairFares request failed: ${response.status}`);
+      }
+      return payload;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (EXPLICIT_API_URL) {
+        break;
+      }
+    }
   }
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(payload.error || `FairFares request failed: ${response.status}`);
-  }
-  return payload;
+  throw new Error(`Could not connect to FairFares API. Tried: ${API_CANDIDATES.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
 export function absoluteAssetUrl(value: string) {
