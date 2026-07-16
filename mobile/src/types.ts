@@ -8,15 +8,23 @@ export type HousingPost = {
   categoryLabel: string;
   location: string;
   area: string;
+  workLocation: string;
   moveIn: string;
   rent: string;
   rentValue: number;
   radiusMiles: number;
+  distanceMiles: number | null;
+  lat: number;
+  lng: number;
   imageUrl: string;
   daysLeft: number;
   expiryLabel: string;
   roommateIntent: boolean;
   genderPreference: string;
+  leaseTerm: string;
+  bathroomType: string;
+  accommodates: number;
+  roommateCount: number;
   amenities: string[];
 };
 

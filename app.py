@@ -11061,7 +11061,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "rent": format_accommodation_rent(row),
         "rentValue": float(row_value(row, "rent_min") or row_value(row, "rent_max") or 0),
         "radiusMiles": int(float(row_value(row, "radius_miles") or 0)),
-        "distanceMiles": None,
+        "distanceMiles": round(float(row_value(row, "distance_miles") or 0), 1) if row_value(row, "distance_miles") not in {"", None} else None,
         "lat": float(row_value(row, "lat") or 0),
         "lng": float(row_value(row, "lng") or 0),
         "imageUrl": preview_image,
@@ -11069,6 +11069,10 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
         "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(row, "gender_preference"), "Open"),
+        "leaseTerm": option_label(ACCOMMODATION_LEASE_TERMS, row_value(row, "lease_term"), "Flexible"),
+        "bathroomType": option_label((("shared", "Shared Bath"), ("private", "Private Bath"), ("private_shared", "Private/Shared Bath")), row_value(row, "bathroom_type"), row_value(row, "bathroom_type")),
+        "accommodates": int(row_value(row, "accommodates") or 0),
+        "roommateCount": int(row_value(row, "roommate_count") or 0),
         "amenities": [item.strip() for item in row_value(row, "amenities").split(",") if item.strip()],
     }
 
@@ -11078,6 +11082,8 @@ def mobile_housing_posts(
     area: str = "",
     need: str = "",
     category: str = "",
+    gender: str = "",
+    budget: str = "",
     limit: int = 30,
 ) -> list[dict[str, object]]:
     expire_accommodation_posts()
@@ -11091,10 +11097,18 @@ def mobile_housing_posts(
     elif need == "have_place":
         clauses.append("post_mode = 'NEED_PLACE'")
     elif need == "need_roommates":
+        clauses.append("post_mode = 'NEED_PLACE'")
         clauses.append("roommate_intent = 1")
     if category:
         clauses.append("category = ?")
         values.append(category)
+    if gender:
+        clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
+        values.append(gender)
+    budget_value = float_from_value(budget)
+    if budget_value:
+        clauses.append("(rent_max = 0 OR rent_max <= ? OR rent_min <= ?)")
+        values.extend([budget_value, budget_value])
     search_term_groups: list[list[str]] = []
     for raw_term in (city, area):
         term = (raw_term or "").strip()
@@ -11140,7 +11154,18 @@ def mobile_housing_posts(
             """,
             (*values, limit),
         ).fetchall()
-    return [mobile_housing_post_payload(row) for row in rows]
+    center = accommodation_location_point(area or city, cached_accommodation_metro_for_place(area or city), allow_refresh=False)
+    center_lat = float(center.get("lat") or 0)
+    center_lng = float(center.get("lng") or 0)
+    payloads: list[dict[str, object]] = []
+    for row in rows:
+        item = mobile_housing_post_payload(row)
+        lat = float(row_value(row, "lat") or 0)
+        lng = float(row_value(row, "lng") or 0)
+        if center_lat and center_lng and lat and lng:
+            item["distanceMiles"] = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
+        payloads.append(item)
+    return payloads
 
 
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
@@ -21081,11 +21106,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         area = (params.get("area", [""])[0] or "").strip()
         need = (params.get("need", [""])[0] or "").strip()
         category = (params.get("category", [""])[0] or "").strip()
+        gender = (params.get("gender", [""])[0] or "").strip()
+        budget = (params.get("budget", params.get("price", [""]))[0] or "").strip()
         try:
             limit = int(params.get("limit", ["30"])[0] or 30)
         except ValueError:
             limit = 30
-        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, limit=limit)
+        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, gender=gender, budget=budget, limit=limit)
         self.send_json(
             {
                 "ok": True,
@@ -21093,6 +21120,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "area": area,
                 "need": need,
                 "category": category,
+                "gender": gender,
+                "budget": budget,
                 "posts": posts,
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
@@ -21112,12 +21141,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         street_address = str(payload.get("streetAddress") or payload.get("street_address") or "").strip()
         zip_code = str(payload.get("zipCode") or payload.get("zip_code") or "").strip()
         area = str(payload.get("area") or payload.get("area_or_apartment") or "").strip()
+        primary_neighborhood = str(payload.get("primaryNeighborhood") or payload.get("primary_neighborhood") or "").strip()
+        apartment_name = str(payload.get("apartmentName") or payload.get("apartment_name") or "").strip()
+        work_school_location = str(payload.get("workSchoolLocation") or payload.get("work_school_location") or "").strip()
         move_in_date = str(payload.get("moveInDate") or payload.get("move_in_date") or "").strip()
         contact_name = str(payload.get("contactName") or row_value(user, "name")).strip()
         contact_email = str(payload.get("contactEmail") or row_value(user, "email")).strip()
         contact_phone = str(payload.get("contactPhone") or row_value(user, "phone")).strip()
         rent_min = float_from_value(payload.get("rentMin") or payload.get("rent_min") or "0")
         rent_max = float_from_value(payload.get("rentMax") or payload.get("rent_max") or "0")
+        rent_period = str(payload.get("rentPeriod") or payload.get("rent_period") or "MONTH").strip() or "MONTH"
+        radius_miles = int(float_from_value(payload.get("radiusMiles") or payload.get("radius_miles") or ("10" if mode == "NEED_PLACE" else "0")))
+        accommodates = int(float_from_value(payload.get("accommodates") or "1") or 1)
+        roommate_count = int(float_from_value(payload.get("roommateCount") or payload.get("roommate_count") or "0") or 0)
+        roommate_intent = 1 if bool(payload.get("roommateIntent") or payload.get("roommate_intent")) else 0
+        about_you = str(payload.get("aboutYou") or payload.get("about_you") or "").strip()
+        bathroom_type = str(payload.get("bathroomType") or payload.get("bathroom_type") or "shared").strip() or "shared"
+        gender_preference = str(payload.get("genderPreference") or payload.get("gender_preference") or "open").strip() or "open"
+        commute_preference = str(payload.get("commutePreference") or payload.get("commute_preference") or "").strip()
+        lease_term = str(payload.get("leaseTerm") or payload.get("lease_term") or "flexible").strip() or "flexible"
+        deposit = float_from_value(payload.get("deposit") or "0")
+        days_available = str(payload.get("daysAvailable") or payload.get("days_available") or "").strip()
+        vegetarian_preference = str(payload.get("vegetarianPreference") or payload.get("vegetarian_preference") or "").strip()
+        smoking_policy = str(payload.get("smokingPolicy") or payload.get("smoking_policy") or "").strip()
+        pet_friendly = str(payload.get("petFriendly") or payload.get("pet_friendly") or "").strip()
+        amenities = str(payload.get("amenities") or "").strip()
+        social_facebook = str(payload.get("socialFacebook") or payload.get("social_facebook") or "").strip()
+        social_x = str(payload.get("socialX") or payload.get("social_x") or "").strip()
+        social_instagram = str(payload.get("socialInstagram") or payload.get("social_instagram") or "").strip()
+        social_youtube = str(payload.get("socialYoutube") or payload.get("social_youtube") or "").strip()
+        private_bath = 1 if bool(payload.get("privateBath") or payload.get("private_bath")) else 0
+        furnished = 1 if bool(payload.get("furnished")) else 0
+        parking = 1 if bool(payload.get("parking")) else 0
+        utilities_included = 1 if bool(payload.get("utilitiesIncluded") or payload.get("utilities_included")) else 0
         if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
             self.send_json(
                 {
@@ -21127,19 +21183,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 400,
             )
             return
-        if mode == "HAVE_PLACE" and not street_address and not area:
-            self.send_json({"ok": False, "error": "Street address or area/apartment is required when listing a place."}, 400)
+        if mode == "HAVE_PLACE" and not (street_address or primary_neighborhood or apartment_name or area):
+            self.send_json({"ok": False, "error": "Street address, neighborhood, apartment, or area is required when listing a place."}, 400)
+            return
+        if mode == "NEED_PLACE" and not (area or work_school_location or primary_neighborhood):
+            self.send_json({"ok": False, "error": "Preferred area, building, campus, or neighborhood is required when requesting a place."}, 400)
             return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
-        roommate_intent = 1 if bool(payload.get("roommateIntent") or payload.get("roommate_intent")) else 0
-        location_query = street_address or area or city or zip_code
+        location_query = street_address or primary_neighborhood or apartment_name or area or work_school_location or city or zip_code
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)
+        area_value = primary_neighborhood or apartment_name or area
         now = datetime.utcnow().isoformat(timespec="seconds")
         expires_at = accommodation_expiry_timestamp(now)
         with db() as con:
@@ -21157,7 +21216,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 'MONTH', 0, 0, 1, 0, ?, '', 'shared', 'open', '', 'flexible', 0, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0, 0, 0, ?, ?, ?, 'ACTIVE', 'MOBILE_POST', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '',
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'MOBILE_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -21169,17 +21229,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     street_address,
                     city,
                     zip_code,
-                    area,
-                    area,
+                    primary_neighborhood,
+                    apartment_name,
                     city_area_zip,
-                    area,
-                    10 if mode == "NEED_PLACE" else 0,
+                    area_value,
+                    work_school_location,
+                    radius_miles,
                     post_lat,
                     post_lng,
                     move_in_date,
                     rent_min,
                     rent_max,
+                    rent_period,
+                    accommodates,
+                    roommate_count,
                     roommate_intent,
+                    about_you,
+                    bathroom_type,
+                    gender_preference,
+                    commute_preference,
+                    lease_term,
+                    deposit,
+                    days_available,
+                    vegetarian_preference,
+                    smoking_policy,
+                    pet_friendly,
+                    social_facebook,
+                    social_x,
+                    social_instagram,
+                    social_youtube,
+                    amenities,
+                    private_bath,
+                    furnished,
+                    parking,
+                    utilities_included,
                     contact_name,
                     contact_phone,
                     contact_email,

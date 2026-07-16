@@ -20,14 +20,99 @@ const emptyListingForm: MobileHousingPostInput = {
   streetAddress: "",
   zipCode: "",
   area: "",
+  primaryNeighborhood: "",
+  apartmentName: "",
+  workSchoolLocation: "",
+  radiusMiles: "10",
   moveInDate: "",
   rentMin: "",
   rentMax: "",
+  rentPeriod: "MONTH",
+  accommodates: "1",
+  roommateCount: "0",
+  aboutYou: "",
+  bathroomType: "shared",
+  genderPreference: "open",
+  commutePreference: "",
+  leaseTerm: "flexible",
+  deposit: "",
+  daysAvailable: "",
+  vegetarianPreference: "",
+  smokingPolicy: "",
+  petFriendly: "",
+  amenities: "",
+  furnished: false,
+  privateBath: false,
+  parking: false,
+  utilitiesIncluded: false,
+  socialFacebook: "",
+  socialX: "",
+  socialInstagram: "",
+  socialYoutube: "",
   contactName: "",
   contactEmail: "",
   contactPhone: "",
   roommateIntent: false
 };
+
+const listingModes: Array<[MobileHousingPostInput["postMode"], string]> = [
+  ["HAVE_PLACE", "I have a place"],
+  ["NEED_PLACE", "I need a place"]
+];
+
+const listingCategories: Array<[string, string]> = [
+  ["single_room", "Single"],
+  ["shared_room", "Shared"],
+  ["paying_guest", "PG"],
+  ["apartment", "Apartment"],
+  ["single_family_home", "Home"],
+  ["condo", "Condo"],
+  ["town_house", "Townhouse"],
+  ["basement_apartment", "Basement"]
+];
+
+const rentPeriods: Array<[string, string]> = [
+  ["MONTH", "Monthly"],
+  ["WEEK", "Weekly"],
+  ["NIGHT", "Nightly"],
+  ["FLEXIBLE", "Flexible"]
+];
+
+const bathroomOptions: Array<[string, string]> = [
+  ["shared", "Shared bath"],
+  ["private", "Private bath"],
+  ["private_shared", "Private/shared"]
+];
+
+const genderOptions: Array<[string, string]> = [
+  ["open", "Open"],
+  ["female", "Female"],
+  ["male", "Male"],
+  ["couple", "Couple"],
+  ["family", "Family"]
+];
+
+const leaseOptions: Array<[string, string]> = [
+  ["short_stay", "Short stay"],
+  ["one_month", "One month"],
+  ["flexible", "Flexible"],
+  ["three_to_six", "3-6 months"],
+  ["six_to_twelve", "6-12 months"],
+  ["year_plus", "12+ months"]
+];
+
+const lifestyleOptions: Array<[keyof MobileHousingPostInput, string, string[]]> = [
+  ["vegetarianPreference", "Vegetarian", ["Mandatory veg", "Non-veg ok", "Both"]],
+  ["smokingPolicy", "Smoking", ["No smoking", "Smoking ok", "Outside only"]],
+  ["petFriendly", "Pets", ["No pets", "Only dogs", "Only cats", "Any pet ok"]]
+];
+
+const amenityToggles: Array<[keyof MobileHousingPostInput, string]> = [
+  ["furnished", "Furnished"],
+  ["privateBath", "Private bath"],
+  ["parking", "Parking"],
+  ["utilitiesIncluded", "Utilities included"]
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
@@ -43,11 +128,15 @@ export default function App() {
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedGender, setSelectedGender] = useState("");
+  const [selectedBudget, setSelectedBudget] = useState("");
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
+  const [searchGender, setSearchGender] = useState("");
+  const [searchBudget, setSearchBudget] = useState("");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -91,7 +180,7 @@ export default function App() {
     setSelectedNeed(need);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, need, selectedCategory));
+      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget));
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
@@ -103,7 +192,7 @@ export default function App() {
     setArea(nextArea);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, nextArea, selectedNeed, selectedCategory));
+      setVisiblePosts(await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget));
       Alert.alert("Location updated", `Showing listings around ${nextArea}.`);
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
@@ -117,10 +206,12 @@ export default function App() {
     const cleanArea = nextArea.trim();
     setCity(cleanCity);
     setArea(cleanArea);
+    setSelectedGender(searchGender);
+    setSelectedBudget(searchBudget);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory);
+      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, searchGender, searchBudget);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -147,8 +238,11 @@ export default function App() {
       setLoginOpen(true);
       return;
     }
+    const nextMode: MobileHousingPostInput["postMode"] = selectedNeed === "have_place" || selectedNeed === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
     setListingForm({
       ...emptyListingForm,
+      postMode: nextMode,
+      roommateIntent: selectedNeed === "need_roommates",
       city,
       contactName: data.user.name || "",
       contactEmail: data.user.email || "",
@@ -165,7 +259,7 @@ export default function App() {
     try {
       const payload = await createMobileHousingPost(listingForm);
       setListingOpen(false);
-      const posts = await getHousing(city, area, selectedNeed, selectedCategory);
+      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget);
       setVisiblePosts(posts.some((post) => post.id === payload.post.id) ? posts : [payload.post, ...posts]);
       setData((current) =>
         current
@@ -186,7 +280,7 @@ export default function App() {
     setSelectedCategory(category);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, category));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget));
     } catch (error) {
       Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
     } finally {
@@ -205,6 +299,34 @@ export default function App() {
       setSelectedService(action === "Explorer" ? "explorer" : "deals");
       setActiveTab("services");
     }
+  }
+
+  function renderChoiceGroup<K extends keyof MobileHousingPostInput>(
+    field: K,
+    options: Array<[MobileHousingPostInput[K] & string, string]>
+  ) {
+    return (
+      <View style={styles.choiceRow}>
+        {options.map(([value, label]) => (
+          <TouchableOpacity
+            key={value}
+            style={[styles.choicePill, listingForm[field] === value && styles.choicePillActive]}
+            onPress={() => updateListingForm(field, value as MobileHousingPostInput[K])}
+          >
+            <Text style={[styles.choiceText, listingForm[field] === value && styles.choiceTextActive]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  }
+
+  function renderFormSection(title: string, children: React.ReactNode) {
+    return (
+      <View style={styles.formSection}>
+        <Text style={styles.formSectionTitle}>{title}</Text>
+        {children}
+      </View>
+    );
   }
 
   async function submitLogin() {
@@ -258,6 +380,8 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
+          setSearchGender(selectedGender);
+          setSearchBudget(selectedBudget);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -278,6 +402,8 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
+          setSearchGender(selectedGender);
+          setSearchBudget(selectedBudget);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -359,56 +485,102 @@ export default function App() {
           <ScrollView style={styles.modalCard} contentContainerStyle={styles.listingForm}>
             <Text style={styles.modalTitle}>List room / property</Text>
             <Text style={styles.modalCopy}>This saves to the same FairFares housing database and expires in 30 days.</Text>
-            <View style={styles.choiceRow}>
-              {[
-                ["HAVE_PLACE", "I have a place"],
-                ["NEED_PLACE", "I need a place"]
-              ].map(([value, label]) => (
+            {renderFormSection(
+              "Your need",
+              <>
+                {renderChoiceGroup("postMode", listingModes)}
+                {renderChoiceGroup("category", listingCategories)}
                 <TouchableOpacity
-                  key={value}
-                  style={[styles.choicePill, listingForm.postMode === value && styles.choicePillActive]}
-                  onPress={() => updateListingForm("postMode", value as MobileHousingPostInput["postMode"])}
+                  style={[styles.choicePill, listingForm.roommateIntent && styles.choicePillActive]}
+                  onPress={() => updateListingForm("roommateIntent", !listingForm.roommateIntent)}
                 >
-                  <Text style={[styles.choiceText, listingForm.postMode === value && styles.choiceTextActive]}>{label}</Text>
+                  <Text style={[styles.choiceText, listingForm.roommateIntent && styles.choiceTextActive]}>Need roommates</Text>
                 </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.choiceRow}>
-              {[
-                ["single_room", "Single"],
-                ["shared_room", "Shared"],
-                ["paying_guest", "PG"],
-                ["apartment", "Apartment"]
-              ].map(([value, label]) => (
-                <TouchableOpacity
-                  key={value}
-                  style={[styles.choicePill, listingForm.category === value && styles.choicePillActive]}
-                  onPress={() => updateListingForm("category", value)}
-                >
-                  <Text style={[styles.choiceText, listingForm.category === value && styles.choiceTextActive]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder="Title*" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder="Description*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
-            <TextInput value={listingForm.city} onChangeText={(text) => updateListingForm("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingForm("streetAddress", text)} placeholder="Street address or building*" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <TextInput value={listingForm.area} onChangeText={(text) => updateListingForm("area", text)} placeholder="Area / apartment / neighborhood" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
-            <TextInput value={listingForm.moveInDate} onChangeText={(text) => updateListingForm("moveInDate", text)} placeholder="Available / move-in date* eg 08/01/2026" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <View style={styles.twoCol}>
-              <TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder="Rent min*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-              <TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder="Rent max" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-            </View>
-            <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Contact name*" placeholderTextColor={theme.colors.muted} style={styles.input} />
-            <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Contact email*" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
-            <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Contact phone*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="phone-pad" />
-            <TouchableOpacity
-              style={[styles.choicePill, listingForm.roommateIntent && styles.choicePillActive]}
-              onPress={() => updateListingForm("roommateIntent", !listingForm.roommateIntent)}
-            >
-              <Text style={[styles.choiceText, listingForm.roommateIntent && styles.choiceTextActive]}>Also looking for roommates</Text>
-            </TouchableOpacity>
+              </>
+            )}
+            {renderFormSection(
+              "Location",
+              <>
+                <TextInput value={listingForm.city} onChangeText={(text) => updateListingForm("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                {listingForm.postMode === "HAVE_PLACE" ? (
+                  <>
+                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingForm("streetAddress", text)} placeholder="Street address / room location*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingForm("primaryNeighborhood", text)} placeholder="Primary neighborhood" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                  </>
+                ) : (
+                  <>
+                    <TextInput value={listingForm.area} onChangeText={(text) => updateListingForm("area", text)} placeholder="Preferred area / building / neighborhood*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Work / school / commute target" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.radiusMiles} onChangeText={(text) => updateListingForm("radiusMiles", text)} placeholder="Search radius miles" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                  </>
+                )}
+              </>
+            )}
+            {renderFormSection(
+              listingForm.postMode === "HAVE_PLACE" ? "Room details" : "Room requirements",
+              <>
+                <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder="Title*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder="Description*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
+                <TextInput value={listingForm.moveInDate} onChangeText={(text) => updateListingForm("moveInDate", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Available from* eg 08/01/2026" : "Move-in from* eg 08/01/2026"} placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <View style={styles.twoCol}>
+                  <TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Rent*" : "Budget min*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                  <TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Rent max" : "Budget max"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                </View>
+                {renderChoiceGroup("rentPeriod", rentPeriods)}
+                <View style={styles.twoCol}>
+                  <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="Accommodates*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                  <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                </View>
+                {renderChoiceGroup("bathroomType", bathroomOptions)}
+                {renderChoiceGroup("genderPreference", genderOptions)}
+                {renderChoiceGroup("leaseTerm", leaseOptions)}
+                <TextInput value={listingForm.commutePreference} onChangeText={(text) => updateListingForm("commutePreference", text)} placeholder="Commute preference / transit notes" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.daysAvailable} onChangeText={(text) => updateListingForm("daysAvailable", text)} placeholder="Days available, eg 7 days / weekdays" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.deposit} onChangeText={(text) => updateListingForm("deposit", text)} placeholder="Deposit optional" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+              </>
+            )}
+            {renderFormSection(
+              "Preferences and amenities",
+              <>
+                <View style={styles.choiceRow}>
+                  {amenityToggles.map(([field, label]) => (
+                    <TouchableOpacity
+                      key={field}
+                      style={[styles.choicePill, listingForm[field] && styles.choicePillActive]}
+                      onPress={() => updateListingForm(field, !listingForm[field] as MobileHousingPostInput[typeof field])}
+                    >
+                      <Text style={[styles.choiceText, listingForm[field] && styles.choiceTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput value={listingForm.amenities} onChangeText={(text) => updateListingForm("amenities", text)} placeholder="Amenities, eg WiFi, gym, laundry, parking" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                {lifestyleOptions.map(([field, label, options]) => (
+                  <View key={field} style={styles.miniGroup}>
+                    <Text style={styles.miniLabel}>{label}</Text>
+                    <View style={styles.choiceRow}>
+                      {options.map((option) => (
+                        <TouchableOpacity key={option} style={[styles.choicePill, listingForm[field] === option && styles.choicePillActive]} onPress={() => updateListingForm(field, option as MobileHousingPostInput[typeof field])}>
+                          <Text style={[styles.choiceText, listingForm[field] === option && styles.choiceTextActive]}>{option}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ))}
+                <TextInput value={listingForm.aboutYou} onChangeText={(text) => updateListingForm("aboutYou", text)} placeholder="About you / ideal roommate" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textAreaSmall]} multiline />
+              </>
+            )}
+            {renderFormSection(
+              "Contact and socials",
+              <>
+                <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Contact name*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Contact email*" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
+                <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Contact phone*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="phone-pad" />
+                <TextInput value={listingForm.socialFacebook} onChangeText={(text) => updateListingForm("socialFacebook", text)} placeholder="Facebook URL optional" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
+                <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Instagram URL optional" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
+              </>
+            )}
             <TouchableOpacity style={styles.primaryButton} onPress={submitListing}>
               <Text style={styles.primaryButtonText}>Post listing</Text>
             </TouchableOpacity>
@@ -444,6 +616,22 @@ export default function App() {
                 </TouchableOpacity>
               ))}
             </View>
+            <Text style={styles.miniLabel}>Gender preference</Text>
+            <View style={styles.chipRow}>
+              {[["", "Any"], ["female", "Female"], ["male", "Male"], ["couple", "Couple"], ["family", "Family"]].map(([value, label]) => (
+                <TouchableOpacity key={label} style={[styles.chip, searchGender === value && styles.chipActive]} onPress={() => setSearchGender(value)}>
+                  <Text style={[styles.chipText, searchGender === value && styles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.miniLabel}>Budget</Text>
+            <View style={styles.chipRow}>
+              {[["", "Any"], ["700", "$700"], ["900", "$900"], ["1200", "$1,200"], ["1600", "$1,600"], ["2000", "$2,000"]].map(([value, label]) => (
+                <TouchableOpacity key={label} style={[styles.chip, searchBudget === value && styles.chipActive]} onPress={() => setSearchBudget(value)}>
+                  <Text style={[styles.chipText, searchBudget === value && styles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
               <Text style={styles.primaryButtonText}>Search listings</Text>
             </TouchableOpacity>
@@ -468,6 +656,11 @@ const styles = StyleSheet.create({
   modalCopy: { color: theme.colors.muted, fontSize: 16, lineHeight: 22 },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 16, minHeight: 54, fontSize: 16 },
   textArea: { minHeight: 104, paddingTop: 14, textAlignVertical: "top" },
+  textAreaSmall: { minHeight: 82, paddingTop: 14, textAlignVertical: "top" },
+  formSection: { gap: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.bg },
+  formSectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  miniGroup: { gap: 7 },
+  miniLabel: { color: theme.colors.muted, fontWeight: "900" },
   twoCol: { flexDirection: "row", gap: theme.spacing.sm },
   twoColInput: { flex: 1 },
   choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -481,6 +674,8 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
+  chipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
   chipText: { color: theme.colors.text, fontWeight: "800" },
+  chipTextActive: { color: theme.colors.bg },
   switchText: { color: theme.colors.muted, textAlign: "center", fontWeight: "900", paddingVertical: 8 }
 });

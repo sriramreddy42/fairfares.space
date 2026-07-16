@@ -43,8 +43,8 @@ export async function getBootstrap(city = "Denver, CO") {
   return request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
 }
 
-export async function getHousing(city: string, area: string, need: string, category = "") {
-  const query = new URLSearchParams({ city, area, need, category, limit: "50" });
+export async function getHousing(city: string, area: string, need: string, category = "", gender = "", budget = "") {
+  const query = new URLSearchParams({ city, area, need, category, gender, budget, limit: "50" });
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
   return payload.posts;
 }
@@ -92,9 +92,35 @@ export type MobileHousingPostInput = {
   streetAddress: string;
   zipCode: string;
   area: string;
+  primaryNeighborhood: string;
+  apartmentName: string;
+  workSchoolLocation: string;
+  radiusMiles: string;
   moveInDate: string;
   rentMin: string;
   rentMax: string;
+  rentPeriod: string;
+  accommodates: string;
+  roommateCount: string;
+  aboutYou: string;
+  bathroomType: string;
+  genderPreference: string;
+  commutePreference: string;
+  leaseTerm: string;
+  deposit: string;
+  daysAvailable: string;
+  vegetarianPreference: string;
+  smokingPolicy: string;
+  petFriendly: string;
+  amenities: string;
+  furnished: boolean;
+  privateBath: boolean;
+  parking: boolean;
+  utilitiesIncluded: boolean;
+  socialFacebook: string;
+  socialX: string;
+  socialInstagram: string;
+  socialYoutube: string;
   contactName: string;
   contactEmail: string;
   contactPhone: string;

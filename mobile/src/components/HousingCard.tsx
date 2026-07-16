@@ -22,11 +22,17 @@ export function HousingCard({ post, onMessage }: Props) {
           {post.title}
         </Text>
         <Text style={styles.meta}>{post.location}</Text>
+        {post.area ? <Text style={styles.meta}>{post.area}</Text> : null}
         <Text style={styles.meta}>{post.categoryLabel}</Text>
-        <Text style={styles.meta}>{post.genderPreference}</Text>
+        <Text style={styles.meta}>{post.genderPreference} · {post.bathroomType || "Bath open"}</Text>
+        <Text style={styles.meta}>{post.leaseTerm || "Flexible"} · {post.moveIn || "Date open"}</Text>
+        {post.distanceMiles !== null ? <Text style={styles.distance}>{post.distanceMiles} mi away</Text> : null}
       </View>
       <View style={styles.footer}>
-        <Text style={styles.rent}>{post.rent || "Rent open"}</Text>
+        <View style={styles.priceBlock}>
+          <Text style={styles.rent}>{post.rent || "Rent open"}</Text>
+          <Text style={styles.expiry}>{post.expiryLabel}</Text>
+        </View>
         <TouchableOpacity style={styles.respond} onPress={() => onMessage(post)}>
           <Text style={styles.respondText}>Message</Text>
         </TouchableOpacity>
@@ -83,6 +89,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700"
   },
+  distance: {
+    color: theme.colors.green,
+    fontSize: 15,
+    fontWeight: "900"
+  },
   footer: {
     borderTopWidth: 1,
     borderTopColor: theme.colors.line,
@@ -91,11 +102,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between"
   },
+  priceBlock: {
+    flex: 1
+  },
   rent: {
     color: theme.colors.green,
     fontSize: 18,
     fontWeight: "900",
     flex: 1
+  },
+  expiry: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 3
   },
   respond: {
     borderWidth: 1,
