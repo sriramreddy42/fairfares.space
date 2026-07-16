@@ -136,6 +136,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
+  const [searchRadius, setSearchRadius] = useState("10");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -202,7 +203,7 @@ export default function App() {
     setSelectedNeed(need);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget));
+      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius));
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
@@ -214,7 +215,7 @@ export default function App() {
     setArea(nextArea);
     setLoading(true);
     try {
-      const posts = await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget);
+      const posts = await getHousing(city, nextArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -237,15 +238,17 @@ export default function App() {
     }
   }
 
-  async function runSearch(nextCity = searchCity, nextArea = searchArea) {
+  async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius) {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
+    const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
     setCity(cleanCity);
     setArea(cleanArea);
+    setSearchRadius(cleanRadius);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, selectedGender, selectedBudget);
+      const posts = await getHousing(cleanCity, cleanArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -293,7 +296,7 @@ export default function App() {
     try {
       const payload = await createMobileHousingPost(listingForm);
       setListingOpen(false);
-      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget);
+      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
       setVisiblePosts(posts.some((post) => post.id === payload.post.id) ? posts : [payload.post, ...posts]);
       setData((current) =>
         current
@@ -314,7 +317,7 @@ export default function App() {
     setSelectedCategory(category);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius));
     } catch (error) {
       Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
     } finally {
@@ -326,7 +329,7 @@ export default function App() {
     setSelectedGender(gender);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius));
     } catch (error) {
       Alert.alert("Gender preference", error instanceof Error ? error.message : "Unable to filter by preference.");
     } finally {
@@ -338,7 +341,7 @@ export default function App() {
     setSelectedBudget(budget);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius));
     } catch (error) {
       Alert.alert("Budget", error instanceof Error ? error.message : "Unable to filter by budget.");
     } finally {
@@ -457,6 +460,7 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
+          setSearchRadius(searchRadius);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -483,6 +487,7 @@ export default function App() {
         onOpenSearch={() => {
           setSearchCity(city);
           setSearchArea(area);
+          setSearchRadius(searchRadius);
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -691,6 +696,24 @@ export default function App() {
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />
+            <View style={styles.miniGroup}>
+              <Text style={styles.miniLabel}>Fill this if looking for a place near an area or building</Text>
+              <TextInput
+                value={searchRadius}
+                onChangeText={setSearchRadius}
+                placeholder="Search radius in miles, e.g. 10"
+                placeholderTextColor={theme.colors.muted}
+                style={styles.input}
+                keyboardType="number-pad"
+              />
+              <View style={styles.chipRow}>
+                {["5", "10", "20", "60"].map((chip) => (
+                  <TouchableOpacity key={chip} style={[styles.chip, searchRadius === chip && styles.chipActive]} onPress={() => setSearchRadius(chip)}>
+                    <Text style={[styles.chipText, searchRadius === chip && styles.chipTextActive]}>{chip} mi</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
             <View style={styles.chipRow}>
               {["Union Station", "DU", "Aurora", "Englewood"].map((chip) => (
                 <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>

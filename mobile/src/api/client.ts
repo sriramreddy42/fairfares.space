@@ -150,13 +150,18 @@ export async function getBootstrap(city = "Denver, CO") {
   }
 }
 
-export async function getHousing(city: string, area: string, need: string, category = "", gender = "", budget = "") {
-  const query = new URLSearchParams({ city, area, need, category, gender, budget, limit: "50" });
+export async function getHousing(city: string, area: string, need: string, category = "", gender = "", budget = "", radius = "") {
+  const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "50" });
   try {
     const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
     return payload.posts;
   } catch {
-    return fallbackHousing.filter((post) => !category || post.category === category);
+    const radiusValue = Number(radius || 0);
+    return fallbackHousing.filter((post) => {
+      if (category && post.category !== category) return false;
+      if (radiusValue && post.distanceMiles !== null && post.distanceMiles > radiusValue) return false;
+      return true;
+    });
   }
 }
 

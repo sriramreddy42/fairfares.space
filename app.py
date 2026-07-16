@@ -11138,6 +11138,7 @@ def mobile_housing_posts(
     category: str = "",
     gender: str = "",
     budget: str = "",
+    radius: float = 0,
     limit: int = 30,
 ) -> list[dict[str, object]]:
     expire_accommodation_posts()
@@ -11216,6 +11217,11 @@ def mobile_housing_posts(
             """,
             (*values, sql_limit),
         ).fetchall()
+    search_radius_miles = float_from_value(radius) or 0
+    if search_radius_miles < 0:
+        search_radius_miles = 0
+    if search_radius_miles > 100:
+        search_radius_miles = 100
     focus_query = area or city
     center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
     center_lat = float(center.get("lat") or 0)
@@ -11244,7 +11250,8 @@ def mobile_housing_posts(
         if area:
             area_match = row_matches_terms(row, area_terms)
             city_match = row_matches_terms(row, city_terms)
-            nearby_match = distance is not None and distance <= max(float(row_value(row, "radius_miles") or 0), 60)
+            nearby_limit = search_radius_miles or 60
+            nearby_match = distance is not None and distance <= nearby_limit
             if not (area_match or nearby_match or (not center_lat and city_match)):
                 continue
             rank = 0 if area_match else 1 if nearby_match else 2
@@ -21199,11 +21206,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         category = (params.get("category", [""])[0] or "").strip()
         gender = (params.get("gender", [""])[0] or "").strip()
         budget = (params.get("budget", params.get("price", [""]))[0] or "").strip()
+        radius = (params.get("radius", params.get("radiusMiles", params.get("radius_miles", [""])))[0] or "").strip()
         try:
             limit = int(params.get("limit", ["30"])[0] or 30)
         except ValueError:
             limit = 30
-        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, gender=gender, budget=budget, limit=limit)
+        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, gender=gender, budget=budget, radius=float_from_value(radius), limit=limit)
         self.send_json(
             {
                 "ok": True,
@@ -21213,6 +21221,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "category": category,
                 "gender": gender,
                 "budget": budget,
+                "radius": radius,
                 "posts": posts,
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
