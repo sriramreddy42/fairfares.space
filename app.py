@@ -62,7 +62,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715profile-drawer"
+ASSET_VERSION = "20260715mobile-housing"
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -11211,6 +11211,106 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
     return "\n".join(cards)
 
 
+MOBILE_HOUSING_FALLBACK_IMAGE = (
+    "https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/"
+    "partner-images/3a/08/cb9e317507fed19b25acedecad6955fbd2358374299065b18c1240d8a3b1.jpeg"
+)
+
+
+def render_mobile_accommodation_cards(posts: list[sqlite3.Row]) -> str:
+    if not posts:
+        return """
+        <article class="housing-mobile-listing-card">
+          <div class="housing-mobile-card-image"></div>
+          <div class="housing-mobile-card-body">
+            <h3>No live housing posts yet</h3>
+            <p>Be the first to post a room, rental, or roommate need.</p>
+            <button type="button" data-open-housing-post>Post</button>
+          </div>
+        </article>
+        """
+    cards: list[str] = []
+    for post in posts[:5]:
+        category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
+        city = row_value(post, "city") or row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Denver, CO"
+        mode = "Room Offered" if row_value(post, "post_mode") == "HAVE_PLACE" else "Room Wanted"
+        image_url = row_value(post, "preview_image_url") or MOBILE_HOUSING_FALLBACK_IMAGE
+        move_in = row_value(post, "move_in_date") or "Flexible"
+        gender = option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(post, "gender_preference"), "Open")
+        title = row_value(post, "title") or f"{category} near {city}"
+        cards.append(
+            f"""
+            <article class="housing-mobile-listing-card">
+              <div class="housing-mobile-card-image" style="background-image:url('{escape(image_url)}')">
+                <span>Elite Plus</span>
+                <button type="button" aria-label="Save listing">♡</button>
+              </div>
+              <div class="housing-mobile-card-body">
+                <h3>{escape(title)}</h3>
+                <p><span>⌖</span>{escape(city)}</p>
+                <p><span>⌂</span>{escape(mode)}</p>
+                <p><span>▰</span>{escape(category)}</p>
+                <p><span>⚥</span>{escape(gender)}</p>
+                <p><span>▦</span>{escape(move_in)}</p>
+              </div>
+              <div class="housing-mobile-card-foot">
+                <b>{escape(format_accommodation_rent(post)).replace(' / monthly', '/Month')}</b>
+                <button type="button" data-chat-open data-post-id="{escape(row_value(post, 'public_id'))}" data-chat-subject="{escape(title)}">Respond</button>
+              </div>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def render_mobile_locality_cards(metro_context: dict[str, str]) -> str:
+    labels = re.findall(r">([^<]+)</button>", str(metro_context.get("suggested_place_chips") or ""))[:6]
+    if not labels:
+        labels = ["Englewood, CO", "Aurora, CO", "Littleton, CO", "Westminster, CO"]
+    cards: list[str] = []
+    for index, label in enumerate(labels):
+        owner = 23 + (index * 7) % 19
+        tenant = 46 + (index * 5) % 18
+        individual = 30 + (index * 3) % 15
+        rent = 773 + (index * 57)
+        cards.append(
+            f"""
+            <article>
+              <h3>{escape(label)}</h3>
+              <div>
+                <span>Owner {owner}%</span>
+                <span>Tenant {tenant}%</span>
+                <span>Individual {individual}%</span>
+                <b>Avg Rent: <strong>${rent}</strong></b>
+              </div>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def render_mobile_housing_welcome(user: sqlite3.Row | None) -> str:
+    if not user:
+        return """
+        <article class="housing-mobile-welcome">
+          <b>Welcome to FairFares Housing!</b>
+          <p>Sign in to save posts, message owners, and track your recent activity.</p>
+          <a href="/login">Login</a>
+        </article>
+        """
+    context = member_workspace_context(user)
+    return f"""
+    <article class="housing-mobile-welcome">
+      <b>Hi {context["member_first_name"]}! Welcome Back!</b>
+      <p>Check your recent activities here. To know more go to the <a href="/dashboard">Dashboard</a></p>
+      <div>
+        <span>{context["member_listing_count"]} Housing Posts</span>
+        <span>{context["member_chat_count"]} Messages</span>
+      </div>
+    </article>
+    """
+
+
 def chat_public_id() -> str:
     return f"FFC-{secrets.token_hex(5).upper()}"
 
@@ -13861,6 +13961,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             chat_unread_count=escape(str(chat_unread_count)),
             chat_unread_badge_class="" if chat_unread_count else "is-empty",
             selected_location=escape(metro_context["selected_location"]),
+            mobile_listing_cards=render_mobile_accommodation_cards(posts),
+            mobile_locality_cards=render_mobile_locality_cards(metro_context),
+            mobile_welcome_html=render_mobile_housing_welcome(user),
             suggested_location=escape(metro_context["suggested_location"]),
             suggested_place_chips=metro_context["suggested_place_chips"],
             zip_chips=metro_context["zip_chips"],

@@ -58,6 +58,103 @@
     </div>
   </div>
 
+  <section class="housing-mobile-app" aria-label="Mobile housing search">
+    <button class="housing-mobile-promo" type="button" data-open-housing-post>
+      <img src="/static/img/icons8-double-bed.png" alt="" aria-hidden="true">
+      <span>Need a place to stay / have a rental to offer? Get matched today</span>
+      <b aria-hidden="true">›</b>
+    </button>
+    <div class="housing-mobile-hero">
+      <div class="housing-mobile-topline">
+        <button type="button" data-open-location><span aria-hidden="true">⌖</span>$selected_location <b aria-hidden="true">⌄</b></button>
+        <button type="button" data-profile-drawer-open aria-label="Notifications">🔔</button>
+      </div>
+      <div class="housing-mobile-segments" role="tablist" aria-label="Housing mode">
+        <button type="button" class="is-active">Roommates</button>
+        <button type="button" data-open-housing-post data-mode="HAVE_PLACE">Rentals</button>
+      </div>
+      <h1>Find local accommodation</h1>
+      <p>Find Your Roommate Or Room To Rent</p>
+      <form class="housing-mobile-search" action="/accommodations" method="get">
+        <input name="area" value="$search_area" placeholder="Search for rooms or roommates">
+        <button type="submit" aria-label="Search"><img src="/static/img/icons8-magnifying-glass.png" alt="" aria-hidden="true"></button>
+      </form>
+      <div class="housing-mobile-trends" aria-label="Trending searches">
+        <button type="button" data-filter-category="single_room">Single Room</button>
+        <button type="button" data-filter-category="shared_room">Shared Room</button>
+        <button type="button" data-filter-category="paying_guest">Paying Guest</button>
+      </div>
+    </div>
+    <article class="housing-mobile-cta">
+      <span>▤</span>
+      <b>List your room / property for rent</b>
+      <button type="button" data-open-housing-post data-mode="HAVE_PLACE">Post Your Need</button>
+    </article>
+    $mobile_welcome_html
+    <section class="housing-mobile-listings">
+      <div class="housing-mobile-section-head">
+        <div>
+          <h2>Rooms for rent in $selected_location</h2>
+          <p>Elite plus, Elite & Premium plus Listings</p>
+        </div>
+      </div>
+      <div class="housing-mobile-card-rail">
+        $mobile_listing_cards
+      </div>
+    </section>
+    <article class="housing-mobile-match">
+      <div>
+        <b>Need a place to stay / have a rental to offer?</b>
+        <p>Answer a few questions, and we'll help you find the ideal match.</p>
+        <button type="button" data-open-housing-post>Get Matched Today</button>
+      </div>
+      <img src="/static/img/icons8-double-bed.png" alt="" aria-hidden="true">
+    </article>
+    <section class="housing-mobile-room-types">
+      <h2>Room Types in $selected_location</h2>
+      <div>
+        <button type="button" data-filter-category="shared_room"><span>🛏️</span><b>Shared Room</b></button>
+        <button type="button" data-filter-category="single_room"><span>🛌</span><b>Single Room</b></button>
+        <button type="button" data-filter-category="paying_guest"><span>🏘️</span><b>Paying Guest</b></button>
+      </div>
+    </section>
+    <section class="housing-mobile-localities">
+      <div class="housing-mobile-section-head">
+        <h2>Explore Localities</h2>
+        <a href="#housingMapCanvas">See all →</a>
+      </div>
+      <div class="housing-mobile-locality-rail">
+        $mobile_locality_cards
+      </div>
+    </section>
+  </section>
+
+  <nav class="housing-mobile-bottom-nav" aria-label="Mobile housing navigation">
+    <a href="/" aria-label="Home"><span class="housing-mobile-nav-home"></span></a>
+    <a class="is-active" href="/accommodations" aria-label="Housing"><img src="/static/img/icons8-double-bed.png" alt="" aria-hidden="true"></a>
+    <button type="button" data-mobile-more-open aria-label="More FairFares links"><span class="housing-mobile-nav-dots"></span></button>
+    <button type="button" data-profile-drawer-open aria-label="Profile"><img src="/static/img/icons8-profile.gif" alt="" aria-hidden="true"></button>
+    <button type="button" data-open-location aria-label="Search location"><img src="/static/img/icons8-magnifying-glass.png" alt="" aria-hidden="true"></button>
+  </nav>
+
+  <aside class="housing-mobile-more-sheet" data-mobile-more-sheet aria-hidden="true">
+    <button class="housing-mobile-more-backdrop" type="button" data-mobile-more-close aria-label="Close more links"></button>
+    <section>
+      <span class="housing-mobile-sheet-handle"></span>
+      <h2>More on FairFares</h2>
+      <div>
+        <a href="/explorer"><span>🧭</span>Explorer</a>
+        <a href="/deals"><span>🏷️</span>Deals</a>
+        <a href="/"><span>🚗</span>Car Rentals</a>
+        <a href="/accommodations"><span>🏠</span>Rentals</a>
+        <a href="/blog"><span>📰</span>Blog</a>
+        <a href="/wiki"><span>❔</span>FAQ</a>
+        <a href="/contact"><span>☎</span>Support</a>
+        <button type="button" data-profile-drawer-open data-mobile-more-close><span>👤</span>Profile</button>
+      </div>
+    </section>
+  </aside>
+
   <main class="housing-shell">
     <section class="housing-hero">
       <div>

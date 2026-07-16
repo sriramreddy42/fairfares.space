@@ -4263,6 +4263,28 @@ function initProfileDrawer() {
 
 initProfileDrawer();
 
+function initMobileHousingMoreSheet() {
+  const sheet = document.querySelector("[data-mobile-more-sheet]");
+  if (!sheet) return;
+  const openButtons = document.querySelectorAll("[data-mobile-more-open]");
+  const closeButtons = document.querySelectorAll("[data-mobile-more-close]");
+  const setOpen = (open) => {
+    sheet.classList.toggle("is-open", open);
+    sheet.setAttribute("aria-hidden", open ? "false" : "true");
+  };
+  openButtons.forEach((button) => {
+    button.addEventListener("click", () => setOpen(true));
+  });
+  closeButtons.forEach((button) => {
+    button.addEventListener("click", () => setOpen(false));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sheet.classList.contains("is-open")) setOpen(false);
+  });
+}
+
+initMobileHousingMoreSheet();
+
 function initWikiAgentWidget() {
   if (document.getElementById("wikiAgentWidget")) return;
   const prompts = [
