@@ -5,9 +5,9 @@ import { theme } from "../theme";
 
 export type TabKey = "home" | "housing" | "services" | "messenger" | "profile";
 
-const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; symbol?: string }> = [
-  { key: "home", label: "Home", symbol: "⌂" },
-  { key: "services", label: "Services", symbol: "▦" },
+const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; custom?: "home" | "services" }> = [
+  { key: "home", label: "Home", custom: "home" },
+  { key: "services", label: "Services", custom: "services" },
   { key: "messenger", label: "Activity", icon: appAssets.message },
   { key: "profile", label: "Account", icon: appAssets.profile }
 ];
@@ -28,8 +28,10 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
             <View style={[styles.icon, isActive && styles.activeIcon]}>
               {tab.icon ? (
                 <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
+              ) : tab.custom === "home" ? (
+                <HomeIcon active={isActive} />
               ) : (
-                <Text style={[styles.symbol, isActive && styles.symbolActive]}>{tab.symbol}</Text>
+                <ServicesIcon active={isActive} />
               )}
               {tab.key === "messenger" && unreadCount > 0 ? <Text style={styles.badge}>{unreadCount}</Text> : null}
             </View>
@@ -37,6 +39,29 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
           </TouchableOpacity>
         );
       })}
+    </View>
+  );
+}
+
+function HomeIcon({ active }: { active: boolean }) {
+  const color = active ? theme.colors.bg : theme.colors.muted;
+  return (
+    <View style={styles.homeIcon}>
+      <View style={[styles.homeRoof, { borderBottomColor: color }]} />
+      <View style={[styles.homeBody, { borderColor: color }]}>
+        <View style={[styles.homeDoor, { backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
+
+function ServicesIcon({ active }: { active: boolean }) {
+  const color = active ? theme.colors.bg : theme.colors.muted;
+  return (
+    <View style={styles.dotsGrid}>
+      {Array.from({ length: 9 }).map((_, index) => (
+        <View key={index} style={[styles.dot, { backgroundColor: color }]} />
+      ))}
     </View>
   );
 }
@@ -83,14 +108,50 @@ const styles = StyleSheet.create({
     width: 23,
     height: 23
   },
-  symbol: {
-    color: theme.colors.muted,
-    fontSize: 25,
-    fontWeight: "900",
-    lineHeight: 27
+  homeIcon: {
+    width: 25,
+    height: 25,
+    alignItems: "center",
+    justifyContent: "flex-end"
   },
-  symbolActive: {
-    color: theme.colors.bg
+  homeRoof: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 11,
+    borderRightWidth: 11,
+    borderBottomWidth: 10,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    marginBottom: -1
+  },
+  homeBody: {
+    width: 17,
+    height: 13,
+    borderWidth: 2,
+    borderTopWidth: 0,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingBottom: 1
+  },
+  homeDoor: {
+    width: 5,
+    height: 7,
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2
+  },
+  dotsGrid: {
+    width: 25,
+    height: 25,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3
   },
   label: {
     color: theme.colors.muted,
