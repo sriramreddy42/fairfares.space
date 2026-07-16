@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
@@ -20,15 +21,19 @@ type Props = {
   onTopAction: (action: string) => void;
 };
 
-const quickActions = [
-  { label: "I need a place", icon: "BED", need: "need_place" },
-  { label: "Need roommates", icon: "ROOM", need: "need_roommates" },
-  { label: "I have a place", icon: "HOME", need: "have_place" },
-  { label: "I need a ride", icon: "RIDE", need: "ride_need" },
-  { label: "I provide a ride", icon: "CAR", need: "ride_offer" }
+const quickActions: Array<{ label: string; icon: ImageSourcePropType; need: string }> = [
+  { label: "I need a place", icon: appAssets.bed, need: "need_place" },
+  { label: "Need roommates", icon: appAssets.roommates, need: "need_roommates" },
+  { label: "I have a place", icon: appAssets.bed, need: "have_place" },
+  { label: "I need a ride", icon: appAssets.ride, need: "ride_need" },
+  { label: "I provide a ride", icon: appAssets.ride, need: "ride_offer" }
 ];
 
-const roomTypes = ["Shared Room", "Single Room", "Paying Guest"];
+const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropType }> = [
+  { label: "Shared Room", category: "shared_room", icon: appAssets.roommates },
+  { label: "Single Room", category: "single_room", icon: appAssets.bed },
+  { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
+];
 
 export function HousingScreen({
   data,
@@ -57,6 +62,17 @@ export function HousingScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.brandHeader}>
+        <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
+        <TouchableOpacity style={styles.cityPill} onPress={onOpenSearch}>
+          <Text style={styles.cityPillText}>{data?.location.city || "Denver, CO"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.headerIcon} onPress={onOpenMessenger}>
+          <Image source={appAssets.message} style={styles.headerIconImage} resizeMode="contain" />
+          {data?.chat.unreadCount ? <Text style={styles.headerBadge}>{data.chat.unreadCount}</Text> : null}
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.topTabs}>
         {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
           <TouchableOpacity key={item} onPress={() => onTopAction(item)} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
@@ -66,13 +82,15 @@ export function HousingScreen({
       </View>
 
       <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
-        <Text style={styles.searchIcon}>Q</Text>
+        <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
         <Text style={styles.searchText}>Search city, area, building</Text>
         <Text style={styles.later}>Search</Text>
       </TouchableOpacity>
 
       <View style={styles.locationCard}>
-        <View style={styles.locationIcon}><Text style={styles.locationIconText}>FF</Text></View>
+        <View style={styles.locationIcon}>
+          <Image source={appAssets.explorer} style={styles.locationIconImage} resizeMode="cover" />
+        </View>
         <View style={styles.locationCopy}>
           <Text style={styles.locationTitle}>{data?.location.selected || "Denver, CO"}</Text>
           <Text style={styles.locationMeta}>Search city, building, campus, or neighborhood</Text>
@@ -113,7 +131,7 @@ export function HousingScreen({
         {quickActions.map((action) => (
           <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => onNeedSelect(action.need)}>
             <View style={[styles.quickBubble, selectedNeed === action.need && styles.quickBubbleActive]}>
-              <Text style={styles.quickIcon}>{action.icon}</Text>
+              <Image source={action.icon} style={styles.quickIcon} resizeMode="contain" />
             </View>
             <Text style={[styles.quickLabel, selectedNeed === action.need && styles.quickLabelActive]}>{action.label}</Text>
           </TouchableOpacity>
@@ -167,15 +185,16 @@ export function HousingScreen({
       <View style={styles.roomTypeRow}>
         {roomTypes.map((type) => (
           <TouchableOpacity
-            key={type}
+            key={type.category}
             style={styles.roomType}
             onPress={() => {
-              const category = type.toLowerCase().replace(" ", "_");
-              onCategorySelect(selectedCategory === category ? "" : category);
+              onCategorySelect(selectedCategory === type.category ? "" : type.category);
             }}
           >
-            <View style={[styles.roomCircle, selectedCategory === type.toLowerCase().replace(" ", "_") && styles.roomCircleActive]}><Text style={styles.roomIcon}>BED</Text></View>
-            <Text style={styles.roomLabel}>{type}</Text>
+            <View style={[styles.roomCircle, selectedCategory === type.category && styles.roomCircleActive]}>
+              <Image source={type.icon} style={styles.roomIcon} resizeMode="contain" />
+            </View>
+            <Text style={styles.roomLabel}>{type.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -200,18 +219,25 @@ export function HousingScreen({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: theme.spacing.md, paddingBottom: 126, gap: theme.spacing.lg },
+  brandHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  logo: { width: 122, height: 54 },
+  cityPill: { flex: 1, minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, justifyContent: "center", paddingHorizontal: 14 },
+  cityPillText: { color: theme.colors.text, fontWeight: "900", fontSize: 17 },
+  headerIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
+  headerIconImage: { width: 28, height: 28 },
+  headerBadge: { position: "absolute", top: -3, right: -3, backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, minWidth: 20, textAlign: "center", fontWeight: "900", overflow: "hidden" },
   topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   topTab: { paddingVertical: 12, paddingRight: 22 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
   topTabText: { color: theme.colors.muted, fontSize: 18, fontWeight: "900" },
   topTabTextActive: { color: theme.colors.text },
   searchBar: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
-  searchIcon: { color: theme.colors.muted, fontWeight: "900", fontSize: 18 },
+  searchIcon: { width: 30, height: 30 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 20, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, fontWeight: "900" },
   locationCard: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", gap: theme.spacing.md },
-  locationIcon: { width: 54, height: 54, borderRadius: theme.radius.md, backgroundColor: "#0e3a21", alignItems: "center", justifyContent: "center" },
-  locationIconText: { color: theme.colors.green, fontWeight: "900" },
+  locationIcon: { width: 60, height: 60, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  locationIconImage: { width: "100%", height: "100%" },
   locationCopy: { flex: 1, gap: 4 },
   locationTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   locationMeta: { color: theme.colors.muted, fontSize: 15 },
@@ -227,7 +253,7 @@ const styles = StyleSheet.create({
   quickAction: { width: 92, alignItems: "center", gap: 9 },
   quickBubble: { width: 78, height: 78, borderRadius: 39, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   quickBubbleActive: { backgroundColor: theme.colors.brand },
-  quickIcon: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  quickIcon: { width: 52, height: 52 },
   quickLabel: { color: theme.colors.soft, fontSize: 13, textAlign: "center", fontWeight: "800" },
   quickLabelActive: { color: theme.colors.text },
   postNeed: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 14 },
@@ -252,7 +278,7 @@ const styles = StyleSheet.create({
   roomType: { alignItems: "center", gap: 10, flex: 1 },
   roomCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
-  roomIcon: { color: theme.colors.text, fontWeight: "900" },
+  roomIcon: { width: 58, height: 58 },
   roomLabel: { color: theme.colors.soft, fontWeight: "900", fontSize: 16 },
   localityCard: { width: 270, borderRadius: theme.radius.lg, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, marginRight: theme.spacing.md, padding: theme.spacing.md, gap: 14 },
   localityTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },

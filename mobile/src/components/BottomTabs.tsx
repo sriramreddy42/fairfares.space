@@ -1,15 +1,16 @@
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { appAssets } from "../assets";
 import { theme } from "../theme";
 
 export type TabKey = "home" | "housing" | "services" | "messenger" | "profile";
 
-const tabs: Array<{ key: TabKey; label: string; symbol: string }> = [
-  { key: "home", label: "Home", symbol: "H" },
-  { key: "housing", label: "Housing", symbol: "B" },
-  { key: "services", label: "Services", symbol: "S" },
-  { key: "messenger", label: "Chats", symbol: "M" },
-  { key: "profile", label: "Profile", symbol: "P" }
+const tabs: Array<{ key: TabKey; label: string; icon: ImageSourcePropType }> = [
+  { key: "home", label: "Home", icon: appAssets.logo },
+  { key: "housing", label: "Housing", icon: appAssets.bed },
+  { key: "services", label: "Services", icon: appAssets.ride },
+  { key: "messenger", label: "Chats", icon: appAssets.message },
+  { key: "profile", label: "Profile", icon: appAssets.profile }
 ];
 
 type Props = {
@@ -26,7 +27,7 @@ export function BottomTabs({ active, unreadCount, onChange }: Props) {
         return (
           <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.active]} onPress={() => onChange(tab.key)}>
             <View style={[styles.icon, isActive && styles.activeIcon]}>
-              <Text style={[styles.symbol, isActive && styles.activeSymbol]}>{tab.symbol}</Text>
+              <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
               {tab.key === "messenger" && unreadCount > 0 ? <Text style={styles.badge}>{unreadCount}</Text> : null}
             </View>
             <Text style={[styles.label, isActive && styles.activeLabel]}>{tab.label}</Text>
@@ -75,12 +76,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.text,
     borderRadius: 16
   },
-  symbol: {
-    color: theme.colors.muted,
-    fontWeight: "900"
-  },
-  activeSymbol: {
-    color: theme.colors.bg
+  iconImage: {
+    width: 23,
+    height: 23
   },
   label: {
     color: theme.colors.muted,
