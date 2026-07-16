@@ -1,4 +1,5 @@
 import { BootstrapPayload, Car, HousingPost, ServiceItem } from "../types";
+import { NativeModules } from "react-native";
 
 declare const process: {
   env: {
@@ -6,7 +7,19 @@ declare const process: {
   };
 };
 
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
+const API_PORT = "8010";
+
+function metroHostApiUrl() {
+  const scriptURL = String(NativeModules.SourceCode?.scriptURL || "");
+  const match = scriptURL.match(/^[a-z]+:\/\/([^/:]+)(?::\d+)?/i);
+  const host = match?.[1];
+  if (!host || host === "localhost" || host === "127.0.0.1") {
+    return "";
+  }
+  return `http://${host}:${API_PORT}`;
+}
+
+const DEFAULT_API_URL = metroHostApiUrl() || "http://127.0.0.1:8010";
 
 export const API_URL =
   process.env.EXPO_PUBLIC_FAIRFARES_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
@@ -25,7 +38,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`;
   }
-  const response = await fetch(`${API_URL}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, { ...init, headers });
+  } catch (error) {
+    throw new Error(`Could not connect to FairFares server at ${API_URL}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then reload Expo.`);
+  }
   const payload = (await response.json()) as T & { error?: string };
   if (!response.ok) {
     throw new Error(payload.error || `FairFares request failed: ${response.status}`);

@@ -5,12 +5,19 @@ This is the long-term native mobile app layer for FairFares. It is an Expo / Rea
 ## Run locally
 
 ```bash
-cd mobile
-npm install
-EXPO_PUBLIC_FAIRFARES_API_URL=http://127.0.0.1:8000 npm run start:go
+cd /Users/sriramreddybandari/Desktop/FairFares
+HOST=0.0.0.0 PORT=8010 python3 app.py
 ```
 
-For a real device on the same Wi-Fi, replace `127.0.0.1` with your Mac's local IP address.
+In another terminal:
+
+```bash
+cd mobile
+npm install
+npm run start:go
+```
+
+For a real device on the same Wi-Fi, the app derives your Mac's local IP from Expo and calls the backend on port `8010`. If needed, override it with `EXPO_PUBLIC_FAIRFARES_API_URL=http://YOUR_MAC_IP:8010 npm run start:go`.
 
 Use `npm run start:go` for Expo Go. Use `npm run start:dev` only after adding `expo-dev-client` and creating a native development build.
 
