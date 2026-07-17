@@ -11259,8 +11259,7 @@ def mobile_housing_posts(
     elif need == "have_place":
         clauses.append("post_mode = 'NEED_PLACE'")
     elif need == "need_roommates":
-        clauses.append("post_mode = 'NEED_PLACE'")
-        clauses.append("roommate_intent = 1")
+        clauses.append("(post_mode = 'HAVE_PLACE' OR roommate_intent = 1)")
     if category:
         clauses.append("category = ?")
         values.append(category)
