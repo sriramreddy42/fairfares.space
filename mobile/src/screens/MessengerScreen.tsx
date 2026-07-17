@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
   blockChatUser,
   createChatCommunity,
@@ -28,6 +28,26 @@ type Props = {
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
 
 const blankGroup = { name: "", area: "", description: "" };
+
+function initials(label: string) {
+  const clean = label.trim();
+  if (!clean) return "F";
+  const parts = clean.split(/\s+/).slice(0, 2);
+  return parts.map((part) => part[0]?.toUpperCase()).join("") || "F";
+}
+
+function relativeTime(value: string) {
+  if (!value) return "";
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return "";
+  const diffMinutes = Math.max(1, Math.round((Date.now() - then) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d`;
+  return `${Math.round(diffDays / 7)}w`;
+}
 
 export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
   const signedIn = Boolean(data?.user);
@@ -71,7 +91,10 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     const query = search.trim().toLowerCase();
     return conversations.filter((conversation) => {
       const matchesSearch = !query || `${conversation.subject} ${conversation.otherName} ${conversation.lastMessage}`.toLowerCase().includes(query);
-      const matchesTab = tab === "All" || (tab === "Unread" && conversation.unread > 0);
+      const matchesTab =
+        tab === "All" ||
+        (tab === "Unread" && conversation.unread > 0) ||
+        (tab === "Groups" && (conversation.kind === "GROUP" || Boolean(conversation.communityId)));
       return matchesSearch && matchesTab;
     });
   }, [conversations, search, tab]);
@@ -112,6 +135,12 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     try {
       const payload = await getChatMessages(conversation.id);
       setActiveSubject(payload.conversation.subject || conversation.subject);
+      setActiveConversation({
+        ...conversation,
+        kind: (payload.conversation.kind as ChatConversation["kind"]) || conversation.kind,
+        status: payload.conversation.status || conversation.status,
+        communityId: payload.conversation.communityId || conversation.communityId
+      });
       setMessages(payload.messages || []);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
@@ -148,7 +177,16 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         const response = await startChatForPost(pendingPost.id, cleanMessage);
         setActiveConversationId(response.conversation.id);
         setActiveSubject(response.conversation.subject || pendingPost.title);
-        setActiveConversation(null);
+        setActiveConversation({
+          id: response.conversation.id,
+          communityId: response.conversation.communityId,
+          kind: response.conversation.communityId ? "GROUP" : "HOST_GUEST",
+          subject: response.conversation.subject || pendingPost.title,
+          otherName: pendingPost.title,
+          lastMessage: cleanMessage,
+          lastMessageAt: new Date().toISOString(),
+          unread: 0
+        });
         setMessages(response.message ? [response.message] : []);
       } else {
         Alert.alert("Choose a chat", "Open a listing or conversation first.");
@@ -290,18 +328,115 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
   }
 
+  function closeThread() {
+    setActiveConversationId("");
+    setActiveConversation(null);
+    setActiveSubject("");
+    setMessages([]);
+    setMessageText("");
+    setEditingMessageId(null);
+  }
+
+  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost));
+
+  if (inThread) {
+    return (
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+      >
+        <View style={styles.threadHeader}>
+          <TouchableOpacity style={styles.backButton} onPress={closeThread}>
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.threadAvatar}>
+            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || activeSubject || "Chat")}</Text>
+            <View style={styles.activeDot} />
+          </View>
+          <View style={styles.threadHeaderCopy}>
+            <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || activeSubject || pendingPost?.title || "FairFares chat"}</Text>
+            <Text style={styles.threadHeaderMeta}>{activeConversation?.communityId ? "Group chat" : "Active now"}</Text>
+          </View>
+          <TouchableOpacity style={styles.headerAction} onPress={toggleMute}><Text style={styles.headerActionText}>•••</Text></TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.threadMessages} contentContainerStyle={styles.threadMessagesContent}>
+          {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
+          {!threadLoading && !messages.length ? (
+            <View style={styles.emptyThread}>
+              <Text style={styles.emptyThreadTitle}>No messages yet.</Text>
+              <Text style={styles.emptyThreadCopy}>Send a message to start the conversation.</Text>
+            </View>
+          ) : null}
+          {messages.map((message) => (
+            <View key={message.id} style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine]}>
+              {!message.mine ? (
+                <View style={styles.smallAvatar}><Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text></View>
+              ) : null}
+              <View style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble]}>
+                {!message.mine && activeConversation?.communityId ? <Text style={styles.senderName}>{message.senderName}</Text> : null}
+                <Text style={styles.bubbleText}>{message.text}</Text>
+                <Text style={styles.bubbleMeta}>
+                  {message.editedAt ? "Edited · " : ""}
+                  {message.mine ? message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent" : ""}
+                </Text>
+                <View style={styles.messageActions}>
+                  {message.mine && message.canEdit ? (
+                    <>
+                      <TouchableOpacity onPress={() => editMessage(message)}><Text style={styles.messageActionText}>Edit</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteMessage(message)}><Text style={styles.messageActionText}>Delete</Text></TouchableOpacity>
+                    </>
+                  ) : null}
+                  {!message.mine ? (
+                    <TouchableOpacity onPress={() => reportMessage(message)}><Text style={styles.messageActionText}>Report</Text></TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+
+        <View style={styles.composer}>
+          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>＋</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>📷</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>🖼</Text></TouchableOpacity>
+          <TextInput
+            placeholder={editingMessageId ? "Edit message" : "Aa"}
+            placeholderTextColor="#7c8493"
+            style={styles.composerInput}
+            value={messageText}
+            onChangeText={setMessageText}
+            multiline
+          />
+          <TouchableOpacity style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
+            <Text style={styles.composerSendText}>{editingMessageId ? "✓" : "➤"}</Text>
+          </TouchableOpacity>
+        </View>
+        {editingMessageId ? (
+          <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
+            <Text style={styles.cancelEditText}>Cancel edit</Text>
+          </TouchableOpacity>
+        ) : null}
+      </KeyboardAvoidingView>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.eyebrow}>Fair Messenger</Text>
           <Text style={styles.title}>Chats</Text>
+        </View>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity style={styles.headerIcon}><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.headerIcon}><Text style={styles.headerIconText}>⛶</Text></TouchableOpacity>
         </View>
         <TouchableOpacity
           style={styles.iconButton}
           onPress={() => (signedIn ? setCreatingGroup((value) => !value) : onRequireLogin())}
         >
-          <Text style={styles.iconButtonText}>+</Text>
+          <Text style={styles.iconButtonText}>✎</Text>
         </TouchableOpacity>
       </View>
 
@@ -362,80 +497,22 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         </View>
       ) : null}
 
-      {(pendingPost || activeConversationId) && signedIn ? (
-        <View style={styles.thread}>
-          <Text style={styles.sectionEyebrow}>Current chat</Text>
-          <Text style={styles.threadTitle}>{activeSubject || pendingPost?.title || "Accommodation chat"}</Text>
-          <View style={styles.threadActions}>
-            <TouchableOpacity style={styles.smallAction} onPress={toggleMute}>
-              <Text style={styles.smallActionText}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text>
-            </TouchableOpacity>
-            {activeConversationId && !activeConversation?.communityId ? (
-              <TouchableOpacity style={styles.smallAction} onPress={toggleBlock}>
-                <Text style={styles.smallActionText}>{activeConversation?.blockedAt ? "Unblock" : "Block"}</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-          <ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent}>
-            {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
-            {!threadLoading && !messages.length ? <Text style={styles.emptyText}>No messages yet.</Text> : null}
-            {messages.map((message) => (
-              <View key={message.id} style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble]}>
-                {!message.mine ? <Text style={styles.senderName}>{message.senderName}</Text> : null}
-                <Text style={styles.bubbleText}>{message.text}</Text>
-                <Text style={styles.bubbleMeta}>
-                  {message.editedAt ? "Edited · " : ""}
-                  {message.mine ? message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent" : ""}
-                </Text>
-                <View style={styles.messageActions}>
-                  {message.mine && message.canEdit ? (
-                    <>
-                      <TouchableOpacity onPress={() => editMessage(message)}><Text style={styles.messageActionText}>Edit</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => deleteMessage(message)}><Text style={styles.messageActionText}>Delete</Text></TouchableOpacity>
-                    </>
-                  ) : null}
-                  {!message.mine ? (
-                    <TouchableOpacity onPress={() => reportMessage(message)}><Text style={styles.messageActionText}>Report</Text></TouchableOpacity>
-                  ) : null}
-                </View>
-              </View>
-            ))}
-          </ScrollView>
-          <View style={styles.messageBox}>
-            <TextInput
-              placeholder={editingMessageId ? "Edit message" : "Type a message"}
-              placeholderTextColor={theme.colors.muted}
-              style={styles.messageInput}
-              value={messageText}
-              onChangeText={setMessageText}
-              multiline
-            />
-            <TouchableOpacity style={[styles.send, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
-              <Text style={styles.sendText}>{editingMessageId ? "Save" : "Send"}</Text>
-            </TouchableOpacity>
-          </View>
-          {editingMessageId ? (
-            <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
-              <Text style={styles.cancelEditText}>Cancel edit</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : null}
-
       <ScrollView
         style={styles.list}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
       >
-        {(tab === "All" || tab === "Unread") && filteredConversations.map((chat) => (
+        {(tab === "All" || tab === "Unread" || tab === "Groups") && filteredConversations.map((chat) => (
           <TouchableOpacity key={chat.id} style={styles.chatRow} onPress={() => openConversation(chat)}>
-            <View style={styles.avatar}><Text style={styles.avatarText}>{(chat.otherName || chat.subject || "C").slice(0, 1)}</Text></View>
+            <View style={styles.avatar}><Text style={styles.avatarText}>{initials(chat.otherName || chat.subject || "Chat")}</Text></View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={styles.chatSubject}>{chat.subject}</Text>
-              <Text style={styles.chatLast}>{chat.lastMessage || "No messages yet."}</Text>
+              <Text style={styles.chatLast} numberOfLines={1}>{chat.lastMessage || chat.subject || "No messages yet."}</Text>
             </View>
-            {chat.unread ? <Text style={styles.unread}>{chat.unread}</Text> : <Text style={styles.chevron}>›</Text>}
+            <View style={styles.chatMeta}>
+              <Text style={styles.chatTime}>{relativeTime(chat.lastMessageAt)}</Text>
+              {chat.unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
+            </View>
           </TouchableOpacity>
         ))}
 
@@ -471,8 +548,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
   eyebrow: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: "900" },
+  headerIcons: { flexDirection: "row", gap: 8, marginLeft: "auto", marginRight: 10 },
+  headerIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  headerIconText: { color: theme.colors.muted, fontSize: 19, fontWeight: "900" },
   iconButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  iconButtonText: { color: theme.colors.text, fontSize: 28, fontWeight: "800", marginTop: -2 },
+  iconButtonText: { color: theme.colors.text, fontSize: 23, fontWeight: "800", marginTop: -2 },
   search: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 16, minHeight: 48, fontSize: 16 },
   tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: theme.spacing.md },
   tab: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
@@ -490,6 +570,32 @@ const styles = StyleSheet.create({
   multiline: { minHeight: 82, paddingTop: 13, textAlignVertical: "top" },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  threadHeader: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  backButton: { width: 34, height: 42, alignItems: "center", justifyContent: "center" },
+  backText: { color: theme.colors.blue, fontSize: 42, fontWeight: "500", marginTop: -5 },
+  threadAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
+  threadAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 15 },
+  activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.green, borderWidth: 2, borderColor: theme.colors.bg },
+  threadHeaderCopy: { flex: 1 },
+  threadHeaderTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  threadHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", marginTop: 1 },
+  headerAction: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  headerActionText: { color: theme.colors.blue, fontSize: 20, fontWeight: "900" },
+  threadMessages: { flex: 1 },
+  threadMessagesContent: { paddingVertical: 16, gap: 10, flexGrow: 1, justifyContent: "flex-end" },
+  threadMessageRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  threadMessageRowMine: { justifyContent: "flex-end" },
+  smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
+  smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
+  emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
+  emptyThreadTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "700" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  composerIcon: { width: 31, minHeight: 38, alignItems: "center", justifyContent: "center" },
+  composerIconText: { color: theme.colors.blue, fontSize: 23, fontWeight: "900" },
+  composerInput: { flex: 1, color: "#101828", backgroundColor: "#f5f7fb", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, minHeight: 38, maxHeight: 110, fontSize: 16 },
+  composerSend: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  composerSendText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   thread: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, marginBottom: theme.spacing.md },
   sectionEyebrow: { color: theme.colors.muted, fontWeight: "900", textTransform: "uppercase", fontSize: 11 },
   threadTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 2, marginBottom: 10 },
@@ -523,6 +629,8 @@ const styles = StyleSheet.create({
   chatName: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "700" },
   chatLast: { color: theme.colors.muted, marginTop: 3 },
+  chatMeta: { alignItems: "flex-end", minWidth: 34, gap: 6 },
+  chatTime: { color: theme.colors.muted, fontWeight: "800", fontSize: 12 },
   unread: { backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, overflow: "hidden", paddingHorizontal: 8, fontWeight: "900" },
   memberCount: { color: theme.colors.muted, fontWeight: "900" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
