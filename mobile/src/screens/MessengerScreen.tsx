@@ -23,6 +23,8 @@ type Props = {
   data: BootstrapPayload | null;
   pendingPost: HousingPost | null;
   onRequireLogin: () => void;
+  onClearPendingPost?: () => void;
+  onThreadModeChange?: (active: boolean) => void;
 };
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
@@ -49,7 +51,7 @@ function relativeTime(value: string) {
   return `${Math.round(diffDays / 7)}w`;
 }
 
-export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
+export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPendingPost, onThreadModeChange }: Props) {
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
@@ -65,6 +67,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
   const [threadLoading, setThreadLoading] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupDraft, setGroupDraft] = useState(blankGroup);
+  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost));
 
   useEffect(() => {
     setConversations(data?.chat.conversations || []);
@@ -86,6 +89,11 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
       refreshMessenger();
     }
   }, [signedIn]);
+
+  useEffect(() => {
+    onThreadModeChange?.(inThread);
+    return () => onThreadModeChange?.(false);
+  }, [inThread, onThreadModeChange]);
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -301,6 +309,25 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
   }
 
+  function showChatOptions() {
+    const actions = [
+      {
+        text: activeConversation?.mutedAt ? "Unmute chat" : "Mute chat",
+        onPress: toggleMute
+      }
+    ];
+    if (activeConversationId && !activeConversation?.communityId) {
+      actions.push({
+        text: activeConversation?.blockedAt ? "Unblock member" : "Block member",
+        onPress: toggleBlock
+      });
+    }
+    Alert.alert(activeConversation?.otherName || activeSubject || "Chat options", "Manage this conversation.", [
+      ...actions,
+      { text: "Cancel", style: "cancel" }
+    ]);
+  }
+
   function editMessage(message: ChatMessage) {
     if (!message.canEdit) return;
     setEditingMessageId(message.id);
@@ -335,20 +362,20 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     setMessages([]);
     setMessageText("");
     setEditingMessageId(null);
+    onClearPendingPost?.();
+    onThreadModeChange?.(false);
   }
-
-  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost));
 
   if (inThread) {
     return (
       <KeyboardAvoidingView
-        style={styles.screen}
+        style={styles.threadScreen}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={closeThread}>
-            <Text style={styles.backText}>‹</Text>
+            <BackIcon />
           </TouchableOpacity>
           <View style={styles.threadAvatar}>
             <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || activeSubject || "Chat")}</Text>
@@ -358,7 +385,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
             <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || activeSubject || pendingPost?.title || "FairFares chat"}</Text>
             <Text style={styles.threadHeaderMeta}>{activeConversation?.communityId ? "Group chat" : "Active now"}</Text>
           </View>
-          <TouchableOpacity style={styles.headerAction} onPress={toggleMute}><Text style={styles.headerActionText}>•••</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.headerAction} onPress={showChatOptions}><DotsIcon /></TouchableOpacity>
         </View>
 
         <ScrollView style={styles.threadMessages} contentContainerStyle={styles.threadMessagesContent}>
@@ -398,9 +425,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         </ScrollView>
 
         <View style={styles.composer}>
-          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>＋</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>📷</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.composerIcon}><Text style={styles.composerIconText}>🖼</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.composerIcon} onPress={showChatOptions}><PlusIcon /></TouchableOpacity>
           <TextInput
             placeholder={editingMessageId ? "Edit message" : "Aa"}
             placeholderTextColor="#7c8493"
@@ -410,7 +435,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
             multiline
           />
           <TouchableOpacity style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
-            <Text style={styles.composerSendText}>{editingMessageId ? "✓" : "➤"}</Text>
+            {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
         </View>
         {editingMessageId ? (
@@ -543,8 +568,46 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
   );
 }
 
+function BackIcon() {
+  return (
+    <View style={styles.backIcon}>
+      <View style={[styles.backLine, styles.backLineTop]} />
+      <View style={[styles.backLine, styles.backLineBottom]} />
+    </View>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <View style={styles.dotsIcon}>
+      <View style={styles.dotIcon} />
+      <View style={styles.dotIcon} />
+      <View style={styles.dotIcon} />
+    </View>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <View style={styles.plusIcon}>
+      <View style={styles.plusHorizontal} />
+      <View style={styles.plusVertical} />
+    </View>
+  );
+}
+
+function SendIcon() {
+  return (
+    <View style={styles.sendIcon}>
+      <View style={styles.sendWingTop} />
+      <View style={styles.sendWingBottom} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg, padding: theme.spacing.md, paddingBottom: 116 },
+  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 10 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
   eyebrow: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: "900" },
@@ -571,16 +634,20 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   threadHeader: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  backButton: { width: 34, height: 42, alignItems: "center", justifyContent: "center" },
-  backText: { color: theme.colors.blue, fontSize: 42, fontWeight: "500", marginTop: -5 },
+  backButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  backIcon: { width: 24, height: 24, justifyContent: "center" },
+  backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: theme.colors.blue, left: 2 },
+  backLineTop: { transform: [{ rotate: "-45deg" }], top: 6 },
+  backLineBottom: { transform: [{ rotate: "45deg" }], bottom: 5 },
   threadAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
   threadAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 15 },
   activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.green, borderWidth: 2, borderColor: theme.colors.bg },
   threadHeaderCopy: { flex: 1 },
   threadHeaderTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   threadHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", marginTop: 1 },
-  headerAction: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  headerActionText: { color: theme.colors.blue, fontSize: 20, fontWeight: "900" },
+  headerAction: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
+  dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.blue },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingVertical: 16, gap: 10, flexGrow: 1, justifyContent: "flex-end" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
@@ -590,12 +657,17 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "700" },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.line },
-  composerIcon: { width: 31, minHeight: 38, alignItems: "center", justifyContent: "center" },
-  composerIconText: { color: theme.colors.blue, fontSize: 23, fontWeight: "900" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  composerIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
+  plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },
+  plusVertical: { position: "absolute", width: 5, height: 24, borderRadius: 3, backgroundColor: theme.colors.blue },
   composerInput: { flex: 1, color: "#101828", backgroundColor: "#f5f7fb", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, minHeight: 38, maxHeight: 110, fontSize: 16 },
   composerSend: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
   composerSendText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },
+  sendWingTop: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "32deg" }], top: 5 },
+  sendWingBottom: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "-32deg" }], bottom: 5 },
   thread: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, marginBottom: theme.spacing.md },
   sectionEyebrow: { color: theme.colors.muted, fontWeight: "900", textTransform: "uppercase", fontSize: 11 },
   threadTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 2, marginBottom: 10 },

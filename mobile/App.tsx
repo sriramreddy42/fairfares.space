@@ -522,7 +522,13 @@ export default function App() {
 
   const screen =
     activeTab === "messenger" ? (
-      <MessengerScreen data={data} pendingPost={pendingPost} onRequireLogin={() => setLoginOpen(true)} />
+      <MessengerScreen
+        data={data}
+        pendingPost={pendingPost}
+        onRequireLogin={() => setLoginOpen(true)}
+        onClearPendingPost={() => setPendingPost(null)}
+        onThreadModeChange={setBottomTabsHidden}
+      />
     ) : activeTab === "activity" ? (
       <DashboardScreen data={data} />
     ) : activeTab === "profile" ? (
