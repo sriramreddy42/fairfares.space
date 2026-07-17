@@ -13633,6 +13633,14 @@ def guest_offer_modal() -> str:
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
 
+    def do_OPTIONS(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.not_found()
+
     def do_HEAD(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in PUBLIC_REDIRECT_ROUTES:
@@ -21704,7 +21712,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return SimpleHTTPRequestHandler.do_GET(self)
 
     def end_headers(self) -> None:
-        if str(getattr(self, "path", "")).startswith("/static/"):
+        current_path = str(getattr(self, "path", ""))
+        if current_path.startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Max-Age", "86400")
+        if current_path.startswith("/static/"):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         super().end_headers()
 
