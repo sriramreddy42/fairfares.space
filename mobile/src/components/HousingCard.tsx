@@ -12,12 +12,14 @@ type Props = {
 };
 
 export function HousingCard({ post, onMessage, onOpen, distanceLabel }: Props) {
-  const imageUrl = absoluteAssetUrl(post.imageUrl);
+  const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
+  const imageUrl = absoluteAssetUrl(postImages[0] || "");
   return (
     <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
       <View style={styles.imageWrap}>
         {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.image} /> : <View style={styles.fallback} />}
         <Text style={styles.badge}>{post.modeLabel}</Text>
+        {postImages.length > 1 ? <Text style={styles.imageCount}>1/{Math.min(postImages.length, 4)}</Text> : null}
       </View>
       <View style={styles.body}>
         <Text numberOfLines={2} style={styles.title}>
@@ -81,6 +83,18 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.accent,
     color: theme.colors.text,
     borderRadius: theme.radius.sm,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontWeight: "900"
+  },
+  imageCount: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    backgroundColor: "rgba(0,0,0,0.68)",
+    color: theme.colors.text,
+    borderRadius: theme.radius.pill,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 5,

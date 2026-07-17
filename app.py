@@ -916,6 +916,23 @@ def save_file_payload_locally(
     return f"local://uploads/{folder_name}/{safe_name}"
 
 
+def save_data_url_payload_locally(
+    *,
+    folder_name: str,
+    data_url: str,
+    fallback_name: str,
+) -> str:
+    parts = data_url_upload_parts(data_url, fallback_name)
+    if not parts:
+        return ""
+    filename, mime_type, payload = parts
+    return save_file_payload_locally(
+        folder_name=folder_name,
+        file_data={"filename": filename, "mime_type": mime_type, "payload": payload},
+        fallback_name=fallback_name,
+    )
+
+
 def local_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     if not value.startswith("local://uploads/"):
         return None
@@ -11136,7 +11153,7 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
                     "parking": bool(int(row_value(row, "parking") or 0)),
                     "utilitiesIncluded": bool(int(row_value(row, "utilities_included") or 0)),
                 },
-                "images": image_urls[:6],
+                "images": image_urls[:4],
                 "lat": lat,
                 "lng": lng,
                 "radius": int(float(row_value(row, "radius_miles") or 0)),
@@ -11171,8 +11188,32 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
     }
 
 
+def accommodation_post_image_urls(post_id: int, preview_image: str = "", limit: int = 4) -> list[str]:
+    image_urls: list[str] = []
+    if post_id:
+        try:
+            with db() as con:
+                image_rows = con.execute(
+                    """
+                    SELECT image_url
+                    FROM accommodation_post_images
+                    WHERE post_id = ?
+                    ORDER BY sort_order ASC, id ASC
+                    LIMIT ?
+                    """,
+                    (post_id, max(1, min(int(limit or 4), 4))),
+                ).fetchall()
+            image_urls = [row_value(image_row, "image_url") for image_row in image_rows if row_value(image_row, "image_url")]
+        except sqlite3.Error:
+            image_urls = []
+    if preview_image and preview_image not in image_urls:
+        image_urls.insert(0, preview_image)
+    return [public_upload_url(image_url) for image_url in image_urls[:4] if image_url]
+
+
 def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
-    preview_image = public_upload_url(row_value(row, "preview_image_url"))
+    images = accommodation_post_image_urls(int(row_value(row, "id") or 0), row_value(row, "preview_image_url"), limit=4)
+    preview_image = images[0] if images else ""
     return {
         "id": row_value(row, "public_id"),
         "title": row_value(row, "title"),
@@ -11192,6 +11233,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "lat": float(row_value(row, "lat") or 0),
         "lng": float(row_value(row, "lng") or 0),
         "imageUrl": preview_image,
+        "images": images,
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -14616,7 +14658,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
             )
             post_id = int(cursor.lastrowid)
-            for index in range(1, 4):
+            for index in range(1, 5):
                 image_url = save_file_payload_locally(
                     folder_name="accommodations",
                     file_data=files.get(f"image_{index}"),
@@ -21559,6 +21601,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         furnished = 1 if bool(payload.get("furnished")) else 0
         parking = 1 if bool(payload.get("parking")) else 0
         utilities_included = 1 if bool(payload.get("utilitiesIncluded") or payload.get("utilities_included")) else 0
+        payload_images = payload.get("images")
+        mobile_images = payload_images if isinstance(payload_images, list) else []
         if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
             self.send_json(
                 {
@@ -21661,6 +21705,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     now,
                 ),
             )
+            post_id = int(cursor.lastrowid)
+            for index, image_value in enumerate(mobile_images[:4], start=1):
+                image_url = save_data_url_payload_locally(
+                    folder_name="accommodations",
+                    data_url=str(image_value or ""),
+                    fallback_name=f"{public_id.lower()}-{index}",
+                )
+                if not image_url:
+                    continue
+                con.execute(
+                    """
+                    INSERT INTO accommodation_post_images
+                    (post_id, image_url, drive_file_id, sort_order, created_at)
+                    VALUES (?, ?, '', ?, ?)
+                    """,
+                    (post_id, image_url, index, now),
+                )
             row = con.execute(
                 """
                 SELECT accommodation_posts.*,
@@ -21670,7 +21731,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM accommodation_posts
                 WHERE id = ?
                 """,
-                (int(cursor.lastrowid),),
+                (post_id,),
             ).fetchone()
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 201)
 

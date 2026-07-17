@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -86,6 +86,7 @@ export function HousingScreen({
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [searchLetterCount, setSearchLetterCount] = useState(1);
+  const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
@@ -132,6 +133,10 @@ export function HousingScreen({
   }, [data?.location.city, posts]);
   const cheapestCarImage = absoluteAssetUrl(cheapestCar?.image_url || "");
   const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
+  const detailImages = detailPost
+    ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
+    : [];
+  const detailImageWidth = Math.max(260, Math.min(viewportWidth - theme.spacing.md * 4, 620));
 
   useEffect(() => {
     const phrase = searchPhrases[searchPhraseIndex];
@@ -396,8 +401,23 @@ export function HousingScreen({
             </View>
             {detailPost ? (
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
-                {absoluteAssetUrl(detailPost.imageUrl) ? (
-                  <Image source={{ uri: absoluteAssetUrl(detailPost.imageUrl) }} style={styles.detailImage} />
+                {detailImages.length ? (
+                  <View style={styles.detailCarouselWrap}>
+                    <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.detailCarousel}>
+                      {detailImages.map((image, index) => (
+                        <Image key={`${image}-${index}`} source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
+                      ))}
+                    </ScrollView>
+                    {detailImages.length > 1 ? (
+                      <View style={styles.detailImageDots}>
+                        {detailImages.map((image, index) => (
+                          <Text key={`${image}-dot-${index}`} style={styles.detailImageDot}>
+                            {index + 1}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
                 ) : (
                   <View style={styles.detailImageFallback} />
                 )}
@@ -526,7 +546,11 @@ const styles = StyleSheet.create({
   detailClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   detailCloseText: { color: theme.colors.text, fontWeight: "900" },
   detailContent: { padding: theme.spacing.md, gap: theme.spacing.md },
-  detailImage: { width: "100%", height: 190, borderRadius: theme.radius.md },
+  detailCarouselWrap: { borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
+  detailCarousel: { width: "100%" },
+  detailImage: { height: 190, borderRadius: theme.radius.md },
+  detailImageDots: { position: "absolute", bottom: 10, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.58)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5 },
+  detailImageDot: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
   detailTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 29, fontWeight: "900" },
   detailMeta: { color: theme.colors.muted, fontSize: 16, fontWeight: "800" },

@@ -17,6 +17,7 @@ export type HousingPost = {
   lat: number;
   lng: number;
   imageUrl: string;
+  images: string[];
   daysLeft: number;
   expiryLabel: string;
   roommateIntent: boolean;

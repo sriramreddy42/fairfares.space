@@ -247,6 +247,7 @@ export type MobileHousingPostInput = {
   contactEmail: string;
   contactPhone: string;
   roommateIntent?: boolean;
+  images?: string[];
 };
 
 export async function createMobileHousingPost(input: MobileHousingPostInput) {
