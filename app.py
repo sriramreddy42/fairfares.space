@@ -11335,6 +11335,55 @@ def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, ob
     }
 
 
+def mobile_rental_policy_payload(row: sqlite3.Row | dict[str, object] | None = None) -> dict[str, object]:
+    timeline = cancellation_policy_timeline(row) if row else {
+        "day_label": "Calculated after pickup date",
+        "cutoff_copy": "Cancel before the 24-hour pickup cutoff for automatic review when eligible.",
+        "day_ticks": [],
+    }
+    return {
+        "securityDepositAmount": SECURITY_DEPOSIT_AMOUNT,
+        "securityDepositCopy": SECURITY_DEPOSIT_RELEASE_COPY,
+        "additionalDriverDailyFee": ADDITIONAL_DRIVER_DAILY_FEE,
+        "holdMinutes": BOOKING_HOLD_MINUTES,
+        "fullPaymentDiscountAmount": FULL_PAYMENT_DISCOUNT_AMOUNT,
+        "cancellation": timeline,
+        "bullets": [
+            "Bring a valid driver license and proof of insurance before vehicle release.",
+            "Pay 10% now to hold the car, or pay in full for faster pickup and eligible savings.",
+            "Pickup balance, refundable deposit authorization, tolls, fuel, cleaning, tickets, and damage are reviewed by policy.",
+        ],
+    }
+
+
+def mobile_rental_quote_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    breakdown = booking_price_breakdown(row)
+    return {
+        "booking": mobile_booking_payload(row),
+        "breakdown": {
+            "daily": breakdown.get("daily"),
+            "effectiveDaily": breakdown.get("effective_daily"),
+            "days": breakdown.get("days"),
+            "standardBase": breakdown.get("standard_base"),
+            "base": breakdown.get("base"),
+            "durationDiscountLabel": breakdown.get("duration_discount_label"),
+            "durationDiscountAmount": breakdown.get("duration_discount_amount"),
+            "additionalDriverFeeAmount": breakdown.get("additional_driver_fee_amount"),
+            "taxFeeAmount": breakdown.get("tax_fee_amount"),
+            "taxFeeLines": [{"label": label, "amount": amount} for label, amount in breakdown.get("tax_fee_lines", [])],
+            "discountAmount": breakdown.get("discount_amount"),
+            "total": breakdown.get("total"),
+            "holdAmount": breakdown.get("booking_hold"),
+            "dueAtPickup": breakdown.get("due_at_pickup"),
+            "marketTotal": breakdown.get("market_total"),
+            "savings": breakdown.get("savings"),
+            "fullPaymentTotal": full_payment_total(breakdown.get("total")),
+        },
+        "policy": mobile_rental_policy_payload(row),
+        "checkoutUrl": "/manage-booking",
+    }
+
+
 def mobile_housing_posts(
     city: str = "",
     area: str = "",
@@ -13939,6 +13988,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rentals":
             self.api_mobile_rentals(parsed)
             return
+        if parsed.path == "/api/mobile/rentals/policy":
+            self.send_json({"ok": True, "policy": mobile_rental_policy_payload()})
+            return
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
             return
@@ -14054,7 +14106,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/housing": self.api_mobile_create_housing,
+            "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
+            "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -22046,6 +22100,107 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Selected car is not available for that pickup time."}, 409)
             return
         self.send_json({"ok": True, "booking": mobile_booking_payload(booking)})
+
+    def api_mobile_rental_quote(self) -> None:
+        payload = self.read_json_body()
+        car_id = int(float_from_value(payload.get("carId") or payload.get("car_id") or "0"))
+        if not car_id:
+            self.send_json({"ok": False, "error": "Choose a rental car first."}, 400)
+            return
+        try:
+            quote = build_booking_preview(
+                car_id=car_id,
+                discount_code=str(payload.get("discountCode") or payload.get("discount_code") or "").strip(),
+                days=int(float_from_value(payload.get("days") or "3") or 3),
+                pickup_date=str(payload.get("pickupDate") or payload.get("pickup_date") or "").strip(),
+                return_date=str(payload.get("returnDate") or payload.get("return_date") or "").strip(),
+                pickup_time=str(payload.get("pickupTime") or payload.get("pickup_time") or "10:00 AM").strip(),
+                return_time=str(payload.get("returnTime") or payload.get("return_time") or "10:00 AM").strip(),
+                pickup_location=str(payload.get("pickupLocation") or payload.get("pickup_location") or "").strip(),
+                return_location=str(payload.get("returnLocation") or payload.get("return_location") or "").strip(),
+                additional_driver_requested=bool(payload.get("additionalDriverRequested") or payload.get("additional_driver_requested")),
+                additional_driver_name=str(payload.get("additionalDriverName") or payload.get("additional_driver_name") or "").strip(),
+                additional_driver_age=str(payload.get("additionalDriverAge") or payload.get("additional_driver_age") or "").strip(),
+            )
+        except Exception as exc:
+            self.send_json({"ok": False, "error": str(exc) or "Unable to quote this rental."}, 400)
+            return
+        if not quote:
+            self.send_json({"ok": False, "error": "Selected car is not available."}, 404)
+            return
+        self.send_json({"ok": True, "quote": mobile_rental_quote_payload(quote)})
+
+    def api_mobile_rental_checkout_session(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before payment."}, 401)
+            return
+        expire_stale_booking_holds()
+        payload = self.read_json_body()
+        payment_option = "full" if str(payload.get("paymentOption") or payload.get("payment_option") or "").lower() == "full" else "hold"
+        booking = get_booking_for_user(int(row_value(user, "id") or 0))
+        if not booking:
+            self.send_json({"ok": False, "error": "Choose a car before paying."}, 404)
+            return
+        if booking["booking_status"] == "EXPIRED_HOLD":
+            self.send_json({"ok": False, "error": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
+            return
+        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "PAID":
+            self.send_json({"ok": False, "error": "This booking does not need a payment right now."}, 400)
+            return
+        if booking["payment_status"] == "HOLD_PAID" and payment_option != "full":
+            self.send_json({"ok": False, "error": "The 10% hold is already paid. Pay the remaining balance for hassle-free pickup."}, 400)
+            return
+        breakdown = booking_price_breakdown(booking)
+        checkout_amount = (
+            round(float(breakdown["due_at_pickup"]), 2)
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else full_payment_total(breakdown["total"])
+            if payment_option == "full"
+            else round(float(breakdown["booking_hold"]), 2)
+        )
+        amount_cents = max(50, int(round(checkout_amount * 100)))
+        origin = self.public_origin().rstrip("/")
+        product_name = (
+            "FairFares remaining pickup balance"
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else "FairFares full booking payment"
+            if payment_option == "full"
+            else "FairFares 10% booking hold"
+        )
+        product_description = (
+            f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - remaining balance for hassle-free pickup"
+            if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
+            else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - full payment includes $10 pickup discount"
+            if payment_option == "full"
+            else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}"
+        )
+        params = {
+            "mode": "payment",
+            "success_url": f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": f"{origin}/payment/cancel",
+            "customer_email": row_value(booking, "contact_email") or row_value(user, "email"),
+            "client_reference_id": row_value(booking, "booking_id"),
+            "line_items[0][quantity]": 1,
+            "line_items[0][price_data][currency]": "usd",
+            "line_items[0][price_data][unit_amount]": amount_cents,
+            "line_items[0][price_data][product_data][name]": product_name,
+            "line_items[0][price_data][product_data][description]": product_description,
+            "metadata[payment_option]": payment_option,
+            "metadata[booking_id]": row_value(booking, "id"),
+            "metadata[public_booking_id]": row_value(booking, "booking_id"),
+            "metadata[user_id]": row_value(user, "id"),
+            "payment_intent_data[metadata][payment_option]": payment_option,
+            "payment_intent_data[metadata][booking_id]": row_value(booking, "id"),
+            "payment_intent_data[metadata][public_booking_id]": row_value(booking, "booking_id"),
+            "payment_intent_data[metadata][user_id]": row_value(user, "id"),
+        }
+        session, status = stripe_api_request("checkout/sessions", params)
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "error": status}, 502)
+            return
+        self.send_json({"ok": True, "url": url, "paymentOption": payment_option, "amount": checkout_amount})
 
     def api_mobile_create_housing(self) -> None:
         user = self.current_user()

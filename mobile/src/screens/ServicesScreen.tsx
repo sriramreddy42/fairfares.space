@@ -1,10 +1,10 @@
-import React from "react";
-import { Alert, Image, ImageBackground, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl } from "../api/client";
+import React, { useMemo, useState } from "react";
+import { Alert, Image, ImageBackground, ImageSourcePropType, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { absoluteAssetUrl, getCars, quoteRentalCar } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { Car, ServiceItem } from "../types";
+import { Car, RentalQuote, RentalSearchInput, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "explorer" | "housing" | "local";
 
@@ -46,7 +46,7 @@ type Props = {
   selected: ServiceKey;
   onSelect: (service: ServiceKey) => void;
   onOpenHousing: () => void;
-  onBookCar: (car: Car) => void;
+  onBookCar: (car: Car, details?: Partial<RentalSearchInput>) => void;
 };
 
 export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousing, onBookCar }: Props) {
@@ -103,10 +103,81 @@ function ServiceGrid({
   );
 }
 
-function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car) => void }) {
+function isoDateFromNow(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const initialRentalSearch: RentalSearchInput = {
+  pickupLocation: "Denver International Airport (DEN)",
+  returnLocation: "Denver International Airport (DEN)",
+  pickupDate: isoDateFromNow(6),
+  returnDate: isoDateFromNow(9),
+  pickupTime: "10:00 AM",
+  returnTime: "10:00 AM",
+  discountCode: "",
+  days: 3,
+  additionalDriverRequested: false,
+  additionalDriverName: "",
+  additionalDriverAge: ""
+};
+
+function dollars(value: unknown) {
+  const numeric = Number(value || 0);
+  return `$${numeric.toFixed(2)}`;
+}
+
+function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, details?: Partial<RentalSearchInput>) => void }) {
+  const [search, setSearch] = useState<RentalSearchInput>(initialRentalSearch);
+  const [visibleCars, setVisibleCars] = useState<Car[]>(cars);
+  const [selectedCar, setSelectedCar] = useState<Car | null>(null);
+  const [quote, setQuote] = useState<RentalQuote | null>(null);
+  const [busy, setBusy] = useState(false);
+  const rows = visibleCars.length ? visibleCars : cars;
   const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
   const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
   const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
+  const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 4), [cars]);
+
+  function updateSearch(key: keyof RentalSearchInput, value: string | boolean) {
+    setSearch((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "pickupLocation" && !current.returnLocation) {
+        next.returnLocation = String(value);
+      }
+      return next;
+    });
+  }
+
+  async function searchCars() {
+    setBusy(true);
+    try {
+      const nextCars = await getCars(search.pickupLocation);
+      setVisibleCars(nextCars);
+      setSelectedCar(null);
+      setQuote(null);
+    } catch (error) {
+      Alert.alert("Rental search failed", error instanceof Error ? error.message : "Could not search cars.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewCar(car: Car) {
+    setSelectedCar(car);
+    setBusy(true);
+    try {
+      const rentalQuote = await quoteRentalCar(Number(car.id), search);
+      setQuote(rentalQuote);
+    } catch (error) {
+      setQuote(null);
+      Alert.alert("Quote failed", error instanceof Error ? error.message : "Could not quote this rental.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <View style={styles.section}>
       <SectionHeader eyebrow="Car Rentals" title="Today's cheapest rate" />
@@ -127,17 +198,62 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car) =>
           </View>
         </View>
       </ImageBackground>
-      {cars.map((car) => {
+      <View style={styles.rentalSearchPanel}>
+        <Text style={styles.panelTitle}>Search rental cars</Text>
+        <TextInput value={search.pickupLocation} onChangeText={(text) => updateSearch("pickupLocation", text)} placeholder="Pickup location" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <TextInput value={search.returnLocation} onChangeText={(text) => updateSearch("returnLocation", text)} placeholder="Return location" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <View style={styles.twoCol}>
+          <TextInput value={search.pickupDate} onChangeText={(text) => updateSearch("pickupDate", text)} placeholder="Pickup date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+          <TextInput value={search.returnDate} onChangeText={(text) => updateSearch("returnDate", text)} placeholder="Return date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+        </View>
+        <View style={styles.twoCol}>
+          <TextInput value={search.pickupTime} onChangeText={(text) => updateSearch("pickupTime", text)} placeholder="Pickup time" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+          <TextInput value={search.returnTime} onChangeText={(text) => updateSearch("returnTime", text)} placeholder="Return time" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+        </View>
+        <TextInput value={search.discountCode} onChangeText={(text) => updateSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.searchInput} autoCapitalize="characters" />
+        <View style={styles.chips}>
+          {pickupLocations.map((location) => (
+            <TouchableOpacity key={location} style={styles.chip} onPress={() => updateSearch("pickupLocation", location)}>
+              <Text style={styles.chipText}>{location}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={styles.searchButton} onPress={searchCars} disabled={busy}>
+          <Text style={styles.searchButtonText}>{busy ? "Searching..." : "Search cars"}</Text>
+        </TouchableOpacity>
+      </View>
+      {quote ? (
+        <View style={styles.quotePanel}>
+          <Text style={styles.panelTitle}>Checkout review</Text>
+          <Text style={styles.quoteTitle}>{quote.booking.carName || selectedCar?.name}</Text>
+          <View style={styles.quoteGrid}>
+            <Text style={styles.quoteItem}>Trip: {quote.booking.days} days</Text>
+            <Text style={styles.quoteItem}>Daily: {dollars(quote.breakdown.effectiveDaily)}</Text>
+            <Text style={styles.quoteItem}>Taxes/fees: {dollars(quote.breakdown.taxFeeAmount)}</Text>
+            <Text style={styles.quoteItem}>Discount: -{dollars(quote.breakdown.discountAmount)}</Text>
+            <Text style={styles.quoteItem}>10% hold: {dollars(quote.breakdown.holdAmount)}</Text>
+            <Text style={styles.quoteItem}>Due pickup: {dollars(quote.breakdown.dueAtPickup)}</Text>
+          </View>
+          <Text style={styles.quoteTotal}>Total {dollars(quote.breakdown.total)} · full pay {dollars(quote.breakdown.fullPaymentTotal)}</Text>
+          <Text style={styles.policyText}>Deposit: {dollars(quote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
+          <Text style={styles.policyText}>{quote.policy.cancellation.cutoff_copy}</Text>
+          {quote.policy.bullets.map((item) => <Text key={item} style={styles.policyBullet}>- {item}</Text>)}
+          <TouchableOpacity style={styles.bookNowWide} onPress={() => selectedCar && onBookCar(selectedCar, search)}>
+            <Text style={styles.bookNowText}>Start checkout</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {rows.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
-          <TouchableOpacity key={car.id} style={styles.carCard} onPress={() => onBookCar(car)}>
+          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => reviewCar(car)}>
             {image ? <Image source={{ uri: image }} style={styles.carImage} /> : <Image source={appAssets.carFallback} style={styles.carImage} />}
             <View style={styles.carBody}>
               <Text style={styles.cardTitle}>{car.name}</Text>
               <Text style={styles.cardMeta}>{car.brand} {car.model} · {car.seats} seats · {car.transmission}</Text>
               <View style={styles.cardFooter}>
                 <Text style={styles.price}>${car.daily_price}/day</Text>
-                <Text style={styles.action}>Select</Text>
+                <Text style={styles.action}>{selectedCar?.id === car.id ? "Reviewing" : "Review"}</Text>
               </View>
             </View>
           </TouchableOpacity>
@@ -214,10 +330,29 @@ const styles = StyleSheet.create({
   rateHeroFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
   bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, paddingVertical: 13 },
   bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
+  bookNowWide: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, paddingVertical: 14, alignItems: "center", marginTop: 4 },
   priceBadge: { minWidth: 108, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, padding: theme.spacing.sm, alignItems: "center" },
   ratePrice: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
   priceBadgeMeta: { color: "#555", fontWeight: "900" },
+  rentalSearchPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
+  panelTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  searchInput: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
+  twoCol: { flexDirection: "row", gap: 10 },
+  twoColField: { flex: 1 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
+  chipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
+  searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  quotePanel: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.blue, padding: theme.spacing.md, gap: 10 },
+  quoteTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  quoteGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  quoteItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
+  quoteTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   carCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
+  carCardActive: { borderColor: theme.colors.blue },
   carImage: { width: "100%", height: 150 },
   carBody: { padding: theme.spacing.md, gap: 8 },
   cardTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", flex: 1 },

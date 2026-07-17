@@ -135,6 +135,58 @@ export type RentalBooking = {
   holdRemainingSeconds: number;
 };
 
+export type RentalSearchInput = {
+  carId?: number;
+  pickupLocation: string;
+  returnLocation: string;
+  pickupDate: string;
+  returnDate: string;
+  pickupTime: string;
+  returnTime: string;
+  discountCode: string;
+  days?: number;
+  additionalDriverRequested?: boolean;
+  additionalDriverName?: string;
+  additionalDriverAge?: string;
+};
+
+export type RentalQuote = {
+  booking: RentalBooking;
+  breakdown: {
+    daily: number;
+    effectiveDaily: number;
+    days: number;
+    standardBase: number;
+    base: number;
+    durationDiscountLabel: string;
+    durationDiscountAmount: number;
+    additionalDriverFeeAmount: number;
+    taxFeeAmount: number;
+    taxFeeLines: Array<{ label: string; amount: number }>;
+    discountAmount: number;
+    total: number;
+    holdAmount: number;
+    dueAtPickup: number;
+    marketTotal: number;
+    savings: number;
+    fullPaymentTotal: number;
+  };
+  policy: {
+    securityDepositAmount: number;
+    securityDepositCopy: string;
+    additionalDriverDailyFee: number;
+    holdMinutes: number;
+    fullPaymentDiscountAmount: number;
+    cancellation: {
+      day_label: string;
+      cutoff_copy: string;
+      day_ticks: string[];
+    };
+    bullets: string[];
+  };
+  checkoutUrl: string;
+};
+
 export type BootstrapPayload = {
   ok: boolean;
   user: FairFaresUser | null;

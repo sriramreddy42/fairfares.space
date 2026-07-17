@@ -1,15 +1,15 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
-import { BootstrapPayload, Car, HousingPost, ServiceItem } from "./src/types";
+import { BootstrapPayload, Car, HousingPost, RentalSearchInput, ServiceItem } from "./src/types";
 
 const emptyListingForm: MobileHousingPostInput = {
   postMode: "HAVE_PLACE",
@@ -205,7 +205,18 @@ export default function App() {
     }
   }
 
-  async function bookCar(car: Car) {
+  async function openRentalCheckout(paymentOption: "hold" | "full") {
+    try {
+      const payload = await startRentalCheckout(paymentOption);
+      if (payload.url) {
+        await Linking.openURL(payload.url);
+      }
+    } catch (error) {
+      Alert.alert("Payment unavailable", error instanceof Error ? error.message : "Unable to open Stripe checkout.");
+    }
+  }
+
+  async function bookCar(car: Car, details?: Partial<RentalSearchInput>) {
     if (!data?.user) {
       setActiveTab("profile");
       setLoginOpen(true);
@@ -213,10 +224,15 @@ export default function App() {
     }
     setLoading(true);
     try {
-      const payload = await bookRentalCar(Number(car.id));
+      const payload = await bookRentalCar(Number(car.id), details);
       Alert.alert(
-        "Rental hold started",
-        `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`
+        "Rental checkout started",
+        `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`,
+        [
+          { text: "Pay 10%", onPress: () => openRentalCheckout("hold") },
+          { text: "Pay full", onPress: () => openRentalCheckout("full") },
+          { text: "Later", style: "cancel" }
+        ]
       );
       const [payloadData, carRows] = await Promise.all([getBootstrap(city), getCars()]);
       setData(payloadData);

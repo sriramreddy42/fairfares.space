@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -155,16 +155,54 @@ export async function getAccommodationLocationOptions(city: string) {
   }
 }
 
-export async function getCars() {
-  const payload = await request<{ cars: Car[] }>("/api/mobile/rentals");
+export async function getCars(location = "", category = "") {
+  const params = new URLSearchParams();
+  if (location) params.set("location", location);
+  if (category) params.set("category", category);
+  const query = params.toString();
+  const payload = await request<{ cars: Car[]; cheapest?: Car | null }>(`/api/mobile/rentals${query ? `?${query}` : ""}`);
   return payload.cars || [];
 }
 
-export async function bookRentalCar(carId: number) {
+function rentalPayload(carId: number, details?: Partial<RentalSearchInput>) {
+  return {
+    carId,
+    pickupLocation: details?.pickupLocation || "",
+    returnLocation: details?.returnLocation || details?.pickupLocation || "",
+    pickupDate: details?.pickupDate || "",
+    returnDate: details?.returnDate || "",
+    pickupTime: details?.pickupTime || "10:00 AM",
+    returnTime: details?.returnTime || "10:00 AM",
+    discountCode: details?.discountCode || "",
+    days: details?.days || 3,
+    additionalDriverRequested: Boolean(details?.additionalDriverRequested),
+    additionalDriverName: details?.additionalDriverName || "",
+    additionalDriverAge: details?.additionalDriverAge || ""
+  };
+}
+
+export async function quoteRentalCar(carId: number, details: Partial<RentalSearchInput>) {
+  const payload = await request<{ ok: boolean; quote: RentalQuote }>("/api/mobile/rentals/quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rentalPayload(carId, details))
+  });
+  return payload.quote;
+}
+
+export async function bookRentalCar(carId: number, details?: Partial<RentalSearchInput>) {
   return request<{ ok: boolean; booking: RentalBooking }>("/api/mobile/rentals/book", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ carId, days: 3 })
+    body: JSON.stringify(rentalPayload(carId, details))
+  });
+}
+
+export async function startRentalCheckout(paymentOption: "hold" | "full" = "hold") {
+  return request<{ ok: boolean; url: string; paymentOption: string; amount: number }>("/api/mobile/rentals/checkout-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paymentOption })
   });
 }
 
