@@ -173,6 +173,7 @@ function rentalPayload(carId: number, details?: Partial<RentalSearchInput>) {
     returnDate: details?.returnDate || "",
     pickupTime: details?.pickupTime || "10:00 AM",
     returnTime: details?.returnTime || "10:00 AM",
+    renterAge: details?.renterAge || "25+",
     discountCode: details?.discountCode || "",
     days: details?.days || 3,
     additionalDriverRequested: Boolean(details?.additionalDriverRequested),

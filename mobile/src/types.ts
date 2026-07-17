@@ -143,6 +143,7 @@ export type RentalSearchInput = {
   returnDate: string;
   pickupTime: string;
   returnTime: string;
+  renterAge?: string;
   discountCode: string;
   days?: number;
   additionalDriverRequested?: boolean;

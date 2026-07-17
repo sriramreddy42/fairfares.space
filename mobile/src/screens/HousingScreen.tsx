@@ -59,11 +59,67 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
 ];
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
 const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
+const renterAgeOptions = ["21-24", "25+"];
+const timeOptions = Array.from({ length: 48 }, (_, index) => {
+  const hour = Math.floor(index / 2);
+  const minute = index % 2 === 0 ? "00" : "30";
+  const date = new Date(`2026-01-01T${String(hour).padStart(2, "0")}:${minute}:00`);
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+});
 
 function isoDateFromNow(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function addDays(dateText: string, days: number) {
+  const date = new Date(`${dateText}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateOptionsFromToday(count = 90) {
+  return Array.from({ length: count }, (_, index) => isoDateFromNow(index));
+}
+
+function formatDateLabel(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateText || "Choose date";
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function rentalDays(search: RentalSearchInput) {
+  const pickup = new Date(`${search.pickupDate}T00:00:00`);
+  const dropoff = new Date(`${search.returnDate}T00:00:00`);
+  const diff = Math.ceil((dropoff.getTime() - pickup.getTime()) / 86400000);
+  return Number.isFinite(diff) && diff > 0 ? diff : 0;
+}
+
+function durationRateTier(days: number) {
+  if (days >= 30) return { rate: 0.3, label: "Monthly rate" };
+  if (days >= 7) return { rate: 0.15, label: "Weekly rate" };
+  return { rate: 0, label: "Standard rate" };
+}
+
+function rentalLengthText(days: number) {
+  if (days <= 0) return "Choose valid dates";
+  if (days >= 30) {
+    const months = days / 30;
+    return `${days} days · about ${Number.isInteger(months) ? months : months.toFixed(1)} months`;
+  }
+  return `${days} days`;
+}
+
+function dailyPriceRange(price: number | string, days: number) {
+  const daily = Number(price || 0);
+  const average = Math.round(daily);
+  const baseLow = Math.max(25, average - 5);
+  const baseHigh = Math.max(baseLow, average + 5);
+  const tier = durationRateTier(days);
+  const low = Math.max(25, Math.round(baseLow * (1 - tier.rate)));
+  const high = Math.max(low, Math.round(baseHigh * (1 - tier.rate)));
+  return { low, high, tier };
 }
 
 const initialRentalSearch: RentalSearchInput = {
@@ -73,6 +129,7 @@ const initialRentalSearch: RentalSearchInput = {
   returnDate: isoDateFromNow(9),
   pickupTime: "10:00 AM",
   returnTime: "10:00 AM",
+  renterAge: "25+",
   discountCode: "",
   days: 3,
   additionalDriverRequested: false,
@@ -111,6 +168,7 @@ export function HousingScreen({
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
+  const [rentalPicker, setRentalPicker] = useState<null | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
@@ -160,6 +218,9 @@ export function HousingScreen({
   const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
   const rentalRows = rentalCars.length ? rentalCars : cars;
   const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 3), [cars]);
+  const rentalDayCount = rentalDays(rentalSearch);
+  const rentalTier = durationRateTier(rentalDayCount);
+  const calendarDates = useMemo(() => dateOptionsFromToday(90), []);
   const detailImages = detailPost
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
@@ -200,6 +261,12 @@ export function HousingScreen({
       if (key === "pickupLocation" && !current.returnLocation) {
         next.returnLocation = String(value);
       }
+      if (key === "pickupDate" && typeof value === "string" && current.returnDate <= value) {
+        next.returnDate = addDays(value, 1);
+      }
+      if (key === "returnDate" && typeof value === "string" && value <= current.pickupDate) {
+        next.returnDate = addDays(current.pickupDate, 1);
+      }
       return next;
     });
   }
@@ -214,6 +281,63 @@ export function HousingScreen({
     } finally {
       setRentalBusy(false);
     }
+  }
+
+  function selectRentalPickerValue(value: string) {
+    if (!rentalPicker) return;
+    updateRentalSearch(rentalPicker, value);
+    setRentalPicker(null);
+  }
+
+  function renderPickerModal() {
+    const isDatePicker = rentalPicker === "pickupDate" || rentalPicker === "returnDate";
+    const isTimePicker = rentalPicker === "pickupTime" || rentalPicker === "returnTime";
+    const title =
+      rentalPicker === "pickupDate" ? "Pick-up date" :
+      rentalPicker === "returnDate" ? "Return date" :
+      rentalPicker === "pickupTime" ? "Pick-up time" :
+      rentalPicker === "returnTime" ? "Return time" :
+      rentalPicker === "renterAge" ? "Renter age" : "";
+    const values = isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
+    const activeValue = rentalPicker ? String(rentalSearch[rentalPicker] || "") : "";
+
+    return (
+      <Modal visible={Boolean(rentalPicker)} transparent animationType="fade" onRequestClose={() => setRentalPicker(null)}>
+        <View style={styles.pickerBackdrop}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>{title}</Text>
+              <TouchableOpacity style={styles.pickerClose} onPress={() => setRentalPicker(null)}>
+                <Text style={styles.pickerCloseText}>X</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={isDatePicker ? styles.calendarGrid : styles.pickerList}>
+              {values.map((value) => {
+                const disabled = rentalPicker === "returnDate" && value <= rentalSearch.pickupDate;
+                const selected = value === activeValue;
+                return (
+                  <TouchableOpacity
+                    key={value}
+                    disabled={disabled}
+                    style={[
+                      isDatePicker ? styles.calendarCell : styles.pickerOption,
+                      selected && styles.pickerOptionActive,
+                      disabled && styles.pickerOptionDisabled
+                    ]}
+                    onPress={() => selectRentalPickerValue(value)}
+                  >
+                    <Text style={[styles.pickerOptionText, selected && styles.pickerOptionTextActive, disabled && styles.pickerOptionTextDisabled]}>
+                      {isDatePicker ? formatDateLabel(value) : value}
+                    </Text>
+                    {isDatePicker ? <Text style={styles.calendarDateText}>{value.slice(5)}</Text> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
   }
 
   function renderRentalCarsOnly() {
@@ -237,7 +361,11 @@ export function HousingScreen({
                 <Text style={styles.bookNowText}>Book now</Text>
               </TouchableOpacity>
               <View style={styles.carRateBox}>
-                <Text style={styles.carRate}>{cheapestCar ? `$${cheapestCar.daily_price}` : "$29.99"}</Text>
+                <Text style={styles.carRate}>
+                  {cheapestCar
+                    ? `$${dailyPriceRange(cheapestCar.daily_price, rentalDayCount).low}-${dailyPriceRange(cheapestCar.daily_price, rentalDayCount).high}`
+                    : "$29-39"}
+                </Text>
                 <Text style={styles.carRateMeta}>per day</Text>
               </View>
             </View>
@@ -252,22 +380,55 @@ export function HousingScreen({
           <View style={styles.carTwoCol}>
             <View style={styles.carTwoColField}>
               <Text style={styles.carFieldLabel}>Pickup date</Text>
-              <TextInput value={rentalSearch.pickupDate} onChangeText={(text) => updateRentalSearch("pickupDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("pickupDate")}>
+                <Text style={styles.carSelectValue}>{formatDateLabel(rentalSearch.pickupDate)}</Text>
+                <Text style={styles.carSelectMeta}>{rentalSearch.pickupDate}</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.carTwoColField}>
               <Text style={styles.carFieldLabel}>Return date</Text>
-              <TextInput value={rentalSearch.returnDate} onChangeText={(text) => updateRentalSearch("returnDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("returnDate")}>
+                <Text style={styles.carSelectValue}>{formatDateLabel(rentalSearch.returnDate)}</Text>
+                <Text style={styles.carSelectMeta}>{rentalSearch.returnDate}</Text>
+              </TouchableOpacity>
             </View>
           </View>
           <View style={styles.carTwoCol}>
             <View style={styles.carTwoColField}>
               <Text style={styles.carFieldLabel}>Pickup time</Text>
-              <TextInput value={rentalSearch.pickupTime} onChangeText={(text) => updateRentalSearch("pickupTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("pickupTime")}>
+                <Text style={styles.carSelectValue}>{rentalSearch.pickupTime}</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.carTwoColField}>
               <Text style={styles.carFieldLabel}>Return time</Text>
-              <TextInput value={rentalSearch.returnTime} onChangeText={(text) => updateRentalSearch("returnTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("returnTime")}>
+                <Text style={styles.carSelectValue}>{rentalSearch.returnTime}</Text>
+              </TouchableOpacity>
             </View>
+          </View>
+          <View style={styles.carTwoCol}>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Renter age</Text>
+              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("renterAge")}>
+                <Text style={styles.carSelectValue}>{rentalSearch.renterAge || "25+"}</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Rental length</Text>
+              <View style={styles.carEstimateBox}>
+                <Text style={styles.carEstimateValue}>{rentalLengthText(rentalDayCount)}</Text>
+                <Text style={styles.carEstimateMeta}>{rentalTier.label}</Text>
+              </View>
+            </View>
+          </View>
+          <View style={styles.carRateNote}>
+            <Text style={styles.carRateNoteTitle}>{rentalTier.label}</Text>
+            <Text style={styles.carRateNoteText}>
+              {rentalTier.rate > 0
+                ? `${Math.round(rentalTier.rate * 100)}% duration savings are reflected in the daily ranges below.`
+                : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
+            </Text>
           </View>
           <Text style={styles.carFieldLabel}>Promo / referral / student code</Text>
           <TextInput value={rentalSearch.discountCode} onChangeText={(text) => updateRentalSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} autoCapitalize="characters" />
@@ -308,7 +469,10 @@ export function HousingScreen({
                   <View style={styles.carMiniBody}>
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
-                    <Text style={styles.carMiniPrice}>${car.daily_price}/day</Text>
+                    <Text style={styles.carMiniPrice}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
+                    {dailyPriceRange(car.daily_price, rentalDayCount).tier.rate > 0 ? (
+                      <Text style={styles.carMiniSavings}>{dailyPriceRange(car.daily_price, rentalDayCount).tier.label}: save vs daily pricing</Text>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               );
@@ -559,6 +723,7 @@ export function HousingScreen({
           </View>
         </View>
       </Modal>
+      {renderPickerModal()}
     </ScrollView>
   );
 }
@@ -644,8 +809,17 @@ const styles = StyleSheet.create({
   carSearchTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
   carFieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   carSearchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
+  carSelectInput: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 56, paddingHorizontal: 13, paddingVertical: 9, justifyContent: "center" },
+  carSelectValue: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  carSelectMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", marginTop: 2 },
   carTwoCol: { flexDirection: "row", gap: 10 },
   carTwoColField: { flex: 1 },
+  carEstimateBox: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 56, paddingHorizontal: 13, paddingVertical: 9, justifyContent: "center" },
+  carEstimateValue: { color: theme.colors.text, fontWeight: "900", fontSize: 14 },
+  carEstimateMeta: { color: theme.colors.green, fontWeight: "900", fontSize: 12, marginTop: 2 },
+  carRateNote: { borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(40,82,255,0.10)", borderRadius: theme.radius.md, padding: 12, gap: 3 },
+  carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
+  carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   carDriverToggle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
   carDriverText: { color: theme.colors.text, fontWeight: "900" },
   carDriverMeta: { color: theme.colors.green, fontWeight: "900" },
@@ -661,6 +835,23 @@ const styles = StyleSheet.create({
   carMiniTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
+  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
+  pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
+  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  pickerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  pickerClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  pickerCloseText: { color: theme.colors.text, fontWeight: "900" },
+  pickerList: { gap: 8 },
+  pickerOption: { minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 14, justifyContent: "center" },
+  pickerOptionActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  pickerOptionDisabled: { opacity: 0.35 },
+  pickerOptionText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  pickerOptionTextActive: { color: theme.colors.bg },
+  pickerOptionTextDisabled: { color: theme.colors.muted },
+  calendarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  calendarCell: { width: "31%", minHeight: 66, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", padding: 8, justifyContent: "center" },
+  calendarDateText: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "800" },
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },
   roomCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
