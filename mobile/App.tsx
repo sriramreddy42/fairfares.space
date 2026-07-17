@@ -457,6 +457,17 @@ export default function App() {
     return known[trimmed.toLowerCase()] || trimmed;
   }
 
+  function searchSuggestionChips() {
+    const rawSuggestions = searchSuggestions.length
+      ? searchSuggestions
+      : searchCity.toLowerCase().includes("denver")
+        ? ["Union Station", "DU", "Aurora", "Englewood"]
+        : [];
+    return rawSuggestions
+      .filter((value) => value.length <= 28 && !/department|public works|network/i.test(value))
+      .slice(0, 4);
+  }
+
   async function submitLogin() {
     if (authBusy) return;
     setAuthMessage("");
@@ -777,85 +788,78 @@ export default function App() {
       </Modal>
       <Modal visible={searchOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setSearchOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Search housing</Text>
-            <Text style={styles.modalCopy}>Enter a metro city, then narrow results by neighborhood, building, campus, or nearby landmark.</Text>
-            <View style={styles.miniGroup}>
-              <Text style={styles.miniLabel}>What are you looking for?</Text>
-              <View style={styles.chipRow}>
-                {[
-                  ["need_place", "I need a place"],
-                  ["need_roommates", "I need roommates"],
-                  ["have_place", "I have a place, need people"]
-                ].map(([value, label]) => (
-                  <TouchableOpacity key={value} style={[styles.chip, searchNeed === value && styles.chipActive]} onPress={() => setSearchNeed(value)}>
-                    <Text style={[styles.chipText, searchNeed === value && styles.chipTextActive]}>{label}</Text>
-                  </TouchableOpacity>
-                ))}
+          <View style={[styles.modalCard, styles.searchModalCard]}>
+            <ScrollView style={styles.searchModalScroll} contentContainerStyle={styles.searchModalContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Search housing</Text>
+              <Text style={styles.modalCopy}>Enter a metro city, then narrow results by neighborhood, building, campus, or nearby landmark.</Text>
+              <View style={styles.miniGroup}>
+                <Text style={styles.miniLabel}>What are you looking for?</Text>
+                <View style={styles.chipRow}>
+                  {[
+                    ["need_place", "I need a place"],
+                    ["need_roommates", "I need roommates"],
+                    ["have_place", "I have a place, need people"]
+                  ].map(([value, label]) => (
+                    <TouchableOpacity key={value} style={[styles.chip, searchNeed === value && styles.chipActive]} onPress={() => setSearchNeed(value)}>
+                      <Text style={[styles.chipText, searchNeed === value && styles.chipTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-            </View>
-            <TextInput
-              value={searchCity}
-              onChangeText={setSearchCity}
-              placeholder="City, e.g. Denver, CO"
-              placeholderTextColor={theme.colors.muted}
-              style={styles.input}
-            />
-            <TextInput
-              value={searchArea}
-              onChangeText={setSearchArea}
-              placeholder={`Neighborhood, building, campus, or landmark near ${normalizeCityInput(searchCity)}`}
-              placeholderTextColor={theme.colors.muted}
-              style={styles.input}
-            />
-            <View style={styles.miniGroup}>
-              <Text style={styles.miniLabel}>Optional when searching near a place</Text>
               <TextInput
-                value={searchRadius}
-                onChangeText={setSearchRadius}
-                placeholder="Search radius in miles, e.g. 10"
+                value={searchCity}
+                onChangeText={setSearchCity}
+                placeholder="City, e.g. Denver, CO"
                 placeholderTextColor={theme.colors.muted}
                 style={styles.input}
-                keyboardType="number-pad"
               />
-              <View style={styles.chipRow}>
-                {["5", "10", "20", "60"].map((chip) => (
-                  <TouchableOpacity key={chip} style={[styles.chip, searchRadius === chip && styles.chipActive]} onPress={() => setSearchRadius(chip)}>
-                    <Text style={[styles.chipText, searchRadius === chip && styles.chipTextActive]}>{chip} mi</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-            <View style={styles.chipRow}>
-              <Text style={styles.suggestionTitle}>
-                {searchSuggestionsLoading
-                  ? "Loading nearby areas..."
-                  : searchSuggestions.length
-                    ? `Nearby areas for ${searchSuggestionMetro || normalizeCityInput(searchCity)}`
-                    : "Nearby area suggestions"}
-              </Text>
-              {(searchSuggestions.length
-                ? searchSuggestions
-                : searchCity.toLowerCase().includes("denver")
-                  ? ["Union Station", "DU", "Aurora", "Englewood"]
-                  : []
-              ).map((chip) => (
-                <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
-                  <Text style={styles.chipText}>{chip}</Text>
-                </TouchableOpacity>
-              ))}
-              {!searchSuggestions.length && !searchCity.toLowerCase().includes("denver") ? (
-                <Text style={styles.suggestionHint}>
-                  {searchSuggestionsLoading ? "Loading nearby areas..." : "No nearby suggestions loaded yet. Check Google Places keys or type a known city/area."}
+              <TextInput
+                value={searchArea}
+                onChangeText={setSearchArea}
+                placeholder="Area, building, campus, landmark"
+                placeholderTextColor={theme.colors.muted}
+                style={styles.input}
+              />
+              <View style={styles.suggestionPanel}>
+                <Text style={styles.suggestionTitle}>
+                  {searchSuggestionsLoading
+                    ? "Loading nearby areas..."
+                    : searchSuggestions.length
+                      ? `Nearby areas for ${searchSuggestionMetro || normalizeCityInput(searchCity)}`
+                      : "Nearby area suggestions"}
                 </Text>
-              ) : null}
-            </View>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
-              <Text style={styles.primaryButtonText}>Search listings</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setSearchOpen(false)}>
-              <Text style={styles.secondaryButtonText}>Close</Text>
-            </TouchableOpacity>
+                <ScrollView style={styles.suggestionList} contentContainerStyle={styles.suggestionListContent} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                  {searchSuggestionChips().map((chip) => (
+                    <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
+                      <Text style={styles.chipText}>{chip}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {!searchSuggestions.length && !searchCity.toLowerCase().includes("denver") ? (
+                    <Text style={styles.suggestionHint}>
+                      {searchSuggestionsLoading ? "Loading nearby areas..." : "No nearby suggestions loaded yet. Check Google Places keys or type a known city/area."}
+                    </Text>
+                  ) : null}
+                </ScrollView>
+              </View>
+              <View style={styles.miniGroup}>
+                <Text style={styles.miniLabel}>Radius when searching near a place</Text>
+                <View style={styles.chipRow}>
+                  {["5", "10", "20", "60"].map((chip) => (
+                    <TouchableOpacity key={chip} style={[styles.chip, searchRadius === chip && styles.chipActive]} onPress={() => setSearchRadius(chip)}>
+                      <Text style={[styles.chipText, searchRadius === chip && styles.chipTextActive]}>{chip} mi</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              <View style={styles.searchModalActions}>
+                <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
+                  <Text style={styles.primaryButtonText}>Search listings</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => setSearchOpen(false)}>
+                  <Text style={styles.secondaryButtonText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -869,6 +873,10 @@ const styles = StyleSheet.create({
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
   modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
+  searchModalCard: { height: "90%", maxHeight: "90%", paddingBottom: theme.spacing.md },
+  searchModalScroll: { flex: 1 },
+  searchModalContent: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
+  searchModalActions: { gap: theme.spacing.xs, paddingTop: theme.spacing.sm, borderTopWidth: 1, borderTopColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
@@ -898,6 +906,9 @@ const styles = StyleSheet.create({
   chipText: { color: theme.colors.text, fontWeight: "800" },
   chipTextActive: { color: theme.colors.bg },
   authMessage: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20 },
+  suggestionPanel: { gap: 6 },
+  suggestionList: { maxHeight: 96 },
+  suggestionListContent: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 4 },
   suggestionTitle: { width: "100%", color: theme.colors.soft, fontWeight: "900", marginBottom: 2 },
   suggestionHint: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
   switchText: { color: theme.colors.muted, textAlign: "center", fontWeight: "900", paddingVertical: 8 }
