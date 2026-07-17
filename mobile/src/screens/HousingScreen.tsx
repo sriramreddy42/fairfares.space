@@ -196,7 +196,7 @@ export function HousingScreen({
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
   const [rentalSearched, setRentalSearched] = useState(false);
-  const [rentalPicker, setRentalPicker] = useState<null | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
+  const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
@@ -245,7 +245,15 @@ export function HousingScreen({
   const cheapestCarImage = absoluteAssetUrl(cheapestCar?.image_url || "");
   const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
   const rentalRows = rentalSearched ? rentalCars : [];
-  const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 3), [cars]);
+  const rentalLocationOptions = useMemo(() => {
+    const locations = new Set<string>();
+    cars.forEach((car) => {
+      if (car.location?.trim()) locations.add(car.location.trim());
+    });
+    if (rentalSearch.pickupLocation.trim()) locations.add(rentalSearch.pickupLocation.trim());
+    if (rentalSearch.returnLocation.trim()) locations.add(rentalSearch.returnLocation.trim());
+    return Array.from(locations);
+  }, [cars, rentalSearch.pickupLocation, rentalSearch.returnLocation]);
   const rentalDayCount = rentalDays(rentalSearch);
   const rentalTier = durationRateTier(rentalDayCount);
   const calendarDates = useMemo(() => dateOptionsFromToday(90), []);
@@ -328,13 +336,16 @@ export function HousingScreen({
   function renderPickerModal() {
     const isDatePicker = rentalPicker === "pickupDate" || rentalPicker === "returnDate";
     const isTimePicker = rentalPicker === "pickupTime" || rentalPicker === "returnTime";
+    const isLocationPicker = rentalPicker === "pickupLocation" || rentalPicker === "returnLocation";
     const title =
+      rentalPicker === "pickupLocation" ? "Pickup location" :
+      rentalPicker === "returnLocation" ? "Return location" :
       rentalPicker === "pickupDate" ? "Pick-up date" :
       rentalPicker === "returnDate" ? "Return date" :
       rentalPicker === "pickupTime" ? "Pick-up time" :
       rentalPicker === "returnTime" ? "Return time" :
       rentalPicker === "renterAge" ? "Renter age" : "";
-    const values = isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
+    const values = isLocationPicker ? rentalLocationOptions : isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
     const activeValue = rentalPicker ? String(rentalSearch[rentalPicker] || "") : "";
 
     return (
@@ -413,9 +424,13 @@ export function HousingScreen({
         <View style={styles.carSearchPanel}>
           <Text style={styles.carSearchTitle}>Search rental cars</Text>
           <Text style={styles.carFieldLabel}>Pickup location</Text>
-          <TextInput value={rentalSearch.pickupLocation} onChangeText={(text) => updateRentalSearch("pickupLocation", text)} placeholder="Airport, city, or pickup address" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+          <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("pickupLocation")}>
+            <Text style={styles.carSelectValue} numberOfLines={2}>{rentalSearch.pickupLocation || "Select pickup location"}</Text>
+          </TouchableOpacity>
           <Text style={styles.carFieldLabel}>Return location</Text>
-          <TextInput value={rentalSearch.returnLocation} onChangeText={(text) => updateRentalSearch("returnLocation", text)} placeholder="Same as pickup or another return place" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+          <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("returnLocation")}>
+            <Text style={styles.carSelectValue} numberOfLines={2}>{rentalSearch.returnLocation || "Select return location"}</Text>
+          </TouchableOpacity>
           <View style={styles.carTwoCol}>
             <View style={styles.carTwoColField}>
               <Text style={styles.carFieldLabel}>Pickup date</Text>
@@ -478,13 +493,6 @@ export function HousingScreen({
             style={styles.carSearchInput}
             autoCapitalize="characters"
           />
-          <View style={styles.carPickupChips}>
-            {pickupLocations.map((location) => (
-              <TouchableOpacity key={location} style={styles.carPickupChip} onPress={() => updateRentalSearch("pickupLocation", location)}>
-                <Text style={styles.carPickupChipText}>{location}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
           <TouchableOpacity style={styles.carSearchButton} onPress={searchRentalCars} disabled={rentalBusy}>
             <Text style={styles.carSearchButtonText}>{rentalBusy ? "Searching..." : "Search cars"}</Text>
           </TouchableOpacity>
@@ -850,9 +858,6 @@ const styles = StyleSheet.create({
   carRateNote: { borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(40,82,255,0.10)", borderRadius: theme.radius.md, padding: 12, gap: 3 },
   carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
   carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  carPickupChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  carPickupChip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
-  carPickupChipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
   carSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   carList: { gap: theme.spacing.md },

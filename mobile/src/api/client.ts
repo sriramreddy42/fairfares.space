@@ -205,12 +205,54 @@ export async function bookRentalCar(carId: number, details?: Partial<RentalSearc
   });
 }
 
-export async function startRentalCheckout(paymentOption: "hold" | "full" = "hold") {
-  return request<{ ok: boolean; url: string; paymentOption: string; amount: number }>("/api/mobile/rentals/checkout-session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paymentOption })
-  });
+export async function startRentalCheckout(paymentOption: "hold" | "full" = "hold", bookingId = "") {
+  let lastError = "";
+  for (const baseUrl of API_CANDIDATES) {
+    for (const endpoint of ["mobile", "web"] as const) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4500);
+      const path = endpoint === "mobile" ? "/api/mobile/rentals/checkout-session" : "/payment/stripe-session";
+      const body = endpoint === "mobile"
+        ? JSON.stringify({ paymentOption, bookingId })
+        : new URLSearchParams({ payment_option: paymentOption, booking_id: bookingId }).toString();
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        "Content-Type": endpoint === "mobile" ? "application/json" : "application/x-www-form-urlencoded"
+      };
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+      try {
+        const response = await fetch(`${baseUrl}${path}`, { method: "POST", headers, body, signal: controller.signal });
+        const text = await response.text();
+        let payload: { ok?: boolean; url?: string; error?: string; message?: string; paymentOption?: string; amount?: number };
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          lastError = `FairFares server at ${baseUrl}${path} returned a non-JSON response.`;
+          continue;
+        }
+        if (!response.ok) {
+          lastError = payload.error || payload.message || `FairFares checkout failed: ${response.status}`;
+          continue;
+        }
+        if (payload.url) {
+          return {
+            ok: true,
+            url: payload.url,
+            paymentOption: payload.paymentOption || paymentOption,
+            amount: Number(payload.amount || 0)
+          };
+        }
+        lastError = payload.error || payload.message || "Stripe did not return a checkout link.";
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+  }
+  throw new Error(lastError || "Unable to open Stripe checkout.");
 }
 
 export async function getSiteServices() {

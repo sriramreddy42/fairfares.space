@@ -3056,6 +3056,27 @@ def get_booking_by_id(booking_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def get_booking_for_user_by_identifier(user_id: int, booking_identifier: object) -> sqlite3.Row | None:
+    identifier = str(booking_identifier or "").strip()
+    if not user_id or not identifier:
+        return None
+    numeric_id = int(float_from_value(identifier) or 0)
+    with db() as con:
+        return con.execute(
+            """
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE bookings.user_id = ?
+              AND (bookings.booking_id = ? OR (? > 0 AND bookings.id = ?))
+            ORDER BY bookings.id DESC
+            LIMIT 1
+            """,
+            (user_id, identifier, numeric_id, numeric_id),
+        ).fetchone()
+
+
 def send_confirmed_booking_email_once(booking_id: int, origin: str) -> tuple[Path | None, str]:
     booking = get_booking_by_id(booking_id)
     if not booking:
@@ -13960,9 +13981,15 @@ def guest_offer_modal() -> str:
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
 
+    def is_cors_path(self, path: str) -> bool:
+        return path.startswith("/api/") or path in {
+            "/payment/stripe-session",
+            "/identity/stripe-session",
+        }
+
     def do_OPTIONS(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path.startswith("/api/"):
+        if self.is_cors_path(parsed.path):
             self.send_response(204)
             self.end_headers()
             return
@@ -14207,6 +14234,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def allow_post_from_same_origin(self, path: str) -> bool:
         if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
+            return True
+        if path in {"/payment/stripe-session", "/identity/stripe-session"} and (self.headers.get("Authorization") or "").strip().lower().startswith("bearer "):
             return True
         if path.startswith("/api/"):
             return True
@@ -16568,7 +16597,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to pay and confirm this car."}, 401)
             return
         expire_stale_booking_holds()
-        booking = get_booking_for_user(user["id"])
+        form = self.read_form()
+        booking = get_booking_for_user_by_identifier(user["id"], form.get("booking_id")) or get_booking_for_user(user["id"])
         if not booking:
             self.send_json({"ok": False, "message": "Choose a car before paying."}, 404)
             return
@@ -16578,7 +16608,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "PAID":
             self.send_json({"ok": False, "message": "This booking does not need a payment right now."}, 400)
             return
-        form = self.read_form()
         payment_option = "full" if form.get("payment_option") == "full" else "hold"
         if booking["payment_status"] == "HOLD_PAID" and payment_option != "full":
             self.send_json({"ok": False, "message": "The 10% hold is already paid. Pay the remaining balance for hassle-free pickup."}, 400)
@@ -22172,7 +22201,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         expire_stale_booking_holds()
         payload = self.read_json_body()
         payment_option = "full" if str(payload.get("paymentOption") or payload.get("payment_option") or "").lower() == "full" else "hold"
-        booking = get_booking_for_user(int(row_value(user, "id") or 0))
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id")) or get_booking_for_user(user_id)
         if not booking:
             self.send_json({"ok": False, "error": "Choose a car before paying."}, 404)
             return
@@ -22457,7 +22487,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         current_path = str(getattr(self, "path", ""))
-        if current_path.startswith("/api/"):
+        parsed_path = urllib.parse.urlparse(current_path).path
+        if self.is_cors_path(parsed_path):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")

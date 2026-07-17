@@ -220,12 +220,20 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
   const [quote, setQuote] = useState<RentalQuote | null>(null);
   const [busy, setBusy] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [rentalPicker, setRentalPicker] = useState<null | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
+  const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const rows = hasSearched ? visibleCars : [];
   const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
   const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
   const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
-  const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 4), [cars]);
+  const rentalLocationOptions = useMemo(() => {
+    const locations = new Set<string>();
+    cars.forEach((car) => {
+      if (car.location?.trim()) locations.add(car.location.trim());
+    });
+    if (search.pickupLocation.trim()) locations.add(search.pickupLocation.trim());
+    if (search.returnLocation.trim()) locations.add(search.returnLocation.trim());
+    return Array.from(locations);
+  }, [cars, search.pickupLocation, search.returnLocation]);
   const calendarDates = useMemo(() => dateOptionsFromToday(90), []);
   const rentalDayCount = rentalDays(search);
   const rentalTier = durationRateTier(rentalDayCount);
@@ -266,13 +274,16 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
   function renderPickerModal() {
     const isDatePicker = rentalPicker === "pickupDate" || rentalPicker === "returnDate";
     const isTimePicker = rentalPicker === "pickupTime" || rentalPicker === "returnTime";
+    const isLocationPicker = rentalPicker === "pickupLocation" || rentalPicker === "returnLocation";
     const title =
+      rentalPicker === "pickupLocation" ? "Pickup location" :
+      rentalPicker === "returnLocation" ? "Return location" :
       rentalPicker === "pickupDate" ? "Pick-up date" :
       rentalPicker === "returnDate" ? "Return date" :
       rentalPicker === "pickupTime" ? "Pick-up time" :
       rentalPicker === "returnTime" ? "Return time" :
       rentalPicker === "renterAge" ? "Renter age" : "";
-    const values = isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
+    const values = isLocationPicker ? rentalLocationOptions : isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
     const activeValue = rentalPicker ? String(search[rentalPicker] || "") : "";
 
     return (
@@ -356,7 +367,7 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.rateMeta}>{cheapest ? `${cheapest.name} · ${cheapest.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}</Text>
           <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
           <View style={styles.rateHeroFooter}>
-            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && reviewCar(cheapest)}>
+            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && onBookCar(cheapest, search, "hold")}>
               <Text style={styles.bookNowText}>Book now</Text>
             </TouchableOpacity>
             <View style={styles.priceBadge}>
@@ -371,9 +382,13 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
       <View style={styles.rentalSearchPanel}>
         <Text style={styles.panelTitle}>Search rental cars</Text>
         <Text style={styles.fieldLabel}>Pickup location</Text>
-        <TextInput value={search.pickupLocation} onChangeText={(text) => updateSearch("pickupLocation", text)} placeholder="Airport, city, or pickup address" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("pickupLocation")}>
+          <Text style={styles.selectValue} numberOfLines={2}>{search.pickupLocation || "Select pickup location"}</Text>
+        </TouchableOpacity>
         <Text style={styles.fieldLabel}>Return location</Text>
-        <TextInput value={search.returnLocation} onChangeText={(text) => updateSearch("returnLocation", text)} placeholder="Same as pickup or another return place" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("returnLocation")}>
+          <Text style={styles.selectValue} numberOfLines={2}>{search.returnLocation || "Select return location"}</Text>
+        </TouchableOpacity>
         <View style={styles.twoCol}>
           <View style={styles.twoColField}>
             <Text style={styles.fieldLabel}>Pickup date</Text>
@@ -436,13 +451,6 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           style={styles.searchInput}
           autoCapitalize="characters"
         />
-        <View style={styles.chips}>
-          {pickupLocations.map((location) => (
-            <TouchableOpacity key={location} style={styles.chip} onPress={() => updateSearch("pickupLocation", location)}>
-              <Text style={styles.chipText}>{location}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
         <TouchableOpacity style={styles.searchButton} onPress={searchCars} disabled={busy}>
           <Text style={styles.searchButtonText}>{busy ? "Searching..." : "Search cars"}</Text>
         </TouchableOpacity>
@@ -476,14 +484,14 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
       {rows.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
-          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => reviewCar(car)}>
+          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => onBookCar(car, search, "hold")}>
             {image ? <Image source={{ uri: image }} style={styles.carImage} /> : <Image source={appAssets.carFallback} style={styles.carImage} />}
             <View style={styles.carBody}>
               <Text style={styles.cardTitle}>{car.name}</Text>
               <Text style={styles.cardMeta}>{car.brand} {car.model} · {car.seats} seats · {car.transmission}</Text>
               <View style={styles.cardFooter}>
                 <Text style={styles.price}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
-                <Text style={styles.action}>{selectedCar?.id === car.id ? "Reviewing" : "Review"}</Text>
+                <Text style={styles.action}>Book</Text>
               </View>
               {dailyPriceRange(car.daily_price, rentalDayCount).tier.rate > 0 ? (
                 <Text style={styles.savingsText}>{dailyPriceRange(car.daily_price, rentalDayCount).tier.label}: save vs daily pricing</Text>
@@ -594,9 +602,6 @@ const styles = StyleSheet.create({
   rateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   twoCol: { flexDirection: "row", gap: 10 },
   twoColField: { flex: 1 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
-  chipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
   searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   quotePanel: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.blue, padding: theme.spacing.md, gap: 10 },

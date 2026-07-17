@@ -150,6 +150,8 @@ export default function App() {
   const [listingOpen, setListingOpen] = useState(false);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
+  const [paymentUrl, setPaymentUrl] = useState("");
+  const [paymentMessage, setPaymentMessage] = useState("");
 
   async function load() {
     setLoading(true);
@@ -205,15 +207,23 @@ export default function App() {
     }
   }
 
-  async function openRentalCheckout(paymentOption: "hold" | "full") {
+  async function openRentalCheckout(paymentOption: "hold" | "full", bookingId = "") {
     try {
-      const payload = await startRentalCheckout(paymentOption);
+      const payload = await startRentalCheckout(paymentOption, bookingId);
       if (payload.url) {
+        setPaymentUrl(payload.url);
+        setPaymentMessage("Opening secure Stripe checkout. If it does not open automatically, tap Open payment.");
         if (Platform.OS === "web" && typeof window !== "undefined") {
           window.location.href = payload.url;
           return true;
         }
-        await Linking.openURL(payload.url);
+        const canOpen = await Linking.canOpenURL(payload.url).catch(() => true);
+        if (canOpen) {
+          await Linking.openURL(payload.url);
+        } else {
+          setPaymentMessage("Stripe checkout is ready, but the device did not open it automatically. Tap Open payment to continue.");
+          return false;
+        }
         return true;
       }
       Alert.alert("Payment unavailable", "Stripe did not return a checkout link.");
@@ -233,15 +243,15 @@ export default function App() {
     try {
       const payload = await bookRentalCar(Number(car.id), details);
       if (paymentOption) {
-        await openRentalCheckout(paymentOption);
+        await openRentalCheckout(paymentOption, String(payload.booking.id || ""));
         return;
       } else {
         Alert.alert(
           "Rental checkout started",
           `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`,
           [
-            { text: "Pay 10%", onPress: () => openRentalCheckout("hold") },
-            { text: "Pay full", onPress: () => openRentalCheckout("full") },
+            { text: "Pay 10%", onPress: () => openRentalCheckout("hold", String(payload.booking.id || "")) },
+            { text: "Pay full", onPress: () => openRentalCheckout("full", String(payload.booking.id || "")) },
             { text: "Later", style: "cancel" }
           ]
         );
@@ -710,6 +720,27 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+      <Modal visible={Boolean(paymentUrl)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentUrl("")}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Secure payment</Text>
+            <Text style={styles.modalCopy}>{paymentMessage || "Stripe checkout is ready."}</Text>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => {
+                if (paymentUrl) {
+                  void Linking.openURL(paymentUrl);
+                }
+              }}
+            >
+              <Text style={styles.primaryButtonText}>Open payment</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentUrl("")}>
+              <Text style={styles.secondaryButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
       <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
