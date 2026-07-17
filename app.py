@@ -13871,6 +13871,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def allow_post_from_same_origin(self, path: str) -> bool:
         if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
             return True
+        if path.startswith("/api/"):
+            return True
         expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
         for header_name in ("Origin", "Referer"):
             value = self.headers.get(header_name)

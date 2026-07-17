@@ -76,9 +76,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       return payload;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      if (EXPLICIT_API_URL) {
-        break;
-      }
     } finally {
       clearTimeout(timeout);
     }
