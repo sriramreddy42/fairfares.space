@@ -587,8 +587,15 @@ SHARED_STYLESHEETS = [f"/static/css/app-feedback.min.css?v={ASSET_VERSION}"]
 
 def refresh_storage_paths() -> None:
     global DB_PATH, BACKUP_DIR
-    DB_PATH = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
-    BACKUP_DIR = Path(os.environ.get("FAIRFARES_BACKUP_DIR", DB_PATH.parent / "backups"))
+    configured_db_path = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
+    configured_backup_dir = Path(os.environ.get("FAIRFARES_BACKUP_DIR", configured_db_path.parent / "backups"))
+    render_runtime = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
+    if not render_runtime and str(configured_db_path).startswith("/var/data"):
+        DB_PATH = DEFAULT_DB_PATH
+        BACKUP_DIR = DATA_DIR / "backups"
+        return
+    DB_PATH = configured_db_path
+    BACKUP_DIR = configured_backup_dir
 
 
 def normalize_drive_folder_id(value: str) -> str:
