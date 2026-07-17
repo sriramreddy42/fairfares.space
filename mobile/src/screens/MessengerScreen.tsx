@@ -143,6 +143,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
       onRequireLogin();
       return;
     }
+    onThreadModeChange?.(true);
     setActiveConversationId(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
@@ -247,6 +248,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
       onRequireLogin();
       return;
     }
+    onThreadModeChange?.(true);
     setLoading(true);
     try {
       const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id)).community;
@@ -614,7 +616,7 @@ function SendIcon() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg, padding: theme.spacing.md, paddingBottom: 116 },
-  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 10 },
+  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 18 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
   eyebrow: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: "900" },
@@ -664,7 +666,7 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "700" },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingTop: 10, paddingBottom: 4, borderTopWidth: 1, borderTopColor: theme.colors.line },
   composerIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },

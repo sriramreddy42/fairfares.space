@@ -21,8 +21,12 @@ type Props = {
 };
 
 export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
+  if (hidden) {
+    return null;
+  }
+
   return (
-    <View style={[styles.bar, hidden && styles.hidden]}>
+    <View style={styles.bar}>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
@@ -108,10 +112,6 @@ const styles = StyleSheet.create({
   },
   active: {
     borderRadius: 28
-  },
-  hidden: {
-    opacity: 0,
-    transform: [{ translateY: 92 }]
   },
   icon: {
     width: 28,
