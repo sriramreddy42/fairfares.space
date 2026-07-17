@@ -44,7 +44,19 @@ export type ChatConversation = {
   subject: string;
   otherName: string;
   lastMessage: string;
+  lastMessageAt: string;
   unread: number;
+};
+
+export type ChatMessage = {
+  id: number;
+  senderId: number;
+  senderName: string;
+  mine: boolean;
+  text: string;
+  createdAt: string;
+  editedAt: string;
+  status: "sent" | "seen" | "";
 };
 
 export type Community = {
@@ -55,6 +67,7 @@ export type Community = {
   area: string;
   memberCount: number;
   joined: boolean;
+  joinUrl?: string;
 };
 
 export type ServiceItem = {

@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, HousingPost, RentalBooking, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -175,6 +175,68 @@ export async function getSiteServices() {
   } catch {
     return [];
   }
+}
+
+function formBody(values: Record<string, string>) {
+  const body = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => body.set(key, value));
+  return body.toString();
+}
+
+export async function getChatConversations() {
+  const payload = await request<{ ok: boolean; conversations: ChatConversation[] }>("/api/chat/conversations");
+  return payload.conversations || [];
+}
+
+export async function getChatCommunities() {
+  const payload = await request<{ ok: boolean; communities: Community[] }>("/api/chat/communities");
+  return payload.communities || [];
+}
+
+export async function getChatMessages(conversationId: string) {
+  return request<{ ok: boolean; conversation: { id: string; subject: string; postId?: string }; messages: ChatMessage[] }>(
+    `/api/chat/messages?conversation_id=${encodeURIComponent(conversationId)}`
+  );
+}
+
+export async function startChatForPost(postId: string, message: string) {
+  return request<{ ok: boolean; conversation: { id: string; subject: string }; message: ChatMessage }>("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ post_id: postId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function sendChatMessage(conversationId: string, message: string) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function markChatRead(conversationId: string, lastMessageId = "") {
+  return request<{ ok: boolean }>("/api/chat/read", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, last_message_id: lastMessageId })
+  });
+}
+
+export async function createChatCommunity(name: string, kind: "GROUP" | "COMMUNITY", description: string, area: string) {
+  return request<{ ok: boolean; community: Community }>("/api/chat/communities", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ name, kind, description, area })
+  });
+}
+
+export async function joinChatCommunity(communityId: string) {
+  return request<{ ok: boolean; community: Community }>("/api/chat/communities/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId })
+  });
 }
 
 export async function mobileLogin(identifier: string, password: string) {

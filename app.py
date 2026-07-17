@@ -12059,15 +12059,19 @@ def save_chat_message(
     ).fetchone()
 
 
-def chat_message_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
+def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id: int = 0) -> dict[str, object]:
     sender_id = int(row_value(row, "sender_id") or 0)
+    message_id = int(row_value(row, "id") or 0)
+    mine = sender_id == current_user_id
     return {
-        "id": int(row_value(row, "id") or 0),
+        "id": message_id,
         "senderId": sender_id,
         "senderName": row_value(row, "sender_name"),
-        "mine": sender_id == current_user_id,
+        "mine": mine,
         "text": row_value(row, "message_text"),
         "createdAt": row_value(row, "created_at"),
+        "editedAt": row_value(row, "edited_at"),
+        "status": "seen" if mine and seen_message_id and message_id <= seen_message_id else "sent" if mine else "",
     }
 
 
@@ -14718,6 +14722,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (conversation["id"],),
             ).fetchall()
+            seen_row = con.execute(
+                """
+                SELECT MAX(last_read_message_id) AS seen_message_id
+                FROM chat_participants
+                WHERE conversation_id = ? AND user_id != ?
+                """,
+                (conversation["id"], current_user_id),
+            ).fetchone()
+            seen_message_id = int(row_value(seen_row, "seen_message_id") or 0)
             last_message_id = int(row_value(messages[-1], "id") or 0) if messages else 0
             if last_message_id:
                 con.execute(
@@ -14736,7 +14749,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "subject": row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
                     "postId": row_value(conversation, "post_public_id"),
                 },
-                "messages": [chat_message_payload(message, current_user_id) for message in messages],
+                "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
             }
         )
 
