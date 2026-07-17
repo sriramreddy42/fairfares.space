@@ -589,6 +589,7 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
       />
     ) : (
@@ -618,6 +619,7 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
       />
     );

@@ -193,7 +193,7 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
           <View style={styles.rateHeroFooter}>
             <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && reviewCar(cheapest)}>
-              <Text style={styles.bookNowText}>Review</Text>
+              <Text style={styles.bookNowText}>Book now</Text>
             </TouchableOpacity>
             <View style={styles.priceBadge}>
               <Text style={styles.ratePrice}>{cheapest ? `$${cheapest.daily_price}` : "$29.99"}</Text>
@@ -374,17 +374,28 @@ const styles = StyleSheet.create({
   priceBadge: { minWidth: 108, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, padding: theme.spacing.sm, alignItems: "center" },
   ratePrice: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
   priceBadgeMeta: { color: "#555", fontWeight: "900" },
-  rentalSearchPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
+  rentalSearchPanel: {
+    backgroundColor: "rgba(24,24,27,0.72)",
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    padding: theme.spacing.md,
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 }
+  },
   panelTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
   fieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", marginTop: 2 },
-  searchInput: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
+  searchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
   twoCol: { flexDirection: "row", gap: 10 },
   twoColField: { flex: 1 },
-  driverToggle: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  driverToggle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
   driverToggleText: { color: theme.colors.text, fontWeight: "900" },
   driverToggleMeta: { color: theme.colors.green, fontWeight: "900" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
+  chip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
   chipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
   searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },

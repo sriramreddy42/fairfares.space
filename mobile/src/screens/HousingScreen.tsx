@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl } from "../api/client";
+import { Alert, Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { absoluteAssetUrl, getCars } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, Car, HousingPost } from "../types";
+import { BootstrapPayload, Car, HousingPost, RentalSearchInput } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -27,6 +27,7 @@ type Props = {
   onSortSelect: (sort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc") => void;
   onPostNeed: (intent?: string) => void;
   onTopAction: (action: string) => void;
+  onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
 };
 
@@ -59,6 +60,26 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
 const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
 
+function isoDateFromNow(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const initialRentalSearch: RentalSearchInput = {
+  pickupLocation: "Denver International Airport (DEN)",
+  returnLocation: "Denver International Airport (DEN)",
+  pickupDate: isoDateFromNow(6),
+  returnDate: isoDateFromNow(9),
+  pickupTime: "10:00 AM",
+  returnTime: "10:00 AM",
+  discountCode: "",
+  days: 3,
+  additionalDriverRequested: false,
+  additionalDriverName: "",
+  additionalDriverAge: ""
+};
+
 export function HousingScreen({
   data,
   posts,
@@ -79,6 +100,7 @@ export function HousingScreen({
   onSortSelect,
   onPostNeed,
   onTopAction,
+  onBookCar,
   onBottomTabsHiddenChange
 }: Props) {
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
@@ -86,6 +108,9 @@ export function HousingScreen({
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [searchLetterCount, setSearchLetterCount] = useState(1);
+  const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
+  const [rentalCars, setRentalCars] = useState<Car[]>(cars);
+  const [rentalBusy, setRentalBusy] = useState(false);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
@@ -96,10 +121,10 @@ export function HousingScreen({
   const animatedSearchText = selectedLocationText || searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
   const cheapestCar = useMemo(
     () =>
-      [...cars]
+      [...(rentalCars.length ? rentalCars : cars)]
         .filter((car) => Number(car.daily_price) > 0)
         .sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0],
-    [cars]
+    [cars, rentalCars]
   );
   const sortedPosts = useMemo(() => {
     const distanceValue = (post: HousingPost) => (post.distanceMiles === null ? Number.MAX_SAFE_INTEGER : post.distanceMiles);
@@ -133,6 +158,8 @@ export function HousingScreen({
   }, [data?.location.city, posts]);
   const cheapestCarImage = absoluteAssetUrl(cheapestCar?.image_url || "");
   const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
+  const rentalRows = rentalCars.length ? rentalCars : cars;
+  const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 3), [cars]);
   const detailImages = detailPost
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
@@ -151,6 +178,10 @@ export function HousingScreen({
     return () => clearTimeout(timer);
   }, [searchLetterCount, searchPhraseIndex]);
 
+  useEffect(() => {
+    setRentalCars(cars);
+  }, [cars]);
+
   function updateScrollVisibility(y: number) {
     const previous = lastScrollYRef.current;
     if (Math.abs(y - previous) < 18) return;
@@ -161,6 +192,28 @@ export function HousingScreen({
   function openPostMap(post: HousingPost) {
     const query = post.lat && post.lng ? `${post.lat},${post.lng}` : `${post.title} ${post.location} ${post.area}`.trim();
     void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`);
+  }
+
+  function updateRentalSearch(key: keyof RentalSearchInput, value: string | boolean) {
+    setRentalSearch((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "pickupLocation" && !current.returnLocation) {
+        next.returnLocation = String(value);
+      }
+      return next;
+    });
+  }
+
+  async function searchRentalCars() {
+    setRentalBusy(true);
+    try {
+      const nextCars = await getCars(rentalSearch.pickupLocation);
+      setRentalCars(nextCars);
+    } catch (error) {
+      Alert.alert("Rental search failed", error instanceof Error ? error.message : "Could not search rental cars.");
+    } finally {
+      setRentalBusy(false);
+    }
   }
 
   function renderRentalCarsOnly() {
@@ -180,7 +233,7 @@ export function HousingScreen({
               <Text style={styles.carFeature}>24/7 support</Text>
             </View>
             <View style={styles.carBottomRow}>
-              <TouchableOpacity style={styles.bookNow} onPress={() => onTopAction("Ride")}>
+              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && onBookCar(cheapestCar, rentalSearch)}>
                 <Text style={styles.bookNowText}>Book now</Text>
               </TouchableOpacity>
               <View style={styles.carRateBox}>
@@ -190,12 +243,67 @@ export function HousingScreen({
             </View>
           </View>
         </ImageBackground>
-        {cars.length ? (
+        <View style={styles.carSearchPanel}>
+          <Text style={styles.carSearchTitle}>Search rental cars</Text>
+          <Text style={styles.carFieldLabel}>Pickup location</Text>
+          <TextInput value={rentalSearch.pickupLocation} onChangeText={(text) => updateRentalSearch("pickupLocation", text)} placeholder="Airport, city, or pickup address" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+          <Text style={styles.carFieldLabel}>Return location</Text>
+          <TextInput value={rentalSearch.returnLocation} onChangeText={(text) => updateRentalSearch("returnLocation", text)} placeholder="Same as pickup or another return place" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+          <View style={styles.carTwoCol}>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Pickup date</Text>
+              <TextInput value={rentalSearch.pickupDate} onChangeText={(text) => updateRentalSearch("pickupDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+            </View>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Return date</Text>
+              <TextInput value={rentalSearch.returnDate} onChangeText={(text) => updateRentalSearch("returnDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+            </View>
+          </View>
+          <View style={styles.carTwoCol}>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Pickup time</Text>
+              <TextInput value={rentalSearch.pickupTime} onChangeText={(text) => updateRentalSearch("pickupTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+            </View>
+            <View style={styles.carTwoColField}>
+              <Text style={styles.carFieldLabel}>Return time</Text>
+              <TextInput value={rentalSearch.returnTime} onChangeText={(text) => updateRentalSearch("returnTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+            </View>
+          </View>
+          <Text style={styles.carFieldLabel}>Promo / referral / student code</Text>
+          <TextInput value={rentalSearch.discountCode} onChangeText={(text) => updateRentalSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} autoCapitalize="characters" />
+          <TouchableOpacity style={styles.carDriverToggle} onPress={() => updateRentalSearch("additionalDriverRequested", !rentalSearch.additionalDriverRequested)}>
+            <Text style={styles.carDriverText}>{rentalSearch.additionalDriverRequested ? "Additional driver selected" : "Add additional driver"}</Text>
+            <Text style={styles.carDriverMeta}>$10/day</Text>
+          </TouchableOpacity>
+          {rentalSearch.additionalDriverRequested ? (
+            <View style={styles.carTwoCol}>
+              <View style={styles.carTwoColField}>
+                <Text style={styles.carFieldLabel}>Driver name</Text>
+                <TextInput value={rentalSearch.additionalDriverName} onChangeText={(text) => updateRentalSearch("additionalDriverName", text)} placeholder="Full name" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              </View>
+              <View style={styles.carTwoColField}>
+                <Text style={styles.carFieldLabel}>Driver age</Text>
+                <TextInput value={rentalSearch.additionalDriverAge} onChangeText={(text) => updateRentalSearch("additionalDriverAge", text)} placeholder="25+" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
+              </View>
+            </View>
+          ) : null}
+          <View style={styles.carPickupChips}>
+            {pickupLocations.map((location) => (
+              <TouchableOpacity key={location} style={styles.carPickupChip} onPress={() => updateRentalSearch("pickupLocation", location)}>
+                <Text style={styles.carPickupChipText}>{location}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={styles.carSearchButton} onPress={searchRentalCars} disabled={rentalBusy}>
+            <Text style={styles.carSearchButtonText}>{rentalBusy ? "Searching..." : "Search cars"}</Text>
+          </TouchableOpacity>
+        </View>
+        {rentalRows.length ? (
           <View style={styles.carList}>
-            {cars.map((car) => {
+            {rentalRows.map((car) => {
               const image = absoluteAssetUrl(car.image_url);
               return (
-                <TouchableOpacity key={car.id} style={styles.carMiniCard} onPress={() => onTopAction("Ride")}>
+                <TouchableOpacity key={car.id} style={styles.carMiniCard} onPress={() => onBookCar(car, rentalSearch)}>
                   {image ? <Image source={{ uri: image }} style={styles.carMiniImage} /> : <Image source={appAssets.carFallback} style={styles.carMiniImage} />}
                   <View style={styles.carMiniBody}>
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
@@ -521,6 +629,31 @@ const styles = StyleSheet.create({
   carRateBox: { minWidth: 108, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
   carRate: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
   carRateMeta: { color: "#555", fontWeight: "900" },
+  carSearchPanel: {
+    backgroundColor: "rgba(24,24,27,0.72)",
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    padding: theme.spacing.md,
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.36,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  carSearchTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  carFieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
+  carSearchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
+  carTwoCol: { flexDirection: "row", gap: 10 },
+  carTwoColField: { flex: 1 },
+  carDriverToggle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
+  carDriverText: { color: theme.colors.text, fontWeight: "900" },
+  carDriverMeta: { color: theme.colors.green, fontWeight: "900" },
+  carPickupChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  carPickupChip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
+  carPickupChipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
+  carSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   carList: { gap: theme.spacing.md },
   carMiniCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   carMiniImage: { width: "100%", height: 170 },
