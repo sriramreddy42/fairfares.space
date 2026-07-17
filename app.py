@@ -439,6 +439,10 @@ ACCOMMODATION_METRO_GROUPS = {
         "suggested": ("Dayton, OH", "Kettering, OH", "Beavercreek, OH", "Centerville, OH", "Miamisburg, OH", "Fairborn, OH", "Huber Heights, OH", "Oakwood, OH", "Riverside, OH"),
         "zips": ("45402", "45420", "45429", "45431", "45440", "45459", "45324", "45424"),
     },
+    "Chicago Metro Area": {
+        "suggested": ("Chicago, IL", "Naperville, IL", "Schaumburg, IL", "Evanston, IL", "Oak Brook, IL", "Skokie, IL", "Des Plaines, IL", "Aurora, IL", "Oak Park, IL", "Downers Grove, IL", "Arlington Heights, IL", "Lombard, IL"),
+        "zips": ("60601", "60611", "60614", "60616", "60622", "60637", "60540", "60173", "60201"),
+    },
 }
 
 ACCOMMODATION_STATIC_POINTS = {
@@ -468,6 +472,20 @@ ACCOMMODATION_STATIC_POINTS = {
     "huber heights, oh": (39.8439, -84.1247),
     "oakwood, oh": (39.7253, -84.1741),
     "riverside, oh": (39.7798, -84.1241),
+    "chicago, il": (41.8781, -87.6298),
+    "chicago": (41.8781, -87.6298),
+    "chicago metro area": (41.8781, -87.6298),
+    "naperville, il": (41.7508, -88.1535),
+    "schaumburg, il": (42.0334, -88.0834),
+    "evanston, il": (42.0451, -87.6877),
+    "oak brook, il": (41.8398, -87.9536),
+    "skokie, il": (42.0324, -87.7416),
+    "des plaines, il": (42.0334, -87.8834),
+    "aurora, il": (41.7606, -88.3201),
+    "oak park, il": (41.8850, -87.7845),
+    "downers grove, il": (41.8089, -88.0112),
+    "arlington heights, il": (42.0884, -87.9806),
+    "lombard, il": (41.8800, -88.0078),
 }
 ACCOMMODATION_PROPERTY_TYPE_FILTERS = (
     ("", "All Property Types"),
@@ -1086,15 +1104,20 @@ def migrate_existing_uploads_to_drive(uploaded_by: int | str | None = None, limi
 
 
 def load_env_file() -> None:
-    env_file = BASE_DIR / ".env"
-    if not env_file.exists():
-        return
-    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    env_files = (BASE_DIR / "fairfares.env", BASE_DIR / ".env")
+    loaded_any = False
+    for env_file in env_files:
+        if not env_file.exists():
             continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+        loaded_any = True
+        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    if not loaded_any:
+        return
     refresh_storage_paths()
 
 
@@ -10820,12 +10843,12 @@ def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> lis
     return places
 
 
-def refresh_accommodation_location_cache(query: str) -> str:
+def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> str:
     query = normalize_accommodation_place_label(query)
     if not query:
         return ""
     cached = cached_accommodation_metro_for_place(query)
-    if cached and not re.fullmatch(r"\d{5}", query):
+    if cached and not force and not re.fullmatch(r"\d{5}", query):
         return cached
     geocode = google_accommodation_geocode(query)
     if not geocode:
@@ -11411,7 +11434,13 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
 
 def accommodation_location_options(query: str, limit: int = 18) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
-    metro_name = cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+    google_enabled = bool(
+        os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    )
+    google_refreshed_metro = refresh_accommodation_location_cache(query, force=True) if google_enabled else ""
+    metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+    fallback_from_group = False
     if not metro_name:
         metro_name = accommodation_metro_name_from_place(query) if query else "Denver Metro Area"
     suggested: list[str] = []
@@ -11431,7 +11460,21 @@ def accommodation_location_options(query: str, limit: int = 18) -> dict[str, obj
                     """,
                     (f"%{city}%", city),
                 ).fetchone()
-            if not metro:
+            if not metro and metro_name in ACCOMMODATION_METRO_GROUPS:
+                fallback_group = ACCOMMODATION_METRO_GROUPS[metro_name]
+                sample_place = next(iter(fallback_group.get("suggested", ()) or (metro_name,)), metro_name)
+                _, state = split_city_state(str(sample_place))
+                metro_lat, metro_lng = static_accommodation_point(metro_name)
+                metro_id = upsert_accommodation_metro(con, metro_name, state=state, lat=metro_lat, lng=metro_lng, source="STATIC_FALLBACK", raw={"mobile_seed": True})
+                for place in fallback_group.get("suggested", ()):
+                    city, place_state = split_city_state(str(place))
+                    place_lat, place_lng = static_accommodation_point(str(place))
+                    upsert_accommodation_local_area(con, metro_id, str(place), city=city, state=place_state or state, place_type="LOCALITY", lat=place_lat, lng=place_lng)
+                for zip_code in fallback_group.get("zips", ()):
+                    upsert_accommodation_local_area(con, metro_id, str(zip_code), zip_code=str(zip_code), state=state, place_type="ZIP")
+                fallback_from_group = True
+                metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone()
+            if not metro and not query:
                 metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", ("Denver Metro Area",)).fetchone()
             if metro:
                 metro_name = row_value(metro, "name", metro_name)
@@ -11457,7 +11500,7 @@ def accommodation_location_options(query: str, limit: int = 18) -> dict[str, obj
     except sqlite3.Error:
         suggested = []
         zips = []
-    if not suggested:
+    if not suggested and metro_name in ACCOMMODATION_METRO_GROUPS:
         fallback_group = ACCOMMODATION_METRO_GROUPS.get(metro_name) or ACCOMMODATION_METRO_GROUPS.get("Denver Metro Area", {})
         suggested = [str(item) for item in fallback_group.get("suggested", ())][:limit]
         zips = [str(item) for item in fallback_group.get("zips", ())][:12]
@@ -11468,7 +11511,8 @@ def accommodation_location_options(query: str, limit: int = 18) -> dict[str, obj
         "selectedLocation": dedupe_repeated_location_label(str(point.get("label") or query or metro_name)),
         "suggested": suggested[:limit],
         "zips": zips[:12],
-        "source": str(point.get("source") or "cache"),
+        "googlePlacesEnabled": google_enabled,
+        "source": "google" if google_refreshed_metro else "static" if fallback_from_group else str(point.get("source") or "cache"),
     }
 
 

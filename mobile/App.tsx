@@ -124,6 +124,8 @@ export default function App() {
   const [signupName, setSignupName] = useState("");
   const [signupPhone, setSignupPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
@@ -141,6 +143,7 @@ export default function App() {
   const [searchNeed, setSearchNeed] = useState("need_place");
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
+  const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -181,8 +184,12 @@ export default function App() {
         .then((options) => {
           const suggested = (options?.suggested || []).filter(Boolean).slice(0, 8);
           setSearchSuggestions(suggested);
+          setSearchSuggestionMetro(options?.metro || "");
         })
-        .catch(() => setSearchSuggestions([]))
+        .catch(() => {
+          setSearchSuggestions([]);
+          setSearchSuggestionMetro("");
+        })
         .finally(() => setSearchSuggestionsLoading(false));
     }, 300);
     return () => {
@@ -451,8 +458,17 @@ export default function App() {
   }
 
   async function submitLogin() {
+    if (authBusy) return;
+    setAuthMessage("");
+    if (!identifier.trim() || !password) {
+      setAuthMessage("Enter your email/phone and password.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage("Signing in...");
     try {
       const payload = await mobileLogin(identifier, password);
+      setAuthMessage("Login successful.");
       setLoginOpen(false);
       setIdentifier("");
       setPassword("");
@@ -462,11 +478,17 @@ export default function App() {
         openListingFormForUser(payload.user, selectedNeed || "need_place");
       }
     } catch (error) {
-      Alert.alert("Login failed", error instanceof Error ? error.message : "Please try again.");
+      setAuthMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
+    } finally {
+      setAuthBusy(false);
     }
   }
 
   async function submitSignup() {
+    if (authBusy) return;
+    setAuthMessage("");
+    setAuthBusy(true);
+    setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(signupName, identifier, signupPhone, password);
       Alert.alert("Signup created", payload.message);
@@ -481,7 +503,9 @@ export default function App() {
         openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
       }
     } catch (error) {
-      Alert.alert("Signup failed", error instanceof Error ? error.message : "Please try again.");
+      setAuthMessage(error instanceof Error ? error.message : "Signup failed. Please try again.");
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -617,10 +641,23 @@ export default function App() {
               secureTextEntry
               style={styles.input}
             />
-            <TouchableOpacity style={styles.primaryButton} onPress={authMode === "login" ? submitLogin : submitSignup}>
-              <Text style={styles.primaryButtonText}>{authMode === "login" ? "Login" : "Sign up"}</Text>
+            {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
+            <TouchableOpacity
+              style={[styles.primaryButton, authBusy && styles.disabledButton]}
+              onPress={authMode === "login" ? submitLogin : submitSignup}
+              disabled={authBusy}
+            >
+              <Text style={styles.primaryButtonText}>
+                {authBusy ? (authMode === "login" ? "Signing in..." : "Creating...") : authMode === "login" ? "Login" : "Sign up"}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setAuthMode(authMode === "login" ? "signup" : "login")}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => {
+                setAuthMessage("");
+                setAuthMode(authMode === "login" ? "signup" : "login");
+              }}
+            >
               <Text style={styles.secondaryButtonText}>{authMode === "login" ? "Need an account? Sign up" : "Already have an account? Login"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setLoginOpen(false)}>
@@ -767,7 +804,7 @@ export default function App() {
             <TextInput
               value={searchArea}
               onChangeText={setSearchArea}
-              placeholder="Neighborhood, building, campus, or landmark"
+              placeholder={`Neighborhood, building, campus, or landmark near ${normalizeCityInput(searchCity)}`}
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />
@@ -790,6 +827,13 @@ export default function App() {
               </View>
             </View>
             <View style={styles.chipRow}>
+              <Text style={styles.suggestionTitle}>
+                {searchSuggestionsLoading
+                  ? "Loading nearby areas..."
+                  : searchSuggestions.length
+                    ? `Nearby areas for ${searchSuggestionMetro || normalizeCityInput(searchCity)}`
+                    : "Nearby area suggestions"}
+              </Text>
               {(searchSuggestions.length
                 ? searchSuggestions
                 : searchCity.toLowerCase().includes("denver")
@@ -801,7 +845,9 @@ export default function App() {
                 </TouchableOpacity>
               ))}
               {!searchSuggestions.length && !searchCity.toLowerCase().includes("denver") ? (
-                <Text style={styles.suggestionHint}>{searchSuggestionsLoading ? "Loading nearby areas..." : "Enter a city to load nearby neighborhood suggestions."}</Text>
+                <Text style={styles.suggestionHint}>
+                  {searchSuggestionsLoading ? "Loading nearby areas..." : "No nearby suggestions loaded yet. Check Google Places keys or type a known city/area."}
+                </Text>
               ) : null}
             </View>
             <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
@@ -842,6 +888,7 @@ const styles = StyleSheet.create({
   choiceText: { color: theme.colors.soft, fontWeight: "900" },
   choiceTextActive: { color: theme.colors.bg },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 14 },
+  disabledButton: { opacity: 0.65 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },
   secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
@@ -850,6 +897,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
   chipText: { color: theme.colors.text, fontWeight: "800" },
   chipTextActive: { color: theme.colors.bg },
+  authMessage: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20 },
+  suggestionTitle: { width: "100%", color: theme.colors.soft, fontWeight: "900", marginBottom: 2 },
   suggestionHint: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
   switchText: { color: theme.colors.muted, textAlign: "center", fontWeight: "900", paddingVertical: 8 }
 });
