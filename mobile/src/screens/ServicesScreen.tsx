@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, ImageBackground, ImageSourcePropType, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { absoluteAssetUrl, getCars, quoteRentalCar } from "../api/client";
 import { appAssets } from "../assets";
@@ -46,7 +46,7 @@ type Props = {
   selected: ServiceKey;
   onSelect: (service: ServiceKey) => void;
   onOpenHousing: () => void;
-  onBookCar: (car: Car, details?: Partial<RentalSearchInput>) => void;
+  onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
 };
 
 export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousing, onBookCar }: Props) {
@@ -60,11 +60,11 @@ export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousi
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>Services</Text>
+      <Text style={styles.title}>{selected === "cars" ? "Rental Cars" : "Services"}</Text>
+      {selected === "cars" ? <CarRentals cars={cars} onBookCar={onBookCar} /> : null}
       <ServiceGrid title="Go anywhere" tiles={goAnywhere} selected={selected} onPress={openTile} />
       <ServiceGrid title="Get anything done" tiles={deliveryTiles} selected={selected} onPress={openTile} />
 
-      {selected === "cars" ? <CarRentals cars={cars} onBookCar={onBookCar} /> : null}
       {selected === "deals" ? <Deals /> : null}
       {selected === "explorer" ? <Explorer /> : null}
       {selected === "local" ? <LocalServices services={services} /> : null}
@@ -128,7 +128,7 @@ function dollars(value: unknown) {
   return `$${numeric.toFixed(2)}`;
 }
 
-function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, details?: Partial<RentalSearchInput>) => void }) {
+function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void }) {
   const [search, setSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [visibleCars, setVisibleCars] = useState<Car[]>(cars);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
@@ -139,6 +139,10 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
   const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
   const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
   const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 4), [cars]);
+
+  useEffect(() => {
+    setVisibleCars(cars);
+  }, [cars]);
 
   function updateSearch(key: keyof RentalSearchInput, value: string | boolean) {
     setSearch((current) => {
@@ -188,8 +192,8 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.rateMeta}>{cheapest ? `${cheapest.name} · ${cheapest.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}</Text>
           <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
           <View style={styles.rateHeroFooter}>
-            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && onBookCar(cheapest)}>
-              <Text style={styles.bookNowText}>Book now</Text>
+            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && reviewCar(cheapest)}>
+              <Text style={styles.bookNowText}>Review</Text>
             </TouchableOpacity>
             <View style={styles.priceBadge}>
               <Text style={styles.ratePrice}>{cheapest ? `$${cheapest.daily_price}` : "$29.99"}</Text>
@@ -200,17 +204,48 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
       </ImageBackground>
       <View style={styles.rentalSearchPanel}>
         <Text style={styles.panelTitle}>Search rental cars</Text>
-        <TextInput value={search.pickupLocation} onChangeText={(text) => updateSearch("pickupLocation", text)} placeholder="Pickup location" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
-        <TextInput value={search.returnLocation} onChangeText={(text) => updateSearch("returnLocation", text)} placeholder="Return location" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <Text style={styles.fieldLabel}>Pickup location</Text>
+        <TextInput value={search.pickupLocation} onChangeText={(text) => updateSearch("pickupLocation", text)} placeholder="Airport, city, or pickup address" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+        <Text style={styles.fieldLabel}>Return location</Text>
+        <TextInput value={search.returnLocation} onChangeText={(text) => updateSearch("returnLocation", text)} placeholder="Same as pickup or another return place" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
         <View style={styles.twoCol}>
-          <TextInput value={search.pickupDate} onChangeText={(text) => updateSearch("pickupDate", text)} placeholder="Pickup date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
-          <TextInput value={search.returnDate} onChangeText={(text) => updateSearch("returnDate", text)} placeholder="Return date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+          <View style={styles.twoColField}>
+            <Text style={styles.fieldLabel}>Pickup date</Text>
+            <TextInput value={search.pickupDate} onChangeText={(text) => updateSearch("pickupDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+          </View>
+          <View style={styles.twoColField}>
+            <Text style={styles.fieldLabel}>Return date</Text>
+            <TextInput value={search.returnDate} onChangeText={(text) => updateSearch("returnDate", text)} placeholder="YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+          </View>
         </View>
         <View style={styles.twoCol}>
-          <TextInput value={search.pickupTime} onChangeText={(text) => updateSearch("pickupTime", text)} placeholder="Pickup time" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
-          <TextInput value={search.returnTime} onChangeText={(text) => updateSearch("returnTime", text)} placeholder="Return time" placeholderTextColor={theme.colors.muted} style={[styles.searchInput, styles.twoColField]} />
+          <View style={styles.twoColField}>
+            <Text style={styles.fieldLabel}>Pickup time</Text>
+            <TextInput value={search.pickupTime} onChangeText={(text) => updateSearch("pickupTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+          </View>
+          <View style={styles.twoColField}>
+            <Text style={styles.fieldLabel}>Return time</Text>
+            <TextInput value={search.returnTime} onChangeText={(text) => updateSearch("returnTime", text)} placeholder="10:00 AM" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+          </View>
         </View>
+        <Text style={styles.fieldLabel}>Promo / referral / student code</Text>
         <TextInput value={search.discountCode} onChangeText={(text) => updateSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.searchInput} autoCapitalize="characters" />
+        <TouchableOpacity style={styles.driverToggle} onPress={() => updateSearch("additionalDriverRequested", !search.additionalDriverRequested)}>
+          <Text style={styles.driverToggleText}>{search.additionalDriverRequested ? "Additional driver selected" : "Add additional driver"}</Text>
+          <Text style={styles.driverToggleMeta}>${10}/day</Text>
+        </TouchableOpacity>
+        {search.additionalDriverRequested ? (
+          <View style={styles.twoCol}>
+            <View style={styles.twoColField}>
+              <Text style={styles.fieldLabel}>Driver name</Text>
+              <TextInput value={search.additionalDriverName} onChangeText={(text) => updateSearch("additionalDriverName", text)} placeholder="Full name" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+            </View>
+            <View style={styles.twoColField}>
+              <Text style={styles.fieldLabel}>Driver age</Text>
+              <TextInput value={search.additionalDriverAge} onChangeText={(text) => updateSearch("additionalDriverAge", text)} placeholder="25+" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
+            </View>
+          </View>
+        ) : null}
         <View style={styles.chips}>
           {pickupLocations.map((location) => (
             <TouchableOpacity key={location} style={styles.chip} onPress={() => updateSearch("pickupLocation", location)}>
@@ -238,9 +273,14 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.policyText}>Deposit: {dollars(quote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
           <Text style={styles.policyText}>{quote.policy.cancellation.cutoff_copy}</Text>
           {quote.policy.bullets.map((item) => <Text key={item} style={styles.policyBullet}>- {item}</Text>)}
-          <TouchableOpacity style={styles.bookNowWide} onPress={() => selectedCar && onBookCar(selectedCar, search)}>
-            <Text style={styles.bookNowText}>Start checkout</Text>
-          </TouchableOpacity>
+          <View style={styles.paymentActions}>
+            <TouchableOpacity style={[styles.bookNowWide, styles.holdButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "hold")}>
+              <Text style={styles.bookNowText}>Pay 10% hold</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.bookNowWide, styles.fullPayButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "full")}>
+              <Text style={styles.fullPayButtonText}>Pay full</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
       {rows.map((car) => {
@@ -336,9 +376,13 @@ const styles = StyleSheet.create({
   priceBadgeMeta: { color: "#555", fontWeight: "900" },
   rentalSearchPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
   panelTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  fieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", marginTop: 2 },
   searchInput: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
   twoCol: { flexDirection: "row", gap: 10 },
   twoColField: { flex: 1 },
+  driverToggle: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  driverToggleText: { color: theme.colors.text, fontWeight: "900" },
+  driverToggleMeta: { color: theme.colors.green, fontWeight: "900" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
   chipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
@@ -351,6 +395,10 @@ const styles = StyleSheet.create({
   quoteTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
+  paymentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  holdButton: { flex: 1 },
+  fullPayButton: { flex: 1, backgroundColor: theme.colors.text },
+  fullPayButtonText: { color: theme.colors.bg, fontWeight: "900", textTransform: "uppercase" },
   carCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
   carCardActive: { borderColor: theme.colors.blue },
   carImage: { width: "100%", height: 150 },

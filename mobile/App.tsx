@@ -216,7 +216,7 @@ export default function App() {
     }
   }
 
-  async function bookCar(car: Car, details?: Partial<RentalSearchInput>) {
+  async function bookCar(car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") {
     if (!data?.user) {
       setActiveTab("profile");
       setLoginOpen(true);
@@ -225,15 +225,19 @@ export default function App() {
     setLoading(true);
     try {
       const payload = await bookRentalCar(Number(car.id), details);
-      Alert.alert(
-        "Rental checkout started",
-        `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`,
-        [
-          { text: "Pay 10%", onPress: () => openRentalCheckout("hold") },
-          { text: "Pay full", onPress: () => openRentalCheckout("full") },
-          { text: "Later", style: "cancel" }
-        ]
-      );
+      if (paymentOption) {
+        await openRentalCheckout(paymentOption);
+      } else {
+        Alert.alert(
+          "Rental checkout started",
+          `${payload.booking.carName || car.name}\nHold due: $${payload.booking.holdAmount}\nPickup: ${payload.booking.pickupLocation}`,
+          [
+            { text: "Pay 10%", onPress: () => openRentalCheckout("hold") },
+            { text: "Pay full", onPress: () => openRentalCheckout("full") },
+            { text: "Later", style: "cancel" }
+          ]
+        );
+      }
       const [payloadData, carRows] = await Promise.all([getBootstrap(city), getCars()]);
       setData(payloadData);
       setCars(carRows);

@@ -10098,6 +10098,9 @@ def ensure_booking_for_user(
     return_time: str = "10:00 AM",
     pickup_location: str = "",
     return_location: str = "",
+    additional_driver_requested: bool = False,
+    additional_driver_name: str = "",
+    additional_driver_age: str = "",
 ) -> sqlite3.Row | None:
     existing = get_booking_for_user(user_id)
     if existing and not car_id:
@@ -10135,14 +10138,42 @@ def ensure_booking_for_user(
         requested_car = get_car(car_id)
         if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
             try:
-                return create_booking_for_user(user_id, car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+                return create_booking_for_user(
+                    user_id,
+                    car_id,
+                    discount_code,
+                    days,
+                    pickup_date,
+                    return_date,
+                    pickup_time,
+                    return_time,
+                    pickup_location,
+                    return_location,
+                    additional_driver_requested,
+                    additional_driver_name,
+                    additional_driver_age,
+                )
             except (RuntimeError, ValueError):
                 return existing
         return None
     cars = get_cars()
     if not cars:
         return None
-    return create_booking_for_user(user_id, cars[0]["id"], discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+    return create_booking_for_user(
+        user_id,
+        cars[0]["id"],
+        discount_code,
+        days,
+        pickup_date,
+        return_date,
+        pickup_time,
+        return_time,
+        pickup_location,
+        return_location,
+        additional_driver_requested,
+        additional_driver_name,
+        additional_driver_age,
+    )
 
 
 def get_saved_cars_for_user(user_id: int) -> list[sqlite3.Row]:
@@ -22092,6 +22123,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return_time=str(payload.get("returnTime") or payload.get("return_time") or "10:00 AM").strip(),
                 pickup_location=str(payload.get("pickupLocation") or payload.get("pickup_location") or "").strip(),
                 return_location=str(payload.get("returnLocation") or payload.get("return_location") or "").strip(),
+                additional_driver_requested=bool(payload.get("additionalDriverRequested") or payload.get("additional_driver_requested")),
+                additional_driver_name=str(payload.get("additionalDriverName") or payload.get("additional_driver_name") or "").strip(),
+                additional_driver_age=str(payload.get("additionalDriverAge") or payload.get("additional_driver_age") or "").strip(),
             )
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc) or "Unable to start this rental booking."}, 400)
