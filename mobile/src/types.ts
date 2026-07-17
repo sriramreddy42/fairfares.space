@@ -47,6 +47,8 @@ export type ChatConversation = {
   subject: string;
   otherName: string;
   otherUserId?: number;
+  otherOnline?: boolean;
+  otherLastSeenAt?: string;
   lastMessage: string;
   lastMessageAt: string;
   mutedAt?: string;

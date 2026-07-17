@@ -51,6 +51,13 @@ function relativeTime(value: string) {
   return `${Math.round(diffDays / 7)}w`;
 }
 
+function presenceLabel(conversation: ChatConversation | null) {
+  if (!conversation || conversation.communityId) return "Group chat";
+  if (conversation.otherOnline) return "Active now";
+  const lastSeen = relativeTime(conversation.otherLastSeenAt || "");
+  return lastSeen ? `Active ${lastSeen} ago` : "Offline";
+}
+
 export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPendingPost, onThreadModeChange }: Props) {
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
@@ -379,11 +386,11 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
           </TouchableOpacity>
           <View style={styles.threadAvatar}>
             <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || activeSubject || "Chat")}</Text>
-            <View style={styles.activeDot} />
+            {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </View>
           <View style={styles.threadHeaderCopy}>
             <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || activeSubject || pendingPost?.title || "FairFares chat"}</Text>
-            <Text style={styles.threadHeaderMeta}>{activeConversation?.communityId ? "Group chat" : "Active now"}</Text>
+            <Text style={styles.threadHeaderMeta}>{presenceLabel(activeConversation)}</Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions}><DotsIcon /></TouchableOpacity>
         </View>
@@ -398,13 +405,10 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
           ) : null}
           {messages.map((message) => (
             <View key={message.id} style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine]}>
-              {!message.mine ? (
-                <View style={styles.smallAvatar}><Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text></View>
-              ) : null}
               <View style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble]}>
                 {!message.mine && activeConversation?.communityId ? <Text style={styles.senderName}>{message.senderName}</Text> : null}
-                <Text style={styles.bubbleText}>{message.text}</Text>
-                <Text style={styles.bubbleMeta}>
+                <Text style={[styles.bubbleText, message.mine ? styles.myBubbleText : styles.theirBubbleText]}>{message.text}</Text>
+                <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>
                   {message.editedAt ? "Edited · " : ""}
                   {message.mine ? message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent" : ""}
                 </Text>
@@ -420,6 +424,9 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
                   ) : null}
                 </View>
               </View>
+              {!message.mine ? (
+                <View style={styles.smallAvatar}><Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text></View>
+              ) : null}
             </View>
           ))}
         </ScrollView>
@@ -650,8 +657,8 @@ const styles = StyleSheet.create({
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.blue },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingVertical: 16, gap: 10, flexGrow: 1, justifyContent: "flex-end" },
-  threadMessageRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
-  threadMessageRowMine: { justifyContent: "flex-end" },
+  threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-end", gap: 8 },
+  threadMessageRowMine: { justifyContent: "flex-start" },
   smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
@@ -677,12 +684,16 @@ const styles = StyleSheet.create({
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
-  bubble: { maxWidth: "84%", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9 },
-  myBubble: { backgroundColor: theme.colors.blue, alignSelf: "flex-end", borderBottomRightRadius: 4 },
-  theirBubble: { backgroundColor: theme.colors.panel2, alignSelf: "flex-start", borderBottomLeftRadius: 4 },
-  senderName: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", marginBottom: 3 },
-  bubbleText: { color: theme.colors.text, fontSize: 15, lineHeight: 20 },
-  bubbleMeta: { color: theme.colors.soft, fontSize: 11, fontWeight: "800", marginTop: 4, opacity: 0.8 },
+  bubble: { maxWidth: "84%", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, borderWidth: 1 },
+  myBubble: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "rgba(255,255,255,0.62)", alignSelf: "flex-start", borderBottomLeftRadius: 6 },
+  theirBubble: { backgroundColor: "rgba(79,124,255,0.9)", borderColor: "rgba(137,170,255,0.42)", alignSelf: "flex-end", borderBottomRightRadius: 6 },
+  senderName: { color: "rgba(255,255,255,0.78)", fontSize: 10, fontWeight: "900", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0 },
+  bubbleText: { fontSize: 15, lineHeight: 20 },
+  myBubbleText: { color: "#111827" },
+  theirBubbleText: { color: theme.colors.text },
+  bubbleMeta: { fontSize: 10, fontWeight: "800", marginTop: 4, opacity: 0.8 },
+  myBubbleMeta: { color: "#667085" },
+  theirBubbleMeta: { color: "rgba(255,255,255,0.78)" },
   messageActions: { flexDirection: "row", gap: 10, marginTop: 6 },
   messageActionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "900" },
   messageBox: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-end" },

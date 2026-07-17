@@ -3461,6 +3461,7 @@ def init_db() -> None:
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
@@ -4428,6 +4429,7 @@ def init_db() -> None:
         ensure_column(con, "workspace_posts", "group_id", "group_id INTEGER")
         ensure_column(con, "workspace_posts", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "workspace_groups", "slack_url", "slack_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "sessions", "last_seen_at", "last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "workspace_groups", "slack_channel_id", "slack_channel_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_groups", "slack_channel_name", "slack_channel_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
@@ -12047,6 +12049,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
     last_read_id = int(row_value(row, "last_read_message_id") or 0)
     community_public_id = row_value(row, "community_public_id")
     community_name = row_value(row, "community_name")
+    other_online = int(row_value(row, "other_online") or 0) > 0
     return {
         "id": row_value(row, "public_id"),
         "conversationId": int(row_value(row, "id") or 0),
@@ -12059,6 +12062,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "postCategory": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "post_category"), "Housing"),
         "otherName": community_name or row_value(row, "other_name") or "FairFares member",
         "otherUserId": int(row_value(row, "other_user_id") or 0),
+        "otherOnline": other_online if not community_public_id else False,
+        "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
         "lastMessage": row_value(row, "last_message"),
         "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
         "mutedAt": row_value(row, "muted_at"),
@@ -12279,7 +12284,9 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    last_message.sender_id AS last_sender_id,
                    last_message.message_text AS last_message,
                    other_user.id AS other_user_id,
-                   other_user.name AS other_name
+                   other_user.name AS other_name,
+                   MAX(other_sessions.last_seen_at) AS other_last_seen_at,
+                   MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
             FROM chat_conversations conversations
             JOIN chat_participants participant ON participant.conversation_id = conversations.id AND participant.user_id = ?
             LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
@@ -12290,7 +12297,9 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             )
             LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
             LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+            LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
+            GROUP BY conversations.id
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
             LIMIT 100
             """,
@@ -14186,7 +14195,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not token:
             return None
         with db() as con:
-            return con.execute(
+            user = con.execute(
                 """
                 SELECT users.* FROM users
                 JOIN sessions ON sessions.user_id = users.id
@@ -14194,6 +14203,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (token,),
             ).fetchone()
+            if user:
+                con.execute("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+            return user
 
     def send_html(self, body: bytes, status: int = 200) -> None:
         self.send_response(status)
