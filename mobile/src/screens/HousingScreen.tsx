@@ -83,10 +83,37 @@ function dateOptionsFromToday(count = 90) {
   return Array.from({ length: count }, (_, index) => isoDateFromNow(index));
 }
 
+function todayIsoDate() {
+  return isoDateFromNow(0);
+}
+
 function formatDateLabel(dateText: string) {
   const date = new Date(`${dateText}T00:00:00`);
   if (Number.isNaN(date.getTime())) return dateText || "Choose date";
   return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function timeTextToMinutes(timeText: string) {
+  const match = String(timeText || "10:00 AM").trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return 600;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hours !== 12) hours += 12;
+  if (period === "AM" && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
+function minimumPickupTimeToday() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() === 0 ? 0 : 60, 0, 0);
+  return now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function firstAllowedPickupTime(pickupDate: string) {
+  if (pickupDate !== todayIsoDate()) return timeOptions[0];
+  const minimum = timeTextToMinutes(minimumPickupTimeToday());
+  return timeOptions.find((time) => timeTextToMinutes(time) >= minimum) || timeOptions[timeOptions.length - 1];
 }
 
 function rentalDays(search: RentalSearchInput) {
@@ -264,6 +291,12 @@ export function HousingScreen({
       if (key === "pickupDate" && typeof value === "string" && current.returnDate <= value) {
         next.returnDate = addDays(value, 1);
       }
+      if ((key === "pickupDate" || key === "pickupTime") && next.pickupDate === todayIsoDate()) {
+        const minimum = firstAllowedPickupTime(next.pickupDate);
+        if (timeTextToMinutes(String(next.pickupTime)) < timeTextToMinutes(minimum)) {
+          next.pickupTime = minimum;
+        }
+      }
       if (key === "returnDate" && typeof value === "string" && value <= current.pickupDate) {
         next.returnDate = addDays(current.pickupDate, 1);
       }
@@ -314,19 +347,22 @@ export function HousingScreen({
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={isDatePicker ? styles.calendarGrid : styles.pickerList}>
               {values.map((value) => {
                 const disabled = rentalPicker === "returnDate" && value <= rentalSearch.pickupDate;
+                const timeDisabled = rentalPicker === "pickupTime"
+                  && rentalSearch.pickupDate === todayIsoDate()
+                  && timeTextToMinutes(value) < timeTextToMinutes(minimumPickupTimeToday());
                 const selected = value === activeValue;
                 return (
                   <TouchableOpacity
                     key={value}
-                    disabled={disabled}
+                    disabled={disabled || timeDisabled}
                     style={[
                       isDatePicker ? styles.calendarCell : styles.pickerOption,
                       selected && styles.pickerOptionActive,
-                      disabled && styles.pickerOptionDisabled
+                      (disabled || timeDisabled) && styles.pickerOptionDisabled
                     ]}
                     onPress={() => selectRentalPickerValue(value)}
                   >
-                    <Text style={[styles.pickerOptionText, selected && styles.pickerOptionTextActive, disabled && styles.pickerOptionTextDisabled]}>
+                    <Text style={[styles.pickerOptionText, selected && styles.pickerOptionTextActive, (disabled || timeDisabled) && styles.pickerOptionTextDisabled]}>
                       {isDatePicker ? formatDateLabel(value) : value}
                     </Text>
                     {isDatePicker ? <Text style={styles.calendarDateText}>{value.slice(5)}</Text> : null}
