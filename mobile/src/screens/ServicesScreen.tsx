@@ -219,8 +219,9 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
   const [quote, setQuote] = useState<RentalQuote | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [rentalPicker, setRentalPicker] = useState<null | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
-  const rows = visibleCars.length ? visibleCars : cars;
+  const rows = hasSearched ? visibleCars : [];
   const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
   const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
   const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
@@ -231,6 +232,7 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
 
   useEffect(() => {
     setVisibleCars(cars);
+    setHasSearched(false);
   }, [cars]);
 
   function updateSearch(key: keyof RentalSearchInput, value: string | boolean) {
@@ -320,6 +322,7 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
     try {
       const nextCars = await getCars(search.pickupLocation);
       setVisibleCars(nextCars);
+      setHasSearched(true);
       setSelectedCar(null);
       setQuote(null);
     } catch (error) {
@@ -424,24 +427,6 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
               : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
           </Text>
         </View>
-        <Text style={styles.fieldLabel}>Promo / referral / student code</Text>
-        <TextInput value={search.discountCode} onChangeText={(text) => updateSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.searchInput} autoCapitalize="characters" />
-        <TouchableOpacity style={styles.driverToggle} onPress={() => updateSearch("additionalDriverRequested", !search.additionalDriverRequested)}>
-          <Text style={styles.driverToggleText}>{search.additionalDriverRequested ? "Additional driver selected" : "Add additional driver"}</Text>
-          <Text style={styles.driverToggleMeta}>${10}/day</Text>
-        </TouchableOpacity>
-        {search.additionalDriverRequested ? (
-          <View style={styles.twoCol}>
-            <View style={styles.twoColField}>
-              <Text style={styles.fieldLabel}>Driver name</Text>
-              <TextInput value={search.additionalDriverName} onChangeText={(text) => updateSearch("additionalDriverName", text)} placeholder="Full name" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
-            </View>
-            <View style={styles.twoColField}>
-              <Text style={styles.fieldLabel}>Driver age</Text>
-              <TextInput value={search.additionalDriverAge} onChangeText={(text) => updateSearch("additionalDriverAge", text)} placeholder="25+" placeholderTextColor={theme.colors.muted} style={styles.searchInput} />
-            </View>
-          </View>
-        ) : null}
         <View style={styles.chips}>
           {pickupLocations.map((location) => (
             <TouchableOpacity key={location} style={styles.chip} onPress={() => updateSearch("pickupLocation", location)}>
@@ -600,9 +585,6 @@ const styles = StyleSheet.create({
   rateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   twoCol: { flexDirection: "row", gap: 10 },
   twoColField: { flex: 1 },
-  driverToggle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
-  driverToggleText: { color: theme.colors.text, fontWeight: "900" },
-  driverToggleMeta: { color: theme.colors.green, fontWeight: "900" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
   chipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },

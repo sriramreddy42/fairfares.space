@@ -195,6 +195,7 @@ export function HousingScreen({
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
+  const [rentalSearched, setRentalSearched] = useState(false);
   const [rentalPicker, setRentalPicker] = useState<null | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
@@ -243,7 +244,7 @@ export function HousingScreen({
   }, [data?.location.city, posts]);
   const cheapestCarImage = absoluteAssetUrl(cheapestCar?.image_url || "");
   const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
-  const rentalRows = rentalCars.length ? rentalCars : cars;
+  const rentalRows = rentalSearched ? rentalCars : [];
   const pickupLocations = useMemo(() => Array.from(new Set(cars.map((car) => car.location).filter(Boolean))).slice(0, 3), [cars]);
   const rentalDayCount = rentalDays(rentalSearch);
   const rentalTier = durationRateTier(rentalDayCount);
@@ -268,6 +269,7 @@ export function HousingScreen({
 
   useEffect(() => {
     setRentalCars(cars);
+    setRentalSearched(false);
   }, [cars]);
 
   function updateScrollVisibility(y: number) {
@@ -309,6 +311,7 @@ export function HousingScreen({
     try {
       const nextCars = await getCars(rentalSearch.pickupLocation);
       setRentalCars(nextCars);
+      setRentalSearched(true);
     } catch (error) {
       Alert.alert("Rental search failed", error instanceof Error ? error.message : "Could not search rental cars.");
     } finally {
@@ -393,7 +396,7 @@ export function HousingScreen({
               <Text style={styles.carFeature}>24/7 support</Text>
             </View>
             <View style={styles.carBottomRow}>
-              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && onBookCar(cheapestCar, rentalSearch)}>
+              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && onBookCar(cheapestCar, rentalSearch, "hold")}>
                 <Text style={styles.bookNowText}>Book now</Text>
               </TouchableOpacity>
               <View style={styles.carRateBox}>
@@ -466,24 +469,6 @@ export function HousingScreen({
                 : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
             </Text>
           </View>
-          <Text style={styles.carFieldLabel}>Promo / referral / student code</Text>
-          <TextInput value={rentalSearch.discountCode} onChangeText={(text) => updateRentalSearch("discountCode", text.toUpperCase())} placeholder="Promo / referral / student code" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} autoCapitalize="characters" />
-          <TouchableOpacity style={styles.carDriverToggle} onPress={() => updateRentalSearch("additionalDriverRequested", !rentalSearch.additionalDriverRequested)}>
-            <Text style={styles.carDriverText}>{rentalSearch.additionalDriverRequested ? "Additional driver selected" : "Add additional driver"}</Text>
-            <Text style={styles.carDriverMeta}>$10/day</Text>
-          </TouchableOpacity>
-          {rentalSearch.additionalDriverRequested ? (
-            <View style={styles.carTwoCol}>
-              <View style={styles.carTwoColField}>
-                <Text style={styles.carFieldLabel}>Driver name</Text>
-                <TextInput value={rentalSearch.additionalDriverName} onChangeText={(text) => updateRentalSearch("additionalDriverName", text)} placeholder="Full name" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
-              </View>
-              <View style={styles.carTwoColField}>
-                <Text style={styles.carFieldLabel}>Driver age</Text>
-                <TextInput value={rentalSearch.additionalDriverAge} onChangeText={(text) => updateRentalSearch("additionalDriverAge", text)} placeholder="25+" placeholderTextColor={theme.colors.muted} style={styles.carSearchInput} />
-              </View>
-            </View>
-          ) : null}
           <View style={styles.carPickupChips}>
             {pickupLocations.map((location) => (
               <TouchableOpacity key={location} style={styles.carPickupChip} onPress={() => updateRentalSearch("pickupLocation", location)}>
@@ -500,7 +485,7 @@ export function HousingScreen({
             {rentalRows.map((car) => {
               const image = absoluteAssetUrl(car.image_url);
               return (
-                <TouchableOpacity key={car.id} style={styles.carMiniCard} onPress={() => onBookCar(car, rentalSearch)}>
+                <TouchableOpacity key={car.id} style={styles.carMiniCard} onPress={() => onBookCar(car, rentalSearch, "hold")}>
                   {image ? <Image source={{ uri: image }} style={styles.carMiniImage} /> : <Image source={appAssets.carFallback} style={styles.carMiniImage} />}
                   <View style={styles.carMiniBody}>
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
@@ -856,9 +841,6 @@ const styles = StyleSheet.create({
   carRateNote: { borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(40,82,255,0.10)", borderRadius: theme.radius.md, padding: 12, gap: 3 },
   carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
   carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  carDriverToggle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(255,255,255,0.07)" },
-  carDriverText: { color: theme.colors.text, fontWeight: "900" },
-  carDriverMeta: { color: theme.colors.green, fontWeight: "900" },
   carPickupChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   carPickupChip: { borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "rgba(255,255,255,0.06)" },
   carPickupChipText: { color: theme.colors.text, fontWeight: "900", fontSize: 12 },
