@@ -41,6 +41,8 @@ export type FairFaresUser = {
 
 export type ChatConversation = {
   id: string;
+  communityId?: string;
+  kind?: "DIRECT" | "GROUP";
   subject: string;
   otherName: string;
   lastMessage: string;

@@ -7,6 +7,7 @@ import {
   getChatMessages,
   joinChatCommunity,
   markChatRead,
+  openCommunityChat,
   sendChatMessage,
   startChatForPost
 } from "../api/client";
@@ -134,7 +135,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         const response = await startChatForPost(pendingPost.id, cleanMessage);
         setActiveConversationId(response.conversation.id);
         setActiveSubject(response.conversation.subject || pendingPost.title);
-        setMessages([response.message]);
+        setMessages(response.message ? [response.message] : []);
       } else {
         Alert.alert("Choose a chat", "Open a listing or conversation first.");
         return;
@@ -174,27 +175,42 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
   }
 
-  async function joinCommunity(community: Community) {
+  async function openCommunityThread(community: Community) {
     if (!signedIn) {
       onRequireLogin();
       return;
     }
-    if (community.joined) {
-      if (community.joinUrl) {
-        await Share.share({ message: `Join ${community.name} on FairFares: ${community.joinUrl}` });
-      } else {
-        Alert.alert(community.name, "You are already joined.");
-      }
-      return;
-    }
     setLoading(true);
     try {
-      const response = await joinChatCommunity(community.id);
-      setCommunities((current) => current.map((item) => (item.id === response.community.id ? response.community : item)));
+      const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id)).community;
+      setCommunities((current) => current.map((item) => (item.id === joinedCommunity.id ? joinedCommunity : item)));
+      const response = await openCommunityChat(joinedCommunity.id);
+      setActiveConversationId(response.conversation.id);
+      setActiveSubject(response.conversation.subject || joinedCommunity.name);
+      setTab("All");
+      setThreadLoading(true);
+      const payload = await getChatMessages(response.conversation.id);
+      setMessages(payload.messages || []);
+      const lastMessage = payload.messages[payload.messages.length - 1];
+      if (lastMessage) {
+        await markChatRead(response.conversation.id, String(lastMessage.id));
+      }
+      await refreshMessenger();
     } catch (error) {
-      Alert.alert("Join failed", error instanceof Error ? error.message : "Could not join this group.");
+      Alert.alert("Group chat failed", error instanceof Error ? error.message : "Could not open this group chat.");
     } finally {
+      setThreadLoading(false);
       setLoading(false);
+    }
+  }
+
+  async function shareCommunity(community: Community) {
+    if (!signedIn) {
+      onRequireLogin();
+      return;
+    }
+    if (community.joinUrl) {
+      await Share.share({ message: `Join ${community.name} on FairFares: ${community.joinUrl}` });
     }
   }
 
@@ -322,13 +338,21 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         ))}
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
-          <TouchableOpacity key={community.id} style={styles.chatRow} onPress={() => joinCommunity(community)}>
+          <TouchableOpacity key={community.id} style={styles.chatRow} onPress={() => openCommunityThread(community)}>
             <View style={[styles.avatar, styles.groupAvatar]}><Text style={styles.avatarText}>#</Text></View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{community.name}</Text>
               <Text style={styles.chatLast}>{community.description || community.area || "FairFares community"}</Text>
             </View>
-            <Text style={styles.memberCount}>{community.joined ? "Share" : "Join"} · {community.memberCount}</Text>
+            <TouchableOpacity
+              style={styles.rowAction}
+              onPress={(event) => {
+                event.stopPropagation();
+                community.joined ? shareCommunity(community) : openCommunityThread(community);
+              }}
+            >
+              <Text style={styles.memberCount}>{community.joined ? "Share" : "Join"} · {community.memberCount}</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         ))}
 
@@ -392,6 +416,7 @@ const styles = StyleSheet.create({
   chatLast: { color: theme.colors.muted, marginTop: 3 },
   unread: { backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, overflow: "hidden", paddingHorizontal: 8, fontWeight: "900" },
   memberCount: { color: theme.colors.muted, fontWeight: "900" },
+  rowAction: { paddingVertical: 8, paddingLeft: 8 },
   chevron: { color: theme.colors.muted, fontSize: 30, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "800", textAlign: "center", padding: theme.spacing.lg }
 });

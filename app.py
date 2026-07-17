@@ -3600,12 +3600,14 @@ def init_db() -> None:
                 public_id TEXT NOT NULL UNIQUE,
                 accommodation_post_id INTEGER,
                 booking_id INTEGER,
+                community_id INTEGER,
                 subject TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_message_at TEXT,
                 FOREIGN KEY(accommodation_post_id) REFERENCES accommodation_posts(id),
-                FOREIGN KEY(booking_id) REFERENCES bookings(id)
+                FOREIGN KEY(booking_id) REFERENCES bookings(id),
+                FOREIGN KEY(community_id) REFERENCES chat_communities(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_participants (
@@ -4442,6 +4444,7 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
         ensure_column(con, "chat_conversations", "accommodation_post_id", "accommodation_post_id INTEGER")
         ensure_column(con, "chat_conversations", "booking_id", "booking_id INTEGER")
+        ensure_column(con, "chat_conversations", "community_id", "community_id INTEGER")
         ensure_column(con, "chat_conversations", "subject", "subject TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_conversations", "last_message_at", "last_message_at TEXT")
         ensure_column(con, "chat_participants", "last_read_message_id", "last_read_message_id INTEGER NOT NULL DEFAULT 0")
@@ -4461,6 +4464,7 @@ def init_db() -> None:
         ensure_column(con, "chat_communities", "created_by_user_id", "created_by_user_id INTEGER")
         ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
@@ -11894,17 +11898,71 @@ def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object]
     return (joined[0] if joined else None), ""
 
 
+def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conversation_id: int, community_id: int) -> None:
+    members = con.execute(
+        "SELECT user_id FROM chat_community_members WHERE community_id = ?",
+        (community_id,),
+    ).fetchall()
+    for member in members:
+        con.execute(
+            "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+            (conversation_id, int(row_value(member, "user_id") or 0)),
+        )
+
+
+def get_or_create_community_conversation(
+    con: sqlite3.Connection,
+    community_public_id: str,
+    user: sqlite3.Row,
+) -> tuple[sqlite3.Row | None, str]:
+    user_id = int(row_value(user, "id") or 0)
+    community = con.execute(
+        """
+        SELECT communities.*
+        FROM chat_communities communities
+        JOIN chat_community_members members ON members.community_id = communities.id AND members.user_id = ?
+        WHERE communities.public_id = ?
+        LIMIT 1
+        """,
+        (user_id, community_public_id),
+    ).fetchone()
+    if not community:
+        return None, "Join this group before chatting."
+    existing = con.execute(
+        "SELECT * FROM chat_conversations WHERE community_id = ? LIMIT 1",
+        (community["id"],),
+    ).fetchone()
+    if existing:
+        sync_chat_conversation_members_from_community(con, int(existing["id"]), int(community["id"]))
+        return existing, ""
+    public_id = chat_public_id()
+    con.execute(
+        """
+        INSERT INTO chat_conversations (public_id, community_id, subject, last_message_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (public_id, int(community["id"]), row_value(community, "name") or "FairFares group"),
+    )
+    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    sync_chat_conversation_members_from_community(con, conversation_id, int(community["id"]))
+    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
+
+
 def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
     last_message_id = int(row_value(row, "last_message_id") or 0)
     last_read_id = int(row_value(row, "last_read_message_id") or 0)
+    community_public_id = row_value(row, "community_public_id")
+    community_name = row_value(row, "community_name")
     return {
         "id": row_value(row, "public_id"),
         "conversationId": int(row_value(row, "id") or 0),
         "postId": row_value(row, "post_public_id"),
-        "subject": row_value(row, "subject") or row_value(row, "post_title") or "Accommodation chat",
+        "communityId": community_public_id,
+        "kind": "GROUP" if community_public_id else "DIRECT",
+        "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or "Accommodation chat",
         "postTitle": row_value(row, "post_title"),
         "postCategory": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "post_category"), "Housing"),
-        "otherName": row_value(row, "other_name") or "FairFares member",
+        "otherName": community_name or row_value(row, "other_name") or "FairFares member",
         "otherUserId": int(row_value(row, "other_user_id") or 0),
         "lastMessage": row_value(row, "last_message"),
         "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
@@ -11915,10 +11973,17 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
 def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int, user_id: int) -> sqlite3.Row | None:
     return con.execute(
         """
-        SELECT conversations.*, posts.public_id AS post_public_id, posts.title AS post_title, posts.category AS post_category
+        SELECT conversations.*,
+               posts.public_id AS post_public_id,
+               posts.title AS post_title,
+               posts.category AS post_category,
+               communities.public_id AS community_public_id,
+               communities.name AS community_name,
+               communities.kind AS community_kind
         FROM chat_conversations conversations
         JOIN chat_participants participant ON participant.conversation_id = conversations.id
         LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
         WHERE conversations.id = ? AND participant.user_id = ?
         LIMIT 1
         """,
@@ -11929,10 +11994,17 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
 def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, user_id: int) -> sqlite3.Row | None:
     return con.execute(
         """
-        SELECT conversations.*, posts.public_id AS post_public_id, posts.title AS post_title, posts.category AS post_category
+        SELECT conversations.*,
+               posts.public_id AS post_public_id,
+               posts.title AS post_title,
+               posts.category AS post_category,
+               communities.public_id AS community_public_id,
+               communities.name AS community_name,
+               communities.kind AS community_kind
         FROM chat_conversations conversations
         JOIN chat_participants participant ON participant.conversation_id = conversations.id
         LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
         WHERE conversations.public_id = ? AND participant.user_id = ?
         LIMIT 1
         """,
@@ -12083,6 +12155,9 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    posts.public_id AS post_public_id,
                    posts.title AS post_title,
                    posts.category AS post_category,
+                   communities.public_id AS community_public_id,
+                   communities.name AS community_name,
+                   communities.kind AS community_kind,
                    participant.last_read_message_id,
                    last_message.id AS last_message_id,
                    last_message.sender_id AS last_sender_id,
@@ -12099,6 +12174,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             )
             LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
             LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+            LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
             LIMIT 100
             """,
@@ -14711,6 +14787,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
+            community_id = int(row_value(conversation, "community_id") or 0)
+            if community_id:
+                sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
             messages = con.execute(
                 """
                 SELECT messages.*, users.name AS sender_name
@@ -14746,8 +14825,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "conversation": {
                     "id": row_value(conversation, "public_id"),
-                    "subject": row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
+                    "subject": row_value(conversation, "community_name") or row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
                     "postId": row_value(conversation, "post_public_id"),
+                    "communityId": row_value(conversation, "community_public_id"),
                 },
                 "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
             }
@@ -14788,27 +14868,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         post_public_id = (form.get("post_id") or "").strip()
-        message_text = (form.get("message") or "").strip() or "Hi, I am interested in this accommodation post."
+        community_public_id = (form.get("community_id") or "").strip()
+        raw_message_text = (form.get("message") or "").strip()
+        message_text = raw_message_text or ("Hi, I am interested in this accommodation post." if post_public_id else "")
         client_message_id = (form.get("client_message_id") or "").strip()
-        if not post_public_id:
-            self.send_json({"ok": False, "message": "Choose a housing post first."}, 400)
+        if not post_public_id and not community_public_id:
+            self.send_json({"ok": False, "message": "Choose a housing post or group first."}, 400)
             return
         if len(message_text) > 2000:
             self.send_json({"ok": False, "message": "Message is too long."}, 400)
             return
         with db() as con:
-            conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
+            if community_public_id:
+                conversation, error = get_or_create_community_conversation(con, community_public_id, user)
+            else:
+                conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
             if not conversation:
                 self.send_json({"ok": False, "message": error or "Could not start chat."}, 400)
                 return
-            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
+            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id) if message_text else None
             full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
-            self.notify_chat_recipients(con, full_conversation, user, message)
+            if message:
+                self.notify_chat_recipients(con, full_conversation, user, message)
         self.send_json(
             {
                 "ok": True,
-                "conversation": {"id": row_value(conversation, "public_id"), "subject": row_value(conversation, "subject")},
-                "message": chat_message_payload(message, int(user["id"])),
+                "conversation": {
+                    "id": row_value(conversation, "public_id"),
+                    "subject": row_value(full_conversation, "community_name") or row_value(conversation, "subject"),
+                    "communityId": row_value(full_conversation, "community_public_id"),
+                },
+                "message": chat_message_payload(message, int(user["id"])) if message else None,
             }
         )
 
@@ -14868,6 +14958,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
+            community_id = int(row_value(conversation, "community_id") or 0)
+            if community_id:
+                sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))})
