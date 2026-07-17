@@ -1,13 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
+  blockChatUser,
   createChatCommunity,
+  deleteChatMessage,
+  editChatMessage,
   getChatCommunities,
   getChatConversations,
   getChatMessages,
   joinChatCommunity,
   markChatRead,
+  muteChatConversation,
   openCommunityChat,
+  reportChatMessage,
   sendChatMessage,
   startChatForPost
 } from "../api/client";
@@ -32,8 +37,10 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [activeSubject, setActiveSubject] = useState(pendingPost?.title || "");
+  const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -47,6 +54,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
   useEffect(() => {
     if (pendingPost) {
       setActiveConversationId("");
+      setActiveConversation(null);
       setActiveSubject(pendingPost.title);
       setMessages([]);
       setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
@@ -99,6 +107,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
     setActiveConversationId(conversation.id);
     setActiveSubject(conversation.subject);
+    setActiveConversation(conversation);
     setThreadLoading(true);
     try {
       const payload = await getChatMessages(conversation.id);
@@ -128,13 +137,18 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
     setThreadLoading(true);
     try {
-      if (activeConversationId) {
+      if (activeConversationId && editingMessageId) {
+        const response = await editChatMessage(activeConversationId, editingMessageId, cleanMessage);
+        setMessages((current) => current.map((item) => (item.id === editingMessageId ? response.message : item)));
+        setEditingMessageId(null);
+      } else if (activeConversationId) {
         const response = await sendChatMessage(activeConversationId, cleanMessage);
         setMessages((current) => [...current, response.message]);
       } else if (pendingPost) {
         const response = await startChatForPost(pendingPost.id, cleanMessage);
         setActiveConversationId(response.conversation.id);
         setActiveSubject(response.conversation.subject || pendingPost.title);
+        setActiveConversation(null);
         setMessages(response.message ? [response.message] : []);
       } else {
         Alert.alert("Choose a chat", "Open a listing or conversation first.");
@@ -187,6 +201,16 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
       const response = await openCommunityChat(joinedCommunity.id);
       setActiveConversationId(response.conversation.id);
       setActiveSubject(response.conversation.subject || joinedCommunity.name);
+      setActiveConversation({
+        id: response.conversation.id,
+        communityId: joinedCommunity.id,
+        kind: "GROUP",
+        subject: response.conversation.subject || joinedCommunity.name,
+        otherName: joinedCommunity.name,
+        lastMessage: "",
+        lastMessageAt: "",
+        unread: 0
+      });
       setTab("All");
       setThreadLoading(true);
       const payload = await getChatMessages(response.conversation.id);
@@ -211,6 +235,58 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
     }
     if (community.joinUrl) {
       await Share.share({ message: `Join ${community.name} on FairFares: ${community.joinUrl}` });
+    }
+  }
+
+  async function toggleMute() {
+    if (!activeConversationId) return;
+    const nextMuted = !activeConversation?.mutedAt;
+    try {
+      await muteChatConversation(activeConversationId, nextMuted);
+      setActiveConversation((current) => current ? { ...current, mutedAt: nextMuted ? new Date().toISOString() : "" } : current);
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Mute failed", error instanceof Error ? error.message : "Could not update this chat.");
+    }
+  }
+
+  async function toggleBlock() {
+    if (!activeConversationId || activeConversation?.communityId) return;
+    const targetUserId = activeConversation?.otherUserId || 0;
+    const nextBlocked = !activeConversation?.blockedAt;
+    try {
+      await blockChatUser(activeConversationId, targetUserId, nextBlocked);
+      setActiveConversation((current) => current ? { ...current, blockedAt: nextBlocked ? new Date().toISOString() : "" } : current);
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Block failed", error instanceof Error ? error.message : "Could not update this member.");
+    }
+  }
+
+  function editMessage(message: ChatMessage) {
+    if (!message.canEdit) return;
+    setEditingMessageId(message.id);
+    setMessageText(message.text);
+  }
+
+  async function deleteMessage(message: ChatMessage) {
+    if (!activeConversationId || !message.canEdit) return;
+    try {
+      await deleteChatMessage(activeConversationId, message.id);
+      setMessages((current) => current.filter((item) => item.id !== message.id));
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Delete failed", error instanceof Error ? error.message : "Could not delete this message.");
+    }
+  }
+
+  async function reportMessage(message: ChatMessage) {
+    if (!activeConversationId) return;
+    try {
+      await reportChatMessage(activeConversationId, message.id, "Reported from mobile Messenger");
+      Alert.alert("Reported", "Thanks. FairFares will review this message.");
+    } catch (error) {
+      Alert.alert("Report failed", error instanceof Error ? error.message : "Could not report this message.");
     }
   }
 
@@ -290,6 +366,16 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
         <View style={styles.thread}>
           <Text style={styles.sectionEyebrow}>Current chat</Text>
           <Text style={styles.threadTitle}>{activeSubject || pendingPost?.title || "Accommodation chat"}</Text>
+          <View style={styles.threadActions}>
+            <TouchableOpacity style={styles.smallAction} onPress={toggleMute}>
+              <Text style={styles.smallActionText}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text>
+            </TouchableOpacity>
+            {activeConversationId && !activeConversation?.communityId ? (
+              <TouchableOpacity style={styles.smallAction} onPress={toggleBlock}>
+                <Text style={styles.smallActionText}>{activeConversation?.blockedAt ? "Unblock" : "Block"}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
           <ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent}>
             {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
             {!threadLoading && !messages.length ? <Text style={styles.emptyText}>No messages yet.</Text> : null}
@@ -299,14 +385,25 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
                 <Text style={styles.bubbleText}>{message.text}</Text>
                 <Text style={styles.bubbleMeta}>
                   {message.editedAt ? "Edited · " : ""}
-                  {message.mine ? message.status === "seen" ? "Seen" : "Sent" : ""}
+                  {message.mine ? message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent" : ""}
                 </Text>
+                <View style={styles.messageActions}>
+                  {message.mine && message.canEdit ? (
+                    <>
+                      <TouchableOpacity onPress={() => editMessage(message)}><Text style={styles.messageActionText}>Edit</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteMessage(message)}><Text style={styles.messageActionText}>Delete</Text></TouchableOpacity>
+                    </>
+                  ) : null}
+                  {!message.mine ? (
+                    <TouchableOpacity onPress={() => reportMessage(message)}><Text style={styles.messageActionText}>Report</Text></TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
             ))}
           </ScrollView>
           <View style={styles.messageBox}>
             <TextInput
-              placeholder="Type a message"
+              placeholder={editingMessageId ? "Edit message" : "Type a message"}
               placeholderTextColor={theme.colors.muted}
               style={styles.messageInput}
               value={messageText}
@@ -314,9 +411,14 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin }: Props) {
               multiline
             />
             <TouchableOpacity style={[styles.send, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
-              <Text style={styles.sendText}>Send</Text>
+              <Text style={styles.sendText}>{editingMessageId ? "Save" : "Send"}</Text>
             </TouchableOpacity>
           </View>
+          {editingMessageId ? (
+            <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
+              <Text style={styles.cancelEditText}>Cancel edit</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : null}
 
@@ -391,6 +493,9 @@ const styles = StyleSheet.create({
   thread: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, marginBottom: theme.spacing.md },
   sectionEyebrow: { color: theme.colors.muted, fontWeight: "900", textTransform: "uppercase", fontSize: 11 },
   threadTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 2, marginBottom: 10 },
+  threadActions: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  smallAction: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 6 },
+  smallActionText: { color: theme.colors.soft, fontWeight: "900", fontSize: 12 },
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
@@ -400,11 +505,15 @@ const styles = StyleSheet.create({
   senderName: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", marginBottom: 3 },
   bubbleText: { color: theme.colors.text, fontSize: 15, lineHeight: 20 },
   bubbleMeta: { color: theme.colors.soft, fontSize: 11, fontWeight: "800", marginTop: 4, opacity: 0.8 },
+  messageActions: { flexDirection: "row", gap: 10, marginTop: 6 },
+  messageActionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "900" },
   messageBox: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-end" },
   messageInput: { flex: 1, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, paddingHorizontal: 12, minHeight: 46, maxHeight: 110 },
   send: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, minHeight: 46, justifyContent: "center" },
   sendDisabled: { opacity: 0.5 },
   sendText: { color: theme.colors.text, fontWeight: "900" },
+  cancelEdit: { alignSelf: "flex-start", marginTop: 8 },
+  cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
   list: { flex: 1 },
   chatRow: { flexDirection: "row", alignItems: "center", paddingVertical: 13, gap: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },

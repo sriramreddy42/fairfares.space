@@ -42,11 +42,15 @@ export type FairFaresUser = {
 export type ChatConversation = {
   id: string;
   communityId?: string;
-  kind?: "DIRECT" | "GROUP";
+  kind?: "DIRECT" | "GROUP" | "HOST_GUEST" | "BOOKING" | "SUPPORT";
+  status?: string;
   subject: string;
   otherName: string;
+  otherUserId?: number;
   lastMessage: string;
   lastMessageAt: string;
+  mutedAt?: string;
+  blockedAt?: string;
   unread: number;
 };
 
@@ -55,10 +59,16 @@ export type ChatMessage = {
   senderId: number;
   senderName: string;
   mine: boolean;
+  type: string;
   text: string;
+  attachmentUrl: string;
   createdAt: string;
+  deliveredAt: string;
+  readAt: string;
   editedAt: string;
-  status: "sent" | "seen" | "";
+  deletedAt: string;
+  canEdit: boolean;
+  status: "sent" | "delivered" | "seen" | "";
 };
 
 export type Community = {

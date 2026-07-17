@@ -194,7 +194,7 @@ export async function getChatCommunities() {
 }
 
 export async function getChatMessages(conversationId: string) {
-  return request<{ ok: boolean; conversation: { id: string; subject: string; postId?: string }; messages: ChatMessage[] }>(
+  return request<{ ok: boolean; conversation: { id: string; subject: string; postId?: string; communityId?: string; kind?: string; status?: string }; messages: ChatMessage[]; hasMore: boolean; nextBefore: number }>(
     `/api/chat/messages?conversation_id=${encodeURIComponent(conversationId)}`
   );
 }
@@ -223,11 +223,51 @@ export async function sendChatMessage(conversationId: string, message: string) {
   });
 }
 
+export async function editChatMessage(conversationId: string, messageId: number, message: string) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages/edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, message_id: String(messageId), message })
+  });
+}
+
+export async function deleteChatMessage(conversationId: string, messageId: number) {
+  return request<{ ok: boolean; messageId: number }>("/api/chat/messages/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, message_id: String(messageId) })
+  });
+}
+
+export async function reportChatMessage(conversationId: string, messageId: number, reason: string) {
+  return request<{ ok: boolean }>("/api/chat/messages/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, message_id: String(messageId), reason })
+  });
+}
+
 export async function markChatRead(conversationId: string, lastMessageId = "") {
   return request<{ ok: boolean }>("/api/chat/read", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ conversation_id: conversationId, last_message_id: lastMessageId })
+  });
+}
+
+export async function muteChatConversation(conversationId: string, muted: boolean) {
+  return request<{ ok: boolean; muted: boolean }>("/api/chat/mute", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, muted: muted ? "1" : "0" })
+  });
+}
+
+export async function blockChatUser(conversationId: string, targetUserId: number, blocked: boolean) {
+  return request<{ ok: boolean; blocked: boolean; targetUserId: number }>("/api/chat/block", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, target_user_id: targetUserId ? String(targetUserId) : "", blocked: blocked ? "1" : "0" })
   });
 }
 

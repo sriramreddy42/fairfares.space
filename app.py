@@ -3598,10 +3598,12 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
+                conversation_type TEXT NOT NULL DEFAULT 'DIRECT',
                 accommodation_post_id INTEGER,
                 booking_id INTEGER,
                 community_id INTEGER,
                 subject TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_message_at TEXT,
@@ -3634,6 +3636,8 @@ def init_db() -> None:
                 client_message_id TEXT NOT NULL DEFAULT '',
                 reply_to_message_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                delivered_at TEXT,
+                read_at TEXT,
                 edited_at TEXT,
                 deleted_at TEXT,
                 FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
@@ -3662,6 +3666,32 @@ def init_db() -> None:
                 UNIQUE(community_id, user_id),
                 FOREIGN KEY(community_id) REFERENCES chat_communities(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_message_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                reporter_user_id INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_id, reporter_user_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
+                FOREIGN KEY(reporter_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_user_blocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                blocker_user_id INTEGER NOT NULL,
+                blocked_user_id INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                lifted_at TEXT,
+                UNIQUE(blocker_user_id, blocked_user_id),
+                FOREIGN KEY(blocker_user_id) REFERENCES users(id),
+                FOREIGN KEY(blocked_user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS accommodation_metros (
@@ -4442,10 +4472,12 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
+        ensure_column(con, "chat_conversations", "conversation_type", "conversation_type TEXT NOT NULL DEFAULT 'DIRECT'")
         ensure_column(con, "chat_conversations", "accommodation_post_id", "accommodation_post_id INTEGER")
         ensure_column(con, "chat_conversations", "booking_id", "booking_id INTEGER")
         ensure_column(con, "chat_conversations", "community_id", "community_id INTEGER")
         ensure_column(con, "chat_conversations", "subject", "subject TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_conversations", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
         ensure_column(con, "chat_conversations", "last_message_at", "last_message_at TEXT")
         ensure_column(con, "chat_participants", "last_read_message_id", "last_read_message_id INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "chat_participants", "muted_at", "muted_at TEXT")
@@ -4455,6 +4487,8 @@ def init_db() -> None:
         ensure_column(con, "chat_messages", "attachment_url", "attachment_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_messages", "client_message_id", "client_message_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_messages", "reply_to_message_id", "reply_to_message_id INTEGER")
+        ensure_column(con, "chat_messages", "delivered_at", "delivered_at TEXT")
+        ensure_column(con, "chat_messages", "read_at", "read_at TEXT")
         ensure_column(con, "chat_messages", "edited_at", "edited_at TEXT")
         ensure_column(con, "chat_messages", "deleted_at", "deleted_at TEXT")
         ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
@@ -4468,6 +4502,20 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
+        con.execute(
+            """
+            UPDATE chat_conversations
+            SET conversation_type = CASE
+                WHEN community_id IS NOT NULL AND community_id > 0 THEN 'GROUP'
+                WHEN booking_id IS NOT NULL AND booking_id > 0 THEN 'BOOKING'
+                WHEN accommodation_post_id IS NOT NULL AND accommodation_post_id > 0 THEN 'HOST_GUEST'
+                ELSE conversation_type
+            END
+            WHERE conversation_type IS NULL OR conversation_type = '' OR conversation_type = 'DIRECT'
+            """
+        )
         seed_chat_communities(con)
         con.execute(
             """
@@ -11796,6 +11844,9 @@ def chat_group_public_id(kind: str = "GROUP") -> str:
     return f"{prefix}-{secrets.token_hex(5).upper()}"
 
 
+CHAT_EDIT_WINDOW_MINUTES = 15
+
+
 DEFAULT_CHAT_COMMUNITIES = [
     ("FFG-DENVER-ROOMMATES", "GROUP", "Denver Roommates", "Roommate matching, sublets, and shared-house leads.", "Denver, CO"),
     ("FFG-DU-HOUSING", "GROUP", "DU Housing Board", "Rooms and apartment leads near University of Denver.", "Denver, CO"),
@@ -11898,6 +11949,49 @@ def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object]
     return (joined[0] if joined else None), ""
 
 
+def chat_user_is_blocked(con: sqlite3.Connection, blocker_id: int, blocked_id: int) -> bool:
+    if not blocker_id or not blocked_id:
+        return False
+    row = con.execute(
+        """
+        SELECT id FROM chat_user_blocks
+        WHERE blocker_user_id = ? AND blocked_user_id = ? AND lifted_at IS NULL
+        LIMIT 1
+        """,
+        (blocker_id, blocked_id),
+    ).fetchone()
+    return bool(row)
+
+
+def chat_conversation_block_error(con: sqlite3.Connection, conversation: sqlite3.Row, sender_id: int) -> str:
+    if row_value(conversation, "community_id"):
+        return ""
+    participants = con.execute(
+        "SELECT user_id FROM chat_participants WHERE conversation_id = ?",
+        (conversation["id"],),
+    ).fetchall()
+    for participant in participants:
+        participant_id = int(row_value(participant, "user_id") or 0)
+        if participant_id == sender_id:
+            continue
+        if chat_user_is_blocked(con, participant_id, sender_id):
+            return "This member is not accepting messages from you."
+        if chat_user_is_blocked(con, sender_id, participant_id):
+            return "Unblock this member before sending another message."
+    return ""
+
+
+def chat_message_is_editable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]:
+    if int(row_value(row, "sender_id") or 0) != user_id:
+        return False, "You can only edit your own messages."
+    if row_value(row, "deleted_at"):
+        return False, "Deleted messages cannot be edited."
+    created_at = parse_sql_datetime(row_value(row, "created_at"))
+    if created_at and datetime.utcnow() - created_at > timedelta(minutes=CHAT_EDIT_WINDOW_MINUTES):
+        return False, f"Messages can only be edited for {CHAT_EDIT_WINDOW_MINUTES} minutes."
+    return True, ""
+
+
 def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conversation_id: int, community_id: int) -> None:
     members = con.execute(
         "SELECT user_id FROM chat_community_members WHERE community_id = ?",
@@ -11938,8 +12032,8 @@ def get_or_create_community_conversation(
     public_id = chat_public_id()
     con.execute(
         """
-        INSERT INTO chat_conversations (public_id, community_id, subject, last_message_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject, last_message_at)
+        VALUES (?, 'GROUP', ?, ?, CURRENT_TIMESTAMP)
         """,
         (public_id, int(community["id"]), row_value(community, "name") or "FairFares group"),
     )
@@ -11958,7 +12052,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "conversationId": int(row_value(row, "id") or 0),
         "postId": row_value(row, "post_public_id"),
         "communityId": community_public_id,
-        "kind": "GROUP" if community_public_id else "DIRECT",
+        "kind": row_value(row, "conversation_type") or ("GROUP" if community_public_id else "DIRECT"),
+        "status": row_value(row, "status") or "ACTIVE",
         "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or "Accommodation chat",
         "postTitle": row_value(row, "post_title"),
         "postCategory": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "post_category"), "Housing"),
@@ -11966,6 +12061,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "otherUserId": int(row_value(row, "other_user_id") or 0),
         "lastMessage": row_value(row, "last_message"),
         "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
+        "mutedAt": row_value(row, "muted_at"),
+        "blockedAt": row_value(row, "blocked_at"),
         "unread": max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0,
     }
 
@@ -12058,8 +12155,8 @@ def get_or_create_accommodation_conversation(
     public_id = chat_public_id()
     con.execute(
         """
-        INSERT INTO chat_conversations (public_id, accommodation_post_id, subject, last_message_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO chat_conversations (public_id, conversation_type, accommodation_post_id, subject, last_message_at)
+        VALUES (?, 'HOST_GUEST', ?, ?, CURRENT_TIMESTAMP)
         """,
         (public_id, post["id"], row_value(post, "title")),
     )
@@ -12135,15 +12232,32 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
     sender_id = int(row_value(row, "sender_id") or 0)
     message_id = int(row_value(row, "id") or 0)
     mine = sender_id == current_user_id
+    read_at = row_value(row, "read_at")
+    delivered_at = row_value(row, "delivered_at")
+    can_edit, _ = chat_message_is_editable(row, current_user_id)
+    status = ""
+    if mine:
+        if read_at or (seen_message_id and message_id <= seen_message_id):
+            status = "seen"
+        elif delivered_at:
+            status = "delivered"
+        else:
+            status = "sent"
     return {
         "id": message_id,
         "senderId": sender_id,
         "senderName": row_value(row, "sender_name"),
         "mine": mine,
+        "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
+        "attachmentUrl": row_value(row, "attachment_url"),
         "createdAt": row_value(row, "created_at"),
+        "deliveredAt": delivered_at,
+        "readAt": read_at,
         "editedAt": row_value(row, "edited_at"),
-        "status": "seen" if mine and seen_message_id and message_id <= seen_message_id else "sent" if mine else "",
+        "deletedAt": row_value(row, "deleted_at"),
+        "canEdit": can_edit,
+        "status": status,
     }
 
 
@@ -12159,6 +12273,8 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    communities.name AS community_name,
                    communities.kind AS community_kind,
                    participant.last_read_message_id,
+                   participant.muted_at,
+                   participant.blocked_at,
                    last_message.id AS last_message_id,
                    last_message.sender_id AS last_sender_id,
                    last_message.message_text AS last_message,
@@ -13918,7 +14034,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/messages": self.api_send_chat_message,
+            "/api/chat/messages/edit": self.api_edit_chat_message,
+            "/api/chat/messages/delete": self.api_delete_chat_message,
+            "/api/chat/messages/report": self.api_report_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
+            "/api/chat/mute": self.api_mute_chat_conversation,
+            "/api/chat/block": self.api_block_chat_user,
             "/api/mobile/login": self.api_mobile_login,
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
@@ -14778,6 +14899,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
+        before_message_id = int(float_from_value(params.get("before", ["0"])[0] or "0"))
+        limit = max(1, min(50, int(float_from_value(params.get("limit", ["30"])[0] or "30") or 30)))
         if not conversation_public_id:
             self.send_json({"ok": False, "message": "Conversation is required."}, 400)
             return
@@ -14790,17 +14913,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             community_id = int(row_value(conversation, "community_id") or 0)
             if community_id:
                 sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
-            messages = con.execute(
+            message_params: list[object] = [conversation["id"]]
+            before_clause = ""
+            if before_message_id > 0:
+                before_clause = "AND messages.id < ?"
+                message_params.append(before_message_id)
+            message_params.append(limit + 1)
+            fetched_messages = con.execute(
                 """
                 SELECT messages.*, users.name AS sender_name
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.conversation_id = ? AND messages.deleted_at IS NULL
-                ORDER BY messages.id ASC
-                LIMIT 200
-                """,
-                (conversation["id"],),
+                {before_clause}
+                ORDER BY messages.id DESC
+                LIMIT ?
+                """.format(before_clause=before_clause),
+                tuple(message_params),
             ).fetchall()
+            has_more = len(fetched_messages) > limit
+            messages = list(reversed(fetched_messages[:limit]))
+            if messages:
+                con.execute(
+                    """
+                    UPDATE chat_messages
+                    SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
+                        read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+                    WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                    """,
+                    (conversation["id"], current_user_id),
+                )
+                messages = con.execute(
+                    """
+                    SELECT messages.*, users.name AS sender_name
+                    FROM chat_messages messages
+                    JOIN users ON users.id = messages.sender_id
+                    WHERE messages.conversation_id = ?
+                      AND messages.id IN ({placeholders})
+                    ORDER BY messages.id ASC
+                    """.format(placeholders=",".join("?" for _ in messages)),
+                    (conversation["id"], *[int(row_value(message, "id") or 0) for message in messages]),
+                ).fetchall()
             seen_row = con.execute(
                 """
                 SELECT MAX(last_read_message_id) AS seen_message_id
@@ -14825,11 +14978,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "conversation": {
                     "id": row_value(conversation, "public_id"),
+                    "kind": row_value(conversation, "conversation_type") or ("GROUP" if row_value(conversation, "community_id") else "DIRECT"),
+                    "status": row_value(conversation, "status") or "ACTIVE",
                     "subject": row_value(conversation, "community_name") or row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
                     "postId": row_value(conversation, "post_public_id"),
                     "communityId": row_value(conversation, "community_public_id"),
                 },
                 "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
+                "hasMore": has_more,
+                "nextBefore": int(row_value(messages[0], "id") or 0) if has_more and messages else 0,
             }
         )
 
@@ -14885,6 +15042,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
             if not conversation:
                 self.send_json({"ok": False, "message": error or "Could not start chat."}, 400)
+                return
+            block_error = chat_conversation_block_error(con, conversation, int(user["id"]))
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
                 return
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id) if message_text else None
             full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
@@ -14961,9 +15122,222 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             community_id = int(row_value(conversation, "community_id") or 0)
             if community_id:
                 sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
+            block_error = chat_conversation_block_error(con, conversation, int(user["id"]))
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
+                return
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))})
+
+    def api_edit_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to edit messages."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        message_id = int_from_form(form, "message_id", 0)
+        message_text = (form.get("message") or "").strip()
+        if not conversation_public_id or not message_id or not message_text:
+            self.send_json({"ok": False, "message": "Conversation, message, and replacement text are required."}, 400)
+            return
+        if len(message_text) > 2000:
+            self.send_json({"ok": False, "message": "Message is too long."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message = con.execute(
+                """
+                SELECT messages.*, users.name AS sender_name
+                FROM chat_messages messages
+                JOIN users ON users.id = messages.sender_id
+                WHERE messages.id = ? AND messages.conversation_id = ?
+                LIMIT 1
+                """,
+                (message_id, conversation["id"]),
+            ).fetchone()
+            if not message:
+                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                return
+            allowed, error = chat_message_is_editable(message, current_user_id)
+            if not allowed:
+                self.send_json({"ok": False, "message": error}, 403)
+                return
+            con.execute(
+                """
+                UPDATE chat_messages
+                SET message_text = ?, edited_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (message_text, message_id),
+            )
+            updated = con.execute(
+                """
+                SELECT messages.*, users.name AS sender_name
+                FROM chat_messages messages
+                JOIN users ON users.id = messages.sender_id
+                WHERE messages.id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+        self.send_json({"ok": True, "message": chat_message_payload(updated, current_user_id)})
+
+    def api_delete_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to delete messages."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        message_id = int_from_form(form, "message_id", 0)
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message = con.execute(
+                """
+                SELECT messages.*, users.name AS sender_name
+                FROM chat_messages messages
+                JOIN users ON users.id = messages.sender_id
+                WHERE messages.id = ? AND messages.conversation_id = ?
+                LIMIT 1
+                """,
+                (message_id, conversation["id"]),
+            ).fetchone()
+            if not message:
+                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                return
+            allowed, error = chat_message_is_editable(message, current_user_id)
+            if not allowed:
+                self.send_json({"ok": False, "message": error}, 403)
+                return
+            con.execute("UPDATE chat_messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", (message_id,))
+        self.send_json({"ok": True, "messageId": message_id})
+
+    def api_report_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to report messages."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        message_id = int_from_form(form, "message_id", 0)
+        reason = " ".join((form.get("reason") or "Reported from Fair Messenger").split())[:300]
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message = con.execute(
+                "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? LIMIT 1",
+                (message_id, conversation["id"]),
+            ).fetchone()
+            if not message:
+                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                return
+            con.execute(
+                """
+                INSERT INTO chat_message_reports (message_id, conversation_id, reporter_user_id, reason)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(message_id, reporter_user_id) DO UPDATE SET
+                    reason = excluded.reason,
+                    status = 'OPEN',
+                    created_at = CURRENT_TIMESTAMP
+                """,
+                (message_id, conversation["id"], current_user_id, reason),
+            )
+            con.execute(
+                "UPDATE chat_participants SET reported_at = COALESCE(reported_at, CURRENT_TIMESTAMP) WHERE conversation_id = ? AND user_id = ?",
+                (conversation["id"], current_user_id),
+            )
+        self.send_json({"ok": True})
+
+    def api_mute_chat_conversation(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to mute chats."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        muted = (form.get("muted") or "1").strip() != "0"
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            con.execute(
+                "UPDATE chat_participants SET muted_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END WHERE conversation_id = ? AND user_id = ?",
+                (1 if muted else 0, conversation["id"], current_user_id),
+            )
+        self.send_json({"ok": True, "muted": muted})
+
+    def api_block_chat_user(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to block members."}, 401)
+            return
+        form = self.read_form()
+        conversation_public_id = (form.get("conversation_id") or "").strip()
+        target_user_id = int_from_form(form, "target_user_id", 0)
+        blocked = (form.get("blocked") or "1").strip() != "0"
+        reason = " ".join((form.get("reason") or "").split())[:200]
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            if row_value(conversation, "community_id"):
+                self.send_json({"ok": False, "message": "Block is available for direct chats. Report group messages for admin review."}, 400)
+                return
+            if not target_user_id:
+                row = con.execute(
+                    """
+                    SELECT user_id FROM chat_participants
+                    WHERE conversation_id = ? AND user_id != ?
+                    LIMIT 1
+                    """,
+                    (conversation["id"], current_user_id),
+                ).fetchone()
+                target_user_id = int(row_value(row, "user_id") or 0)
+            if not target_user_id or target_user_id == current_user_id:
+                self.send_json({"ok": False, "message": "Choose a member to block."}, 400)
+                return
+            if blocked:
+                con.execute(
+                    """
+                    INSERT INTO chat_user_blocks (blocker_user_id, blocked_user_id, reason)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(blocker_user_id, blocked_user_id) DO UPDATE SET
+                        reason = excluded.reason,
+                        lifted_at = NULL,
+                        created_at = CURRENT_TIMESTAMP
+                    """,
+                    (current_user_id, target_user_id, reason),
+                )
+                con.execute(
+                    "UPDATE chat_participants SET blocked_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND user_id = ?",
+                    (conversation["id"], current_user_id),
+                )
+            else:
+                con.execute(
+                    "UPDATE chat_user_blocks SET lifted_at = CURRENT_TIMESTAMP WHERE blocker_user_id = ? AND blocked_user_id = ? AND lifted_at IS NULL",
+                    (current_user_id, target_user_id),
+                )
+                con.execute(
+                    "UPDATE chat_participants SET blocked_at = NULL WHERE conversation_id = ? AND user_id = ?",
+                    (conversation["id"], current_user_id),
+                )
+        self.send_json({"ok": True, "blocked": blocked, "targetUserId": target_user_id})
 
     def api_mark_chat_read(self) -> None:
         user = self.current_user()
