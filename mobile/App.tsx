@@ -138,6 +138,7 @@ export default function App() {
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
   const [searchRadius, setSearchRadius] = useState("10");
+  const [searchNeed, setSearchNeed] = useState("need_place");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -249,7 +250,7 @@ export default function App() {
     }
   }
 
-  async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius) {
+  async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius, nextNeed = searchNeed) {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
@@ -259,10 +260,11 @@ export default function App() {
     setCity(resolvedCity);
     setArea(resolvedArea);
     setSearchRadius(cleanRadius);
+    setSelectedNeed(nextNeed);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
+      const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -285,13 +287,13 @@ export default function App() {
     }
   }
 
-  function openListingFormForUser(user: BootstrapPayload["user"]) {
+  function openListingFormForUser(user: BootstrapPayload["user"], intent = selectedNeed) {
     const nextMode: MobileHousingPostInput["postMode"] =
-      selectedNeed === "need_place" || selectedNeed === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
+      intent === "need_place" || intent === "need_roommates" ? "NEED_PLACE" : "HAVE_PLACE";
     setListingForm({
       ...emptyListingForm,
       postMode: nextMode,
-      roommateIntent: selectedNeed === "need_roommates",
+      roommateIntent: intent === "need_roommates",
       city,
       contactName: user?.name || "",
       contactEmail: user?.email || "",
@@ -300,13 +302,14 @@ export default function App() {
     setListingOpen(true);
   }
 
-  function postNeed() {
+  function postNeed(intent = selectedNeed || "need_place") {
+    setSelectedNeed(intent);
     if (!data?.user) {
       setPendingListingAfterLogin(true);
       setLoginOpen(true);
       return;
     }
-    openListingFormForUser(data.user);
+    openListingFormForUser(data.user, intent);
   }
 
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
@@ -436,7 +439,7 @@ export default function App() {
       await load();
       if (pendingListingAfterLogin) {
         setPendingListingAfterLogin(false);
-        openListingFormForUser(payload.user);
+        openListingFormForUser(payload.user, selectedNeed || "need_place");
       }
     } catch (error) {
       Alert.alert("Login failed", error instanceof Error ? error.message : "Please try again.");
@@ -487,6 +490,7 @@ export default function App() {
           setSearchCity(city);
           setSearchArea(area);
           setSearchRadius(searchRadius);
+          setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -515,6 +519,7 @@ export default function App() {
           setSearchCity(city);
           setSearchArea(area);
           setSearchRadius(searchRadius);
+          setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
         onCategorySelect={selectCategory}
@@ -709,6 +714,20 @@ export default function App() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Search housing</Text>
             <Text style={styles.modalCopy}>Enter a metro city, then narrow results by neighborhood, building, campus, or nearby landmark.</Text>
+            <View style={styles.miniGroup}>
+              <Text style={styles.miniLabel}>What are you looking for?</Text>
+              <View style={styles.chipRow}>
+                {[
+                  ["need_place", "I need a place"],
+                  ["need_roommates", "I need roommates"],
+                  ["have_place", "I have a place, need people"]
+                ].map(([value, label]) => (
+                  <TouchableOpacity key={value} style={[styles.chip, searchNeed === value && styles.chipActive]} onPress={() => setSearchNeed(value)}>
+                    <Text style={[styles.chipText, searchNeed === value && styles.chipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
             <TextInput
               value={searchCity}
               onChangeText={setSearchCity}
@@ -719,7 +738,7 @@ export default function App() {
             <TextInput
               value={searchArea}
               onChangeText={setSearchArea}
-              placeholder="Area, building, campus"
+              placeholder="Neighborhood, building, campus, or landmark"
               placeholderTextColor={theme.colors.muted}
               style={styles.input}
             />
@@ -765,7 +784,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 68 : 34, paddingHorizontal: 8 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
   modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },

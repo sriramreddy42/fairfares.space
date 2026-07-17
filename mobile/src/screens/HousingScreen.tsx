@@ -25,7 +25,7 @@ type Props = {
   onGenderSelect: (gender: string) => void;
   onBudgetSelect: (budget: string) => void;
   onSortSelect: (sort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc") => void;
-  onPostNeed: () => void;
+  onPostNeed: (intent?: string) => void;
   onTopAction: (action: string) => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
 };
@@ -33,9 +33,14 @@ type Props = {
 const quickActions: Array<{ label: string; icon: ImageSourcePropType; need: string }> = [
   { label: "I need a place", icon: appAssets.bed, need: "need_place" },
   { label: "Need roommates", icon: appAssets.roommates, need: "need_roommates" },
-  { label: "I have a place", icon: appAssets.bed, need: "have_place" },
   { label: "I need a ride", icon: appAssets.ride, need: "ride_need" },
   { label: "I provide a ride", icon: appAssets.ride, need: "ride_offer" }
+];
+
+const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
+  { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place" },
+  { label: "I need roommates", sub: "Post your roommate search, preferred area, and fit.", icon: appAssets.roommates, intent: "need_roommates" },
+  { label: "I have a property", sub: "List a room or rental and find tenants.", icon: appAssets.bed, intent: "have_place" }
 ];
 
 const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropType }> = [
@@ -254,16 +259,14 @@ export function HousingScreen({
             setMode("cheapCars");
           }}
         >
-          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Cheap Rental Cars</Text>
+          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Rental Cars</Text>
         </TouchableOpacity>
       </View>
 
       {mode === "cheapCars" ? renderRentalCarsOnly() : (
         <>
 
-      <TouchableOpacity onPress={() => onNeedSelect("")}>
-        <SectionHeader title="For you" action="See all" />
-      </TouchableOpacity>
+      <SectionHeader title="Create a post" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
         {quickActions.map((action) => (
           <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => onNeedSelect(action.need)}>
@@ -275,14 +278,16 @@ export function HousingScreen({
         ))}
       </ScrollView>
 
-      <View style={styles.postNeed}>
-        <View style={styles.postNeedCopy}>
-          <Text style={styles.postNeedTitle}>List your room / property for rent</Text>
-          <Text style={styles.postNeedMeta}>Need a place to stay? Get matched today.</Text>
-        </View>
-        <TouchableOpacity style={styles.postNeedButton} onPress={onPostNeed}>
-          <Text style={styles.postNeedButtonText}>Post</Text>
-        </TouchableOpacity>
+      <View style={styles.postActionGrid}>
+        {postActions.map((action) => (
+          <TouchableOpacity key={action.intent} style={styles.postActionCard} onPress={() => onPostNeed(action.intent)}>
+            <Image source={action.icon} style={styles.postActionIcon} resizeMode="contain" />
+            <View style={styles.postActionCopy}>
+              <Text style={styles.postNeedTitle}>{action.label}</Text>
+              <Text style={styles.postNeedMeta}>{action.sub}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
       </View>
 
       <View style={styles.welcome}>
@@ -457,12 +462,12 @@ const styles = StyleSheet.create({
   quickIcon: { width: 52, height: 52 },
   quickLabel: { color: theme.colors.soft, fontSize: 13, textAlign: "center", fontWeight: "800" },
   quickLabelActive: { color: theme.colors.text },
-  postNeed: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  postNeedCopy: { flex: 1, minWidth: 0 },
+  postActionGrid: { gap: 10 },
+  postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
+  postActionIcon: { width: 42, height: 42 },
+  postActionCopy: { flex: 1, minWidth: 0 },
   postNeedTitle: { color: "#111", fontSize: 17, lineHeight: 21, fontWeight: "900" },
   postNeedMeta: { color: "#5b5148", marginTop: 4, fontSize: 14 },
-  postNeedButton: { backgroundColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 12, flexShrink: 0 },
-  postNeedButtonText: { color: theme.colors.text, fontWeight: "900" },
   welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#18241d", gap: 8 },
   welcomeTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
   welcomeMeta: { color: theme.colors.soft, fontSize: 15 },

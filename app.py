@@ -435,6 +435,39 @@ ACCOMMODATION_METRO_GROUPS = {
         "suggested": ("Austin, TX", "Round Rock, TX", "Cedar Park, TX", "Pflugerville, TX", "Leander, TX"),
         "zips": ("78701", "78758", "78664", "78613", "78641"),
     },
+    "Dayton Metro Area": {
+        "suggested": ("Dayton, OH", "Kettering, OH", "Beavercreek, OH", "Centerville, OH", "Miamisburg, OH", "Fairborn, OH", "Huber Heights, OH", "Oakwood, OH", "Riverside, OH"),
+        "zips": ("45402", "45420", "45429", "45431", "45440", "45459", "45324", "45424"),
+    },
+}
+
+ACCOMMODATION_STATIC_POINTS = {
+    "denver, co": (39.7392, -104.9903),
+    "denver": (39.7392, -104.9903),
+    "denver metro area": (39.7392, -104.9903),
+    "union station": (39.7527, -105.0008),
+    "union station, denver, co": (39.7527, -105.0008),
+    "du": (39.6781, -104.9618),
+    "university of denver": (39.6781, -104.9618),
+    "aurora, co": (39.7294, -104.8319),
+    "englewood, co": (39.6478, -104.9878),
+    "littleton, co": (39.6133, -105.0166),
+    "lakewood, co": (39.7047, -105.0814),
+    "wheat ridge, co": (39.7661, -105.0772),
+    "thornton, co": (39.8680, -104.9719),
+    "centennial, co": (39.5807, -104.8772),
+    "boulder, co": (40.0150, -105.2705),
+    "dayton, oh": (39.7589, -84.1916),
+    "dayton": (39.7589, -84.1916),
+    "dayton metro area": (39.7589, -84.1916),
+    "kettering, oh": (39.6895, -84.1688),
+    "beavercreek, oh": (39.7092, -84.0633),
+    "centerville, oh": (39.6284, -84.1594),
+    "miamisburg, oh": (39.6428, -84.2866),
+    "fairborn, oh": (39.8209, -84.0194),
+    "huber heights, oh": (39.8439, -84.1247),
+    "oakwood, oh": (39.7253, -84.1741),
+    "riverside, oh": (39.7798, -84.1241),
 }
 ACCOMMODATION_PROPERTY_TYPE_FILTERS = (
     ("", "All Property Types"),
@@ -10556,6 +10589,19 @@ def dedupe_repeated_location_label(value: str) -> str:
     return value
 
 
+def static_accommodation_point(value: str) -> tuple[float, float]:
+    label = normalize_accommodation_place_label(value).lower()
+    if not label:
+        return (0.0, 0.0)
+    candidates = [label]
+    if "," in label:
+        candidates.append(label.split(",", 1)[0].strip())
+    for candidate in candidates:
+        if candidate in ACCOMMODATION_STATIC_POINTS:
+            return ACCOMMODATION_STATIC_POINTS[candidate]
+    return (0.0, 0.0)
+
+
 def accommodation_metro_name_from_place(value: str) -> str:
     city, state = split_city_state(value)
     if city and state:
@@ -10656,15 +10702,20 @@ def seed_accommodation_location_cache(con: sqlite3.Connection) -> None:
     for metro_name, data in ACCOMMODATION_METRO_GROUPS.items():
         sample_place = next(iter(data.get("suggested", ()) or (metro_name,)), metro_name)
         _, state = split_city_state(str(sample_place))
-        metro_id = upsert_accommodation_metro(con, metro_name, state=state, source="STATIC_FALLBACK", raw={"seed": True})
+        metro_lat, metro_lng = static_accommodation_point(metro_name)
+        if not metro_lat or not metro_lng:
+            metro_lat, metro_lng = static_accommodation_point(str(sample_place))
+        metro_id = upsert_accommodation_metro(con, metro_name, state=state, lat=metro_lat, lng=metro_lng, source="STATIC_FALLBACK", raw={"seed": True})
         for place in data.get("suggested", ()):
             city, place_state = split_city_state(str(place))
-            upsert_accommodation_local_area(con, metro_id, str(place), city=city, state=place_state or state, place_type="LOCALITY")
+            place_lat, place_lng = static_accommodation_point(str(place))
+            upsert_accommodation_local_area(con, metro_id, str(place), city=city, state=place_state or state, place_type="LOCALITY", lat=place_lat, lng=place_lng)
         for zip_code in data.get("zips", ()):
             upsert_accommodation_local_area(con, metro_id, str(zip_code), zip_code=str(zip_code), state=state, place_type="ZIP")
     for metro_name, _label in ACCOMMODATION_METRO_FILTERS:
         if metro_name:
-            upsert_accommodation_metro(con, metro_name, source="STATIC_FALLBACK", raw={"seed": True})
+            metro_lat, metro_lng = static_accommodation_point(metro_name)
+            upsert_accommodation_metro(con, metro_name, lat=metro_lat, lng=metro_lng, source="STATIC_FALLBACK", raw={"seed": True})
 
 
 def accommodation_metro_filter_options() -> tuple[tuple[str, str], ...]:
@@ -10931,6 +10982,19 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                     "lng": float(row["lng"] or 0),
                     "source": "cache",
                 }
+            if row:
+                static_lat, static_lng = static_accommodation_point(row_value(row, "name") or row_value(row, "city") or query)
+                if static_lat and static_lng:
+                    return {
+                        "label": row_value(row, "name") or query,
+                        "metro": row_value(row, "metro_name"),
+                        "lat": static_lat,
+                        "lng": static_lng,
+                        "source": "static",
+                    }
+            static_lat, static_lng = static_accommodation_point(query)
+            if static_lat and static_lng:
+                return {"label": query, "metro": search_metro, "lat": static_lat, "lng": static_lng, "source": "static"}
             metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (search_metro or query,)).fetchone()
             if metro and float(metro["lat"] or 0) and float(metro["lng"] or 0):
                 return {
@@ -10940,8 +11004,21 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                     "lng": float(metro["lng"] or 0),
                     "source": "metro",
                 }
+            if metro:
+                static_lat, static_lng = static_accommodation_point(row_value(metro, "name") or query)
+                if static_lat and static_lng:
+                    return {
+                        "label": row_value(metro, "center_city") or row_value(metro, "name") or query,
+                        "metro": row_value(metro, "name"),
+                        "lat": static_lat,
+                        "lng": static_lng,
+                        "source": "static",
+                    }
     except sqlite3.Error:
         pass
+    static_lat, static_lng = static_accommodation_point(query)
+    if static_lat and static_lng:
+        return {"label": query, "metro": search_metro, "lat": static_lat, "lng": static_lng, "source": "static"}
     if allow_refresh:
         metro_name = refresh_accommodation_location_cache(query)
         if metro_name:
