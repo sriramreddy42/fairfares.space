@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -139,6 +139,8 @@ export default function App() {
   const [searchArea, setSearchArea] = useState("");
   const [searchRadius, setSearchRadius] = useState("10");
   const [searchNeed, setSearchNeed] = useState("need_place");
+  const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
+  const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -169,6 +171,24 @@ export default function App() {
   useEffect(() => {
     setBottomTabsHidden(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const cleanCity = normalizeCityInput(searchCity);
+    setSearchSuggestionsLoading(true);
+    const timer = setTimeout(() => {
+      getAccommodationLocationOptions(cleanCity)
+        .then((options) => {
+          const suggested = (options?.suggested || []).filter(Boolean).slice(0, 8);
+          setSearchSuggestions(suggested);
+        })
+        .catch(() => setSearchSuggestions([]))
+        .finally(() => setSearchSuggestionsLoading(false));
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [searchOpen, searchCity]);
 
   function openMessage(post: HousingPost) {
     setPendingPost(post);
@@ -449,8 +469,17 @@ export default function App() {
   async function submitSignup() {
     try {
       const payload = await mobileSignup(signupName, identifier, signupPhone, password);
-      Alert.alert("Signup created", payload.activationLink ? `${payload.message}\n\nActivation link: ${payload.activationLink}` : payload.message);
-      setAuthMode("login");
+      Alert.alert("Signup created", payload.message);
+      setLoginOpen(false);
+      setSignupName("");
+      setSignupPhone("");
+      setIdentifier("");
+      setPassword("");
+      await load();
+      if (pendingListingAfterLogin) {
+        setPendingListingAfterLogin(false);
+        openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
+      }
     } catch (error) {
       Alert.alert("Signup failed", error instanceof Error ? error.message : "Please try again.");
     }
@@ -761,11 +790,19 @@ export default function App() {
               </View>
             </View>
             <View style={styles.chipRow}>
-              {["Union Station", "DU", "Aurora", "Englewood"].map((chip) => (
+              {(searchSuggestions.length
+                ? searchSuggestions
+                : searchCity.toLowerCase().includes("denver")
+                  ? ["Union Station", "DU", "Aurora", "Englewood"]
+                  : []
+              ).map((chip) => (
                 <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
                   <Text style={styles.chipText}>{chip}</Text>
                 </TouchableOpacity>
               ))}
+              {!searchSuggestions.length && !searchCity.toLowerCase().includes("denver") ? (
+                <Text style={styles.suggestionHint}>{searchSuggestionsLoading ? "Loading nearby areas..." : "Enter a city to load nearby neighborhood suggestions."}</Text>
+              ) : null}
             </View>
             <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
               <Text style={styles.primaryButtonText}>Search listings</Text>
@@ -813,5 +850,6 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
   chipText: { color: theme.colors.text, fontWeight: "800" },
   chipTextActive: { color: theme.colors.bg },
+  suggestionHint: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
   switchText: { color: theme.colors.muted, textAlign: "center", fontWeight: "900", paddingVertical: 8 }
 });

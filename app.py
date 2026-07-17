@@ -11409,6 +11409,69 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
     }
 
 
+def accommodation_location_options(query: str, limit: int = 18) -> dict[str, object]:
+    query = normalize_accommodation_place_label(query)
+    metro_name = cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+    if not metro_name:
+        metro_name = accommodation_metro_name_from_place(query) if query else "Denver Metro Area"
+    suggested: list[str] = []
+    zips: list[str] = []
+    try:
+        with db() as con:
+            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone()
+            if not metro and query:
+                city = query.split(",", 1)[0].strip()
+                metro = con.execute(
+                    """
+                    SELECT DISTINCT metro.*
+                    FROM accommodation_metros metro
+                    JOIN accommodation_local_areas area ON area.metro_id = metro.id
+                    WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                    LIMIT 1
+                    """,
+                    (f"%{city}%", city),
+                ).fetchone()
+            if not metro:
+                metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", ("Denver Metro Area",)).fetchone()
+            if metro:
+                metro_name = row_value(metro, "name", metro_name)
+                rows = con.execute(
+                    """
+                    SELECT name, city, state, zip_code, place_type
+                    FROM accommodation_local_areas
+                    WHERE metro_id = ?
+                    ORDER BY CASE place_type WHEN 'ZIP' THEN 2 ELSE 1 END, name ASC
+                    """,
+                    (int(row_value(metro, "id") or 0),),
+                ).fetchall()
+                for row in rows:
+                    place_type = str(row_value(row, "place_type") or "")
+                    if place_type == "ZIP":
+                        value = str(row_value(row, "zip_code") or row_value(row, "name") or "").strip()
+                        if value and value not in zips:
+                            zips.append(value)
+                    else:
+                        value = dedupe_repeated_location_label(str(row_value(row, "name") or "")).strip()
+                        if value and value not in suggested:
+                            suggested.append(value)
+    except sqlite3.Error:
+        suggested = []
+        zips = []
+    if not suggested:
+        fallback_group = ACCOMMODATION_METRO_GROUPS.get(metro_name) or ACCOMMODATION_METRO_GROUPS.get("Denver Metro Area", {})
+        suggested = [str(item) for item in fallback_group.get("suggested", ())][:limit]
+        zips = [str(item) for item in fallback_group.get("zips", ())][:12]
+    point = accommodation_location_point(query or metro_name, metro_name, allow_refresh=False)
+    return {
+        "ok": True,
+        "metro": metro_name,
+        "selectedLocation": dedupe_repeated_location_label(str(point.get("label") or query or metro_name)),
+        "suggested": suggested[:limit],
+        "zips": zips[:12],
+        "source": str(point.get("source") or "cache"),
+    }
+
+
 def int_from_form(form: dict[str, str], key: str, default: int = 0) -> int:
     try:
         return int((form.get(key) or "").strip())
@@ -13557,6 +13620,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/accommodations/locations":
             self.api_accommodation_locations(parsed)
+            return
+        if parsed.path == "/api/mobile/location-options":
+            self.api_mobile_location_options(parsed)
             return
         if parsed.path == "/api/mobile/bootstrap":
             self.api_mobile_bootstrap(parsed)
@@ -21231,10 +21297,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
                     return
                 con.execute(
-                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
+                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
                     (name, email, phone, hash_password(password)),
                 )
                 user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                session_token = secrets.token_urlsafe(32)
+                con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
         except sqlite3.IntegrityError:
             self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
             return
@@ -21244,8 +21313,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "activationRequired": True,
-                "message": "Account created. Activate it from the email link, then log in.",
+                "activationRequired": False,
+                "token": session_token,
+                "user": mobile_user_payload(user),
+                "message": "Account created. You are signed in on this device.",
                 "activationLink": link if not delivery_status.startswith("sent") else "",
                 "outboxFile": str(outbox_file),
             },
@@ -21290,6 +21361,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
             }
         )
+
+    def api_mobile_location_options(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        query = (params.get("city", params.get("q", [""]))[0] or "").strip()
+        if not query:
+            self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
+            return
+        self.send_json(accommodation_location_options(query))
 
     def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)

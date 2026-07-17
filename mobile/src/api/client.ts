@@ -129,11 +129,30 @@ export type AccommodationLocationLookup = {
   source: string;
 };
 
+export type AccommodationLocationOptions = {
+  ok: boolean;
+  metro: string;
+  selectedLocation: string;
+  suggested: string[];
+  zips: string[];
+  source: string;
+};
+
 export async function lookupAccommodationLocation(query: string) {
   const cleanQuery = query.trim();
   if (!cleanQuery) return null;
   try {
     return await request<AccommodationLocationLookup>(`/api/accommodations/locations?q=${encodeURIComponent(cleanQuery)}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAccommodationLocationOptions(city: string) {
+  const cleanCity = city.trim();
+  if (!cleanCity) return null;
+  try {
+    return await request<AccommodationLocationOptions>(`/api/mobile/location-options?city=${encodeURIComponent(cleanCity)}`);
   } catch {
     return null;
   }
@@ -175,7 +194,7 @@ export async function mobileLogin(identifier: string, password: string) {
 }
 
 export async function mobileSignup(name: string, email: string, phone: string, password: string) {
-  return request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string }>(
+  const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
@@ -183,6 +202,10 @@ export async function mobileSignup(name: string, email: string, phone: string, p
       body: JSON.stringify({ name, email, phone, password })
     }
   );
+  if (payload.token) {
+    setAuthToken(payload.token);
+  }
+  return payload;
 }
 
 export type MobileHousingPostInput = {
