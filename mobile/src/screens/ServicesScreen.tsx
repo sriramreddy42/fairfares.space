@@ -427,6 +427,15 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
               : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
           </Text>
         </View>
+        <Text style={styles.fieldLabel}>Promo / referral / student code</Text>
+        <TextInput
+          value={search.discountCode}
+          onChangeText={(text) => updateSearch("discountCode", text.toUpperCase())}
+          placeholder="Enter promo, referral, or student code"
+          placeholderTextColor={theme.colors.muted}
+          style={styles.searchInput}
+          autoCapitalize="characters"
+        />
         <View style={styles.chips}>
           {pickupLocations.map((location) => (
             <TouchableOpacity key={location} style={styles.chip} onPress={() => updateSearch("pickupLocation", location)}>

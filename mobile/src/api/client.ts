@@ -165,6 +165,12 @@ export async function getCars(location = "", category = "") {
 }
 
 function rentalPayload(carId: number, details?: Partial<RentalSearchInput>) {
+  const pickup = details?.pickupDate ? new Date(`${details.pickupDate}T00:00:00`) : null;
+  const dropoff = details?.returnDate ? new Date(`${details.returnDate}T00:00:00`) : null;
+  const calculatedDays =
+    pickup && dropoff
+      ? Math.ceil((dropoff.getTime() - pickup.getTime()) / 86400000)
+      : 0;
   return {
     carId,
     pickupLocation: details?.pickupLocation || "",
@@ -175,7 +181,7 @@ function rentalPayload(carId: number, details?: Partial<RentalSearchInput>) {
     returnTime: details?.returnTime || "10:00 AM",
     renterAge: details?.renterAge || "25+",
     discountCode: details?.discountCode || "",
-    days: details?.days || 3,
+    days: calculatedDays > 0 ? calculatedDays : details?.days || 3,
     additionalDriverRequested: Boolean(details?.additionalDriverRequested),
     additionalDriverName: details?.additionalDriverName || "",
     additionalDriverAge: details?.additionalDriverAge || ""

@@ -469,6 +469,15 @@ export function HousingScreen({
                 : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
             </Text>
           </View>
+          <Text style={styles.carFieldLabel}>Promo / referral / student code</Text>
+          <TextInput
+            value={rentalSearch.discountCode}
+            onChangeText={(text) => updateRentalSearch("discountCode", text.toUpperCase())}
+            placeholder="Enter promo, referral, or student code"
+            placeholderTextColor={theme.colors.muted}
+            style={styles.carSearchInput}
+            autoCapitalize="characters"
+          />
           <View style={styles.carPickupChips}>
             {pickupLocations.map((location) => (
               <TouchableOpacity key={location} style={styles.carPickupChip} onPress={() => updateRentalSearch("pickupLocation", location)}>

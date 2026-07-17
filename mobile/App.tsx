@@ -209,8 +209,14 @@ export default function App() {
     try {
       const payload = await startRentalCheckout(paymentOption);
       if (payload.url) {
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          window.location.href = payload.url;
+          return;
+        }
         await Linking.openURL(payload.url);
+        return;
       }
+      Alert.alert("Payment unavailable", "Stripe did not return a checkout link.");
     } catch (error) {
       Alert.alert("Payment unavailable", error instanceof Error ? error.message : "Unable to open Stripe checkout.");
     }
