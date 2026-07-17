@@ -211,14 +211,16 @@ export default function App() {
       if (payload.url) {
         if (Platform.OS === "web" && typeof window !== "undefined") {
           window.location.href = payload.url;
-          return;
+          return true;
         }
         await Linking.openURL(payload.url);
-        return;
+        return true;
       }
       Alert.alert("Payment unavailable", "Stripe did not return a checkout link.");
+      return false;
     } catch (error) {
       Alert.alert("Payment unavailable", error instanceof Error ? error.message : "Unable to open Stripe checkout.");
+      return false;
     }
   }
 
@@ -228,11 +230,11 @@ export default function App() {
       setLoginOpen(true);
       return;
     }
-    setLoading(true);
     try {
       const payload = await bookRentalCar(Number(car.id), details);
       if (paymentOption) {
         await openRentalCheckout(paymentOption);
+        return;
       } else {
         Alert.alert(
           "Rental checkout started",
@@ -249,8 +251,6 @@ export default function App() {
       setCars(carRows);
     } catch (error) {
       Alert.alert("Rental booking failed", error instanceof Error ? error.message : "Unable to start this booking.");
-    } finally {
-      setLoading(false);
     }
   }
 
