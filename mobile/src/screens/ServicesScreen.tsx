@@ -1,44 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Image, ImageBackground, ImageSourcePropType, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, getCars, quoteRentalCar } from "../api/client";
+import React from "react";
+import { Alert, Image, ImageSourcePropType, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
-import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { Car, RentalQuote, RentalSearchInput, ServiceItem } from "../types";
+import { Car, RentalSearchInput, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "explorer" | "housing" | "local";
-
-type ServiceTile = {
-  key: ServiceKey;
-  label: string;
-  badge?: string;
-  icon: ImageSourcePropType;
-  action: "select" | "housing";
-};
-
-const goAnywhere: ServiceTile[] = [
-  { key: "cars", label: "Ride", badge: "5%", icon: appAssets.ride, action: "select" },
-  { key: "deals", label: "Reserve", badge: "Promo", icon: appAssets.arrowDown, action: "select" },
-  { key: "housing", label: "Housing", badge: "New", icon: appAssets.bed, action: "housing" },
-  { key: "cars", label: "Rental Cars", badge: "Promo", icon: appAssets.ride, action: "select" },
-  { key: "explorer", label: "Explorer", icon: appAssets.explorer, action: "select" },
-  { key: "local", label: "Transit", icon: appAssets.search, action: "select" },
-  { key: "cars", label: "Hourly", icon: appAssets.ride, action: "select" },
-  { key: "housing", label: "Roommates", icon: appAssets.roommates, action: "housing" },
-  { key: "local", label: "Care", icon: appAssets.profile, action: "select" },
-  { key: "deals", label: "Student Deals", icon: appAssets.logo, action: "select" }
-];
-
-const deliveryTiles: ServiceTile[] = [
-  { key: "local", label: "Food", icon: appAssets.logo, action: "select" },
-  { key: "local", label: "Grocery", icon: appAssets.arrowDown, action: "select" },
-  { key: "local", label: "Events", icon: appAssets.search, action: "select" },
-  { key: "local", label: "Convenience", icon: appAssets.logo, action: "select" },
-  { key: "local", label: "Electronics", icon: appAssets.search, action: "select" },
-  { key: "local", label: "Retail", icon: appAssets.arrowUp, action: "select" },
-  { key: "local", label: "Support", icon: appAssets.message, action: "select" },
-  { key: "local", label: "Health", icon: appAssets.profile, action: "select" }
-];
 
 type Props = {
   cars: Car[];
@@ -49,870 +15,133 @@ type Props = {
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
 };
 
-export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousing, onBookCar }: Props) {
-  function openTile(tile: ServiceTile) {
-    if (tile.action === "housing") {
-      onOpenHousing();
-      return;
+type ServiceAction = {
+  label: string;
+  icon: ImageSourcePropType;
+  primary?: boolean;
+  onPress: () => void;
+};
+
+export function ServicesScreen({ onOpenHousing }: Props) {
+  const actions: ServiceAction[] = [
+    {
+      label: "Modify Reservation",
+      icon: appAssets.serviceModify,
+      onPress: () => Alert.alert("Modify reservation", "Request pickup date, return date, time, location, or vehicle changes from your rental booking.")
+    },
+    {
+      label: "Cancel Reservation",
+      icon: appAssets.serviceCancel,
+      onPress: () => Alert.alert("Cancel reservation", "Cancellation requests are reviewed against pickup cutoff, payment status, no-show rules, and discount conditions.")
+    },
+    {
+      label: "Download Invoice",
+      icon: appAssets.serviceInvoice,
+      primary: true,
+      onPress: () => Alert.alert("Download invoice", "Invoice and receipt documents become available after payment confirmation.")
+    },
+    {
+      label: "View Details",
+      icon: appAssets.serviceEye,
+      onPress: () => Alert.alert("View details", "Open the selected rental booking details, pickup instructions, payment status, and trip timing.")
+    },
+    {
+      label: "Housing",
+      icon: appAssets.serviceHome,
+      onPress: onOpenHousing
+    },
+    {
+      label: "Support Center",
+      icon: appAssets.serviceSupport,
+      onPress: () => Alert.alert("Support center", "FairFares support can help with pickup questions, payment status, document review, and rental changes.")
     }
-    onSelect(tile.key);
-  }
+  ];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>{selected === "cars" ? "Rental Cars" : "Services"}</Text>
-      {selected === "cars" ? <CarRentals cars={cars} onBookCar={onBookCar} onOpenHousing={onOpenHousing} /> : null}
-      {selected !== "cars" ? (
-        <>
-          <ServiceGrid title="Go anywhere" tiles={goAnywhere} selected={selected} onPress={openTile} />
-          <ServiceGrid title="Get anything done" tiles={deliveryTiles} selected={selected} onPress={openTile} />
-        </>
-      ) : null}
-
-      {selected === "deals" ? <Deals /> : null}
-      {selected === "explorer" ? <Explorer /> : null}
-      {selected === "local" ? <LocalServices services={services} /> : null}
+      <View style={styles.header}>
+        <Text style={styles.eyebrow}>Services</Text>
+        <Text style={styles.title}>Rental support</Text>
+      </View>
+      <View style={styles.actionGrid}>
+        {actions.map((action, index) => (
+          <TouchableOpacity
+            key={`${action.label}-${index}`}
+            style={[styles.actionButton, action.primary && styles.primaryAction]}
+            onPress={action.onPress}
+            activeOpacity={0.78}
+          >
+            <Image source={action.icon} style={styles.actionIcon} resizeMode="contain" />
+            <Text style={styles.actionLabel} numberOfLines={2}>{action.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </ScrollView>
   );
 }
 
-function ServiceGrid({
-  title,
-  tiles,
-  selected,
-  onPress
-}: {
-  title: string;
-  tiles: ServiceTile[];
-  selected: ServiceKey;
-  onPress: (tile: ServiceTile) => void;
-}) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.grid}>
-        {tiles.map((tile, index) => (
-          <TouchableOpacity
-            key={`${tile.label}-${index}`}
-            style={[styles.tile, selected === tile.key && tile.action !== "housing" && styles.tileActive]}
-            onPress={() => onPress(tile)}
-          >
-            {tile.badge ? <Text style={styles.badge}>{tile.badge}</Text> : null}
-            <Image source={tile.icon} style={styles.tileIcon} resizeMode="contain" />
-            <Text numberOfLines={1} style={styles.tileLabel}>{tile.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function isoDateFromNow(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function addDays(dateText: string, days: number) {
-  const date = new Date(`${dateText}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function todayIsoDate() {
-  return isoDateFromNow(0);
-}
-
-function dateOptionsFromToday(count = 90) {
-  return Array.from({ length: count }, (_, index) => isoDateFromNow(index));
-}
-
-function formatDateLabel(dateText: string) {
-  const date = new Date(`${dateText}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return dateText || "Choose date";
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-}
-
-const renterAgeOptions = ["21-24", "25+"];
-const timeOptions = Array.from({ length: 48 }, (_, index) => {
-  const hour = Math.floor(index / 2);
-  const minute = index % 2 === 0 ? "00" : "30";
-  const date = new Date(`2026-01-01T${String(hour).padStart(2, "0")}:${minute}:00`);
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-});
-
-function timeTextToMinutes(timeText: string) {
-  const match = String(timeText || "10:00 AM").trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return 600;
-  let hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  const period = match[3].toUpperCase();
-  if (period === "PM" && hours !== 12) hours += 12;
-  if (period === "AM" && hours === 12) hours = 0;
-  return hours * 60 + minutes;
-}
-
-function minimumPickupTimeToday() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() === 0 ? 0 : 60, 0, 0);
-  return now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function firstAllowedPickupTime(pickupDate: string) {
-  if (pickupDate !== todayIsoDate()) return timeOptions[0];
-  const minimum = timeTextToMinutes(minimumPickupTimeToday());
-  return timeOptions.find((time) => timeTextToMinutes(time) >= minimum) || timeOptions[timeOptions.length - 1];
-}
-
-function rentalDays(search: RentalSearchInput) {
-  const pickup = new Date(`${search.pickupDate}T00:00:00`);
-  const dropoff = new Date(`${search.returnDate}T00:00:00`);
-  const diff = Math.ceil((dropoff.getTime() - pickup.getTime()) / 86400000);
-  return Number.isFinite(diff) && diff > 0 ? diff : 0;
-}
-
-function durationRateTier(days: number) {
-  if (days >= 30) return { rate: 0.3, label: "Monthly rate" };
-  if (days >= 7) return { rate: 0.15, label: "Weekly rate" };
-  return { rate: 0, label: "Standard rate" };
-}
-
-function rentalLengthText(days: number) {
-  if (days <= 0) return "Choose valid dates";
-  if (days >= 30) {
-    const months = days / 30;
-    return `${days} days · about ${Number.isInteger(months) ? months : months.toFixed(1)} months`;
-  }
-  return `${days} days`;
-}
-
-function dailyPriceRange(price: number | string, days: number) {
-  const daily = Number(price || 0);
-  const average = Math.round(daily);
-  const baseLow = Math.max(25, average - 5);
-  const baseHigh = Math.max(baseLow, average + 5);
-  const tier = durationRateTier(days);
-  const low = Math.max(25, Math.round(baseLow * (1 - tier.rate)));
-  const high = Math.max(low, Math.round(baseHigh * (1 - tier.rate)));
-  return { low, high, tier };
-}
-
-function durationSavingsText(price: number | string, days: number) {
-  const tier = durationRateTier(days);
-  const daily = Number(price || 0);
-  const savings = daily > 0 && days > 0 ? daily * days * tier.rate : 0;
-  if (!tier.rate || savings <= 0) return "";
-  return `${tier.label}: save about $${savings.toFixed(2)} vs daily pricing.`;
-}
-
-const initialRentalSearch: RentalSearchInput = {
-  pickupLocation: "Denver International Airport (DEN)",
-  returnLocation: "Denver International Airport (DEN)",
-  pickupDate: isoDateFromNow(6),
-  returnDate: isoDateFromNow(13),
-  pickupTime: "10:00 AM",
-  returnTime: "10:00 AM",
-  renterAge: "25+",
-  discountCode: "",
-  days: 7,
-  additionalDriverRequested: false,
-  additionalDriverName: "",
-  additionalDriverAge: ""
-};
-
-function dollars(value: unknown) {
-  const numeric = Number(value || 0);
-  return `$${numeric.toFixed(2)}`;
-}
-
-function CarRentals({
-  cars,
-  onBookCar,
-  onOpenHousing
-}: {
-  cars: Car[];
-  onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
-  onOpenHousing: () => void;
-}) {
-  const [search, setSearch] = useState<RentalSearchInput>(initialRentalSearch);
-  const [visibleCars, setVisibleCars] = useState<Car[]>(cars);
-  const [selectedCar, setSelectedCar] = useState<Car | null>(null);
-  const [quote, setQuote] = useState<RentalQuote | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
-  const rows = hasSearched ? visibleCars : [];
-  const cheapest = [...cars].filter((car) => Number(car.daily_price) > 0).sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0];
-  const heroImage = absoluteAssetUrl(cheapest?.image_url || "");
-  const heroSource = heroImage ? { uri: heroImage } : appAssets.carFallback;
-  const rentalLocationOptions = useMemo(() => {
-    const locations = new Set<string>();
-    cars.forEach((car) => {
-      if (car.location?.trim()) locations.add(car.location.trim());
-    });
-    if (search.pickupLocation.trim()) locations.add(search.pickupLocation.trim());
-    if (search.returnLocation.trim()) locations.add(search.returnLocation.trim());
-    return Array.from(locations);
-  }, [cars, search.pickupLocation, search.returnLocation]);
-  const calendarDates = useMemo(() => dateOptionsFromToday(90), []);
-  const rentalDayCount = rentalDays(search);
-  const rentalTier = durationRateTier(rentalDayCount);
-
-  useEffect(() => {
-    setVisibleCars(cars);
-    setHasSearched(false);
-  }, [cars]);
-
-  function updateSearch(key: keyof RentalSearchInput, value: string | boolean) {
-    setSearch((current) => {
-      const next = { ...current, [key]: value };
-      if (key === "pickupLocation" && !current.returnLocation) {
-        next.returnLocation = String(value);
-      }
-      if (key === "pickupDate" && typeof value === "string" && current.returnDate <= value) {
-        next.returnDate = addDays(value, 1);
-      }
-      if ((key === "pickupDate" || key === "pickupTime") && next.pickupDate === todayIsoDate()) {
-        const minimum = firstAllowedPickupTime(next.pickupDate);
-        if (timeTextToMinutes(String(next.pickupTime)) < timeTextToMinutes(minimum)) {
-          next.pickupTime = minimum;
-        }
-      }
-      if (key === "returnDate" && typeof value === "string" && value <= current.pickupDate) {
-        next.returnDate = addDays(current.pickupDate, 1);
-      }
-      return next;
-    });
-  }
-
-  function selectRentalPickerValue(value: string) {
-    if (!rentalPicker) return;
-    updateSearch(rentalPicker, value);
-    setRentalPicker(null);
-  }
-
-  function renderPickerModal() {
-    const isDatePicker = rentalPicker === "pickupDate" || rentalPicker === "returnDate";
-    const isTimePicker = rentalPicker === "pickupTime" || rentalPicker === "returnTime";
-    const isLocationPicker = rentalPicker === "pickupLocation" || rentalPicker === "returnLocation";
-    const title =
-      rentalPicker === "pickupLocation" ? "Pickup location" :
-      rentalPicker === "returnLocation" ? "Return location" :
-      rentalPicker === "pickupDate" ? "Pick-up date" :
-      rentalPicker === "returnDate" ? "Return date" :
-      rentalPicker === "pickupTime" ? "Pick-up time" :
-      rentalPicker === "returnTime" ? "Return time" :
-      rentalPicker === "renterAge" ? "Renter age" : "";
-    const values = isLocationPicker ? rentalLocationOptions : isDatePicker ? calendarDates : isTimePicker ? timeOptions : renterAgeOptions;
-    const activeValue = rentalPicker ? String(search[rentalPicker] || "") : "";
-
-    return (
-      <Modal visible={Boolean(rentalPicker)} transparent animationType="fade" onRequestClose={() => setRentalPicker(null)}>
-        <View style={styles.pickerBackdrop}>
-          <View style={styles.pickerCard}>
-            <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>{title}</Text>
-              <TouchableOpacity style={styles.pickerClose} onPress={() => setRentalPicker(null)}>
-                <Text style={styles.pickerCloseText}>X</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={isDatePicker ? styles.calendarGrid : styles.pickerList}>
-              {values.map((value) => {
-                const disabled = rentalPicker === "returnDate" && value <= search.pickupDate;
-                const timeDisabled = rentalPicker === "pickupTime"
-                  && search.pickupDate === todayIsoDate()
-                  && timeTextToMinutes(value) < timeTextToMinutes(minimumPickupTimeToday());
-                const selected = value === activeValue;
-                return (
-                  <TouchableOpacity
-                    key={value}
-                    disabled={disabled || timeDisabled}
-                    style={[
-                      isDatePicker ? styles.calendarCell : styles.pickerOption,
-                      selected && styles.pickerOptionActive,
-                      (disabled || timeDisabled) && styles.pickerOptionDisabled
-                    ]}
-                    onPress={() => selectRentalPickerValue(value)}
-                  >
-                    <Text style={[styles.pickerOptionText, selected && styles.pickerOptionTextActive, (disabled || timeDisabled) && styles.pickerOptionTextDisabled]}>
-                      {isDatePicker ? formatDateLabel(value) : value}
-                    </Text>
-                    {isDatePicker ? <Text style={styles.calendarDateText}>{value.slice(5)}</Text> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-    );
-  }
-
-  async function searchCars() {
-    setBusy(true);
-    try {
-      const nextCars = await getCars(search.pickupLocation);
-      setVisibleCars(nextCars);
-      setHasSearched(true);
-      setSelectedCar(null);
-      setQuote(null);
-    } catch (error) {
-      Alert.alert("Rental search failed", error instanceof Error ? error.message : "Could not search cars.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function reviewCar(car: Car) {
-    setSelectedCar(car);
-    setBusy(true);
-    try {
-      const rentalQuote = await quoteRentalCar(Number(car.id), search);
-      setQuote(rentalQuote);
-    } catch (error) {
-      setQuote(null);
-      Alert.alert("Quote failed", error instanceof Error ? error.message : "Could not quote this rental.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function showReservationTool(title: string, message: string) {
-    Alert.alert(title, message);
-  }
-
-  return (
-    <View style={styles.section}>
-      <SectionHeader eyebrow="Car Rentals" title="Today's cheapest rate" />
-      <ImageBackground source={heroSource} style={styles.rateHero} imageStyle={styles.rateHeroImage}>
-        <View style={styles.rateShade}>
-          <Text style={styles.rateEyebrow}>Rental cars</Text>
-          <Text style={styles.rateHeroTitle}>Today's cheapest rate</Text>
-          <Text style={styles.rateMeta}>{cheapest ? `${cheapest.name} · ${cheapest.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}</Text>
-          <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
-          <View style={styles.rateHeroFooter}>
-            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && reviewCar(cheapest)}>
-              <Text style={styles.bookNowText}>Review trip</Text>
-            </TouchableOpacity>
-            <View style={styles.priceBadge}>
-              <Text style={styles.ratePrice}>
-                {cheapest ? `$${dailyPriceRange(cheapest.daily_price, rentalDayCount).low}-${dailyPriceRange(cheapest.daily_price, rentalDayCount).high}` : "$29-39"}
-              </Text>
-              <Text style={styles.priceBadgeMeta}>per day</Text>
-            </View>
-          </View>
-        </View>
-      </ImageBackground>
-      <View style={styles.rentalSearchPanel}>
-        <Text style={styles.panelTitle}>Search rental cars</Text>
-        <Text style={styles.fieldLabel}>Pickup location</Text>
-        <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("pickupLocation")}>
-          <Text style={styles.selectValue} numberOfLines={2}>{search.pickupLocation || "Select pickup location"}</Text>
-        </TouchableOpacity>
-        <Text style={styles.fieldLabel}>Return location</Text>
-        <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("returnLocation")}>
-          <Text style={styles.selectValue} numberOfLines={2}>{search.returnLocation || "Select return location"}</Text>
-        </TouchableOpacity>
-        <View style={styles.twoCol}>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Pickup date</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("pickupDate")}>
-              <Text style={styles.selectValue}>{formatDateLabel(search.pickupDate)}</Text>
-              <Text style={styles.selectMeta}>{search.pickupDate}</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Return date</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("returnDate")}>
-              <Text style={styles.selectValue}>{formatDateLabel(search.returnDate)}</Text>
-              <Text style={styles.selectMeta}>{search.returnDate}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={styles.twoCol}>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Pickup time</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("pickupTime")}>
-              <Text style={styles.selectValue}>{search.pickupTime}</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Return time</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("returnTime")}>
-              <Text style={styles.selectValue}>{search.returnTime}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={styles.twoCol}>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Renter age</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setRentalPicker("renterAge")}>
-              <Text style={styles.selectValue}>{search.renterAge || "25+"}</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.twoColField}>
-            <Text style={styles.fieldLabel}>Rental length</Text>
-            <View style={styles.estimateBox}>
-              <Text style={styles.estimateValue}>{rentalLengthText(rentalDayCount)}</Text>
-              <Text style={styles.estimateMeta}>{rentalTier.label}</Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.rateNote}>
-          <Text style={styles.rateNoteTitle}>{rentalTier.label}</Text>
-          <Text style={styles.rateNoteText}>
-            {rentalTier.rate > 0
-              ? `${Math.round(rentalTier.rate * 100)}% duration savings are reflected in the daily ranges below.`
-              : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
-          </Text>
-        </View>
-        <Text style={styles.fieldLabel}>Promo / referral / student code</Text>
-        <TextInput
-          value={search.discountCode}
-          onChangeText={(text) => updateSearch("discountCode", text.toUpperCase())}
-          placeholder="Enter promo, referral, or student code"
-          placeholderTextColor={theme.colors.muted}
-          style={styles.searchInput}
-          autoCapitalize="characters"
-        />
-        <TouchableOpacity style={styles.searchButton} onPress={searchCars} disabled={busy}>
-          <Text style={styles.searchButtonText}>{busy ? "Searching..." : "Search cars"}</Text>
-        </TouchableOpacity>
-      </View>
-      <RentalServiceCenter quote={quote} selectedCar={selectedCar} onOpenHousing={onOpenHousing} onAction={showReservationTool} />
-      <Modal visible={Boolean(quote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setQuote(null)}>
-        <View style={styles.checkoutScreen}>
-          <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.checkoutHeader}>
-              <View>
-                <Text style={styles.quoteEyebrow}>Checkout</Text>
-                <Text style={styles.panelTitle}>Finalize trip</Text>
-              </View>
-              <TouchableOpacity style={styles.checkoutClose} onPress={() => setQuote(null)}>
-                <Text style={styles.checkoutCloseText}>X</Text>
-              </TouchableOpacity>
-            </View>
-        {quote ? (
-        <View style={styles.quotePanel}>
-          <View style={styles.reviewCard}>
-            <View style={styles.reviewThumbWrap}>
-              {selectedCar && absoluteAssetUrl(selectedCar.image_url) ? (
-                <Image source={{ uri: absoluteAssetUrl(selectedCar.image_url) }} style={styles.reviewThumb} />
-              ) : (
-                <Image source={appAssets.carFallback} style={styles.reviewThumb} />
-              )}
-            </View>
-            <View style={styles.reviewCopy}>
-              <Text style={styles.quoteTitle}>{quote.booking.carName || selectedCar?.name}</Text>
-              <Text style={styles.reviewMeta}>{quote.booking.pickupLocation}</Text>
-              <Text style={styles.reviewMeta}>{quote.booking.pickupDate} {quote.booking.pickupTime} to {quote.booking.returnDate} {quote.booking.returnTime}</Text>
-            </View>
-          </View>
-          <View style={styles.paymentWindow}>
-            <View style={styles.paymentWindowCopy}>
-              <Text style={styles.quoteEyebrow}>Payment window</Text>
-              <Text style={styles.paymentWindowTitle}>{quote.booking.paymentStatus === "HOLD_PAID" ? "Remaining balance" : "Reserve booking"}</Text>
-              <Text style={styles.policyText}>Complete payment before the hold timer expires.</Text>
-            </View>
-            <View style={styles.paymentTimer}>
-              <Text style={styles.paymentTimerText}>{quote.policy.holdMinutes}:00</Text>
-            </View>
-          </View>
-          <View style={styles.quoteGrid}>
-            <Text style={styles.quoteItem}>Trip: {quote.booking.days} days</Text>
-            <Text style={styles.quoteItem}>Daily: {dollars(quote.breakdown.effectiveDaily)}</Text>
-            <Text style={styles.quoteItem}>Taxes/fees: {dollars(quote.breakdown.taxFeeAmount)}</Text>
-            <Text style={styles.quoteItem}>Discount: -{dollars(quote.breakdown.discountAmount)}</Text>
-            <Text style={styles.quoteItem}>10% hold: {dollars(quote.breakdown.holdAmount)}</Text>
-            <Text style={styles.quoteItem}>Due pickup: {dollars(quote.breakdown.dueAtPickup)}</Text>
-          </View>
-          <Text style={styles.quoteTotal}>Estimated rental subtotal {dollars(quote.breakdown.total)}</Text>
-          {quote.breakdown.savings > 0 ? (
-            <Text style={styles.savingsBanner}>You save {dollars(quote.breakdown.savings)} vs standard rental pricing.</Text>
-          ) : null}
-          <View style={styles.paymentActions}>
-            <TouchableOpacity style={[styles.bookNowWide, styles.holdButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "hold")}>
-              <Text style={styles.bookNowText}>Pay 10% hold</Text>
-              <Text style={styles.payButtonMeta}>{dollars(quote.breakdown.holdAmount)} due now</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.bookNowWide, styles.fullPayButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "full")}>
-              <Text style={styles.fullPayButtonText}>Pay in full</Text>
-              <Text style={styles.fullPayButtonMeta}>{dollars(quote.breakdown.fullPaymentTotal)} today</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Rental car protection</Text>
-            <Text style={styles.policyText}>Feel more secure before pickup. If an accident happens, make sure everyone is safe, call emergency services if needed, document photos, collect other driver information, then create a support request.</Text>
-            <Text style={styles.policyText}>Insurance requirements, damage review, towing, tolls, fuel, smoking, cleaning, misuse, and post-return fees are handled after review.</Text>
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Cancellation policy</Text>
-            <View style={styles.cancelTimeline}>
-              <View style={styles.cancelStep}>
-                <View style={styles.cancelDotActive} />
-                <Text style={styles.cancelStepTitle}>Today</Text>
-                <Text style={styles.cancelStepMeta}>Review or cancel</Text>
-              </View>
-              <View style={styles.cancelLine} />
-              <View style={styles.cancelStep}>
-                <View style={styles.cancelDot} />
-                <Text style={styles.cancelStepTitle}>24-hour cutoff</Text>
-                <Text style={styles.cancelStepMeta}>Auto review ends</Text>
-              </View>
-              <View style={styles.cancelLine} />
-              <View style={styles.cancelStep}>
-                <View style={styles.cancelDot} />
-                <Text style={styles.cancelStepTitle}>Pickup</Text>
-                <Text style={styles.cancelStepMeta}>{quote.booking.pickupDate}</Text>
-              </View>
-            </View>
-            <Text style={styles.policyText}>{quote.policy.cancellation.cutoff_copy}</Text>
-            <Text style={styles.policyText}>Cancel before pickup when plans change. Late cancellations, no-shows, and discount conditions can affect refunds.</Text>
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Rental policies</Text>
-            <Text style={styles.policyText}>Driver rules and required documents: age restrictions, valid license, payment method, insurance information, and booking confirmation.</Text>
-            <Text style={styles.policyText}>Deposit: {dollars(quote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
-            {quote.policy.bullets.slice(0, 4).map((item) => <Text key={item} style={styles.policyBullet}>- {item}</Text>)}
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Identity checked at pickup</Text>
-            <Text style={styles.policyText}>Staff will start Stripe Identity during pickup before the vehicle is released. Bring a valid license, payment method, and insurance proof if requested.</Text>
-          </View>
-        </View>
-        ) : null}
-          </ScrollView>
-        </View>
-      </Modal>
-      {rows.map((car) => {
-        const image = absoluteAssetUrl(car.image_url);
-        return (
-          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => reviewCar(car)}>
-            {image ? <Image source={{ uri: image }} style={styles.carImage} /> : <Image source={appAssets.carFallback} style={styles.carImage} />}
-            <View style={styles.carBody}>
-              <Text style={styles.cardTitle}>{car.name}</Text>
-              <Text style={styles.cardMeta}>{car.brand} {car.model} · {car.seats} seats · {car.transmission}</Text>
-              <View style={styles.cardFooter}>
-                <Text style={styles.price}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
-                <Text style={styles.action}>Review</Text>
-              </View>
-              {durationSavingsText(car.daily_price, rentalDayCount) ? (
-                <Text style={styles.savingsText}>{durationSavingsText(car.daily_price, rentalDayCount)}</Text>
-              ) : null}
-            </View>
-          </TouchableOpacity>
-        );
-      })}
-      {renderPickerModal()}
-    </View>
-  );
-}
-
-function RentalServiceCenter({
-  quote,
-  selectedCar,
-  onOpenHousing,
-  onAction
-}: {
-  quote: RentalQuote | null;
-  selectedCar: Car | null;
-  onOpenHousing: () => void;
-  onAction: (title: string, message: string) => void;
-}) {
-  const bookingTitle = quote?.booking.carName || selectedCar?.name || "Select a rental car";
-  const bookingDates = quote ? `${quote.booking.pickupDate} to ${quote.booking.returnDate}` : "Choose dates and search cars";
-  const pickupDate = quote?.booking.pickupDate || "Pickup";
-  const policy = quote?.policy;
-
-  return (
-    <View style={styles.rentalServicePanel}>
-      <View style={styles.servicePanelHeader}>
-        <View>
-          <Text style={styles.quoteEyebrow}>Rental services</Text>
-          <Text style={styles.servicePanelTitle}>Manage your rental</Text>
-        </View>
-        <Image source={appAssets.ride} style={styles.servicePanelIcon} resizeMode="contain" />
-      </View>
-
-      <View style={styles.policyCard}>
-        <Text style={styles.policyTitle}>Cancellation policy</Text>
-        <Text style={styles.policyText}>Cancel before pickup when plans change.</Text>
-        <View style={styles.cancelTimeline}>
-          <View style={styles.cancelStep}>
-            <View style={styles.cancelDotActive} />
-            <Text style={styles.cancelStepTitle}>Today</Text>
-            <Text style={styles.cancelStepMeta}>Open</Text>
-          </View>
-          <View style={styles.cancelLine} />
-          <View style={styles.cancelStep}>
-            <View style={styles.cancelDot} />
-            <Text style={styles.cancelStepTitle}>24-hour cutoff</Text>
-            <Text style={styles.cancelStepMeta}>Auto review</Text>
-          </View>
-          <View style={styles.cancelLine} />
-          <View style={styles.cancelStep}>
-            <View style={styles.cancelDot} />
-            <Text style={styles.cancelStepTitle}>Pickup</Text>
-            <Text style={styles.cancelStepMeta}>{pickupDate}</Text>
-          </View>
-        </View>
-        <Text style={styles.policyText}>
-          {policy?.cancellation.cutoff_copy || "Cancellation requests are reviewed against pickup time, payment status, no-show rules, and discount conditions."}
-        </Text>
-      </View>
-
-      <View style={styles.policyCard}>
-        <Text style={styles.policyTitle}>Rental policies</Text>
-        <Text style={styles.policyText}>Driver rules and required documents are checked before vehicle release.</Text>
-        <Text style={styles.policyText}>Bring a valid driver license, payment method, insurance information when required, and booking confirmation.</Text>
-        <Text style={styles.policyText}>Deposit: {policy ? dollars(policy.securityDepositAmount) : "shown after quote"} refundable authorization at pickup.</Text>
-        {(policy?.bullets || ["Pickup staff may verify identity before keys are released.", "Cleaning, fuel, tolls, damage, and late return fees are reviewed after return."]).slice(0, 3).map((item) => (
-          <Text key={item} style={styles.policyBullet}>- {item}</Text>
-        ))}
-      </View>
-
-      <View style={styles.policyCard}>
-        <Text style={styles.policyTitle}>Identity checked at pickup</Text>
-        <Text style={styles.policyText}>Staff will start Stripe Identity during pickup before the vehicle is released.</Text>
-      </View>
-
-      <View style={styles.checkoutToolGrid}>
-        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Modify reservation", "Request date, time, pickup location, return location, or vehicle changes after booking.")}>
-          <Text style={styles.checkoutToolText}>Modify Reservation</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Cancel reservation", "Cancellation requests use the pickup cutoff, payment status, no-show rules, and discount conditions.")}>
-          <Text style={styles.checkoutToolText}>Cancel Reservation</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.checkoutTool, styles.checkoutToolPrimary]} onPress={() => onAction("Download invoice", "Invoice and receipt documents become available after payment confirmation.")}>
-          <Text style={styles.checkoutToolPrimaryText}>Download Invoice</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("View details", `${bookingTitle}\n${bookingDates}`)}>
-          <Text style={styles.checkoutToolText}>View Details</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.checkoutTool} onPress={onOpenHousing}>
-          <Text style={styles.checkoutToolText}>Housing</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Support center", "FairFares support can help with pickup questions, document review, payment status, and rental changes.")}>
-          <Text style={styles.checkoutToolText}>Support Center</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.policyCard}>
-        <Text style={styles.policyTitle}>Documents</Text>
-        <Text style={styles.documentStatus}>Documents can be retrieved once pickup is completed.</Text>
-        <Text style={styles.policyText}>Booking documents</Text>
-        <View style={styles.documentSelect}>
-          <Text style={styles.documentSelectText}>
-            {quote ? `Pending confirmation - ${bookingTitle} - ${bookingDates} - Locked until pickup` : "Search and reserve a car to attach rental documents."}
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function Deals() {
-  const deals = ["Student savings", "Housing match alerts", "Long rental savings"];
-  return (
-    <View style={styles.section}>
-      <SectionHeader eyebrow="Deals" title="Current FairFares offers" />
-      {deals.map((deal) => (
-        <TouchableOpacity key={deal} style={styles.infoCard} onPress={() => Alert.alert(deal, "Offer details open here.")}>
-          <Image source={appAssets.arrowDown} style={styles.infoIcon} resizeMode="contain" />
-          <Text style={styles.cardTitle}>{deal}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-function Explorer() {
-  return (
-    <View style={styles.section}>
-      <SectionHeader eyebrow="Explorer" title="Location intelligence" />
-      <View style={styles.infoCard}>
-        <Image source={appAssets.explorer} style={styles.infoIcon} resizeMode="contain" />
-        <Text style={styles.cardTitle}>Search by city, area, building, radius, and distance.</Text>
-      </View>
-    </View>
-  );
-}
-
-function LocalServices({ services }: { services: ServiceItem[] }) {
-  const rows = services.length ? services : [{ title: "Local services", body: "FairFares directory items load here.", icon: "local" }];
-  return (
-    <View style={styles.section}>
-      <SectionHeader eyebrow="Local" title="Service directory" />
-      {rows.map((service) => (
-        <TouchableOpacity key={service.title} style={styles.infoCard} onPress={() => Alert.alert(service.title, service.body)}>
-          <Image source={appAssets.logo} style={styles.infoIcon} resizeMode="contain" />
-          <View style={styles.infoCopy}>
-            <Text style={styles.cardTitle}>{service.title}</Text>
-            <Text style={styles.cardMeta}>{service.body}</Text>
-          </View>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 132, gap: theme.spacing.lg },
-  title: { color: theme.colors.text, fontSize: 42, fontWeight: "900" },
-  section: { gap: theme.spacing.md },
-  sectionTitle: { color: theme.colors.text, fontSize: 25, fontWeight: "900" },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  tile: { width: "30.8%", minHeight: 108, backgroundColor: theme.colors.panel2, borderRadius: 12, alignItems: "center", justifyContent: "center", padding: 8, gap: 8 },
-  tileActive: { borderWidth: 2, borderColor: theme.colors.brand },
-  badge: { position: "absolute", top: -10, left: 18, backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 6, overflow: "hidden", paddingHorizontal: 6, paddingVertical: 3, fontWeight: "900", zIndex: 2 },
-  tileIcon: { width: 48, height: 48 },
-  tileLabel: { color: theme.colors.soft, fontSize: 16, fontWeight: "800", textAlign: "center" },
-  rateHero: { minHeight: 360, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
-  rateHeroImage: { borderRadius: theme.radius.lg },
-  rateShade: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", padding: theme.spacing.lg, justifyContent: "space-between", gap: theme.spacing.md },
-  rateEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  rateHeroTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900", maxWidth: 260 },
-  rateMeta: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20 },
-  ratePhone: { color: theme.colors.green, fontWeight: "900", fontSize: 18 },
-  rateHeroFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
-  bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, paddingVertical: 13 },
-  bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
-  bookNowWide: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, paddingVertical: 14, alignItems: "center", marginTop: 4 },
-  priceBadge: { minWidth: 108, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, padding: theme.spacing.sm, alignItems: "center" },
-  ratePrice: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
-  priceBadgeMeta: { color: "#555", fontWeight: "900" },
-  rentalSearchPanel: {
-    backgroundColor: "rgba(24,24,27,0.72)",
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.bg
+  },
+  content: {
     padding: theme.spacing.md,
-    gap: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 }
+    paddingBottom: 132,
+    gap: 18
   },
-  rentalServicePanel: {
-    backgroundColor: "rgba(17,24,39,0.84)",
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: "rgba(80,124,255,0.42)",
-    padding: theme.spacing.md,
-    gap: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.38,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 }
+  header: {
+    gap: 4
   },
-  servicePanelHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12
+  eyebrow: {
+    color: theme.colors.accent,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 2,
+    textTransform: "uppercase"
   },
-  servicePanelTitle: {
+  title: {
     color: theme.colors.text,
-    fontSize: 23,
+    fontSize: 36,
     fontWeight: "900"
   },
-  servicePanelIcon: {
-    width: 54,
-    height: 54
+  actionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 14
   },
-  panelTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
-  fieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", marginTop: 2 },
-  searchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
-  selectInput: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 56, paddingHorizontal: 13, paddingVertical: 9, justifyContent: "center" },
-  selectValue: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  selectMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", marginTop: 2 },
-  estimateBox: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 56, paddingHorizontal: 13, paddingVertical: 9, justifyContent: "center" },
-  estimateValue: { color: theme.colors.text, fontWeight: "900", fontSize: 14 },
-  estimateMeta: { color: theme.colors.green, fontWeight: "900", fontSize: 12, marginTop: 2 },
-  rateNote: { borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(40,82,255,0.10)", borderRadius: theme.radius.md, padding: 12, gap: 3 },
-  rateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
-  rateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  twoCol: { flexDirection: "row", gap: 10 },
-  twoColField: { flex: 1 },
-  searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
-  searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
-  checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
-  checkoutContent: { padding: theme.spacing.md, paddingTop: 54, paddingBottom: 120, gap: theme.spacing.md },
-  checkoutHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
-  checkoutClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center" },
-  checkoutCloseText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
-  quotePanel: { backgroundColor: "rgba(17,24,39,0.86)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10, shadowColor: "#000", shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
-  quoteEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  reviewCard: { flexDirection: "row", gap: 12, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 10 },
-  reviewThumbWrap: { width: 86, height: 66, borderRadius: 12, overflow: "hidden", backgroundColor: theme.colors.panel2 },
-  reviewThumb: { width: "100%", height: "100%" },
-  reviewCopy: { flex: 1, gap: 3 },
-  quoteTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
-  reviewMeta: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", lineHeight: 16 },
-  paymentWindow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 12 },
-  paymentWindowCopy: { flex: 1, gap: 3 },
-  paymentWindowTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  paymentTimer: { backgroundColor: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9 },
-  paymentTimerText: { color: theme.colors.accent, fontWeight: "900" },
-  quoteGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  quoteItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
-  quoteTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
-  savingsBanner: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
-  policyCard: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 12, gap: 6 },
-  policyTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  cancelTimeline: { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 10, marginBottom: 4 },
-  cancelStep: { flex: 1, alignItems: "center", gap: 4 },
-  cancelDotActive: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.accent },
-  cancelDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.42)" },
-  cancelLine: { width: 18, height: 2, backgroundColor: "rgba(255,255,255,0.22)", marginTop: 5 },
-  cancelStepTitle: { color: theme.colors.text, fontSize: 11, fontWeight: "900", textAlign: "center" },
-  cancelStepMeta: { color: theme.colors.muted, fontSize: 10, fontWeight: "800", textAlign: "center" },
-  checkoutToolGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
-  checkoutTool: { minWidth: "47%", flexGrow: 1, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 10, paddingVertical: 11, alignItems: "center", justifyContent: "center" },
-  checkoutToolPrimary: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
-  checkoutToolText: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textAlign: "center" },
-  checkoutToolPrimaryText: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textAlign: "center" },
-  documentStatus: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderWidth: 1, borderColor: "rgba(34,197,94,0.24)", borderRadius: theme.radius.md, paddingHorizontal: 10, paddingVertical: 9, fontSize: 12, fontWeight: "900" },
-  documentBox: { minHeight: 44, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", justifyContent: "center", paddingHorizontal: 11 },
-  documentBoxText: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
-  documentSelect: { borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(80,124,255,0.42)", backgroundColor: "rgba(80,124,255,0.10)", padding: 11 },
-  documentSelectText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
-  paymentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
-  holdButton: { flex: 1 },
-  fullPayButton: { flex: 1, backgroundColor: theme.colors.text },
-  fullPayButtonText: { color: theme.colors.bg, fontWeight: "900", textTransform: "uppercase" },
-  payButtonMeta: { color: theme.colors.text, fontSize: 11, fontWeight: "800", marginTop: 2 },
-  fullPayButtonMeta: { color: "#555", fontSize: 11, fontWeight: "900", marginTop: 2 },
-  carCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
-  carCardActive: { borderColor: theme.colors.blue },
-  carImage: { width: "100%", height: 150 },
-  carBody: { padding: theme.spacing.md, gap: 8 },
-  cardTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", flex: 1 },
-  cardMeta: { color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
-  cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
-  price: { color: theme.colors.green, fontSize: 18, fontWeight: "900" },
-  action: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 9, overflow: "hidden", fontWeight: "900" },
-  savingsText: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", marginTop: 3 },
-  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
-  pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
-  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  pickerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
-  pickerClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
-  pickerCloseText: { color: theme.colors.text, fontWeight: "900" },
-  pickerList: { gap: 8 },
-  pickerOption: { minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 14, justifyContent: "center" },
-  pickerOptionActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
-  pickerOptionDisabled: { opacity: 0.35 },
-  pickerOptionText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  pickerOptionTextActive: { color: theme.colors.bg },
-  pickerOptionTextDisabled: { color: theme.colors.muted },
-  calendarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  calendarCell: { width: "31%", minHeight: 66, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", padding: 8, justifyContent: "center" },
-  calendarDateText: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "800" },
-  infoCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 12, flexDirection: "row", alignItems: "center" },
-  infoIcon: { width: 48, height: 48 },
-  infoCopy: { flex: 1, gap: 5 }
+  actionButton: {
+    width: "48%",
+    minHeight: 132,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "rgba(17,24,39,0.82)",
+    paddingHorizontal: 14,
+    paddingVertical: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.36,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  primaryAction: {
+    backgroundColor: theme.colors.accent,
+    borderColor: "rgba(255,255,255,0.26)",
+    shadowColor: theme.colors.accent,
+    shadowOpacity: 0.52
+  },
+  actionIcon: {
+    width: 44,
+    height: 44
+  },
+  actionLabel: {
+    color: theme.colors.text,
+    fontSize: 17,
+    fontWeight: "900",
+    textAlign: "center"
+  }
 });
