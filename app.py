@@ -63,6 +63,17 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260715mobile-housing"
+DEFAULT_CORS_ALLOWED_ORIGINS = {
+    "https://fairfares.onrender.com",
+    "https://fairfares.space",
+    "https://www.fairfares.space",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:19006",
+    "http://127.0.0.1:19006",
+}
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
 OPENAI_AGENT_MCP_SERVERS_ENV = "OPENAI_AGENT_MCP_SERVERS"
 OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED_ENV = "OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED"
@@ -1143,6 +1154,27 @@ def load_env_file() -> None:
     if not loaded_any:
         return
     refresh_storage_paths()
+
+
+def configured_cors_allowed_origins() -> set[str]:
+    load_env_file()
+    origins = {origin.rstrip("/") for origin in DEFAULT_CORS_ALLOWED_ORIGINS}
+    for env_name in ("PUBLIC_ORIGIN", "FAIRFARES_PUBLIC_ORIGIN"):
+        origin = os.environ.get(env_name, "").strip().rstrip("/")
+        if origin:
+            origins.add(origin)
+    raw_origins = os.environ.get("FAIRFARES_CORS_ALLOWED_ORIGINS", "")
+    for value in raw_origins.replace("\n", ",").split(","):
+        origin = value.strip().rstrip("/")
+        if origin:
+            origins.add(origin)
+    return origins
+
+
+def is_loopback_origin(origin: str) -> bool:
+    parsed = urllib.parse.urlparse(origin)
+    hostname = (parsed.hostname or "").lower()
+    return parsed.scheme in {"http", "https"} and hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 class FairFaresConnection(sqlite3.Connection):
@@ -13987,10 +14019,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/identity/stripe-session",
         }
 
+    def cors_allowed_origin(self) -> str:
+        origin = (self.headers.get("Origin") or "").strip().rstrip("/")
+        if not origin:
+            return ""
+        if origin in configured_cors_allowed_origins() or is_loopback_origin(origin):
+            return origin
+        return ""
+
     def do_OPTIONS(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if self.is_cors_path(parsed.path):
-            self.send_response(204)
+            if self.headers.get("Origin") and not self.cors_allowed_origin():
+                self.send_response(403)
+            else:
+                self.send_response(204)
             self.end_headers()
             return
         self.not_found()
@@ -14236,6 +14279,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
             return True
         if path in {"/payment/stripe-session", "/identity/stripe-session"} and (self.headers.get("Authorization") or "").strip().lower().startswith("bearer "):
+            if self.headers.get("Origin") and not self.cors_allowed_origin():
+                return False
             return True
         if path.startswith("/api/"):
             return True
@@ -22489,10 +22534,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         current_path = str(getattr(self, "path", ""))
         parsed_path = urllib.parse.urlparse(current_path).path
         if self.is_cors_path(parsed_path):
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-            self.send_header("Access-Control-Max-Age", "86400")
+            allowed_origin = self.cors_allowed_origin()
+            if allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", allowed_origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+                self.send_header("Access-Control-Max-Age", "86400")
         if current_path.startswith("/static/"):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         super().end_headers()
