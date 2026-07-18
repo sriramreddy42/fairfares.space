@@ -9,7 +9,7 @@ const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; cust
   { key: "home", label: "Home", custom: "home" },
   { key: "services", label: "Services", custom: "services" },
   { key: "activity", label: "Activity", custom: "activity" },
-  { key: "messenger", label: "Chats", icon: appAssets.message },
+  { key: "messenger", label: "Fchat", icon: appAssets.fchat },
   { key: "profile", label: "Account", icon: appAssets.profile }
 ];
 
