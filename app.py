@@ -11634,6 +11634,8 @@ def mobile_rental_service_booking_payload(
     row: sqlite3.Row | dict[str, object],
     origin: str = "",
     user_id: int | None = None,
+    *,
+    include_document_bodies: bool = False,
 ) -> dict[str, object]:
     payload = mobile_booking_payload(row)
     breakdown = booking_price_breakdown(row)
@@ -11658,7 +11660,9 @@ def mobile_rental_service_booking_payload(
         stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         stats["past"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         stats["saved"] = len(saved_cars)
-        document_sets = get_user_document_sets(user_id, active_booking_id)
+        document_sets = get_user_document_sets(user_id, active_booking_id, include_docs=include_document_bodies)
+        if not include_document_bodies:
+            document_sets = [item for item in document_sets if int(item.get("id") or 0) == active_booking_id]
         support_rows = get_support_tickets_for_user(user_id)
         support_tickets = [mobile_support_ticket_summary(ticket) for ticket in support_rows]
         stats["supportOpen"] = sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"})
@@ -13669,7 +13673,12 @@ def get_booking_documents(booking_id: int | None) -> dict[str, dict[str, str]]:
     }
 
 
-def get_user_document_sets(user_id: int | None, active_booking_id: int | None = None) -> list[dict[str, object]]:
+def get_user_document_sets(
+    user_id: int | None,
+    active_booking_id: int | None = None,
+    *,
+    include_docs: bool = True,
+) -> list[dict[str, object]]:
     if not user_id:
         return []
     document_sets: list[dict[str, object]] = []
@@ -13693,7 +13702,7 @@ def get_user_document_sets(user_id: int | None, active_booking_id: int | None = 
                 "statusLabel": booking_status_label(status, payment_status),
                 "locked": locked,
                 "lockMessage": lock_message,
-                "docs": get_booking_documents(booking["id"]),
+                "docs": get_booking_documents(booking["id"]) if include_docs else {},
             }
         )
     document_sets.sort(key=lambda item: (0 if item["id"] == active_booking_id else 1, str(item["bookingId"])))
