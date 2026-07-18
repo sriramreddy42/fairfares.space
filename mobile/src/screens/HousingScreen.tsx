@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, getCars } from "../api/client";
+import { absoluteAssetUrl, getCars, quoteRentalCar } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, Car, HousingPost, RentalSearchInput } from "../types";
+import { BootstrapPayload, Car, HousingPost, RentalQuote, RentalSearchInput } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -149,16 +149,29 @@ function dailyPriceRange(price: number | string, days: number) {
   return { low, high, tier };
 }
 
+function durationSavingsText(price: number | string, days: number) {
+  const tier = durationRateTier(days);
+  const daily = Number(price || 0);
+  const savings = daily > 0 && days > 0 ? daily * days * tier.rate : 0;
+  if (!tier.rate || savings <= 0) return "";
+  return `${tier.label}: save about $${savings.toFixed(2)} vs daily pricing.`;
+}
+
+function dollars(value: unknown) {
+  const numeric = Number(value || 0);
+  return `$${numeric.toFixed(2)}`;
+}
+
 const initialRentalSearch: RentalSearchInput = {
   pickupLocation: "Denver International Airport (DEN)",
   returnLocation: "Denver International Airport (DEN)",
   pickupDate: isoDateFromNow(6),
-  returnDate: isoDateFromNow(9),
+  returnDate: isoDateFromNow(13),
   pickupTime: "10:00 AM",
   returnTime: "10:00 AM",
   renterAge: "25+",
   discountCode: "",
-  days: 3,
+  days: 7,
   additionalDriverRequested: false,
   additionalDriverName: "",
   additionalDriverAge: ""
@@ -196,6 +209,8 @@ export function HousingScreen({
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
   const [rentalSearched, setRentalSearched] = useState(false);
+  const [selectedRentalCar, setSelectedRentalCar] = useState<Car | null>(null);
+  const [rentalQuote, setRentalQuote] = useState<RentalQuote | null>(null);
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
@@ -320,8 +335,24 @@ export function HousingScreen({
       const nextCars = await getCars(rentalSearch.pickupLocation);
       setRentalCars(nextCars);
       setRentalSearched(true);
+      setSelectedRentalCar(null);
+      setRentalQuote(null);
     } catch (error) {
       Alert.alert("Rental search failed", error instanceof Error ? error.message : "Could not search rental cars.");
+    } finally {
+      setRentalBusy(false);
+    }
+  }
+
+  async function reviewRentalCar(car: Car) {
+    setSelectedRentalCar(car);
+    setRentalBusy(true);
+    try {
+      const nextQuote = await quoteRentalCar(Number(car.id), rentalSearch);
+      setRentalQuote(nextQuote);
+    } catch (error) {
+      setRentalQuote(null);
+      Alert.alert("Quote failed", error instanceof Error ? error.message : "Could not quote this rental.");
     } finally {
       setRentalBusy(false);
     }
@@ -407,8 +438,8 @@ export function HousingScreen({
               <Text style={styles.carFeature}>24/7 support</Text>
             </View>
             <View style={styles.carBottomRow}>
-              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && onBookCar(cheapestCar, rentalSearch, "hold")}>
-                <Text style={styles.bookNowText}>Book now</Text>
+              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && reviewRentalCar(cheapestCar)}>
+                <Text style={styles.bookNowText}>Review trip</Text>
               </TouchableOpacity>
               <View style={styles.carRateBox}>
                 <Text style={styles.carRate}>
@@ -499,18 +530,48 @@ export function HousingScreen({
         </View>
         {rentalRows.length ? (
           <View style={styles.carList}>
+            {rentalQuote ? (
+              <View style={styles.rentalReviewPanel}>
+                <Text style={styles.reviewEyebrow}>Checkout</Text>
+                <Text style={styles.reviewTitle}>Finalize trip</Text>
+                <Text style={styles.reviewCarTitle}>{rentalQuote.booking.carName || selectedRentalCar?.name}</Text>
+                <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupLocation}</Text>
+                <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupDate} {rentalQuote.booking.pickupTime} to {rentalQuote.booking.returnDate} {rentalQuote.booking.returnTime}</Text>
+                <View style={styles.reviewGrid}>
+                  <Text style={styles.reviewItem}>Trip: {rentalQuote.booking.days} days</Text>
+                  <Text style={styles.reviewItem}>Daily: {dollars(rentalQuote.breakdown.effectiveDaily)}</Text>
+                  <Text style={styles.reviewItem}>Taxes/fees: {dollars(rentalQuote.breakdown.taxFeeAmount)}</Text>
+                  <Text style={styles.reviewItem}>Due pickup: {dollars(rentalQuote.breakdown.dueAtPickup)}</Text>
+                </View>
+                <Text style={styles.reviewTotal}>Total {dollars(rentalQuote.breakdown.total)}</Text>
+                {rentalQuote.breakdown.savings > 0 ? <Text style={styles.reviewSavings}>You save {dollars(rentalQuote.breakdown.savings)} vs standard rental pricing.</Text> : null}
+                <View style={styles.reviewActions}>
+                  <TouchableOpacity style={styles.reviewHoldButton} onPress={() => selectedRentalCar && onBookCar(selectedRentalCar, rentalSearch, "hold")}>
+                    <Text style={styles.reviewHoldText}>Pay 10% hold</Text>
+                    <Text style={styles.reviewHoldMeta}>{dollars(rentalQuote.breakdown.holdAmount)} due now</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.reviewFullButton} onPress={() => selectedRentalCar && onBookCar(selectedRentalCar, rentalSearch, "full")}>
+                    <Text style={styles.reviewFullText}>Pay in full</Text>
+                    <Text style={styles.reviewFullMeta}>{dollars(rentalQuote.breakdown.fullPaymentTotal)} today</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.reviewPolicy}>Deposit: {dollars(rentalQuote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
+                <Text style={styles.reviewPolicy}>{rentalQuote.policy.cancellation.cutoff_copy}</Text>
+              </View>
+            ) : null}
             {rentalRows.map((car) => {
               const image = absoluteAssetUrl(car.image_url);
               return (
-                <TouchableOpacity key={car.id} style={styles.carMiniCard} onPress={() => onBookCar(car, rentalSearch, "hold")}>
+                <TouchableOpacity key={car.id} style={[styles.carMiniCard, selectedRentalCar?.id === car.id && styles.carMiniCardActive]} onPress={() => reviewRentalCar(car)}>
                   {image ? <Image source={{ uri: image }} style={styles.carMiniImage} /> : <Image source={appAssets.carFallback} style={styles.carMiniImage} />}
                   <View style={styles.carMiniBody}>
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
                     <Text style={styles.carMiniPrice}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
-                    {dailyPriceRange(car.daily_price, rentalDayCount).tier.rate > 0 ? (
-                      <Text style={styles.carMiniSavings}>{dailyPriceRange(car.daily_price, rentalDayCount).tier.label}: save vs daily pricing</Text>
+                    {durationSavingsText(car.daily_price, rentalDayCount) ? (
+                      <Text style={styles.carMiniSavings}>{durationSavingsText(car.daily_price, rentalDayCount)}</Text>
                     ) : null}
+                    <Text style={styles.carMiniAction}>Review trip</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -862,12 +923,31 @@ const styles = StyleSheet.create({
   carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   carList: { gap: theme.spacing.md },
   carMiniCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
+  carMiniCardActive: { borderColor: theme.colors.blue },
   carMiniImage: { width: "100%", height: 170 },
   carMiniBody: { padding: theme.spacing.md, gap: 6 },
   carMiniTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
+  carMiniAction: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900", alignSelf: "flex-start", marginTop: 4 },
+  rentalReviewPanel: { backgroundColor: "rgba(17,24,39,0.88)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10 },
+  reviewEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  reviewTitle: { color: theme.colors.text, fontSize: 28, fontWeight: "900" },
+  reviewCarTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  reviewMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", lineHeight: 18 },
+  reviewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  reviewItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
+  reviewTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  reviewSavings: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
+  reviewActions: { flexDirection: "row", gap: 10 },
+  reviewHoldButton: { flex: 1, backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: "center" },
+  reviewHoldText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
+  reviewHoldMeta: { color: theme.colors.text, fontSize: 11, fontWeight: "800", marginTop: 2 },
+  reviewFullButton: { flex: 1, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: "center" },
+  reviewFullText: { color: theme.colors.bg, fontWeight: "900", textTransform: "uppercase" },
+  reviewFullMeta: { color: "#555", fontSize: 11, fontWeight: "900", marginTop: 2 },
+  reviewPolicy: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
   pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
   pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

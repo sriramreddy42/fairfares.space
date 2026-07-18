@@ -193,16 +193,24 @@ function dailyPriceRange(price: number | string, days: number) {
   return { low, high, tier };
 }
 
+function durationSavingsText(price: number | string, days: number) {
+  const tier = durationRateTier(days);
+  const daily = Number(price || 0);
+  const savings = daily > 0 && days > 0 ? daily * days * tier.rate : 0;
+  if (!tier.rate || savings <= 0) return "";
+  return `${tier.label}: save about $${savings.toFixed(2)} vs daily pricing.`;
+}
+
 const initialRentalSearch: RentalSearchInput = {
   pickupLocation: "Denver International Airport (DEN)",
   returnLocation: "Denver International Airport (DEN)",
   pickupDate: isoDateFromNow(6),
-  returnDate: isoDateFromNow(9),
+  returnDate: isoDateFromNow(13),
   pickupTime: "10:00 AM",
   returnTime: "10:00 AM",
   renterAge: "25+",
   discountCode: "",
-  days: 3,
+  days: 7,
   additionalDriverRequested: false,
   additionalDriverName: "",
   additionalDriverAge: ""
@@ -367,8 +375,8 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.rateMeta}>{cheapest ? `${cheapest.name} · ${cheapest.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}</Text>
           <Text style={styles.ratePhone}>Call / text: +1 9372518688</Text>
           <View style={styles.rateHeroFooter}>
-            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && onBookCar(cheapest, search, "hold")}>
-              <Text style={styles.bookNowText}>Book now</Text>
+            <TouchableOpacity style={styles.bookNow} onPress={() => cheapest && reviewCar(cheapest)}>
+              <Text style={styles.bookNowText}>Review trip</Text>
             </TouchableOpacity>
             <View style={styles.priceBadge}>
               <Text style={styles.ratePrice}>
@@ -543,8 +551,8 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
                 <Text style={styles.price}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
                 <Text style={styles.action}>Review</Text>
               </View>
-              {dailyPriceRange(car.daily_price, rentalDayCount).tier.rate > 0 ? (
-                <Text style={styles.savingsText}>{dailyPriceRange(car.daily_price, rentalDayCount).tier.label}: save vs daily pricing</Text>
+              {durationSavingsText(car.daily_price, rentalDayCount) ? (
+                <Text style={styles.savingsText}>{durationSavingsText(car.daily_price, rentalDayCount)}</Text>
               ) : null}
             </View>
           </TouchableOpacity>
