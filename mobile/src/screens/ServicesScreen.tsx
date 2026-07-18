@@ -46,6 +46,15 @@ type ServiceAction = {
 };
 
 type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | null;
+type ServicesView = "grid" | "rental";
+type ServiceTile = {
+  label: string;
+  icon?: ImageSourcePropType;
+  emoji?: string;
+  badge?: string;
+  badgeTone?: "red" | "green";
+  onPress?: () => void;
+};
 
 function bookingTitle(booking: RentalServiceBooking | null) {
   if (!booking) return "Select rental booking";
@@ -63,8 +72,9 @@ function mergeBooking(rows: RentalServiceBooking[], updated?: RentalServiceBooki
   return rows.map((booking) => (booking.id === updated.id ? updated : booking));
 }
 
-export function ServicesScreen({ user, onRequireLogin }: Props) {
+export function ServicesScreen({ user, onRequireLogin, onOpenHousing, onSelect }: Props) {
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
+  const [view, setView] = useState<ServicesView>("grid");
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [bookingMenuOpen, setBookingMenuOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
@@ -309,70 +319,114 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
   const selectedDocument = selectedDocumentSet?.docs?.[selectedDocName] || null;
   const selectedUpgrade = selectedBooking?.upgradeOptions?.find((option) => option.id === selectedVehicleId) || null;
   const estimatedPrice = selectedUpgrade?.estimatedTotalLabel || selectedBooking?.totalLabel || "";
+  const goAnywhereTiles: ServiceTile[] = [
+    { label: "Ride", icon: appAssets.ride, badge: "5%", onPress: () => onSelect("cars") },
+    { label: "Reserve", emoji: "📅", badge: "Promo", onPress: () => onSelect("cars") },
+    { label: "Hotels", icon: appAssets.bed, badge: "New" },
+    { label: "Transit", emoji: "🚋" },
+    { label: "2-Wheels", emoji: "🛴" },
+    { label: "Rental Cars", emoji: "🚘", badge: "Promo", onPress: () => setView("rental") },
+    { label: "Group Ride", icon: appAssets.ride },
+    { label: "Hourly", emoji: "🚘" },
+    { label: "Teens", emoji: "🎒" },
+    { label: "Seniors", emoji: "🚶" },
+    { label: "Housing", icon: appAssets.bed, onPress: onOpenHousing },
+    { label: "FChat", icon: appAssets.fchat }
+  ];
+  const deliveryTiles: ServiceTile[] = [
+    { label: "Food", emoji: "🥗" },
+    { label: "Grocery", emoji: "🛒" },
+    { label: "Convenience", emoji: "🧻" },
+    { label: "Alcohol", emoji: "🍾" },
+    { label: "Electronics", emoji: "🖱️" },
+    { label: "Health", emoji: "💊" },
+    { label: "Flowers", emoji: "💐" },
+    { label: "Retail", emoji: "🛍️" },
+    { label: "Beauty", emoji: "💄" },
+    { label: "Pet Supplies", emoji: "🦴" },
+    { label: "Packages", emoji: "📦" },
+    { label: "Baby", emoji: "🍼" }
+  ];
 
   return (
     <>
       <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>Services</Text>
-          <Text style={styles.title}>Rental Cars</Text>
-          <Text style={styles.subtitle}>Select a booking, then manage changes, cancellation, invoice, or trip details.</Text>
-        </View>
-
-        <View style={styles.bookingPanel}>
-          <Text style={styles.fieldLabel}>Rental booking</Text>
-          <TouchableOpacity
-            style={styles.bookingSelect}
-            onPress={() => {
-              if (!user) {
-                onRequireLogin();
-                return;
-              }
-              if (!bookings.length && !busy) void loadBookings();
-              setBookingMenuOpen((open) => !open);
-            }}
-            activeOpacity={0.82}
-          >
-            <View style={styles.bookingSelectText}>
-              <Text style={styles.bookingTitle} numberOfLines={1}>{bookingTitle(selectedBooking)}</Text>
-              <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy, user)}</Text>
+        {view === "grid" ? (
+          <>
+            <View style={styles.header}>
+              <Text style={styles.servicesTitle}>Services</Text>
             </View>
-            <Text style={styles.chevron}>{bookingMenuOpen ? "Up" : "Down"}</Text>
-          </TouchableOpacity>
-          {bookingMenuOpen ? (
-            <View style={styles.bookingMenu}>
-              {bookings.length ? bookings.map((booking) => (
+            <ServiceSection title="Go anywhere" tiles={goAnywhereTiles} />
+            <View style={styles.sectionDivider} />
+            <ServiceSection title="Get anything delivered" tiles={deliveryTiles} compact />
+          </>
+        ) : (
+          <>
+            <View style={styles.header}>
+              <TouchableOpacity style={styles.backButton} onPress={() => setView("grid")} activeOpacity={0.82}>
+                <Text style={styles.backButtonText}>‹ Services</Text>
+              </TouchableOpacity>
+              <Text style={styles.eyebrow}>Services</Text>
+              <Text style={styles.title}>Rental Cars</Text>
+              <Text style={styles.subtitle}>Select a booking, then manage changes, cancellation, invoice, or trip details.</Text>
+            </View>
+
+            <View style={styles.bookingPanel}>
+              <Text style={styles.fieldLabel}>Rental booking</Text>
+              <TouchableOpacity
+                style={styles.bookingSelect}
+                onPress={() => {
+                  if (!user) {
+                    onRequireLogin();
+                    return;
+                  }
+                  if (!bookings.length && !busy) void loadBookings();
+                  setBookingMenuOpen((open) => !open);
+                }}
+                activeOpacity={0.82}
+              >
+                <View style={styles.bookingSelectText}>
+                  <Text style={styles.bookingTitle} numberOfLines={1}>{bookingTitle(selectedBooking)}</Text>
+                  <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy, user)}</Text>
+                </View>
+                <Text style={styles.chevron}>{bookingMenuOpen ? "Up" : "Down"}</Text>
+              </TouchableOpacity>
+              {bookingMenuOpen ? (
+                <View style={styles.bookingMenu}>
+                  {bookings.length ? bookings.map((booking) => (
+                    <TouchableOpacity
+                      key={booking.id}
+                      style={[styles.bookingOption, selectedBooking?.id === booking.id && styles.selectedBookingOption]}
+                      onPress={() => {
+                        setSelectedBookingId(booking.id);
+                        setBookingMenuOpen(false);
+                      }}
+                    >
+                      <Text style={styles.bookingOptionTitle} numberOfLines={1}>{booking.carName}</Text>
+                      <Text style={styles.bookingOptionMeta} numberOfLines={1}>{booking.pickupDate} - {booking.returnDate} · {booking.statusLabel}</Text>
+                    </TouchableOpacity>
+                  )) : (
+                    <Text style={styles.emptyText}>{error || "No rental bookings found yet."}</Text>
+                  )}
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.actionGrid}>
+              {actions.map((action) => (
                 <TouchableOpacity
-                  key={booking.id}
-                  style={[styles.bookingOption, selectedBooking?.id === booking.id && styles.selectedBookingOption]}
-                  onPress={() => {
-                    setSelectedBookingId(booking.id);
-                    setBookingMenuOpen(false);
-                  }}
+                  key={action.label}
+                  style={[styles.actionButton, action.primary && styles.primaryAction]}
+                  onPress={action.onPress}
+                  activeOpacity={0.78}
                 >
-                  <Text style={styles.bookingOptionTitle} numberOfLines={1}>{booking.carName}</Text>
-                  <Text style={styles.bookingOptionMeta} numberOfLines={1}>{booking.pickupDate} - {booking.returnDate} · {booking.statusLabel}</Text>
+                  <Image source={action.icon} style={styles.actionIcon} resizeMode="contain" />
+                  <Text style={styles.actionLabel} numberOfLines={2}>{action.label}</Text>
                 </TouchableOpacity>
-              )) : (
-                <Text style={styles.emptyText}>{error || "No rental bookings found yet."}</Text>
-              )}
+              ))}
             </View>
-          ) : null}
-        </View>
-
-        <View style={styles.actionGrid}>
-          {actions.map((action) => (
-            <TouchableOpacity
-              key={action.label}
-              style={[styles.actionButton, action.primary && styles.primaryAction]}
-              onPress={action.onPress}
-              activeOpacity={0.78}
-            >
-              <Image source={action.icon} style={styles.actionIcon} resizeMode="contain" />
-              <Text style={styles.actionLabel} numberOfLines={2}>{action.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+          </>
+        )}
       </ScrollView>
 
       <Modal visible={panelMode !== null} transparent animationType="fade" onRequestClose={() => setPanelMode(null)}>
@@ -647,6 +701,37 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
   );
 }
 
+function ServiceSection({ title, tiles, compact }: { title: string; tiles: ServiceTile[]; compact?: boolean }) {
+  return (
+    <View style={styles.serviceSection}>
+      <Text style={styles.serviceSectionTitle}>{title}</Text>
+      <View style={styles.serviceTileGrid}>
+        {tiles.map((tile) => (
+          <TouchableOpacity
+            key={tile.label}
+            style={[styles.serviceTile, compact && styles.compactServiceTile]}
+            onPress={tile.onPress}
+            disabled={!tile.onPress}
+            activeOpacity={0.78}
+          >
+            {tile.badge ? (
+              <View style={[styles.tileBadge, tile.badgeTone === "green" && styles.greenTileBadge]}>
+                <Text style={styles.tileBadgeText}>{tile.badge}</Text>
+              </View>
+            ) : null}
+            {tile.icon ? (
+              <Image source={tile.icon} style={[styles.serviceTileIcon, compact && styles.compactTileIcon]} resizeMode="contain" />
+            ) : (
+              <Text style={[styles.serviceTileEmoji, compact && styles.compactTileEmoji]}>{tile.emoji}</Text>
+            )}
+            <Text style={styles.serviceTileLabel} numberOfLines={1}>{tile.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function panelTitle(mode: PanelMode) {
   if (mode === "modify") return "Modify reservation";
   if (mode === "cancel") return "Cancel reservation";
@@ -770,6 +855,105 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: 6
+  },
+  servicesTitle: {
+    color: theme.colors.text,
+    fontSize: 46,
+    fontWeight: "900"
+  },
+  serviceSection: {
+    gap: 14
+  },
+  serviceSectionTitle: {
+    color: theme.colors.text,
+    fontSize: 27,
+    fontWeight: "900"
+  },
+  serviceTileGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 14
+  },
+  serviceTile: {
+    width: "31%",
+    minHeight: 118,
+    borderRadius: 13,
+    backgroundColor: "#242424",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingTop: 20,
+    paddingBottom: 12,
+    position: "relative"
+  },
+  compactServiceTile: {
+    minHeight: 108
+  },
+  serviceTileIcon: {
+    width: 46,
+    height: 46,
+    marginBottom: 14
+  },
+  compactTileIcon: {
+    width: 42,
+    height: 42,
+    marginBottom: 12
+  },
+  serviceTileEmoji: {
+    fontSize: 42,
+    marginBottom: 14
+  },
+  compactTileEmoji: {
+    fontSize: 38,
+    marginBottom: 12
+  },
+  serviceTileLabel: {
+    color: theme.colors.soft,
+    fontSize: 16,
+    fontWeight: "800",
+    textAlign: "center"
+  },
+  tileBadge: {
+    position: "absolute",
+    top: -10,
+    alignSelf: "center",
+    minWidth: 50,
+    minHeight: 31,
+    borderRadius: 5,
+    backgroundColor: "#ff2d16",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 7,
+    zIndex: 2
+  },
+  greenTileBadge: {
+    backgroundColor: theme.colors.brand
+  },
+  tileBadgeText: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  sectionDivider: {
+    height: 4,
+    marginHorizontal: -theme.spacing.md,
+    backgroundColor: "#242424"
+  },
+  backButton: {
+    alignSelf: "flex-start",
+    minHeight: 38,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.07)",
+    justifyContent: "center",
+    paddingHorizontal: 13
+  },
+  backButtonText: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: "900"
   },
   eyebrow: {
     color: theme.colors.accent,
