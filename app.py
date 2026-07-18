@@ -38,6 +38,17 @@ OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
+
+
+def positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
+SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
@@ -1370,6 +1381,19 @@ def ensure_admin_account(con: sqlite3.Connection, email: str, password: str) -> 
             """,
             (admin["id"],),
         )
+
+
+def cleanup_expired_sessions(con: sqlite3.Connection) -> None:
+    idle_cutoff = f"-{SESSION_IDLE_TIMEOUT_DAYS} days"
+    absolute_cutoff = f"-{SESSION_ABSOLUTE_TIMEOUT_DAYS} days"
+    con.execute(
+        """
+        DELETE FROM sessions
+        WHERE datetime(created_at) < datetime('now', ?)
+           OR datetime(COALESCE(NULLIF(last_seen_at, ''), created_at)) < datetime('now', ?)
+        """,
+        (absolute_cutoff, idle_cutoff),
+    )
 
 
 def repair_normalized_auth_emails(con: sqlite3.Connection) -> None:
@@ -4494,6 +4518,7 @@ def init_db() -> None:
         ensure_column(con, "workspace_groups", "slack_url", "slack_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "sessions", "last_seen_at", "last_seen_at TEXT NOT NULL DEFAULT ''")
         con.execute("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE last_seen_at = ''")
+        cleanup_expired_sessions(con)
         ensure_column(con, "workspace_groups", "slack_channel_id", "slack_channel_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_groups", "slack_channel_name", "slack_channel_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
@@ -14514,16 +14539,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not token:
             return None
         with db() as con:
+            idle_cutoff = f"-{SESSION_IDLE_TIMEOUT_DAYS} days"
+            absolute_cutoff = f"-{SESSION_ABSOLUTE_TIMEOUT_DAYS} days"
             user = con.execute(
                 """
                 SELECT users.* FROM users
                 JOIN sessions ON sessions.user_id = users.id
                 WHERE sessions.token = ?
+                  AND datetime(sessions.created_at) >= datetime('now', ?)
+                  AND datetime(COALESCE(NULLIF(sessions.last_seen_at, ''), sessions.created_at)) >= datetime('now', ?)
                 """,
-                (token,),
+                (token, absolute_cutoff, idle_cutoff),
             ).fetchone()
             if user:
                 con.execute("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+            else:
+                con.execute("DELETE FROM sessions WHERE token = ?", (token,))
             return user
 
     def send_html(self, body: bytes, status: int = 200) -> None:
@@ -22184,6 +22215,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     403,
                 )
                 return
+            cleanup_expired_sessions(con)
             token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, int(row_value(user, "id") or 0)))
         self.send_json({"ok": True, "token": token, "user": mobile_user_payload(user)})
@@ -22215,6 +22247,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
                 user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                cleanup_expired_sessions(con)
                 session_token = secrets.token_urlsafe(32)
                 con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
         except sqlite3.IntegrityError:

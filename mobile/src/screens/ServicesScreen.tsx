@@ -18,6 +18,7 @@ import {
   getRentalBookings,
   requestRentalCancellation,
   requestRentalModification,
+  setAuthToken,
   updateMobileStudentVerification
 } from "../api/client";
 import { appAssets } from "../assets";
@@ -109,6 +110,7 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Could not load rental bookings.";
       if (/login is required|401|unauthorized|not authorized/i.test(message)) {
+        setAuthToken("");
         setBookings([]);
         setSelectedBookingId("");
         setError("Login again to view and manage your rental bookings.");
