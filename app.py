@@ -11429,6 +11429,40 @@ def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, ob
     }
 
 
+def mobile_rental_service_booking_payload(row: sqlite3.Row | dict[str, object], origin: str = "") -> dict[str, object]:
+    payload = mobile_booking_payload(row)
+    breakdown = booking_price_breakdown(row)
+    booking_id = row_value(row, "booking_id") or row_value(row, "id")
+    latest_transaction = None
+    with db() as con:
+        latest_transaction = con.execute(
+            """
+            SELECT invoice_number, invoice_pdf_url
+            FROM transactions
+            WHERE booking_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(row_value(row, "id") or 0),),
+        ).fetchone()
+    manage_url = f"/manage-booking?booking_id={urllib.parse.quote(str(booking_id))}"
+    if origin:
+        manage_url = f"{origin.rstrip('/')}{manage_url}"
+    payload.update(
+        {
+            "statusLabel": booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")),
+            "paymentLabel": payment_status_label(row_value(row, "payment_status")),
+            "totalLabel": format_money(breakdown.get("total")),
+            "dueNowLabel": format_money(breakdown.get("booking_hold")),
+            "dueAtPickupLabel": format_money(breakdown.get("due_at_pickup")),
+            "invoiceNumber": row_value(latest_transaction, "invoice_number") if latest_transaction else "",
+            "invoiceUrl": row_value(latest_transaction, "invoice_pdf_url") if latest_transaction else "",
+            "manageUrl": manage_url,
+        }
+    )
+    return payload
+
+
 def mobile_rental_policy_payload(row: sqlite3.Row | dict[str, object] | None = None) -> dict[str, object]:
     timeline = cancellation_policy_timeline(row) if row else {
         "day_label": "Calculated after pickup date",
@@ -14099,6 +14133,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rentals":
             self.api_mobile_rentals(parsed)
             return
+        if parsed.path == "/api/mobile/rentals/bookings":
+            self.api_mobile_rental_bookings()
+            return
         if parsed.path == "/api/mobile/rentals/policy":
             self.send_json({"ok": True, "policy": mobile_rental_policy_payload()})
             return
@@ -14220,6 +14257,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
             "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
+            "/api/mobile/rentals/cancel-request": self.api_mobile_rental_cancel_request,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -22185,6 +22223,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_mobile_rental_bookings(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to view rental bookings."}, 401)
+            return
+        bookings = get_bookings_for_user(int(row_value(user, "id") or 0))
+        origin = self.public_origin()
+        self.send_json(
+            {
+                "ok": True,
+                "bookings": [mobile_rental_service_booking_payload(booking, origin) for booking in bookings],
+            }
+        )
+
     def api_mobile_book_rental(self) -> None:
         user = self.current_user()
         if not user:
@@ -22247,6 +22299,62 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Selected car is not available."}, 404)
             return
         self.send_json({"ok": True, "quote": mobile_rental_quote_payload(quote)})
+
+    def api_mobile_rental_cancel_request(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to cancel a rental booking."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
+            return
+        if row_value(booking, "booking_status") == "CANCELLED":
+            self.send_json({"ok": False, "error": "This booking is already cancelled."}, 409)
+            return
+        if row_value(booking, "payment_status") == "REFUNDED":
+            self.send_json({"ok": False, "error": "This booking has already been refunded."}, 409)
+            return
+        reason = str(payload.get("reason") or "Customer cancellation request").strip()[:240]
+        auto_cancel = not cancellation_requires_admin_review(booking)
+        next_status = "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED"
+        refund_message = ""
+        if auto_cancel and row_value(booking, "payment_status") == "HOLD_PAID":
+            next_payment_status, refund_message = auto_refund_booking_payments(int(row_value(booking, "id") or 0))
+        elif row_value(booking, "payment_status") in {"PAID", "HOLD_PAID"}:
+            next_payment_status = "REFUND_REVIEW"
+        else:
+            next_payment_status = row_value(booking, "payment_status")
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = ?,
+                    status = ?,
+                    payment_status = ?,
+                    cancellation_reason = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (next_status, next_status, next_payment_status, reason, row_value(booking, "id"), user_id),
+            )
+            if auto_cancel:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
+            ticket_id = make_cancellation_task(con, booking, user, reason, auto_cancel)
+        updated = get_booking_for_user_by_identifier(user_id, row_value(booking, "booking_id"))
+        message = (
+            f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created."
+            if auto_cancel
+            else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
+        )
+        self.send_json(
+            {
+                "ok": True,
+                "message": message,
+                "booking": mobile_rental_service_booking_payload(updated, self.public_origin()) if updated else None,
+            }
+        )
 
     def api_mobile_rental_checkout_session(self) -> None:
         user = self.current_user()

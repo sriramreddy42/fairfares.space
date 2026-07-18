@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -257,6 +257,19 @@ export async function startRentalCheckout(
     }
   }
   throw new Error(lastError || "Unable to open Stripe checkout.");
+}
+
+export async function getRentalBookings() {
+  const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
+  return payload.bookings || [];
+}
+
+export async function requestRentalCancellation(bookingId: string, reason = "Customer cancellation request") {
+  return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>("/api/mobile/rentals/cancel-request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, reason })
+  });
 }
 
 export async function getSiteServices() {

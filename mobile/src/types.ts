@@ -135,6 +135,17 @@ export type RentalBooking = {
   holdRemainingSeconds: number;
 };
 
+export type RentalServiceBooking = RentalBooking & {
+  statusLabel: string;
+  paymentLabel: string;
+  totalLabel: string;
+  dueNowLabel: string;
+  dueAtPickupLabel: string;
+  invoiceNumber: string;
+  invoiceUrl: string;
+  manageUrl: string;
+};
+
 export type RentalSearchInput = {
   carId?: number;
   pickupLocation: string;
