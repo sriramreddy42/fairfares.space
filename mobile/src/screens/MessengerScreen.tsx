@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
   blockChatUser,
   createChatCommunity,
@@ -16,6 +16,7 @@ import {
   sendChatMessage,
   startChatForPost
 } from "../api/client";
+import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { BootstrapPayload, ChatConversation, ChatMessage, Community, HousingPost } from "../types";
 
@@ -459,8 +460,8 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Chats</Text>
+        <View style={styles.chatBrandWrap}>
+          <Image source={appAssets.fchatWordmark} style={styles.chatBrand} resizeMode="contain" />
         </View>
         <View style={styles.headerIcons}>
           <TouchableOpacity style={styles.headerIcon}><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
@@ -620,6 +621,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
   eyebrow: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: "900" },
+  chatBrandWrap: { flex: 1, minWidth: 0, gap: 2 },
+  chatBrand: { width: 152, height: 48 },
   headerIcons: { flexDirection: "row", gap: 8, marginLeft: "auto", marginRight: 10 },
   headerIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   headerIconText: { color: theme.colors.muted, fontSize: 19, fontWeight: "900" },
