@@ -22,16 +22,18 @@ import {
 } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
-import { Car, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
+import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "explorer" | "housing" | "local";
 
 type Props = {
   cars: Car[];
   services: ServiceItem[];
+  user: FairFaresUser | null;
   selected: ServiceKey;
   onSelect: (service: ServiceKey) => void;
   onOpenHousing: () => void;
+  onRequireLogin: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
 };
 
@@ -52,7 +54,7 @@ function bookingTitle(booking: RentalServiceBooking | null) {
 function selectedBookingCopy(booking: RentalServiceBooking | null, busy: boolean) {
   if (booking) return `${booking.statusLabel} - ${booking.totalLabel}`;
   if (busy) return "Loading bookings...";
-  return "Sign in and book a rental car first";
+  return "Login to view or manage rental bookings";
 }
 
 function mergeBooking(rows: RentalServiceBooking[], updated?: RentalServiceBooking) {
@@ -60,7 +62,7 @@ function mergeBooking(rows: RentalServiceBooking[], updated?: RentalServiceBooki
   return rows.map((booking) => (booking.id === updated.id ? updated : booking));
 }
 
-export function ServicesScreen(_props: Props) {
+export function ServicesScreen({ user, onRequireLogin }: Props) {
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [bookingMenuOpen, setBookingMenuOpen] = useState(false);
@@ -92,6 +94,12 @@ export function ServicesScreen(_props: Props) {
   const [supportMessage, setSupportMessage] = useState("");
 
   async function loadBookings() {
+    if (!user) {
+      setBookings([]);
+      setSelectedBookingId("");
+      setError("");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -107,7 +115,7 @@ export function ServicesScreen(_props: Props) {
 
   useEffect(() => {
     void loadBookings();
-  }, []);
+  }, [user?.id]);
 
   const selectedBooking = useMemo(
     () => bookings.find((booking) => booking.id === selectedBookingId) || bookings[0] || null,
@@ -142,8 +150,12 @@ export function ServicesScreen(_props: Props) {
   }, [selectedBooking?.id]);
 
   function requireBooking(action: (booking: RentalServiceBooking) => void) {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     if (!selectedBooking) {
-      Alert.alert("Choose a booking", "Select one of your rental car bookings first.");
+      Alert.alert("No rental bookings yet", "Book a rental car first, then your reservation tools will appear here.");
       return;
     }
     action(selectedBooking);
@@ -295,7 +307,11 @@ export function ServicesScreen(_props: Props) {
 
         <View style={styles.bookingPanel}>
           <Text style={styles.fieldLabel}>Rental booking</Text>
-          <TouchableOpacity style={styles.bookingSelect} onPress={() => setBookingMenuOpen((open) => !open)} activeOpacity={0.82}>
+          <TouchableOpacity
+            style={styles.bookingSelect}
+            onPress={() => (user ? setBookingMenuOpen((open) => !open) : onRequireLogin())}
+            activeOpacity={0.82}
+          >
             <View style={styles.bookingSelectText}>
               <Text style={styles.bookingTitle} numberOfLines={1}>{bookingTitle(selectedBooking)}</Text>
               <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy)}</Text>

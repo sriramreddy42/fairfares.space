@@ -605,9 +605,11 @@ export default function App() {
       <ServicesScreen
         cars={cars}
         services={services}
+        user={data?.user || null}
         selected={selectedService}
         onSelect={setSelectedService}
         onOpenHousing={() => setActiveTab("housing")}
+        onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
       />
     ) : activeTab === "housing" || activeTab === "home" ? (
