@@ -9,13 +9,14 @@ const tabs: Array<{
   key: TabKey;
   label: string;
   icon: ImageSourcePropType;
-  iconSize?: number;
+  iconWidth: number;
+  iconHeight: number;
 }> = [
-  { key: "home", label: "Home", icon: appAssets.navHome, iconSize: 29 },
-  { key: "services", label: "Services", icon: appAssets.navServices, iconSize: 30 },
-  { key: "activity", label: "Activity", icon: appAssets.navActivity, iconSize: 30 },
-  { key: "messenger", label: "Fchat", icon: appAssets.fchat, iconSize: 32 },
-  { key: "profile", label: "Account", icon: appAssets.profile, iconSize: 30 }
+  { key: "home", label: "Home", icon: appAssets.navHome, iconWidth: 31, iconHeight: 31 },
+  { key: "services", label: "Services", icon: appAssets.navServices, iconWidth: 31, iconHeight: 31 },
+  { key: "activity", label: "Activity", icon: appAssets.navActivity, iconWidth: 31, iconHeight: 31 },
+  { key: "messenger", label: "Fchat", icon: appAssets.fchat, iconWidth: 43, iconHeight: 31 },
+  { key: "profile", label: "Account", icon: appAssets.profile, iconWidth: 31, iconHeight: 31 }
 ];
 
 type Props = {
@@ -41,7 +42,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
                 source={tab.icon}
                 style={[
                   styles.iconImage,
-                  tab.iconSize ? { width: tab.iconSize, height: tab.iconSize } : null,
+                  { width: tab.iconWidth, height: tab.iconHeight },
                   !isActive && styles.inactiveIcon
                 ]}
                 resizeMode="contain"
@@ -85,8 +86,8 @@ const styles = StyleSheet.create({
     borderRadius: 28
   },
   icon: {
-    width: 28,
-    height: 28,
+    width: 44,
+    height: 31,
     alignItems: "center",
     justifyContent: "center"
   },
