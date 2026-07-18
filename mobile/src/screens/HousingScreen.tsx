@@ -211,6 +211,7 @@ export function HousingScreen({
   const [rentalSearched, setRentalSearched] = useState(false);
   const [selectedRentalCar, setSelectedRentalCar] = useState<Car | null>(null);
   const [rentalQuote, setRentalQuote] = useState<RentalQuote | null>(null);
+  const [rentalCheckoutInfo, setRentalCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
@@ -530,13 +531,31 @@ export function HousingScreen({
         </View>
         {rentalRows.length ? (
           <View style={styles.carList}>
+            <Modal visible={Boolean(rentalQuote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setRentalQuote(null)}>
+              <View style={styles.checkoutScreen}>
+                <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
+                  <View style={styles.checkoutHeader}>
+                    <View>
+                      <Text style={styles.reviewEyebrow}>Checkout</Text>
+                      <Text style={styles.reviewTitle}>Finalize trip</Text>
+                    </View>
+                    <TouchableOpacity style={styles.checkoutClose} onPress={() => setRentalQuote(null)}>
+                      <Text style={styles.checkoutCloseText}>X</Text>
+                    </TouchableOpacity>
+                  </View>
             {rentalQuote ? (
               <View style={styles.rentalReviewPanel}>
-                <Text style={styles.reviewEyebrow}>Checkout</Text>
-                <Text style={styles.reviewTitle}>Finalize trip</Text>
                 <Text style={styles.reviewCarTitle}>{rentalQuote.booking.carName || selectedRentalCar?.name}</Text>
                 <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupLocation}</Text>
                 <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupDate} {rentalQuote.booking.pickupTime} to {rentalQuote.booking.returnDate} {rentalQuote.booking.returnTime}</Text>
+                <View style={styles.reviewInfoCard}>
+                  <Text style={styles.reviewInfoTitle}>Your information</Text>
+                  <TextInput value={rentalCheckoutInfo.firstName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, firstName: text }))} placeholder="First name" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} />
+                  <TextInput value={rentalCheckoutInfo.lastName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, lastName: text }))} placeholder="Last name" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} />
+                  <TextInput value={rentalCheckoutInfo.email} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, email: text }))} placeholder="Email address" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} autoCapitalize="none" />
+                  <TextInput value={rentalCheckoutInfo.phone} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, phone: text }))} placeholder="Mobile number" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} keyboardType="phone-pad" />
+                  <Text style={styles.reviewPolicy}>Used for booking confirmation, pickup coordination, and rental updates.</Text>
+                </View>
                 <View style={styles.reviewGrid}>
                   <Text style={styles.reviewItem}>Trip: {rentalQuote.booking.days} days</Text>
                   <Text style={styles.reviewItem}>Daily: {dollars(rentalQuote.breakdown.effectiveDaily)}</Text>
@@ -559,6 +578,9 @@ export function HousingScreen({
                 <Text style={styles.reviewPolicy}>{rentalQuote.policy.cancellation.cutoff_copy}</Text>
               </View>
             ) : null}
+                </ScrollView>
+              </View>
+            </Modal>
             {rentalRows.map((car) => {
               const image = absoluteAssetUrl(car.image_url);
               return (
@@ -931,6 +953,11 @@ const styles = StyleSheet.create({
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
   carMiniAction: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900", alignSelf: "flex-start", marginTop: 4 },
+  checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  checkoutContent: { padding: theme.spacing.md, paddingTop: 54, paddingBottom: 120, gap: theme.spacing.md },
+  checkoutHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  checkoutClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center" },
+  checkoutCloseText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
   rentalReviewPanel: { backgroundColor: "rgba(17,24,39,0.88)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10 },
   reviewEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   reviewTitle: { color: theme.colors.text, fontSize: 28, fontWeight: "900" },
@@ -940,6 +967,9 @@ const styles = StyleSheet.create({
   reviewItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
   reviewTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   reviewSavings: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
+  reviewInfoCard: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 12, gap: 8 },
+  reviewInfoTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  reviewInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontWeight: "800" },
   reviewActions: { flexDirection: "row", gap: 10 },
   reviewHoldButton: { flex: 1, backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: "center" },
   reviewHoldText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },

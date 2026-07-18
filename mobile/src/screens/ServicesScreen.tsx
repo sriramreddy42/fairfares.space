@@ -226,6 +226,7 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
   const [visibleCars, setVisibleCars] = useState<Car[]>(cars);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
   const [quote, setQuote] = useState<RentalQuote | null>(null);
+  const [checkoutInfo, setCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
@@ -463,10 +464,20 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
           <Text style={styles.searchButtonText}>{busy ? "Searching..." : "Search cars"}</Text>
         </TouchableOpacity>
       </View>
-      {quote ? (
+      <Modal visible={Boolean(quote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setQuote(null)}>
+        <View style={styles.checkoutScreen}>
+          <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.checkoutHeader}>
+              <View>
+                <Text style={styles.quoteEyebrow}>Checkout</Text>
+                <Text style={styles.panelTitle}>Finalize trip</Text>
+              </View>
+              <TouchableOpacity style={styles.checkoutClose} onPress={() => setQuote(null)}>
+                <Text style={styles.checkoutCloseText}>X</Text>
+              </TouchableOpacity>
+            </View>
+        {quote ? (
         <View style={styles.quotePanel}>
-          <Text style={styles.quoteEyebrow}>Checkout</Text>
-          <Text style={styles.panelTitle}>Finalize trip</Text>
           <View style={styles.reviewCard}>
             <View style={styles.reviewThumbWrap}>
               {selectedCar && absoluteAssetUrl(selectedCar.image_url) ? (
@@ -490,6 +501,16 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
             <View style={styles.paymentTimer}>
               <Text style={styles.paymentTimerText}>{quote.policy.holdMinutes}:00</Text>
             </View>
+          </View>
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>Your information</Text>
+            <View style={styles.checkoutInfoGrid}>
+              <TextInput value={checkoutInfo.firstName} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, firstName: text }))} placeholder="First name" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} />
+              <TextInput value={checkoutInfo.lastName} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, lastName: text }))} placeholder="Last name" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} />
+              <TextInput value={checkoutInfo.email} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, email: text }))} placeholder="Email address" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} autoCapitalize="none" />
+              <TextInput value={checkoutInfo.phone} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, phone: text }))} placeholder="Mobile number" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} keyboardType="phone-pad" />
+            </View>
+            <Text style={styles.policyText}>Used for booking confirmation, pickup coordination, and rental updates.</Text>
           </View>
           <View style={styles.quoteGrid}>
             <Text style={styles.quoteItem}>Trip: {quote.booking.days} days</Text>
@@ -538,7 +559,10 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
             </TouchableOpacity>
           </View>
         </View>
-      ) : null}
+        ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
       {rows.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
@@ -662,6 +686,11 @@ const styles = StyleSheet.create({
   twoColField: { flex: 1 },
   searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  checkoutContent: { padding: theme.spacing.md, paddingTop: 54, paddingBottom: 120, gap: theme.spacing.md },
+  checkoutHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  checkoutClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center" },
+  checkoutCloseText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
   quotePanel: { backgroundColor: "rgba(17,24,39,0.86)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10, shadowColor: "#000", shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
   quoteEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   reviewCard: { flexDirection: "row", gap: 12, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 10 },
@@ -681,6 +710,8 @@ const styles = StyleSheet.create({
   savingsBanner: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
   policyCard: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 12, gap: 6 },
   policyTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  checkoutInfoGrid: { gap: 8 },
+  checkoutInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontWeight: "800" },
   policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   paymentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
