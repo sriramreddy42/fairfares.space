@@ -14258,6 +14258,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
             "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
             "/api/mobile/rentals/cancel-request": self.api_mobile_rental_cancel_request,
+            "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
+            "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
+            "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -22353,6 +22356,196 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "message": message,
                 "booking": mobile_rental_service_booking_payload(updated, self.public_origin()) if updated else None,
+            }
+        )
+
+    def api_mobile_rental_modify_request(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to modify a rental booking."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
+            return
+        if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED"}:
+            self.send_json({"ok": False, "error": "This booking cannot be modified now."}, 400)
+            return
+        new_pickup_date = str(payload.get("pickupDate") or payload.get("pickup_date") or row_value(booking, "pickup_date")).strip()
+        new_pickup_time = str(payload.get("pickupTime") or payload.get("pickup_time") or row_value(booking, "pickup_time")).strip()
+        new_return_date = str(payload.get("returnDate") or payload.get("return_date") or row_value(booking, "dropoff_date")).strip()
+        new_return_time = str(payload.get("returnTime") or payload.get("return_time") or row_value(booking, "dropoff_time")).strip()
+        new_pickup_location = str(payload.get("pickupLocation") or payload.get("pickup_location") or row_value(booking, "pickup_location")).strip()
+        new_return_location = str(payload.get("returnLocation") or payload.get("return_location") or row_value(booking, "dropoff_location")).strip()
+        note = str(payload.get("note") or "").strip()[:400]
+        requested_start = parse_booking_datetime(new_pickup_date, new_pickup_time)
+        requested_end = parse_booking_datetime(new_return_date, new_return_time)
+        if requested_start and requested_end and requested_end <= requested_start:
+            self.send_json({"ok": False, "error": "Return date and time must be after pickup date and time."}, 400)
+            return
+        next_days = rental_day_count(requested_start, requested_end, row_value(booking, "days") or 1)
+        discount_amount = calculate_booking_discount_amount(
+            float(row_value(booking, "daily_price") or 0),
+            next_days,
+            get_valid_discount(row_value(booking, "discount_code")),
+        )
+        additional_driver_requested = str(row_value(booking, "additional_driver_requested")).lower() in {"1", "true", "on", "yes"}
+        additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
+        breakdown = rental_price_breakdown(row_value(booking, "daily_price") or 0, next_days, discount_amount, additional_driver_fee)
+        changes = []
+        if new_pickup_location != row_value(booking, "pickup_location"):
+            changes.append(f"Pickup location changed to {new_pickup_location}")
+        if new_return_location != row_value(booking, "dropoff_location"):
+            changes.append(f"Return location changed to {new_return_location}")
+        if new_pickup_date != row_value(booking, "pickup_date") or new_pickup_time != row_value(booking, "pickup_time"):
+            changes.append(f"Pickup changed to {new_pickup_date} at {new_pickup_time}")
+        if new_return_date != row_value(booking, "dropoff_date") or new_return_time != row_value(booking, "dropoff_time"):
+            changes.append(f"Return changed to {new_return_date} at {new_return_time}")
+        if note:
+            changes.append(f"Customer note: {note}")
+        change_note = "; ".join(changes) or "Trip modification review requested"
+        with db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET pickup_date = ?,
+                    pickup_time = ?,
+                    dropoff_date = ?,
+                    dropoff_time = ?,
+                    pickup_location = ?,
+                    dropoff_location = ?,
+                    return_location = ?,
+                    days = ?,
+                    subtotal_price = ?,
+                    discount_amount = ?,
+                    tax_fee_amount = ?,
+                    booking_hold_amount = ?,
+                    due_at_pickup_amount = ?,
+                    estimated_market_total = ?,
+                    fairfares_savings_amount = ?,
+                    total_price = ?,
+                    booking_status = 'MODIFIED',
+                    status = 'MODIFIED',
+                    cancellation_reason = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    new_pickup_date,
+                    new_pickup_time,
+                    new_return_date,
+                    new_return_time,
+                    new_pickup_location,
+                    new_return_location,
+                    new_return_location,
+                    next_days,
+                    breakdown["base"],
+                    discount_amount,
+                    breakdown["tax_fee_amount"],
+                    breakdown["booking_hold"],
+                    breakdown["due_at_pickup"],
+                    breakdown["market_total"],
+                    breakdown["savings"],
+                    breakdown["total"],
+                    change_note,
+                    row_value(booking, "id"),
+                    user_id,
+                ),
+            )
+        updated = get_booking_for_user_by_identifier(user_id, row_value(booking, "booking_id"))
+        self.send_json(
+            {
+                "ok": True,
+                "message": f"Modification request sent: {change_note}",
+                "booking": mobile_rental_service_booking_payload(updated, self.public_origin()) if updated else None,
+            }
+        )
+
+    def api_mobile_rental_documents_email(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to email rental documents."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Booking documents not found."}, 404)
+            return
+        if row_value(booking, "booking_status") not in {"PICKED_UP", "RETURNED", "CANCELLED"}:
+            self.send_json({"ok": False, "error": "Documents can be retrieved once pickup is completed."}, 400)
+            return
+        documents = get_booking_documents(int(row_value(booking, "id") or 0))
+        if not documents:
+            self.send_json({"ok": False, "error": "Documents are not generated yet."}, 404)
+            return
+        email = normalize_email(payload.get("email") or row_value(user, "email") or "")
+        outbox_file, delivery_status = send_booking_documents_email(email, row_value(user, "name"), booking, documents, self.public_origin())
+        message = f"Documents emailed to {email}." if delivery_status.startswith("sent") else f"Documents email copy saved for {email}."
+        self.send_json({"ok": True, "message": message, "deliveryStatus": delivery_status, "outboxFile": str(outbox_file)})
+
+    def api_mobile_rental_support_ticket(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to create a support ticket."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        ticket_id = make_ticket_id()
+        topic = str(payload.get("topic") or "Rental support").strip()[:120]
+        message = str(payload.get("message") or "").strip()[:1200]
+        urgent = bool(payload.get("urgent"))
+        priority = classify_support_priority(topic, urgent, message)
+        due_at = support_due_at(priority)
+        with db() as con:
+            while con.execute("SELECT 1 FROM support_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone():
+                ticket_id = make_ticket_id()
+            con.execute(
+                """
+                INSERT INTO support_tickets
+                (ticket_id, booking_id, user_id, topic, preferred_contact, message, urgent, priority,
+                 escalated_to_oncall, escalation_reason, escalated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END)
+                """,
+                (
+                    ticket_id,
+                    int(row_value(booking, "id") or 0) if booking else None,
+                    user_id,
+                    topic,
+                    str(payload.get("preferredContact") or payload.get("preferred_contact") or "FairFares app").strip()[:80],
+                    message,
+                    1 if urgent else 0,
+                    priority,
+                    1 if priority == "P0" else 0,
+                    "Auto-escalated because the customer ticket was classified P0." if priority == "P0" else "",
+                    1 if priority == "P0" else 0,
+                ),
+            )
+            ticket_pk = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            ticket_row = con.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_pk,)).fetchone()
+            alert_body = (
+                f"{priority} support ticket created\n"
+                f"SLA: {support_sla_text(priority)}\n"
+                f"Ticket: {ticket_id}\n"
+                f"Customer: {row_value(user, 'name')} · {row_value(user, 'email')} · {row_value(user, 'phone') or 'No phone'}\n"
+                f"Booking: {row_value(booking, 'booking_id') or 'No selected booking'}\n"
+                f"Topic: {topic}\n"
+                f"Message: {message or '-'}"
+            )
+            if priority == "P0" and ticket_row:
+                queue_oncall_escalation_alert(con, ticket_row, None, "Auto-escalated because the customer ticket was classified P0.")
+            else:
+                queue_support_alerts(con, ticket_pk, ticket_id, priority, f"{priority} FairFares support ticket {ticket_id}", alert_body)
+        notify_slack_support_ticket(ticket_id, priority, topic, user, self.public_origin(), escalated=priority == "P0")
+        self.send_json(
+            {
+                "ok": True,
+                "ticketId": ticket_id,
+                "priority": priority,
+                "sla": support_sla_text(priority),
+                "message": f"Ticket {ticket_id} created as {priority}. SLA: {support_sla_text(priority)}. Target response by {due_at}.",
             }
         )
 

@@ -272,6 +272,46 @@ export async function requestRentalCancellation(bookingId: string, reason = "Cus
   });
 }
 
+export async function requestRentalModification(
+  bookingId: string,
+  changes: {
+    pickupLocation?: string;
+    returnLocation?: string;
+    pickupDate?: string;
+    returnDate?: string;
+    pickupTime?: string;
+    returnTime?: string;
+    note?: string;
+  }
+) {
+  return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>("/api/mobile/rentals/modify-request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, ...changes })
+  });
+}
+
+export async function emailRentalDocuments(bookingId: string, email = "") {
+  return request<{ ok: boolean; message: string }>("/api/mobile/rentals/documents-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, email })
+  });
+}
+
+export async function createRentalSupportTicket(
+  bookingId: string,
+  topic: string,
+  message: string,
+  urgent = false
+) {
+  return request<{ ok: boolean; message: string; ticketId: string; priority: string; sla: string }>("/api/mobile/rentals/support-ticket", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, topic, message, urgent, preferredContact: "FairFares app" })
+  });
+}
+
 export async function getSiteServices() {
   try {
     const payload = await request<{ services: ServiceItem[] }>("/api/site");
