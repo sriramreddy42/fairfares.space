@@ -209,7 +209,7 @@ export default function App() {
     const cleanCity = normalizeCityInput(searchCity);
     setSearchSuggestionsLoading(true);
     const timer = setTimeout(() => {
-      getAccommodationLocationOptions(cleanCity)
+      getAccommodationLocationOptions(cleanCity, searchArea)
         .then((options) => {
           const suggested = (options?.suggested || []).filter(Boolean).slice(0, 8);
           setSearchSuggestions(suggested);
@@ -224,7 +224,7 @@ export default function App() {
     return () => {
       clearTimeout(timer);
     };
-  }, [searchOpen, searchCity]);
+  }, [searchOpen, searchCity, searchArea]);
 
   function openMessage(post: HousingPost) {
     setPendingPost(post);
@@ -526,14 +526,10 @@ export default function App() {
   }
 
   function searchSuggestionChips() {
-    const rawSuggestions = searchSuggestions.length
-      ? searchSuggestions
-      : searchCity.toLowerCase().includes("denver")
-        ? ["Union Station", "DU", "Aurora", "Englewood"]
-        : [];
-    return rawSuggestions
-      .filter((value) => value.length <= 28 && !/department|public works|network/i.test(value))
-      .slice(0, 4);
+    return searchSuggestions
+      .map((value) => value.replace(/,\s*(USA|United States)$/i, "").trim())
+      .filter((value) => value && value.length <= 48 && !/department|public works|network|stadium|urgent care|health center|convention center|airport|car rental|hertz|tavern|market|mural|city council|mayor|office|pavilion|city o' city|cuernavaca|comedy works|hilton|hotel|improper city/i.test(value))
+      .slice(0, 6);
   }
 
   async function submitLogin() {
@@ -570,7 +566,7 @@ export default function App() {
     setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(signupName, identifier, signupPhone, password);
-      Alert.alert("Signup created", payload.message);
+      setAuthMessage(payload.message || "Account created. You are signed in on this device.");
       setLoginOpen(false);
       setSignupName("");
       setSignupPhone("");

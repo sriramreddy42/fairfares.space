@@ -52,10 +52,10 @@ function bookingTitle(booking: RentalServiceBooking | null) {
   return `${booking.carName || "Rental car"} - ${booking.pickupDate || "Pickup pending"}`;
 }
 
-function selectedBookingCopy(booking: RentalServiceBooking | null, busy: boolean) {
+function selectedBookingCopy(booking: RentalServiceBooking | null, busy: boolean, user: FairFaresUser | null) {
   if (booking) return `${booking.statusLabel} - ${booking.totalLabel}`;
   if (busy) return "Loading bookings...";
-  return "Login to view or manage rental bookings";
+  return user ? "No rental bookings found for this account yet." : "Login to view or manage rental bookings";
 }
 
 function mergeBooking(rows: RentalServiceBooking[], updated?: RentalServiceBooking) {
@@ -116,7 +116,9 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
         setError("Login again to view and manage your rental bookings.");
         onRequireLogin();
       } else if (/could not connect|failed to fetch|network request failed/i.test(message)) {
-        setError("We could not refresh your rental bookings. Check your connection and try again.");
+        setBookings([]);
+        setSelectedBookingId("");
+        setError("Bookings could not be refreshed. Pull down or tap the selector to retry.");
       } else {
         setError(message);
       }
@@ -321,12 +323,19 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
           <Text style={styles.fieldLabel}>Rental booking</Text>
           <TouchableOpacity
             style={styles.bookingSelect}
-            onPress={() => (user ? setBookingMenuOpen((open) => !open) : onRequireLogin())}
+            onPress={() => {
+              if (!user) {
+                onRequireLogin();
+                return;
+              }
+              if (!bookings.length && !busy) void loadBookings();
+              setBookingMenuOpen((open) => !open);
+            }}
             activeOpacity={0.82}
           >
             <View style={styles.bookingSelectText}>
               <Text style={styles.bookingTitle} numberOfLines={1}>{bookingTitle(selectedBooking)}</Text>
-              <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy)}</Text>
+              <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy, user)}</Text>
             </View>
             <Text style={styles.chevron}>{bookingMenuOpen ? "Up" : "Down"}</Text>
           </TouchableOpacity>

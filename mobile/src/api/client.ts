@@ -94,10 +94,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
       }
       if (!response.ok) {
-        throw new Error(payload.error || `FairFares request failed: ${response.status}`);
+        const httpError = new Error(payload.error || `FairFares request failed: ${response.status}`);
+        (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
+        throw httpError;
       }
       return payload;
     } catch (error) {
+      if ((error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus) {
+        throw error;
+      }
       lastError = error instanceof Error ? error.message : String(error);
     } finally {
       clearTimeout(timeout);
@@ -168,11 +173,14 @@ export async function lookupAccommodationLocation(query: string) {
   }
 }
 
-export async function getAccommodationLocationOptions(city: string) {
+export async function getAccommodationLocationOptions(city: string, area = "") {
   const cleanCity = city.trim();
+  const cleanArea = area.trim();
   if (!cleanCity) return null;
   try {
-    return await request<AccommodationLocationOptions>(`/api/mobile/location-options?city=${encodeURIComponent(cleanCity)}`);
+    const params = new URLSearchParams({ city: cleanCity });
+    if (cleanArea) params.set("area", cleanArea);
+    return await request<AccommodationLocationOptions>(`/api/mobile/location-options?${params.toString()}`);
   } catch {
     return null;
   }

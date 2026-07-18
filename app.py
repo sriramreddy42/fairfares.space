@@ -11104,6 +11104,69 @@ def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> lis
     return places
 
 
+def clean_google_place_prediction(description: str) -> str:
+    description = normalize_accommodation_place_label(description)
+    description = re.sub(r",\s*(USA|United States)$", "", description, flags=re.I).strip()
+    return dedupe_repeated_location_label(description)
+
+
+def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10) -> list[str]:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    city = normalize_accommodation_place_label(city)
+    area = normalize_accommodation_place_label(area)
+    city_root = city.split(",", 1)[0].strip().lower()
+    if not api_key or not city or not area or area.lower() == city_root or area.lower() == city.lower():
+        return []
+    input_text = f"{area} {city}".strip() if area else city
+    geocode = google_accommodation_geocode(city)
+    params: dict[str, str] = {
+        "input": input_text,
+        "key": api_key,
+        "components": "country:us",
+    }
+    geometry = geocode.get("geometry") if isinstance(geocode, dict) else {}
+    location = geometry.get("location") if isinstance(geometry, dict) else {}
+    if isinstance(location, dict) and location.get("lat") and location.get("lng"):
+        params["location"] = f"{location.get('lat')},{location.get('lng')}"
+        params["radius"] = "96560"
+    try:
+        payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}")
+    except Exception:
+        return []
+    if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+        return []
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    blocked_types = {"hospital", "stadium", "local_government_office"}
+    for prediction in payload.get("predictions") or []:
+        if not isinstance(prediction, dict):
+            continue
+        types = set(str(item) for item in (prediction.get("types") or []))
+        if types & blocked_types:
+            continue
+        label = clean_google_place_prediction(str(prediction.get("description") or ""))
+        if not label or label.lower() in seen:
+            continue
+        seen.add(label.lower())
+        suggestions.append(label)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
+def keep_mobile_accommodation_suggestion(label: str) -> bool:
+    label = (label or "").strip()
+    if not label:
+        return False
+    return not re.search(
+        r"\b(public works|department|dept\.?|hospital|stadium|network|health center|convention center|airport|"
+        r"library|car rental|hertz|tavern|market|mural|city council|city & county building|mayor|office|"
+        r"pavilion|city o' city|cuernavaca|comedy works|hilton|hotel|improper city)\b",
+        label,
+        re.I,
+    )
+
+
 def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> str:
     query = normalize_accommodation_place_label(query)
     if not query:
@@ -11907,12 +11970,14 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
     }
 
 
-def accommodation_location_options(query: str, limit: int = 18) -> dict[str, object]:
+def accommodation_location_options(query: str, area: str = "", limit: int = 18) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
+    area = normalize_accommodation_place_label(area)
     google_enabled = bool(
         os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     )
+    autocomplete_suggestions = google_accommodation_place_suggestions(query, area, limit=limit) if google_enabled else []
     google_refreshed_metro = refresh_accommodation_location_cache(query, force=True) if google_enabled else ""
     metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
     fallback_from_group = False
@@ -11970,7 +12035,7 @@ def accommodation_location_options(query: str, limit: int = 18) -> dict[str, obj
                             zips.append(value)
                     else:
                         value = dedupe_repeated_location_label(str(row_value(row, "name") or "")).strip()
-                        if value and value not in suggested:
+                        if value and keep_mobile_accommodation_suggestion(value) and value not in suggested:
                             suggested.append(value)
     except sqlite3.Error:
         suggested = []
@@ -11979,6 +12044,13 @@ def accommodation_location_options(query: str, limit: int = 18) -> dict[str, obj
         fallback_group = ACCOMMODATION_METRO_GROUPS.get(metro_name) or ACCOMMODATION_METRO_GROUPS.get("Denver Metro Area", {})
         suggested = [str(item) for item in fallback_group.get("suggested", ())][:limit]
         zips = [str(item) for item in fallback_group.get("zips", ())][:12]
+    if autocomplete_suggestions:
+        merged: list[str] = []
+        for value in autocomplete_suggestions + suggested:
+            value = dedupe_repeated_location_label(value).strip()
+            if value and keep_mobile_accommodation_suggestion(value) and value not in merged:
+                merged.append(value)
+        suggested = merged
     point = accommodation_location_point(query or metro_name, metro_name, allow_refresh=False)
     return {
         "ok": True,
@@ -22411,10 +22483,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_location_options(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         query = (params.get("city", params.get("q", [""]))[0] or "").strip()
+        area = (params.get("area", [""])[0] or "").strip()
         if not query:
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
-        self.send_json(accommodation_location_options(query))
+        self.send_json(accommodation_location_options(query, area))
 
     def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
