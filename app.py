@@ -51,6 +51,9 @@ SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000
+MAX_HOUSING_IMAGE_BYTES = 3_000_000
+MAX_REQUEST_BODY_BYTES = 24_000_000
+ALLOWED_HOUSING_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 DEFAULT_PROMOTED_ADMIN_EMAILS = "sriramreddy42@gmail.com"
@@ -661,18 +664,26 @@ def google_drive_config_status() -> dict[str, object]:
     }
 
 
-def data_url_upload_parts(value: str, fallback_name: str) -> tuple[str, str, bytes] | None:
+def data_url_upload_parts(
+    value: str,
+    fallback_name: str,
+    *,
+    allowed_mime_types: set[str] | None = None,
+    max_bytes: int = MAX_DRIVE_UPLOAD_BYTES,
+) -> tuple[str, str, bytes] | None:
     if not value or not value.startswith("data:") or ";base64," not in value:
         return None
     header, encoded = value.split(";base64,", 1)
     mime_type = header.replace("data:", "", 1).strip() or "application/octet-stream"
     if not re.match(r"^[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+$", mime_type):
         return None
+    if allowed_mime_types is not None and mime_type.lower() not in allowed_mime_types:
+        return None
     try:
         payload = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
         return None
-    if not payload or len(payload) > MAX_DRIVE_UPLOAD_BYTES:
+    if not payload or len(payload) > max_bytes:
         return None
     extension = mimetypes.guess_extension(mime_type) or ".bin"
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", fallback_name).strip("-") or "fairfares-upload"
@@ -918,11 +929,18 @@ def save_file_payload_locally(
     folder_name: str,
     file_data: dict[str, object] | None,
     fallback_name: str,
+    allowed_mime_types: set[str] | None = None,
+    max_bytes: int = MAX_DRIVE_UPLOAD_BYTES,
 ) -> str:
     if not file_data:
         return ""
     payload = file_data.get("payload")
     if not isinstance(payload, bytes) or not payload:
+        return ""
+    mime_type = str(file_data.get("mime_type") or "").lower()
+    if allowed_mime_types is not None and mime_type not in allowed_mime_types:
+        return ""
+    if len(payload) > max_bytes:
         return ""
     filename = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(file_data.get("filename") or fallback_name)).strip("-")
     if not filename:
@@ -943,8 +961,15 @@ def save_data_url_payload_locally(
     folder_name: str,
     data_url: str,
     fallback_name: str,
+    allowed_mime_types: set[str] | None = None,
+    max_bytes: int = MAX_DRIVE_UPLOAD_BYTES,
 ) -> str:
-    parts = data_url_upload_parts(data_url, fallback_name)
+    parts = data_url_upload_parts(
+        data_url,
+        fallback_name,
+        allowed_mime_types=allowed_mime_types,
+        max_bytes=max_bytes,
+    )
     if not parts:
         return ""
     filename, mime_type, payload = parts
@@ -952,6 +977,8 @@ def save_data_url_payload_locally(
         folder_name=folder_name,
         file_data={"filename": filename, "mime_type": mime_type, "payload": payload},
         fallback_name=fallback_name,
+        allowed_mime_types=allowed_mime_types,
+        max_bytes=max_bytes,
     )
 
 
@@ -10747,6 +10774,42 @@ def option_label(options: tuple[tuple[str, str], ...], value: str, default: str 
     return default
 
 
+def option_value_or_default(options: tuple[tuple[str, str], ...], value: object, default: str = "") -> str:
+    clean_value = str(value or "").strip()
+    allowed = {option_value for option_value, _label in options}
+    return clean_value if clean_value in allowed else default
+
+
+def clean_text_value(value: object, max_length: int) -> str:
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", str(value or ""))
+    text = re.sub(r"[ \t\r\f\v]+", " ", text).strip()
+    return text[:max_length]
+
+
+def clean_multiline_text_value(value: object, max_length: int) -> str:
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", str(value or ""))
+    text = re.sub(r"[ \t\r\f\v]+", " ", text).strip()
+    return text[:max_length]
+
+
+def valid_contact_email(value: str) -> bool:
+    return bool(re.fullmatch(r"[^@\s]{1,120}@[^@\s]{1,180}\.[^@\s]{2,24}", value or ""))
+
+
+def valid_contact_phone(value: str) -> bool:
+    return 7 <= len(normalize_phone(value)) <= 15
+
+
+def clean_social_url(value: object) -> str:
+    text = clean_text_value(value, 240)
+    if not text:
+        return ""
+    parsed = urllib.parse.urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return text
+
+
 def render_select_options(options: tuple[tuple[str, str], ...], selected: str = "") -> str:
     return "\n".join(
         f'<option value="{escape(value)}"{" selected" if value == selected else ""}>{escape(label)}</option>'
@@ -14480,6 +14543,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def read_form(self) -> dict[str, str]:
         length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_REQUEST_BODY_BYTES:
+            return {}
         body = self.rfile.read(length).decode()
         parsed = urllib.parse.parse_qs(body)
         return {key: values[0].strip() for key, values in parsed.items()}
@@ -14487,6 +14552,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def read_json_body(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0:
+            return {}
+        if length > MAX_REQUEST_BODY_BYTES:
             return {}
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -14501,6 +14568,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form: dict[str, str] = {}
         files: dict[str, dict[str, object]] = {}
         length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_REQUEST_BODY_BYTES:
+            return {}, {}
         body = self.rfile.read(length)
         message = BytesParser(policy=EMAIL_POLICY).parsebytes(
             f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
@@ -15068,9 +15137,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def create_accommodation_post(self) -> None:
         user = self.current_user()
+        if not user:
+            self.redirect("/accommodations?error=login_required#post")
+            return
         form, files = self.read_form_with_files()
+        for field, max_length in {
+            "title": 140,
+            "description": 1800,
+            "street_address": 180,
+            "city": 120,
+            "zip_code": 20,
+            "primary_neighborhood": 140,
+            "apartment_name": 140,
+            "city_area_zip": 160,
+            "area_or_apartment": 140,
+            "work_school_location": 160,
+            "move_in_date": 40,
+            "about_you": 900,
+            "commute_preference": 180,
+            "days_available": 120,
+            "amenities": 700,
+            "contact_name": 120,
+            "contact_phone": 40,
+        }.items():
+            form[field] = clean_multiline_text_value(form.get(field), max_length)
+        form["contact_email"] = normalize_email(form.get("contact_email") or row_value(user, "email"))
+        for field in ("social_facebook", "social_x", "social_instagram", "social_youtube"):
+            form[field] = clean_social_url(form.get(field))
         mode = normalize_accommodation_mode(form.get("post_mode", ""))
-        category = (form.get("category") or "").strip()
+        category = option_value_or_default(ACCOMMODATION_CATEGORIES, form.get("category"), "")
         description = (form.get("description") or "").strip()
         contact_name = (form.get("contact_name") or row_value(user, "name")).strip()
         contact_email = (form.get("contact_email") or row_value(user, "email")).strip()
@@ -15079,6 +15174,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect("/accommodations?error=missing")
             return
         if not contact_name or not contact_email or not contact_phone:
+            self.redirect("/accommodations?error=missing")
+            return
+        if not valid_contact_email(contact_email) or not valid_contact_phone(contact_phone):
             self.redirect("/accommodations?error=missing")
             return
         if mode == "HAVE_PLACE":
@@ -15226,6 +15324,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     folder_name="accommodations",
                     file_data=files.get(f"image_{index}"),
                     fallback_name=f"{public_id.lower()}-{index}",
+                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
                 )
                 if not image_url:
                     continue
@@ -22851,42 +22951,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         mode = normalize_accommodation_mode(str(payload.get("postMode") or payload.get("post_mode") or "HAVE_PLACE"))
-        category = str(payload.get("category") or "single_room").strip()
-        title = str(payload.get("title") or "").strip()
-        description = str(payload.get("description") or "").strip()
-        city = str(payload.get("city") or "").strip()
-        street_address = str(payload.get("streetAddress") or payload.get("street_address") or "").strip()
-        zip_code = str(payload.get("zipCode") or payload.get("zip_code") or "").strip()
-        area = str(payload.get("area") or payload.get("area_or_apartment") or "").strip()
-        primary_neighborhood = str(payload.get("primaryNeighborhood") or payload.get("primary_neighborhood") or "").strip()
-        apartment_name = str(payload.get("apartmentName") or payload.get("apartment_name") or "").strip()
-        work_school_location = str(payload.get("workSchoolLocation") or payload.get("work_school_location") or "").strip()
-        move_in_date = str(payload.get("moveInDate") or payload.get("move_in_date") or "").strip()
-        contact_name = str(payload.get("contactName") or row_value(user, "name")).strip()
-        contact_email = str(payload.get("contactEmail") or row_value(user, "email")).strip()
-        contact_phone = str(payload.get("contactPhone") or row_value(user, "phone")).strip()
+        category = option_value_or_default(ACCOMMODATION_CATEGORIES, payload.get("category"), "single_room")
+        title = clean_text_value(payload.get("title"), 140)
+        description = clean_multiline_text_value(payload.get("description"), 1800)
+        city = clean_text_value(payload.get("city"), 120)
+        street_address = clean_text_value(payload.get("streetAddress") or payload.get("street_address"), 180)
+        zip_code = clean_text_value(payload.get("zipCode") or payload.get("zip_code"), 20)
+        area = clean_text_value(payload.get("area") or payload.get("area_or_apartment"), 140)
+        primary_neighborhood = clean_text_value(payload.get("primaryNeighborhood") or payload.get("primary_neighborhood"), 140)
+        apartment_name = clean_text_value(payload.get("apartmentName") or payload.get("apartment_name"), 140)
+        work_school_location = clean_text_value(payload.get("workSchoolLocation") or payload.get("work_school_location"), 160)
+        move_in_date = clean_text_value(payload.get("moveInDate") or payload.get("move_in_date"), 40)
+        contact_name = clean_text_value(payload.get("contactName") or row_value(user, "name"), 120)
+        contact_email = normalize_email(payload.get("contactEmail") or row_value(user, "email"))
+        contact_phone = clean_text_value(payload.get("contactPhone") or row_value(user, "phone"), 40)
         rent_min = float_from_value(payload.get("rentMin") or payload.get("rent_min") or "0")
         rent_max = float_from_value(payload.get("rentMax") or payload.get("rent_max") or "0")
-        rent_period = str(payload.get("rentPeriod") or payload.get("rent_period") or "MONTH").strip() or "MONTH"
+        rent_min = max(0, min(rent_min, 100000))
+        rent_max = max(0, min(rent_max, 100000))
+        rent_period = option_value_or_default(ACCOMMODATION_RENT_PERIODS, payload.get("rentPeriod") or payload.get("rent_period"), "MONTH")
         radius_miles = int(float_from_value(payload.get("radiusMiles") or payload.get("radius_miles") or ("10" if mode == "NEED_PLACE" else "0")))
+        radius_miles = max(0, min(radius_miles, 100))
         accommodates = int(float_from_value(payload.get("accommodates") or "1") or 1)
+        accommodates = max(1, min(accommodates, 20))
         roommate_count = int(float_from_value(payload.get("roommateCount") or payload.get("roommate_count") or "0") or 0)
+        roommate_count = max(0, min(roommate_count, 20))
         roommate_intent = 1 if bool(payload.get("roommateIntent") or payload.get("roommate_intent")) else 0
-        about_you = str(payload.get("aboutYou") or payload.get("about_you") or "").strip()
-        bathroom_type = str(payload.get("bathroomType") or payload.get("bathroom_type") or "shared").strip() or "shared"
-        gender_preference = str(payload.get("genderPreference") or payload.get("gender_preference") or "open").strip() or "open"
-        commute_preference = str(payload.get("commutePreference") or payload.get("commute_preference") or "").strip()
-        lease_term = str(payload.get("leaseTerm") or payload.get("lease_term") or "flexible").strip() or "flexible"
-        deposit = float_from_value(payload.get("deposit") or "0")
-        days_available = str(payload.get("daysAvailable") or payload.get("days_available") or "").strip()
-        vegetarian_preference = str(payload.get("vegetarianPreference") or payload.get("vegetarian_preference") or "").strip()
-        smoking_policy = str(payload.get("smokingPolicy") or payload.get("smoking_policy") or "").strip()
-        pet_friendly = str(payload.get("petFriendly") or payload.get("pet_friendly") or "").strip()
-        amenities = str(payload.get("amenities") or "").strip()
-        social_facebook = str(payload.get("socialFacebook") or payload.get("social_facebook") or "").strip()
-        social_x = str(payload.get("socialX") or payload.get("social_x") or "").strip()
-        social_instagram = str(payload.get("socialInstagram") or payload.get("social_instagram") or "").strip()
-        social_youtube = str(payload.get("socialYoutube") or payload.get("social_youtube") or "").strip()
+        about_you = clean_multiline_text_value(payload.get("aboutYou") or payload.get("about_you"), 900)
+        bathroom_type = clean_text_value(payload.get("bathroomType") or payload.get("bathroom_type") or "shared", 40) or "shared"
+        gender_preference = option_value_or_default(ACCOMMODATION_GENDER_OPTIONS, payload.get("genderPreference") or payload.get("gender_preference"), "open")
+        commute_preference = clean_text_value(payload.get("commutePreference") or payload.get("commute_preference"), 180)
+        lease_term = option_value_or_default(ACCOMMODATION_LEASE_TERMS, payload.get("leaseTerm") or payload.get("lease_term"), "flexible")
+        deposit = max(0, min(float_from_value(payload.get("deposit") or "0"), 100000))
+        days_available = clean_text_value(payload.get("daysAvailable") or payload.get("days_available"), 120)
+        vegetarian_preference = clean_text_value(payload.get("vegetarianPreference") or payload.get("vegetarian_preference"), 80)
+        smoking_policy = clean_text_value(payload.get("smokingPolicy") or payload.get("smoking_policy"), 80)
+        pet_friendly = clean_text_value(payload.get("petFriendly") or payload.get("pet_friendly"), 80)
+        amenities = clean_multiline_text_value(payload.get("amenities"), 700)
+        social_facebook = clean_social_url(payload.get("socialFacebook") or payload.get("social_facebook"))
+        social_x = clean_social_url(payload.get("socialX") or payload.get("social_x"))
+        social_instagram = clean_social_url(payload.get("socialInstagram") or payload.get("social_instagram"))
+        social_youtube = clean_social_url(payload.get("socialYoutube") or payload.get("social_youtube"))
         private_bath = 1 if bool(payload.get("privateBath") or payload.get("private_bath")) else 0
         furnished = 1 if bool(payload.get("furnished")) else 0
         parking = 1 if bool(payload.get("parking")) else 0
@@ -22901,6 +23006,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
                 400,
             )
+            return
+        if not valid_contact_email(contact_email) or not valid_contact_phone(contact_phone):
+            self.send_json({"ok": False, "error": "Use a valid contact email and phone number."}, 400)
             return
         if mode == "HAVE_PLACE" and not (street_address or primary_neighborhood or apartment_name or area):
             self.send_json({"ok": False, "error": "Street address, neighborhood, apartment, or area is required when listing a place."}, 400)
@@ -23001,6 +23109,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     folder_name="accommodations",
                     data_url=str(image_value or ""),
                     fallback_name=f"{public_id.lower()}-{index}",
+                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
                 )
                 if not image_url:
                     continue
@@ -23035,6 +23145,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = requested.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mime_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Disposition", f'inline; filename="{escape(requested.name)}"')
         self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
