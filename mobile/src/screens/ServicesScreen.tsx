@@ -107,7 +107,17 @@ export function ServicesScreen({ user, onRequireLogin }: Props) {
       setBookings(rows);
       setSelectedBookingId((current) => current || rows[0]?.id || "");
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load rental bookings.");
+      const message = loadError instanceof Error ? loadError.message : "Could not load rental bookings.";
+      if (/login is required|401|unauthorized|not authorized/i.test(message)) {
+        setBookings([]);
+        setSelectedBookingId("");
+        setError("Login again to view and manage your rental bookings.");
+        onRequireLogin();
+      } else if (/could not connect|failed to fetch|network request failed/i.test(message)) {
+        setError("We could not refresh your rental bookings. Check your connection and try again.");
+      } else {
+        setError(message);
+      }
     } finally {
       setBusy(false);
     }

@@ -43,10 +43,33 @@ const API_CANDIDATES = uniqueUrls(
     : [EXPLICIT_API_URL, metroHostApiUrl(), "http://127.0.0.1:8010"]
 );
 
-let authToken = "";
+const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
+
+function browserStorage() {
+  return (globalThis as unknown as {
+    localStorage?: {
+      getItem: (key: string) => string | null;
+      setItem: (key: string, value: string) => void;
+      removeItem: (key: string) => void;
+    };
+  }).localStorage;
+}
+
+let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
 
 export function setAuthToken(token: string) {
   authToken = token;
+  const storage = browserStorage();
+  if (!storage) return;
+  if (token) {
+    storage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  } else {
+    storage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  }
+}
+
+export function hasAuthToken() {
+  return Boolean(authToken);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
