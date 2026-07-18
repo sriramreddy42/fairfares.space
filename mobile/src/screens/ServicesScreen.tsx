@@ -457,8 +457,32 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
       </View>
       {quote ? (
         <View style={styles.quotePanel}>
-          <Text style={styles.panelTitle}>Checkout review</Text>
-          <Text style={styles.quoteTitle}>{quote.booking.carName || selectedCar?.name}</Text>
+          <Text style={styles.quoteEyebrow}>Checkout</Text>
+          <Text style={styles.panelTitle}>Finalize trip</Text>
+          <View style={styles.reviewCard}>
+            <View style={styles.reviewThumbWrap}>
+              {selectedCar && absoluteAssetUrl(selectedCar.image_url) ? (
+                <Image source={{ uri: absoluteAssetUrl(selectedCar.image_url) }} style={styles.reviewThumb} />
+              ) : (
+                <Image source={appAssets.carFallback} style={styles.reviewThumb} />
+              )}
+            </View>
+            <View style={styles.reviewCopy}>
+              <Text style={styles.quoteTitle}>{quote.booking.carName || selectedCar?.name}</Text>
+              <Text style={styles.reviewMeta}>{quote.booking.pickupLocation}</Text>
+              <Text style={styles.reviewMeta}>{quote.booking.pickupDate} {quote.booking.pickupTime} to {quote.booking.returnDate} {quote.booking.returnTime}</Text>
+            </View>
+          </View>
+          <View style={styles.paymentWindow}>
+            <View style={styles.paymentWindowCopy}>
+              <Text style={styles.quoteEyebrow}>Payment window</Text>
+              <Text style={styles.paymentWindowTitle}>{quote.booking.paymentStatus === "HOLD_PAID" ? "Remaining balance" : "Reserve booking"}</Text>
+              <Text style={styles.policyText}>Complete payment before the hold timer expires.</Text>
+            </View>
+            <View style={styles.paymentTimer}>
+              <Text style={styles.paymentTimerText}>{quote.policy.holdMinutes}:00</Text>
+            </View>
+          </View>
           <View style={styles.quoteGrid}>
             <Text style={styles.quoteItem}>Trip: {quote.booking.days} days</Text>
             <Text style={styles.quoteItem}>Daily: {dollars(quote.breakdown.effectiveDaily)}</Text>
@@ -467,16 +491,42 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
             <Text style={styles.quoteItem}>10% hold: {dollars(quote.breakdown.holdAmount)}</Text>
             <Text style={styles.quoteItem}>Due pickup: {dollars(quote.breakdown.dueAtPickup)}</Text>
           </View>
-          <Text style={styles.quoteTotal}>Total {dollars(quote.breakdown.total)} · full pay {dollars(quote.breakdown.fullPaymentTotal)}</Text>
-          <Text style={styles.policyText}>Deposit: {dollars(quote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
-          <Text style={styles.policyText}>{quote.policy.cancellation.cutoff_copy}</Text>
-          {quote.policy.bullets.map((item) => <Text key={item} style={styles.policyBullet}>- {item}</Text>)}
+          <Text style={styles.quoteTotal}>Estimated rental subtotal {dollars(quote.breakdown.total)}</Text>
+          {quote.breakdown.savings > 0 ? (
+            <Text style={styles.savingsBanner}>You save {dollars(quote.breakdown.savings)} vs standard rental pricing.</Text>
+          ) : null}
+          <View style={styles.paymentActions}>
+            <TouchableOpacity style={[styles.bookNowWide, styles.holdButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "hold")}>
+              <Text style={styles.bookNowText}>Pay 10% hold</Text>
+              <Text style={styles.payButtonMeta}>{dollars(quote.breakdown.holdAmount)} due now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.bookNowWide, styles.fullPayButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "full")}>
+              <Text style={styles.fullPayButtonText}>Pay in full</Text>
+              <Text style={styles.fullPayButtonMeta}>{dollars(quote.breakdown.fullPaymentTotal)} today</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>Rental car protection</Text>
+            <Text style={styles.policyText}>Feel more secure before pickup. If an accident happens, make sure everyone is safe, call emergency services if needed, document photos, collect other driver information, then create a support request.</Text>
+            <Text style={styles.policyText}>Insurance requirements, damage review, towing, tolls, fuel, smoking, cleaning, misuse, and post-return fees are handled after review.</Text>
+          </View>
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>Cancellation policy</Text>
+            <Text style={styles.policyText}>{quote.policy.cancellation.cutoff_copy}</Text>
+            <Text style={styles.policyText}>Cancel before pickup when plans change. Late cancellations, no-shows, and discount conditions can affect refunds.</Text>
+          </View>
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>Rental policies</Text>
+            <Text style={styles.policyText}>Driver rules and required documents: age restrictions, valid license, payment method, insurance information, and booking confirmation.</Text>
+            <Text style={styles.policyText}>Deposit: {dollars(quote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
+            {quote.policy.bullets.slice(0, 4).map((item) => <Text key={item} style={styles.policyBullet}>- {item}</Text>)}
+          </View>
           <View style={styles.paymentActions}>
             <TouchableOpacity style={[styles.bookNowWide, styles.holdButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "hold")}>
               <Text style={styles.bookNowText}>Pay 10% hold</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.bookNowWide, styles.fullPayButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "full")}>
-              <Text style={styles.fullPayButtonText}>Pay full</Text>
+              <Text style={styles.fullPayButtonText}>Pay in full</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -484,14 +534,14 @@ function CarRentals({ cars, onBookCar }: { cars: Car[]; onBookCar: (car: Car, de
       {rows.map((car) => {
         const image = absoluteAssetUrl(car.image_url);
         return (
-          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => onBookCar(car, search, "hold")}>
+          <TouchableOpacity key={car.id} style={[styles.carCard, selectedCar?.id === car.id && styles.carCardActive]} onPress={() => reviewCar(car)}>
             {image ? <Image source={{ uri: image }} style={styles.carImage} /> : <Image source={appAssets.carFallback} style={styles.carImage} />}
             <View style={styles.carBody}>
               <Text style={styles.cardTitle}>{car.name}</Text>
               <Text style={styles.cardMeta}>{car.brand} {car.model} · {car.seats} seats · {car.transmission}</Text>
               <View style={styles.cardFooter}>
                 <Text style={styles.price}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
-                <Text style={styles.action}>Book</Text>
+                <Text style={styles.action}>Review</Text>
               </View>
               {dailyPriceRange(car.daily_price, rentalDayCount).tier.rate > 0 ? (
                 <Text style={styles.savingsText}>{dailyPriceRange(car.daily_price, rentalDayCount).tier.label}: save vs daily pricing</Text>
@@ -552,7 +602,7 @@ function LocalServices({ services }: { services: ServiceItem[] }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 32, gap: theme.spacing.lg },
+  content: { padding: theme.spacing.md, paddingBottom: 132, gap: theme.spacing.lg },
   title: { color: theme.colors.text, fontSize: 42, fontWeight: "900" },
   section: { gap: theme.spacing.md },
   sectionTitle: { color: theme.colors.text, fontSize: 25, fontWeight: "900" },
@@ -604,17 +654,33 @@ const styles = StyleSheet.create({
   twoColField: { flex: 1 },
   searchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   searchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
-  quotePanel: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.blue, padding: theme.spacing.md, gap: 10 },
+  quotePanel: { backgroundColor: "rgba(17,24,39,0.86)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10, shadowColor: "#000", shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
+  quoteEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  reviewCard: { flexDirection: "row", gap: 12, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 10 },
+  reviewThumbWrap: { width: 86, height: 66, borderRadius: 12, overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  reviewThumb: { width: "100%", height: "100%" },
+  reviewCopy: { flex: 1, gap: 3 },
   quoteTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  reviewMeta: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", lineHeight: 16 },
+  paymentWindow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 12 },
+  paymentWindowCopy: { flex: 1, gap: 3 },
+  paymentWindowTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  paymentTimer: { backgroundColor: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9 },
+  paymentTimerText: { color: theme.colors.accent, fontWeight: "900" },
   quoteGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   quoteItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
   quoteTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  savingsBanner: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
+  policyCard: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 12, gap: 6 },
+  policyTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   paymentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
   holdButton: { flex: 1 },
   fullPayButton: { flex: 1, backgroundColor: theme.colors.text },
   fullPayButtonText: { color: theme.colors.bg, fontWeight: "900", textTransform: "uppercase" },
+  payButtonMeta: { color: theme.colors.text, fontSize: 11, fontWeight: "800", marginTop: 2 },
+  fullPayButtonMeta: { color: "#555", fontSize: 11, fontWeight: "900", marginTop: 2 },
   carCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
   carCardActive: { borderColor: theme.colors.blue },
   carImage: { width: "100%", height: 150 },

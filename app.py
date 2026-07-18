@@ -1177,6 +1177,16 @@ def is_loopback_origin(origin: str) -> bool:
     return parsed.scheme in {"http", "https"} and hostname in {"localhost", "127.0.0.1", "::1"}
 
 
+def is_safe_mobile_return_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if parsed.scheme in {"fairfares", "exp"}:
+        return True
+    if parsed.scheme in {"http", "https"}:
+        origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return origin in configured_cors_allowed_origins() or is_loopback_origin(origin)
+    return False
+
+
 class FairFaresConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
         try:
@@ -22284,10 +22294,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if payment_option == "full"
             else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')}"
         )
+        success_url = str(payload.get("successUrl") or payload.get("success_url") or "").strip()
+        cancel_url = str(payload.get("cancelUrl") or payload.get("cancel_url") or "").strip()
+        if not is_safe_mobile_return_url(success_url):
+            success_url = f"{origin}/payment/success"
+        if not is_safe_mobile_return_url(cancel_url):
+            cancel_url = f"{origin}/payment/cancel"
         params = {
             "mode": "payment",
-            "success_url": f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-            "cancel_url": f"{origin}/payment/cancel",
+            "success_url": f"{success_url}{'&' if '?' in success_url else '?'}session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": cancel_url,
             "customer_email": row_value(booking, "contact_email") or row_value(user, "email"),
             "client_reference_id": row_value(booking, "booking_id"),
             "line_items[0][quantity]": 1,

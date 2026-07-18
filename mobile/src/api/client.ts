@@ -205,7 +205,11 @@ export async function bookRentalCar(carId: number, details?: Partial<RentalSearc
   });
 }
 
-export async function startRentalCheckout(paymentOption: "hold" | "full" = "hold", bookingId = "") {
+export async function startRentalCheckout(
+  paymentOption: "hold" | "full" = "hold",
+  bookingId = "",
+  returnUrls?: { successUrl?: string; cancelUrl?: string }
+) {
   let lastError = "";
   for (const baseUrl of API_CANDIDATES) {
     for (const endpoint of ["mobile", "web"] as const) {
@@ -213,7 +217,7 @@ export async function startRentalCheckout(paymentOption: "hold" | "full" = "hold
       const timeout = setTimeout(() => controller.abort(), 4500);
       const path = endpoint === "mobile" ? "/api/mobile/rentals/checkout-session" : "/payment/stripe-session";
       const body = endpoint === "mobile"
-        ? JSON.stringify({ paymentOption, bookingId })
+        ? JSON.stringify({ paymentOption, bookingId, successUrl: returnUrls?.successUrl || "", cancelUrl: returnUrls?.cancelUrl || "" })
         : new URLSearchParams({ payment_option: paymentOption, booking_id: bookingId }).toString();
       const headers: Record<string, string> = {
         Accept: "application/json",

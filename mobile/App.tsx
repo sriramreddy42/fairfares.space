@@ -152,6 +152,7 @@ export default function App() {
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState<{ title: string; body: string; action: string } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -176,6 +177,32 @@ export default function App() {
   useEffect(() => {
     setBottomTabsHidden(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    function handlePaymentUrl(url: string | null) {
+      if (!url) return;
+      if (url.includes("payment/success")) {
+        setPaymentUrl("");
+        setPaymentStatus({
+          title: "Payment completed",
+          body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
+          action: "View booking"
+        });
+        void load();
+      }
+      if (url.includes("payment/cancel")) {
+        setPaymentUrl("");
+        setPaymentStatus({
+          title: "Payment not completed",
+          body: "Stripe checkout was cancelled. Your payment window remains active until the timer expires.",
+          action: "Return to checkout"
+        });
+      }
+    }
+    Linking.getInitialURL().then(handlePaymentUrl).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", (event) => handlePaymentUrl(event.url));
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -209,7 +236,12 @@ export default function App() {
 
   async function openRentalCheckout(paymentOption: "hold" | "full", bookingId = "") {
     try {
-      const payload = await startRentalCheckout(paymentOption, bookingId);
+      const webOrigin = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "";
+      const returnUrls = {
+        successUrl: webOrigin ? `${webOrigin}/payment/success` : "fairfares://payment/success",
+        cancelUrl: webOrigin ? `${webOrigin}/payment/cancel` : "fairfares://payment/cancel"
+      };
+      const payload = await startRentalCheckout(paymentOption, bookingId, returnUrls);
       if (payload.url) {
         setPaymentUrl(payload.url);
         setPaymentMessage("Opening secure Stripe checkout. If it does not open automatically, tap Open payment.");
@@ -737,6 +769,26 @@ export default function App() {
               <Text style={styles.primaryButtonText}>Open payment</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentUrl("")}>
+              <Text style={styles.secondaryButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={Boolean(paymentStatus)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentStatus(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{paymentStatus?.title}</Text>
+            <Text style={styles.modalCopy}>{paymentStatus?.body}</Text>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => {
+                setPaymentStatus(null);
+                setActiveTab("activity");
+              }}
+            >
+              <Text style={styles.primaryButtonText}>{paymentStatus?.action || "Continue"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentStatus(null)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
