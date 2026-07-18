@@ -11429,11 +11429,94 @@ def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, ob
     }
 
 
-def mobile_rental_service_booking_payload(row: sqlite3.Row | dict[str, object], origin: str = "") -> dict[str, object]:
+def mobile_rental_upgrade_options(row: sqlite3.Row | dict[str, object]) -> list[dict[str, object]]:
+    current_car_id = int(row_value(row, "car_id") or 0)
+    requested_start = parse_booking_datetime(row_value(row, "pickup_date"), row_value(row, "pickup_time"))
+    requested_end = parse_booking_datetime(row_value(row, "dropoff_date"), row_value(row, "dropoff_time"))
+    days = int(row_value(row, "days") or 1)
+    options: list[dict[str, object]] = []
+    for car in get_cars():
+        car_id = int(row_value(car, "id") or 0)
+        if not car_id or car_id == current_car_id:
+            continue
+        if active_booking_conflict_for_car(car_id, requested_start, requested_end, int(row_value(row, "id") or 0)):
+            continue
+        daily = float(row_value(car, "daily_price") or 0)
+        low, high = daily_price_range(daily)
+        breakdown = rental_price_breakdown(daily, days, 0, 0)
+        options.append(
+            {
+                "id": car_id,
+                "name": row_value(car, "name"),
+                "category": row_value(car, "category"),
+                "dailyRange": f"${low}-{high}/day est.",
+                "estimatedTotalLabel": format_money(breakdown["total"]),
+            }
+        )
+    return options
+
+
+def mobile_housing_post_summary(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": row_value(row, "public_id") or str(row_value(row, "id")),
+        "title": row_value(row, "title"),
+        "status": row_value(row, "visibility_status") or "ACTIVE",
+        "expiryLabel": accommodation_expiry_label(row),
+        "modeLabel": accommodation_mode_label(row),
+        "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
+        "location": row_value(row, "city_area_zip") or row_value(row, "area_or_apartment") or "Location open",
+        "rent": format_accommodation_rent(row),
+    }
+
+
+def mobile_support_ticket_summary(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "ticketId": row_value(row, "ticket_id"),
+        "topic": row_value(row, "topic") or "Support",
+        "status": row_value(row, "status").replace("_", " ").title(),
+        "priority": row_value(row, "priority") or "P3",
+        "bookingId": row_value(row, "public_booking_id") or "No booking",
+    }
+
+
+def mobile_rental_service_booking_payload(
+    row: sqlite3.Row | dict[str, object],
+    origin: str = "",
+    user_id: int | None = None,
+) -> dict[str, object]:
     payload = mobile_booking_payload(row)
     breakdown = booking_price_breakdown(row)
     booking_id = row_value(row, "booking_id") or row_value(row, "id")
     latest_transaction = None
+    document_sets: list[dict[str, object]] = []
+    support_tickets: list[dict[str, object]] = []
+    housing_posts: list[dict[str, object]] = []
+    service_user = None
+    stats = {
+        "upcoming": 0,
+        "past": 0,
+        "saved": 0,
+        "housingActive": 0,
+        "housingExpired": 0,
+        "supportOpen": 0,
+    }
+    active_booking_id = int(row_value(row, "id") or 0)
+    if user_id:
+        user_bookings = get_bookings_for_user(user_id)
+        saved_cars = get_saved_cars_for_user(user_id)
+        stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        stats["past"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        stats["saved"] = len(saved_cars)
+        document_sets = get_user_document_sets(user_id, active_booking_id)
+        support_rows = get_support_tickets_for_user(user_id)
+        support_tickets = [mobile_support_ticket_summary(ticket) for ticket in support_rows]
+        stats["supportOpen"] = sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"})
+        post_rows = get_accommodation_posts_for_user(user_id)
+        stats["housingActive"] = sum(1 for post in post_rows if row_value(post, "visibility_status") == "ACTIVE" and accommodation_expiry_label(post) != "Expired")
+        stats["housingExpired"] = sum(1 for post in post_rows if accommodation_expiry_label(post) == "Expired")
+        housing_posts = [mobile_housing_post_summary(post) for post in post_rows[:12]]
+        with db() as con:
+            service_user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     with db() as con:
         latest_transaction = con.execute(
             """
@@ -11448,6 +11531,9 @@ def mobile_rental_service_booking_payload(row: sqlite3.Row | dict[str, object], 
     manage_url = f"/manage-booking?booking_id={urllib.parse.quote(str(booking_id))}"
     if origin:
         manage_url = f"{origin.rstrip('/')}{manage_url}"
+    refund_amount, refund_note = booking_refund_estimate(row)
+    current_doc = next((item for item in document_sets if int(item.get("id") or 0) == active_booking_id), None)
+    documents_locked = bool(current_doc.get("locked")) if current_doc else row_value(row, "booking_status") not in {"PICKED_UP", "RETURNED", "CANCELLED"}
     payload.update(
         {
             "statusLabel": booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")),
@@ -11458,6 +11544,27 @@ def mobile_rental_service_booking_payload(row: sqlite3.Row | dict[str, object], 
             "invoiceNumber": row_value(latest_transaction, "invoice_number") if latest_transaction else "",
             "invoiceUrl": row_value(latest_transaction, "invoice_pdf_url") if latest_transaction else "",
             "manageUrl": manage_url,
+            "locations": get_inventory_locations(),
+            "upgradeOptions": mobile_rental_upgrade_options(row),
+            "refund": {
+                "amount": refund_amount,
+                "amountLabel": format_money(refund_amount),
+                "note": refund_note,
+            },
+            "documents": document_sets,
+            "documentsLocked": documents_locked,
+            "documentsLockedMessage": (current_doc or {}).get("lockMessage") or "Documents can be retrieved once pickup is completed.",
+            "liveStatus": live_status_for_booking(row),
+            "student": {
+                "email": row_value(service_user, "student_email") if service_user else "",
+                "id": row_value(service_user, "student_id") if service_user else "",
+                "verified": str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"},
+                "statusLabel": "Student verified" if service_user and str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"} else "Student Verification Pending",
+                "discountLabel": "10% OFF" if service_user and str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"} else "0% OFF",
+            },
+            "stats": stats,
+            "housingPosts": housing_posts,
+            "supportTickets": support_tickets,
         }
     )
     return payload
@@ -14261,6 +14368,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
+            "/api/mobile/student-verification": self.api_mobile_student_verification,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -22236,7 +22344,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "bookings": [mobile_rental_service_booking_payload(booking, origin) for booking in bookings],
+                "bookings": [mobile_rental_service_booking_payload(booking, origin, int(row_value(user, "id") or 0)) for booking in bookings],
             }
         )
 
@@ -22321,6 +22429,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "This booking has already been refunded."}, 409)
             return
         reason = str(payload.get("reason") or "Customer cancellation request").strip()[:240]
+        refund_method = str(payload.get("refundMethod") or payload.get("refund_method") or "Original payment method").strip()[:120]
+        note = str(payload.get("note") or "").strip()[:400]
+        if refund_method and refund_method != "Original payment method":
+            reason = f"{reason} · Refund method: {refund_method}"[:240]
+        if note:
+            reason = f"{reason} · Note: {note}"[:240]
         auto_cancel = not cancellation_requires_admin_review(booking)
         next_status = "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED"
         refund_message = ""
@@ -22355,7 +22469,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             {
                 "ok": True,
                 "message": message,
-                "booking": mobile_rental_service_booking_payload(updated, self.public_origin()) if updated else None,
+                "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), user_id) if updated else None,
             }
         )
 
@@ -22379,22 +22493,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         new_return_time = str(payload.get("returnTime") or payload.get("return_time") or row_value(booking, "dropoff_time")).strip()
         new_pickup_location = str(payload.get("pickupLocation") or payload.get("pickup_location") or row_value(booking, "pickup_location")).strip()
         new_return_location = str(payload.get("returnLocation") or payload.get("return_location") or row_value(booking, "dropoff_location")).strip()
+        requested_car_id = int(float_from_value(payload.get("vehicleId") or payload.get("vehicle_id") or row_value(booking, "car_id") or "0"))
         note = str(payload.get("note") or "").strip()[:400]
         requested_start = parse_booking_datetime(new_pickup_date, new_pickup_time)
         requested_end = parse_booking_datetime(new_return_date, new_return_time)
         if requested_start and requested_end and requested_end <= requested_start:
             self.send_json({"ok": False, "error": "Return date and time must be after pickup date and time."}, 400)
             return
+        selected_car = None
+        if requested_car_id and requested_car_id != int(row_value(booking, "car_id") or 0):
+            with db() as con:
+                selected_car = con.execute("SELECT * FROM cars WHERE id = ?", (requested_car_id,)).fetchone()
+            if not selected_car:
+                self.send_json({"ok": False, "error": "Selected upgrade vehicle was not found."}, 404)
+                return
+            if active_booking_conflict_for_car(requested_car_id, requested_start, requested_end, int(row_value(booking, "id") or 0)):
+                self.send_json({"ok": False, "error": "Selected upgrade vehicle is no longer available for those dates."}, 409)
+                return
+        else:
+            requested_car_id = int(row_value(booking, "car_id") or 0)
         next_days = rental_day_count(requested_start, requested_end, row_value(booking, "days") or 1)
+        daily_price = float(row_value(selected_car, "daily_price") or row_value(booking, "daily_price") or 0)
         discount_amount = calculate_booking_discount_amount(
-            float(row_value(booking, "daily_price") or 0),
+            daily_price,
             next_days,
             get_valid_discount(row_value(booking, "discount_code")),
         )
-        additional_driver_requested = str(row_value(booking, "additional_driver_requested")).lower() in {"1", "true", "on", "yes"}
+        additional_driver_requested = bool(payload.get("additionalDriverRequested") or payload.get("additional_driver_requested"))
+        driver_name = str(payload.get("additionalDriverName") or payload.get("additional_driver_name") or "").strip()[:120]
+        driver_age = str(payload.get("additionalDriverAge") or payload.get("additional_driver_age") or "").strip()[:20]
         additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
-        breakdown = rental_price_breakdown(row_value(booking, "daily_price") or 0, next_days, discount_amount, additional_driver_fee)
+        breakdown = rental_price_breakdown(daily_price, next_days, discount_amount, additional_driver_fee)
         changes = []
+        if selected_car:
+            changes.append(f"Vehicle changed to {row_value(selected_car, 'name')}")
         if new_pickup_location != row_value(booking, "pickup_location"):
             changes.append(f"Pickup location changed to {new_pickup_location}")
         if new_return_location != row_value(booking, "dropoff_location"):
@@ -22403,6 +22535,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             changes.append(f"Pickup changed to {new_pickup_date} at {new_pickup_time}")
         if new_return_date != row_value(booking, "dropoff_date") or new_return_time != row_value(booking, "dropoff_time"):
             changes.append(f"Return changed to {new_return_date} at {new_return_time}")
+        if additional_driver_requested:
+            changes.append(f"Additional driver requested: {driver_name or 'Name pending'} ({driver_age or 'Age pending'})")
         if note:
             changes.append(f"Customer note: {note}")
         change_note = "; ".join(changes) or "Trip modification review requested"
@@ -22410,7 +22544,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """
                 UPDATE bookings
-                SET pickup_date = ?,
+                SET car_id = ?,
+                    pickup_date = ?,
                     pickup_time = ?,
                     dropoff_date = ?,
                     dropoff_time = ?,
@@ -22426,12 +22561,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     estimated_market_total = ?,
                     fairfares_savings_amount = ?,
                     total_price = ?,
+                    additional_driver_requested = ?,
+                    additional_driver_name = ?,
+                    additional_driver_age = ?,
+                    additional_driver_fee_amount = ?,
                     booking_status = 'MODIFIED',
                     status = 'MODIFIED',
                     cancellation_reason = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (
+                    requested_car_id,
                     new_pickup_date,
                     new_pickup_time,
                     new_return_date,
@@ -22448,17 +22588,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     breakdown["market_total"],
                     breakdown["savings"],
                     breakdown["total"],
+                    1 if additional_driver_requested else 0,
+                    driver_name,
+                    driver_age,
+                    additional_driver_fee,
                     change_note,
                     row_value(booking, "id"),
                     user_id,
                 ),
             )
+            if selected_car:
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
+                con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
         updated = get_booking_for_user_by_identifier(user_id, row_value(booking, "booking_id"))
         self.send_json(
             {
                 "ok": True,
                 "message": f"Modification request sent: {change_note}",
-                "booking": mobile_rental_service_booking_payload(updated, self.public_origin()) if updated else None,
+                "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), user_id) if updated else None,
             }
         )
 
@@ -22546,6 +22693,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "priority": priority,
                 "sla": support_sla_text(priority),
                 "message": f"Ticket {ticket_id} created as {priority}. SLA: {support_sla_text(priority)}. Target response by {due_at}.",
+            }
+        )
+
+    def api_mobile_student_verification(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to update student verification."}, 401)
+            return
+        payload = self.read_json_body()
+        student_email = normalize_email(payload.get("studentEmail") or payload.get("student_email") or "")
+        student_id = str(payload.get("studentId") or payload.get("student_id") or "").strip()
+        if "@" not in student_email or not student_email.endswith(".edu") or len(student_id) < 4:
+            self.send_json({"ok": False, "error": "Use your real .edu email and a valid student ID."}, 400)
+            return
+        if not student_email_matches_profile_name(row_value(user, "name"), student_email):
+            self.send_json({"ok": False, "error": "Your profile name must match your school email."}, 400)
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE users
+                SET student_email = ?,
+                    student_id = ?,
+                    student_verified = 0
+                WHERE id = ?
+                """,
+                (student_email, student_id, row_value(user, "id")),
+            )
+        token = create_verification(int(row_value(user, "id") or 0), student_email, "STUDENT")
+        link = self.student_verification_url(token)
+        _outbox_file, delivery_status = send_student_verification_email(student_email, row_value(user, "name"), link)
+        self.send_json(
+            {
+                "ok": True,
+                "message": student_verification_delivery_message(delivery_status),
+                "user": mobile_user_payload(self.current_user()),
             }
         )
 

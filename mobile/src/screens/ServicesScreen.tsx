@@ -17,7 +17,8 @@ import {
   emailRentalDocuments,
   getRentalBookings,
   requestRentalCancellation,
-  requestRentalModification
+  requestRentalModification,
+  updateMobileStudentVerification
 } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -72,8 +73,21 @@ export function ServicesScreen(_props: Props) {
   const [returnDate, setReturnDate] = useState("");
   const [pickupTime, setPickupTime] = useState("");
   const [returnTime, setReturnTime] = useState("");
+  const [selectedVehicleId, setSelectedVehicleId] = useState(0);
+  const [additionalDriverRequested, setAdditionalDriverRequested] = useState(false);
+  const [additionalDriverName, setAdditionalDriverName] = useState("");
+  const [additionalDriverAge, setAdditionalDriverAge] = useState("25+");
   const [modifyNote, setModifyNote] = useState("");
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelNote, setCancelNote] = useState("");
+  const [refundMethod, setRefundMethod] = useState("Original payment method");
+  const [cancelConfirmed, setCancelConfirmed] = useState(false);
+  const [documentEmail, setDocumentEmail] = useState("");
+  const [selectedDocumentSetId, setSelectedDocumentSetId] = useState<number | null>(null);
+  const [selectedDocName, setSelectedDocName] = useState("Invoice / Receipt");
+  const [detailsTab, setDetailsTab] = useState<"student" | "saved" | "status" | "housing">("student");
+  const [studentEmail, setStudentEmail] = useState("");
+  const [studentId, setStudentId] = useState("");
   const [supportTopic, setSupportTopic] = useState("Rental support");
   const [supportMessage, setSupportMessage] = useState("");
 
@@ -108,7 +122,20 @@ export function ServicesScreen(_props: Props) {
     setReturnDate(selectedBooking.returnDate || "");
     setPickupTime(selectedBooking.pickupTime || "");
     setReturnTime(selectedBooking.returnTime || "");
+    setSelectedVehicleId(0);
+    setAdditionalDriverRequested(false);
+    setAdditionalDriverName("");
+    setAdditionalDriverAge("25+");
     setCancelReason("Customer cancellation request");
+    setCancelNote("");
+    setRefundMethod("Original payment method");
+    setCancelConfirmed(false);
+    setDocumentEmail("");
+    setSelectedDocumentSetId(selectedBooking.documents?.[0]?.id ?? null);
+    setSelectedDocName("Invoice / Receipt");
+    setDetailsTab("student");
+    setStudentEmail(selectedBooking.student?.email || "");
+    setStudentId(selectedBooking.student?.id || "");
     setModifyNote("");
     setSupportTopic("Rental support");
     setSupportMessage("");
@@ -137,6 +164,10 @@ export function ServicesScreen(_props: Props) {
         returnDate,
         pickupTime,
         returnTime,
+        vehicleId: selectedVehicleId || undefined,
+        additionalDriverRequested,
+        additionalDriverName,
+        additionalDriverAge,
         note: modifyNote
       });
       setBookings((rows) => mergeBooking(rows, result.booking));
@@ -151,9 +182,18 @@ export function ServicesScreen(_props: Props) {
 
   async function submitCancellation() {
     if (!selectedBooking) return;
+    if (!cancelConfirmed) {
+      Alert.alert("Confirm cancellation", "Please confirm that this booking should be sent for cancellation approval.");
+      return;
+    }
     setBusy(true);
     try {
-      const result = await requestRentalCancellation(selectedBooking.id, cancelReason || "Customer cancellation request");
+      const result = await requestRentalCancellation(
+        selectedBooking.id,
+        cancelReason || "Customer cancellation request",
+        cancelNote,
+        refundMethod
+      );
       setBookings((rows) => mergeBooking(rows, result.booking));
       setPanelMode("details");
       Alert.alert("Cancellation request", result.message || "Request sent.");
@@ -172,7 +212,7 @@ export function ServicesScreen(_props: Props) {
     }
     setBusy(true);
     try {
-      const result = await emailRentalDocuments(selectedBooking.id);
+      const result = await emailRentalDocuments(String(selectedDocumentSetId || selectedBooking.id), documentEmail);
       Alert.alert("Rental documents", result.message || "Documents were emailed.");
     } catch (documentError) {
       Alert.alert("Documents unavailable", documentError instanceof Error ? documentError.message : "Try again after pickup is completed.");
@@ -195,6 +235,19 @@ export function ServicesScreen(_props: Props) {
       Alert.alert("Support ticket created", result.message || `Ticket ${result.ticketId} created.`);
     } catch (supportError) {
       Alert.alert("Could not create ticket", supportError instanceof Error ? supportError.message : "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitStudentVerification() {
+    setBusy(true);
+    try {
+      const result = await updateMobileStudentVerification(studentEmail, studentId);
+      Alert.alert("Student verification", result.message || "Check your .edu inbox for the verification link.");
+      await loadBookings();
+    } catch (studentError) {
+      Alert.alert("Could not update", studentError instanceof Error ? studentError.message : "Try again.");
     } finally {
       setBusy(false);
     }
@@ -223,6 +276,13 @@ export function ServicesScreen(_props: Props) {
       onPress: () => openPanel("details")
     }
   ];
+
+  const selectedDocumentSet = selectedBooking?.documents?.find((item) => item.id === selectedDocumentSetId)
+    || selectedBooking?.documents?.[0]
+    || null;
+  const selectedDocument = selectedDocumentSet?.docs?.[selectedDocName] || null;
+  const selectedUpgrade = selectedBooking?.upgradeOptions?.find((option) => option.id === selectedVehicleId) || null;
+  const estimatedPrice = selectedUpgrade?.estimatedTotalLabel || selectedBooking?.totalLabel || "";
 
   return (
     <>
@@ -290,35 +350,158 @@ export function ServicesScreen(_props: Props) {
             <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
               {selectedBooking && panelMode === "modify" ? (
                 <>
-                  <Text style={styles.policyCopy}>Request pickup, return, date, or time changes. FairFares recalculates the trip and flags the booking for review like the web manage-booking flow.</Text>
-                  <InputField label="Pickup location" value={pickupLocation} onChangeText={setPickupLocation} />
-                  <InputField label="Return location" value={returnLocation} onChangeText={setReturnLocation} />
-                  <InputField label="Pickup date" value={pickupDate} onChangeText={setPickupDate} placeholder="YYYY-MM-DD" />
-                  <InputField label="Return date" value={returnDate} onChangeText={setReturnDate} placeholder="YYYY-MM-DD" />
-                  <InputField label="Pickup time" value={pickupTime} onChangeText={setPickupTime} placeholder="10:00 AM" />
-                  <InputField label="Return time" value={returnTime} onChangeText={setReturnTime} placeholder="10:00 AM" />
+                  <Text style={styles.policyCopy}>Make changes to fit your plans. Date, location, vehicle, and additional-driver changes are sent to FairFares for review using the same booking flow as web.</Text>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Change dates</Text>
+                    <View style={styles.twoColumn}>
+                      <InputField label="Pickup date" value={pickupDate} onChangeText={setPickupDate} placeholder="YYYY-MM-DD" />
+                      <InputField label="Pickup time" value={pickupTime} onChangeText={setPickupTime} placeholder="10:00 AM" />
+                    </View>
+                    <View style={styles.twoColumn}>
+                      <InputField label="Return date" value={returnDate} onChangeText={setReturnDate} placeholder="YYYY-MM-DD" />
+                      <InputField label="Return time" value={returnTime} onChangeText={setReturnTime} placeholder="10:00 AM" />
+                    </View>
+                  </View>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Change pickup location</Text>
+                    <InputField label="Pickup location" value={pickupLocation} onChangeText={setPickupLocation} />
+                    <InputField label="Drop-off location" value={returnLocation} onChangeText={setReturnLocation} />
+                    <View style={styles.chipWrap}>
+                      {(selectedBooking.locations || []).slice(0, 6).map((location) => (
+                        <TouchableOpacity key={location} style={styles.choiceChip} onPress={() => { setPickupLocation(location); setReturnLocation(location); }}>
+                          <Text style={styles.choiceChipText}>{location}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Upgrade vehicle</Text>
+                    <ChoiceRow
+                      label="No upgrade"
+                      detail={`Keep current vehicle - ${selectedBooking.totalLabel}`}
+                      selected={selectedVehicleId === 0}
+                      onPress={() => setSelectedVehicleId(0)}
+                    />
+                    {(selectedBooking.upgradeOptions || []).map((option) => (
+                      <ChoiceRow
+                        key={option.id}
+                        label={option.name}
+                        detail={`${option.category} - ${option.dailyRange} - ${option.estimatedTotalLabel}`}
+                        selected={selectedVehicleId === option.id}
+                        onPress={() => setSelectedVehicleId(option.id)}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Add additional driver</Text>
+                    <ToggleRow
+                      label="Add an additional driver"
+                      selected={additionalDriverRequested}
+                      onPress={() => setAdditionalDriverRequested((value) => !value)}
+                    />
+                    {additionalDriverRequested ? (
+                      <>
+                        <InputField label="Driver name" value={additionalDriverName} onChangeText={setAdditionalDriverName} placeholder="Enter full name" />
+                        <View style={styles.chipWrap}>
+                          {["21-24", "25+"].map((age) => (
+                            <TouchableOpacity key={age} style={[styles.choiceChip, additionalDriverAge === age && styles.activeChoiceChip]} onPress={() => setAdditionalDriverAge(age)}>
+                              <Text style={[styles.choiceChipText, additionalDriverAge === age && styles.activeChoiceChipText]}>{age}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
+                  <View style={styles.modifySummary}>
+                    <AmountPill label="Selected vehicle" value={selectedUpgrade?.name || selectedBooking.carName} />
+                    <AmountPill label="Estimated price" value={estimatedPrice} />
+                  </View>
                   <InputField label="Notes for FairFares" value={modifyNote} onChangeText={setModifyNote} multiline placeholder="Tell us what changed." />
+                  <View style={styles.inlineActions}>
+                    <SecondaryButton label="Reset changes" onPress={() => {
+                      setPickupLocation(selectedBooking.pickupLocation || "");
+                      setReturnLocation(selectedBooking.returnLocation || "");
+                      setPickupDate(selectedBooking.pickupDate || "");
+                      setReturnDate(selectedBooking.returnDate || "");
+                      setPickupTime(selectedBooking.pickupTime || "");
+                      setReturnTime(selectedBooking.returnTime || "");
+                      setSelectedVehicleId(0);
+                      setAdditionalDriverRequested(false);
+                      setAdditionalDriverName("");
+                      setAdditionalDriverAge("25+");
+                      setModifyNote("");
+                    }} />
+                  </View>
                   <PrimaryButton label={busy ? "Saving..." : "Submit modification request"} onPress={submitModification} disabled={busy} />
                 </>
               ) : null}
 
               {selectedBooking && panelMode === "cancel" ? (
                 <>
-                  <Text style={styles.policyCopy}>Cancel requests follow the web cancellation policy: eligible holds may cancel automatically; other bookings go to admin review with a support task.</Text>
+                  <View style={styles.greenNote}>
+                    <Text style={styles.greenNoteTitle}>Cancellation approval required</Text>
+                    <Text style={styles.greenNoteBody}>Admin will review your request and confirm refund details.</Text>
+                  </View>
                   <Summary booking={selectedBooking} />
-                  <InputField label="Cancellation reason" value={cancelReason} onChangeText={setCancelReason} multiline />
+                  <Text style={styles.fieldLabel}>Cancellation reason</Text>
+                  <View style={styles.chipWrap}>
+                    {["Plans changed", "Found a better price", "Need a different vehicle", "Booked by mistake"].map((reason) => (
+                      <TouchableOpacity key={reason} style={[styles.choiceChip, cancelReason === reason && styles.activeChoiceChip]} onPress={() => setCancelReason(reason)}>
+                        <Text style={[styles.choiceChipText, cancelReason === reason && styles.activeChoiceChipText]}>{reason}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.fieldLabel}>Refund method</Text>
+                  <View style={styles.chipWrap}>
+                    {["Original payment method", "FairFares travel credit"].map((method) => (
+                      <TouchableOpacity key={method} style={[styles.choiceChip, refundMethod === method && styles.activeChoiceChip]} onPress={() => setRefundMethod(method)}>
+                        <Text style={[styles.choiceChipText, refundMethod === method && styles.activeChoiceChipText]}>{method}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <InputField label="Optional note" value={cancelNote} onChangeText={setCancelNote} multiline placeholder="Add details for support" />
+                  <View style={styles.refundBox}>
+                    <Text style={styles.amountLabel}>Refund Amount (Est.)</Text>
+                    <Text style={styles.refundAmount}>{selectedBooking.refund?.amountLabel || "$0.00"}</Text>
+                    <Text style={styles.detailsLine}>{selectedBooking.refund?.note || "Admin will confirm refund details."}</Text>
+                  </View>
+                  <ToggleRow
+                    label="I understand this sends the selected booking to admin for cancellation approval."
+                    selected={cancelConfirmed}
+                    onPress={() => setCancelConfirmed((value) => !value)}
+                  />
+                  <SecondaryButton label="Keep booking" onPress={() => setPanelMode(null)} />
                   <DangerButton label={busy ? "Sending..." : "Request cancellation"} onPress={submitCancellation} disabled={busy} />
                 </>
               ) : null}
 
               {selectedBooking && panelMode === "documents" ? (
                 <>
-                  <Text style={styles.policyCopy}>Invoices and pickup documents are available after pickup is completed. Cancelled bookings keep documents for recordkeeping when generated.</Text>
-                  <Summary booking={selectedBooking} />
+                  <View style={styles.greenNote}>
+                    <Text style={styles.greenNoteTitle}>{selectedBooking.documentsLockedMessage || "Documents can be retrieved once pickup is completed."}</Text>
+                  </View>
+                  <InputField label="Send documents to" value={documentEmail} onChangeText={setDocumentEmail} placeholder="Email address" />
+                  <Text style={styles.fieldLabel}>Choose booking documents</Text>
+                  {(selectedBooking.documents || []).map((set) => (
+                    <ChoiceRow
+                      key={set.id}
+                      label={`${set.statusLabel} - ${set.vehicle}`}
+                      detail={`${set.dates}${set.locked ? " - Locked until pickup" : ""}`}
+                      selected={(selectedDocumentSet?.id || 0) === set.id}
+                      onPress={() => setSelectedDocumentSetId(set.id)}
+                    />
+                  ))}
+                  <View style={styles.chipWrap}>
+                    {["Invoice / Receipt", "Rental Agreement", "Taxes & Fees Breakdown"].map((name) => (
+                      <TouchableOpacity key={name} style={[styles.choiceChip, selectedDocName === name && styles.activeChoiceChip]} onPress={() => setSelectedDocName(name)}>
+                        <Text style={[styles.choiceChipText, selectedDocName === name && styles.activeChoiceChipText]}>{name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   <View style={styles.documentBox}>
-                    <Text style={styles.amountLabel}>Invoice</Text>
-                    <Text style={styles.detailsLine}>{selectedBooking.invoiceNumber || "No generated invoice number yet"}</Text>
-                    <Text style={styles.detailsLine}>{selectedBooking.invoiceUrl ? "PDF is ready to open." : "Use email documents when the booking is eligible."}</Text>
+                    <Text style={styles.amountLabel}>{selectedDocument?.title || selectedDocName}</Text>
+                    <Text style={styles.detailsLine}>{selectedDocument?.body || selectedBooking.invoiceNumber || "Documents are generated from admin booking records."}</Text>
+                    <Text style={styles.detailsLine}>{selectedDocument?.status || (selectedDocumentSet?.locked ? selectedDocumentSet.lockMessage : "Ready when generated.")}</Text>
                   </View>
                   <PrimaryButton label={selectedBooking.invoiceUrl ? "Open invoice" : "Email rental documents"} onPress={sendDocuments} disabled={busy} />
                 </>
@@ -326,25 +509,72 @@ export function ServicesScreen(_props: Props) {
 
               {selectedBooking && panelMode === "details" ? (
                 <>
-                  <Summary booking={selectedBooking} />
-                  <View style={styles.detailSection}>
-                    <Text style={styles.sectionTitle}>Trip</Text>
-                    <Text style={styles.detailsLine}>Pickup: {selectedBooking.pickupLocation}</Text>
-                    <Text style={styles.detailsLine}>{selectedBooking.pickupDate} at {selectedBooking.pickupTime}</Text>
-                    <Text style={styles.detailsLine}>Return: {selectedBooking.returnLocation}</Text>
-                    <Text style={styles.detailsLine}>{selectedBooking.returnDate} at {selectedBooking.returnTime}</Text>
+                  <View style={styles.detailTabs}>
+                    {[
+                      ["student", "Student Verification"],
+                      ["saved", "Saved Trips"],
+                      ["status", "Live Status"],
+                      ["housing", "Housing Posts"]
+                    ].map(([key, label]) => (
+                      <TouchableOpacity key={key} style={[styles.detailTab, detailsTab === key && styles.activeDetailTab]} onPress={() => setDetailsTab(key as typeof detailsTab)}>
+                        <Text style={[styles.detailTabText, detailsTab === key && styles.activeDetailTabText]}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
-                  <View style={styles.detailSection}>
-                    <Text style={styles.sectionTitle}>Payment</Text>
-                    <View style={styles.amountGrid}>
-                      <AmountPill label="Total" value={selectedBooking.totalLabel} />
-                      <AmountPill label="Due pickup" value={selectedBooking.dueAtPickupLabel} />
+                  {detailsTab === "student" ? (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.sectionTitle}>Student Verification</Text>
+                      <View style={styles.greenNote}>
+                        <Text style={styles.greenNoteTitle}>{selectedBooking.student?.statusLabel || "Student Verification Pending"}</Text>
+                        <Text style={styles.greenNoteBody}>{selectedBooking.student?.discountLabel || "0% OFF"}</Text>
+                      </View>
+                      <InputField label="University email" value={studentEmail} onChangeText={setStudentEmail} placeholder="name@school.edu" />
+                      <InputField label="Student ID" value={studentId} onChangeText={setStudentId} placeholder="STU-0000" />
+                      <PrimaryButton label={busy ? "Saving..." : "Update verification"} onPress={submitStudentVerification} disabled={busy} />
                     </View>
-                    <View style={styles.amountGrid}>
-                      <AmountPill label="Due now" value={selectedBooking.dueNowLabel} />
-                      <AmountPill label="Payment" value={selectedBooking.paymentLabel} />
+                  ) : null}
+                  {detailsTab === "saved" ? (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.sectionTitle}>Saved Trips</Text>
+                      <View style={styles.amountGrid}>
+                        <AmountPill label="Upcoming" value={String(selectedBooking.stats?.upcoming ?? 0)} />
+                        <AmountPill label="Past" value={String(selectedBooking.stats?.past ?? 0)} />
+                        <AmountPill label="Saved" value={String(selectedBooking.stats?.saved ?? 0)} />
+                      </View>
+                      <Summary booking={selectedBooking} />
                     </View>
-                  </View>
+                  ) : null}
+                  {detailsTab === "status" ? (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.sectionTitle}>Live Rental Status</Text>
+                      <View style={styles.greenNote}>
+                        <Text style={styles.greenNoteTitle}>{selectedBooking.liveStatus?.title || "No active booking yet"}</Text>
+                        <Text style={styles.greenNoteBody}>{selectedBooking.liveStatus?.body || "Book a car to see live pickup status here."}</Text>
+                      </View>
+                      <View style={styles.countdownRow}>
+                        <AmountPill label="Days" value={selectedBooking.liveStatus?.days || "00"} />
+                        <AmountPill label="Hours" value={selectedBooking.liveStatus?.hours || "00"} />
+                        <AmountPill label="Mins" value={selectedBooking.liveStatus?.mins || "00"} />
+                      </View>
+                      <Text style={styles.detailsLine}>{selectedBooking.liveStatus?.instructions}</Text>
+                    </View>
+                  ) : null}
+                  {detailsTab === "housing" ? (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.sectionTitle}>Housing Posts</Text>
+                      <View style={styles.amountGrid}>
+                        <AmountPill label="Active" value={String(selectedBooking.stats?.housingActive ?? 0)} />
+                        <AmountPill label="Expired" value={String(selectedBooking.stats?.housingExpired ?? 0)} />
+                      </View>
+                      {(selectedBooking.housingPosts || []).length ? (selectedBooking.housingPosts || []).map((post) => (
+                        <View key={post.id} style={styles.documentBox}>
+                          <Text style={styles.detailsCar}>{post.title}</Text>
+                          <Text style={styles.detailsLine}>{post.modeLabel} - {post.categoryLabel} - {post.location}</Text>
+                          <Text style={styles.detailsLine}>{post.rent} - {post.expiryLabel}</Text>
+                        </View>
+                      )) : <Text style={styles.detailsLine}>No housing posts yet.</Text>}
+                    </View>
+                  ) : null}
                   <View style={styles.inlineActions}>
                     <SecondaryButton label="Support Center" onPress={() => setPanelMode("support")} />
                     {selectedBooking.manageUrl ? <SecondaryButton label="Open web details" onPress={() => Linking.openURL(selectedBooking.manageUrl)} /> : null}
@@ -358,6 +588,14 @@ export function ServicesScreen(_props: Props) {
                   <Summary booking={selectedBooking} />
                   <InputField label="Topic" value={supportTopic} onChangeText={setSupportTopic} />
                   <InputField label="Message" value={supportMessage} onChangeText={setSupportMessage} multiline placeholder="Tell us what you need help with." />
+                  {(selectedBooking.supportTickets || []).length ? (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.sectionTitle}>Recent support</Text>
+                      {(selectedBooking.supportTickets || []).map((ticket) => (
+                        <Text key={ticket.ticketId} style={styles.detailsLine}>{ticket.ticketId} - {ticket.status} - {ticket.topic}</Text>
+                      ))}
+                    </View>
+                  ) : null}
                   <View style={styles.inlineActions}>
                     <PrimaryButton label={busy ? "Sending..." : "Create ticket"} onPress={() => submitSupportTicket(false)} disabled={busy} />
                     <DangerButton label="Urgent" onPress={() => submitSupportTicket(true)} disabled={busy} />
@@ -449,6 +687,37 @@ function AmountPill({ label, value }: { label: string; value: string }) {
       <Text style={styles.amountLabel}>{label}</Text>
       <Text style={styles.amountValue}>{value}</Text>
     </View>
+  );
+}
+
+function ChoiceRow({
+  label,
+  detail,
+  selected,
+  onPress
+}: {
+  label: string;
+  detail: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={[styles.choiceRow, selected && styles.selectedChoiceRow]} onPress={onPress} activeOpacity={0.82}>
+      <View style={styles.radioDot}>{selected ? <View style={styles.radioDotInner} /> : null}</View>
+      <View style={styles.choiceRowCopy}>
+        <Text style={styles.choiceRowLabel}>{label}</Text>
+        <Text style={styles.choiceRowDetail}>{detail}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ToggleRow({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.toggleRow} onPress={onPress} activeOpacity={0.82}>
+      <View style={[styles.checkbox, selected && styles.checkedBox]}>{selected ? <Text style={styles.checkText}>✓</Text> : null}</View>
+      <Text style={styles.toggleText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -651,6 +920,7 @@ const styles = StyleSheet.create({
     lineHeight: 20
   },
   inputGroup: {
+    flex: 1,
     gap: 7
   },
   input: {
@@ -692,6 +962,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.05)",
     padding: 14
   },
+  twoColumn: {
+    flexDirection: "row",
+    gap: 10
+  },
   sectionTitle: {
     color: theme.colors.text,
     fontSize: 16,
@@ -719,6 +993,175 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 16,
     fontWeight: "900"
+  },
+  modifySummary: {
+    flexDirection: "row",
+    gap: 10
+  },
+  choiceRow: {
+    minHeight: 70,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  selectedChoiceRow: {
+    borderColor: theme.colors.blue,
+    backgroundColor: "rgba(80,124,255,0.18)"
+  },
+  radioDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.64)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  radioDotInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: theme.colors.blue
+  },
+  choiceRowCopy: {
+    flex: 1,
+    gap: 4
+  },
+  choiceRowLabel: {
+    color: theme.colors.text,
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  choiceRowDetail: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 16
+  },
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  choiceChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    paddingHorizontal: 12,
+    paddingVertical: 9
+  },
+  activeChoiceChip: {
+    backgroundColor: theme.colors.text,
+    borderColor: theme.colors.text
+  },
+  choiceChipText: {
+    color: theme.colors.text,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  activeChoiceChipText: {
+    color: "#05070d"
+  },
+  toggleRow: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.5)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  checkedBox: {
+    backgroundColor: theme.colors.blue,
+    borderColor: theme.colors.blue
+  },
+  checkText: {
+    color: theme.colors.text,
+    fontWeight: "900"
+  },
+  toggleText: {
+    color: theme.colors.text,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 19
+  },
+  greenNote: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(74,222,128,0.28)",
+    backgroundColor: "rgba(34,197,94,0.12)",
+    padding: 14,
+    gap: 4
+  },
+  greenNoteTitle: {
+    color: "#bbf7d0",
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  greenNoteBody: {
+    color: "#dcfce7",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18
+  },
+  refundBox: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 14,
+    gap: 5
+  },
+  refundAmount: {
+    color: "#4ade80",
+    fontSize: 24,
+    fontWeight: "900"
+  },
+  detailTabs: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  detailTab: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: "rgba(255,255,255,0.05)"
+  },
+  activeDetailTab: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent
+  },
+  detailTabText: {
+    color: theme.colors.text,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  activeDetailTabText: {
+    color: theme.colors.text
+  },
+  countdownRow: {
+    flexDirection: "row",
+    gap: 8
   },
   documentBox: {
     borderRadius: 20,

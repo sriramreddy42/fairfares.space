@@ -264,11 +264,16 @@ export async function getRentalBookings() {
   return payload.bookings || [];
 }
 
-export async function requestRentalCancellation(bookingId: string, reason = "Customer cancellation request") {
+export async function requestRentalCancellation(
+  bookingId: string,
+  reason = "Customer cancellation request",
+  note = "",
+  refundMethod = "Original payment method"
+) {
   return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>("/api/mobile/rentals/cancel-request", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId, reason })
+    body: JSON.stringify({ bookingId, reason, note, refundMethod })
   });
 }
 
@@ -281,6 +286,10 @@ export async function requestRentalModification(
     returnDate?: string;
     pickupTime?: string;
     returnTime?: string;
+    vehicleId?: number;
+    additionalDriverRequested?: boolean;
+    additionalDriverName?: string;
+    additionalDriverAge?: string;
     note?: string;
   }
 ) {
@@ -296,6 +305,14 @@ export async function emailRentalDocuments(bookingId: string, email = "") {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bookingId, email })
+  });
+}
+
+export async function updateMobileStudentVerification(studentEmail: string, studentId: string) {
+  return request<{ ok: boolean; message: string; user?: BootstrapPayload["user"] }>("/api/mobile/student-verification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ studentEmail, studentId })
   });
 }
 

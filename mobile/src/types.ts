@@ -144,6 +144,73 @@ export type RentalServiceBooking = RentalBooking & {
   invoiceNumber: string;
   invoiceUrl: string;
   manageUrl: string;
+  locations?: string[];
+  upgradeOptions?: Array<{
+    id: number;
+    name: string;
+    category: string;
+    dailyRange: string;
+    estimatedTotalLabel: string;
+  }>;
+  refund?: {
+    amount: number;
+    amountLabel: string;
+    note: string;
+  };
+  documents?: Array<{
+    id: number;
+    bookingId: string;
+    vehicle: string;
+    dates: string;
+    status: string;
+    statusLabel: string;
+    locked: boolean;
+    lockMessage: string;
+    docs: Record<string, { title: string; body: string; status: string }>;
+  }>;
+  documentsLocked?: boolean;
+  documentsLockedMessage?: string;
+  liveStatus?: {
+    title: string;
+    body: string;
+    instructions: string;
+    days: string;
+    hours: string;
+    mins: string;
+    secs: string;
+  };
+  student?: {
+    email: string;
+    id: string;
+    verified: boolean;
+    statusLabel: string;
+    discountLabel: string;
+  };
+  stats?: {
+    upcoming: number;
+    past: number;
+    saved: number;
+    housingActive: number;
+    housingExpired: number;
+    supportOpen: number;
+  };
+  housingPosts?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    expiryLabel: string;
+    modeLabel: string;
+    categoryLabel: string;
+    location: string;
+    rent: string;
+  }>;
+  supportTickets?: Array<{
+    ticketId: string;
+    topic: string;
+    status: string;
+    priority: string;
+    bookingId: string;
+  }>;
 };
 
 export type RentalSearchInput = {
