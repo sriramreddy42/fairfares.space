@@ -62,8 +62,12 @@ export function ServicesScreen({ cars, services, selected, onSelect, onOpenHousi
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Text style={styles.title}>{selected === "cars" ? "Rental Cars" : "Services"}</Text>
       {selected === "cars" ? <CarRentals cars={cars} onBookCar={onBookCar} onOpenHousing={onOpenHousing} /> : null}
-      <ServiceGrid title="Go anywhere" tiles={goAnywhere} selected={selected} onPress={openTile} />
-      <ServiceGrid title="Get anything done" tiles={deliveryTiles} selected={selected} onPress={openTile} />
+      {selected !== "cars" ? (
+        <>
+          <ServiceGrid title="Go anywhere" tiles={goAnywhere} selected={selected} onPress={openTile} />
+          <ServiceGrid title="Get anything done" tiles={deliveryTiles} selected={selected} onPress={openTile} />
+        </>
+      ) : null}
 
       {selected === "deals" ? <Deals /> : null}
       {selected === "explorer" ? <Explorer /> : null}
@@ -234,7 +238,6 @@ function CarRentals({
   const [visibleCars, setVisibleCars] = useState<Car[]>(cars);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
   const [quote, setQuote] = useState<RentalQuote | null>(null);
-  const [checkoutInfo, setCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
@@ -476,6 +479,7 @@ function CarRentals({
           <Text style={styles.searchButtonText}>{busy ? "Searching..." : "Search cars"}</Text>
         </TouchableOpacity>
       </View>
+      <RentalServiceCenter quote={quote} selectedCar={selectedCar} onOpenHousing={onOpenHousing} onAction={showReservationTool} />
       <Modal visible={Boolean(quote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setQuote(null)}>
         <View style={styles.checkoutScreen}>
           <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
@@ -513,16 +517,6 @@ function CarRentals({
             <View style={styles.paymentTimer}>
               <Text style={styles.paymentTimerText}>{quote.policy.holdMinutes}:00</Text>
             </View>
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Your information</Text>
-            <View style={styles.checkoutInfoGrid}>
-              <TextInput value={checkoutInfo.firstName} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, firstName: text }))} placeholder="First name" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} />
-              <TextInput value={checkoutInfo.lastName} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, lastName: text }))} placeholder="Last name" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} />
-              <TextInput value={checkoutInfo.email} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, email: text }))} placeholder="Email address" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} autoCapitalize="none" />
-              <TextInput value={checkoutInfo.phone} onChangeText={(text) => setCheckoutInfo((current) => ({ ...current, phone: text }))} placeholder="Mobile number" placeholderTextColor={theme.colors.muted} style={styles.checkoutInput} keyboardType="phone-pad" />
-            </View>
-            <Text style={styles.policyText}>Used for booking confirmation, pickup coordination, and rental updates.</Text>
           </View>
           <View style={styles.quoteGrid}>
             <Text style={styles.quoteItem}>Trip: {quote.booking.days} days</Text>
@@ -585,52 +579,6 @@ function CarRentals({
             <Text style={styles.policyTitle}>Identity checked at pickup</Text>
             <Text style={styles.policyText}>Staff will start Stripe Identity during pickup before the vehicle is released. Bring a valid license, payment method, and insurance proof if requested.</Text>
           </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Reservation tools</Text>
-            <Text style={styles.policyText}>After payment, these actions stay attached to this booking so changes, documents, and support do not get scattered.</Text>
-            <View style={styles.checkoutToolGrid}>
-              <TouchableOpacity style={styles.checkoutTool} onPress={() => showReservationTool("Modify reservation", "Use this after payment to request date, time, location, or vehicle changes.")}>
-                <Text style={styles.checkoutToolText}>Modify Reservation</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.checkoutTool} onPress={() => showReservationTool("Cancel reservation", "Cancellation requests are reviewed against the cutoff window, payment status, no-show rules, and discount conditions.")}>
-                <Text style={styles.checkoutToolText}>Cancel Reservation</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.checkoutTool, styles.checkoutToolPrimary]} onPress={() => showReservationTool("Download invoice", "Invoice and receipt documents become available after the payment confirmation is created.")}>
-                <Text style={styles.checkoutToolPrimaryText}>Download Invoice</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.checkoutTool} onPress={() => showReservationTool("View details", `${quote.booking.carName || selectedCar?.name}\n${quote.booking.pickupLocation}\n${quote.booking.pickupDate} ${quote.booking.pickupTime} to ${quote.booking.returnDate} ${quote.booking.returnTime}`)}>
-                <Text style={styles.checkoutToolText}>View Details</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.checkoutTool} onPress={onOpenHousing}>
-                <Text style={styles.checkoutToolText}>Housing</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.checkoutTool} onPress={() => showReservationTool("Support center", "FairFares support can help with pickup questions, document review, payment status, and rental changes.")}>
-                <Text style={styles.checkoutToolText}>Support Center</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          <View style={styles.policyCard}>
-            <Text style={styles.policyTitle}>Documents</Text>
-            <Text style={styles.documentStatus}>Documents can be retrieved once pickup is completed.</Text>
-            <Text style={styles.policyText}>Send documents to</Text>
-            <View style={styles.documentBox}>
-              <Text style={styles.documentBoxText}>{checkoutInfo.email || "Add your email above"}</Text>
-            </View>
-            <Text style={styles.policyText}>Booking documents</Text>
-            <View style={styles.documentSelect}>
-              <Text style={styles.documentSelectText}>
-                Pending confirmation - {quote.booking.carName || selectedCar?.name || "Rental car"} - {quote.booking.pickupDate} to {quote.booking.returnDate} - Locked until pickup
-              </Text>
-            </View>
-          </View>
-          <View style={styles.paymentActions}>
-            <TouchableOpacity style={[styles.bookNowWide, styles.holdButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "hold")}>
-              <Text style={styles.bookNowText}>Pay 10% hold</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.bookNowWide, styles.fullPayButton]} onPress={() => selectedCar && onBookCar(selectedCar, search, "full")}>
-              <Text style={styles.fullPayButtonText}>Pay in full</Text>
-            </TouchableOpacity>
-          </View>
         </View>
         ) : null}
           </ScrollView>
@@ -656,6 +604,109 @@ function CarRentals({
         );
       })}
       {renderPickerModal()}
+    </View>
+  );
+}
+
+function RentalServiceCenter({
+  quote,
+  selectedCar,
+  onOpenHousing,
+  onAction
+}: {
+  quote: RentalQuote | null;
+  selectedCar: Car | null;
+  onOpenHousing: () => void;
+  onAction: (title: string, message: string) => void;
+}) {
+  const bookingTitle = quote?.booking.carName || selectedCar?.name || "Select a rental car";
+  const bookingDates = quote ? `${quote.booking.pickupDate} to ${quote.booking.returnDate}` : "Choose dates and search cars";
+  const pickupDate = quote?.booking.pickupDate || "Pickup";
+  const policy = quote?.policy;
+
+  return (
+    <View style={styles.rentalServicePanel}>
+      <View style={styles.servicePanelHeader}>
+        <View>
+          <Text style={styles.quoteEyebrow}>Rental services</Text>
+          <Text style={styles.servicePanelTitle}>Manage your rental</Text>
+        </View>
+        <Image source={appAssets.ride} style={styles.servicePanelIcon} resizeMode="contain" />
+      </View>
+
+      <View style={styles.policyCard}>
+        <Text style={styles.policyTitle}>Cancellation policy</Text>
+        <Text style={styles.policyText}>Cancel before pickup when plans change.</Text>
+        <View style={styles.cancelTimeline}>
+          <View style={styles.cancelStep}>
+            <View style={styles.cancelDotActive} />
+            <Text style={styles.cancelStepTitle}>Today</Text>
+            <Text style={styles.cancelStepMeta}>Open</Text>
+          </View>
+          <View style={styles.cancelLine} />
+          <View style={styles.cancelStep}>
+            <View style={styles.cancelDot} />
+            <Text style={styles.cancelStepTitle}>24-hour cutoff</Text>
+            <Text style={styles.cancelStepMeta}>Auto review</Text>
+          </View>
+          <View style={styles.cancelLine} />
+          <View style={styles.cancelStep}>
+            <View style={styles.cancelDot} />
+            <Text style={styles.cancelStepTitle}>Pickup</Text>
+            <Text style={styles.cancelStepMeta}>{pickupDate}</Text>
+          </View>
+        </View>
+        <Text style={styles.policyText}>
+          {policy?.cancellation.cutoff_copy || "Cancellation requests are reviewed against pickup time, payment status, no-show rules, and discount conditions."}
+        </Text>
+      </View>
+
+      <View style={styles.policyCard}>
+        <Text style={styles.policyTitle}>Rental policies</Text>
+        <Text style={styles.policyText}>Driver rules and required documents are checked before vehicle release.</Text>
+        <Text style={styles.policyText}>Bring a valid driver license, payment method, insurance information when required, and booking confirmation.</Text>
+        <Text style={styles.policyText}>Deposit: {policy ? dollars(policy.securityDepositAmount) : "shown after quote"} refundable authorization at pickup.</Text>
+        {(policy?.bullets || ["Pickup staff may verify identity before keys are released.", "Cleaning, fuel, tolls, damage, and late return fees are reviewed after return."]).slice(0, 3).map((item) => (
+          <Text key={item} style={styles.policyBullet}>- {item}</Text>
+        ))}
+      </View>
+
+      <View style={styles.policyCard}>
+        <Text style={styles.policyTitle}>Identity checked at pickup</Text>
+        <Text style={styles.policyText}>Staff will start Stripe Identity during pickup before the vehicle is released.</Text>
+      </View>
+
+      <View style={styles.checkoutToolGrid}>
+        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Modify reservation", "Request date, time, pickup location, return location, or vehicle changes after booking.")}>
+          <Text style={styles.checkoutToolText}>Modify Reservation</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Cancel reservation", "Cancellation requests use the pickup cutoff, payment status, no-show rules, and discount conditions.")}>
+          <Text style={styles.checkoutToolText}>Cancel Reservation</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.checkoutTool, styles.checkoutToolPrimary]} onPress={() => onAction("Download invoice", "Invoice and receipt documents become available after payment confirmation.")}>
+          <Text style={styles.checkoutToolPrimaryText}>Download Invoice</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("View details", `${bookingTitle}\n${bookingDates}`)}>
+          <Text style={styles.checkoutToolText}>View Details</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.checkoutTool} onPress={onOpenHousing}>
+          <Text style={styles.checkoutToolText}>Housing</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.checkoutTool} onPress={() => onAction("Support center", "FairFares support can help with pickup questions, document review, payment status, and rental changes.")}>
+          <Text style={styles.checkoutToolText}>Support Center</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.policyCard}>
+        <Text style={styles.policyTitle}>Documents</Text>
+        <Text style={styles.documentStatus}>Documents can be retrieved once pickup is completed.</Text>
+        <Text style={styles.policyText}>Booking documents</Text>
+        <View style={styles.documentSelect}>
+          <Text style={styles.documentSelectText}>
+            {quote ? `Pending confirmation - ${bookingTitle} - ${bookingDates} - Locked until pickup` : "Search and reserve a car to attach rental documents."}
+          </Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -743,6 +794,33 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 }
   },
+  rentalServicePanel: {
+    backgroundColor: "rgba(17,24,39,0.84)",
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(80,124,255,0.42)",
+    padding: theme.spacing.md,
+    gap: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.38,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 }
+  },
+  servicePanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  servicePanelTitle: {
+    color: theme.colors.text,
+    fontSize: 23,
+    fontWeight: "900"
+  },
+  servicePanelIcon: {
+    width: 54,
+    height: 54
+  },
   panelTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
   fieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", marginTop: 2 },
   searchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
@@ -800,8 +878,6 @@ const styles = StyleSheet.create({
   documentBoxText: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
   documentSelect: { borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(80,124,255,0.42)", backgroundColor: "rgba(80,124,255,0.10)", padding: 11 },
   documentSelectText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  checkoutInfoGrid: { gap: 8 },
-  checkoutInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontWeight: "800" },
   policyText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   policyBullet: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   paymentActions: { flexDirection: "row", gap: 10, marginTop: 4 },
