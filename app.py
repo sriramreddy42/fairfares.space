@@ -1303,6 +1303,13 @@ def normalized_email_sql(column: str = "email") -> str:
     return f"LOWER(REPLACE(REPLACE(REPLACE(REPLACE({column}, ' ', ''), char(9), ''), char(10), ''), char(13), ''))"
 
 
+def normalized_phone_sql(column: str = "phone") -> str:
+    return (
+        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+        f"{column}, ' ', ''), char(9), ''), char(10), ''), char(13), ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')"
+    )
+
+
 def find_user_by_email(con: sqlite3.Connection, email: object) -> sqlite3.Row | None:
     clean_email = normalize_email(email)
     if not clean_email:
@@ -3167,6 +3174,94 @@ def get_booking_for_user_by_identifier(user_id: int, booking_identifier: object)
             LIMIT 1
             """,
             (user_id, identifier, numeric_id, numeric_id),
+        ).fetchone()
+
+
+def booking_identity_filters_for_user(user: sqlite3.Row | None) -> tuple[str, list[object]]:
+    user_id = int(row_value(user, "id") or 0) if user else 0
+    email = normalize_email(row_value(user, "email") if user else "")
+    phone = normalize_phone(row_value(user, "phone") if user else "")
+    clauses = []
+    params: list[object] = []
+    if user_id:
+        clauses.append("bookings.user_id = ?")
+        params.append(user_id)
+    if email:
+        clauses.append(f"{normalized_email_sql('bookings.contact_email')} = ?")
+        params.append(email)
+        clauses.append(
+            "bookings.user_id IN "
+            f"(SELECT id FROM users WHERE {normalized_email_sql('users.email')} = ?)"
+        )
+        params.append(email)
+    if phone:
+        clauses.append(f"({normalized_phone_sql('bookings.contact_phone')} = ? AND TRIM(COALESCE(bookings.contact_email, '')) = '')")
+        params.append(phone)
+        clauses.append(
+            "bookings.user_id IN "
+            f"(SELECT id FROM users WHERE {normalized_phone_sql('users.phone')} = ? AND TRIM(COALESCE(users.email, '')) = '')"
+        )
+        params.append(phone)
+    if not clauses:
+        return "0", []
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def get_mobile_rental_bookings_for_user(user: sqlite3.Row) -> list[sqlite3.Row]:
+    expire_stale_booking_holds()
+    where_sql, params = booking_identity_filters_for_user(user)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url, cars.daily_price
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE {where_sql}
+            ORDER BY bookings.id DESC
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def get_mobile_rental_booking_by_identifier(user: sqlite3.Row, booking_identifier: object) -> sqlite3.Row | None:
+    identifier = str(booking_identifier or "").strip()
+    if not identifier:
+        return None
+    numeric_id = int(float_from_value(identifier) or 0)
+    where_sql, params = booking_identity_filters_for_user(user)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE {where_sql}
+              AND (bookings.booking_id = ? OR (? > 0 AND bookings.id = ?))
+            ORDER BY bookings.id DESC
+            LIMIT 1
+            """,
+            tuple(params) + (identifier, numeric_id, numeric_id),
+        ).fetchone()
+
+
+def get_mobile_current_rental_booking(user: sqlite3.Row) -> sqlite3.Row | None:
+    expire_stale_booking_holds()
+    where_sql, params = booking_identity_filters_for_user(user)
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT bookings.*, cars.name AS car_name, cars.category, cars.seats, cars.bags,
+                   cars.doors, cars.transmission, cars.color, cars.image_url, cars.daily_price
+            FROM bookings
+            JOIN cars ON cars.id = bookings.car_id
+            WHERE {where_sql}
+            ORDER BY
+                CASE WHEN bookings.booking_status IN ('CANCELLED', 'RETURNED') THEN 1 ELSE 0 END,
+                bookings.id DESC
+            LIMIT 1
+            """,
+            tuple(params),
         ).fetchone()
 
 
@@ -22554,7 +22649,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required to view rental bookings."}, 401)
             return
-        bookings = get_bookings_for_user(int(row_value(user, "id") or 0))
+        bookings = get_mobile_rental_bookings_for_user(user)
         origin = self.public_origin()
         self.send_json(
             {
@@ -22633,7 +22728,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         user_id = int(row_value(user, "id") or 0)
-        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
         if not booking:
             self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
             return
@@ -22667,14 +22762,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     status = ?,
                     payment_status = ?,
                     cancellation_reason = ?
-                WHERE id = ? AND user_id = ?
+                WHERE id = ?
                 """,
-                (next_status, next_status, next_payment_status, reason, row_value(booking, "id"), user_id),
+                (next_status, next_status, next_payment_status, reason, row_value(booking, "id")),
             )
             if auto_cancel:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
             ticket_id = make_cancellation_task(con, booking, user, reason, auto_cancel)
-        updated = get_booking_for_user_by_identifier(user_id, row_value(booking, "booking_id"))
+        updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
         message = (
             f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created."
             if auto_cancel
@@ -22695,7 +22790,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         user_id = int(row_value(user, "id") or 0)
-        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
         if not booking:
             self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
             return
@@ -22783,7 +22878,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     booking_status = 'MODIFIED',
                     status = 'MODIFIED',
                     cancellation_reason = ?
-                WHERE id = ? AND user_id = ?
+                WHERE id = ?
                 """,
                 (
                     requested_car_id,
@@ -22809,13 +22904,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     additional_driver_fee,
                     change_note,
                     row_value(booking, "id"),
-                    user_id,
                 ),
             )
             if selected_car:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
                 con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
-        updated = get_booking_for_user_by_identifier(user_id, row_value(booking, "booking_id"))
+        updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
         self.send_json(
             {
                 "ok": True,
@@ -22831,7 +22925,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         user_id = int(row_value(user, "id") or 0)
-        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
         if not booking:
             self.send_json({"ok": False, "error": "Booking documents not found."}, 404)
             return
@@ -22854,7 +22948,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         user_id = int(row_value(user, "id") or 0)
-        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id"))
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
         ticket_id = make_ticket_id()
         topic = str(payload.get("topic") or "Rental support").strip()[:120]
         message = str(payload.get("message") or "").strip()[:1200]
@@ -22956,7 +23050,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         payment_option = "full" if str(payload.get("paymentOption") or payload.get("payment_option") or "").lower() == "full" else "hold"
         user_id = int(row_value(user, "id") or 0)
-        booking = get_booking_for_user_by_identifier(user_id, payload.get("bookingId") or payload.get("booking_id")) or get_booking_for_user(user_id)
+        booking = (
+            get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
+            or get_mobile_current_rental_booking(user)
+        )
         if not booking:
             self.send_json({"ok": False, "error": "Choose a car before paying."}, 404)
             return
