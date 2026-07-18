@@ -5,12 +5,18 @@ import { theme } from "../theme";
 
 export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
-const tabs: Array<{ key: TabKey; label: string; icon?: ImageSourcePropType; custom?: "home" | "services" | "activity" }> = [
+const tabs: Array<{
+  key: TabKey;
+  label: string;
+  icon?: ImageSourcePropType;
+  iconSize?: number;
+  custom?: "home" | "services" | "activity";
+}> = [
   { key: "home", label: "Home", custom: "home" },
   { key: "services", label: "Services", custom: "services" },
   { key: "activity", label: "Activity", custom: "activity" },
-  { key: "messenger", label: "Fchat", icon: appAssets.fchat },
-  { key: "profile", label: "Account", icon: appAssets.profile }
+  { key: "messenger", label: "Fchat", icon: appAssets.fchat, iconSize: 31 },
+  { key: "profile", label: "Account", icon: appAssets.profile, iconSize: 28 }
 ];
 
 type Props = {
@@ -33,7 +39,11 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
           <TouchableOpacity key={tab.key} style={styles.item} onPress={() => onChange(tab.key)}>
             <View style={styles.icon}>
               {tab.icon ? (
-                <Image source={tab.icon} style={styles.iconImage} resizeMode="contain" />
+                <Image
+                  source={tab.icon}
+                  style={[styles.iconImage, tab.iconSize ? { width: tab.iconSize, height: tab.iconSize } : null]}
+                  resizeMode="contain"
+                />
               ) : tab.custom === "home" ? (
                 <HomeIcon active={isActive} />
               ) : tab.custom === "services" ? (

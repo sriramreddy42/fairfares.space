@@ -8,7 +8,7 @@ export const appAssets = {
   ride: require("../assets/icons8-ride.gif") as ImageSourcePropType,
   message: require("../assets/icons8-message.gif") as ImageSourcePropType,
   fchat: require("../assets/fchat-nav.png") as ImageSourcePropType,
-  profile: require("../assets/icons8-profile.gif") as ImageSourcePropType,
+  profile: require("../assets/account-nav.png") as ImageSourcePropType,
   search: require("../assets/icons8-magnifying-glass.png") as ImageSourcePropType,
   arrowUp: require("../assets/icons8-up-94.png") as ImageSourcePropType,
   arrowDown: require("../assets/icons8-arrow-down-94.png") as ImageSourcePropType,
