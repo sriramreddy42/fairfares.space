@@ -273,6 +273,7 @@ export function HousingScreen({
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
     : data?.location.suggested || data?.location.city || "";
+  const rideDefaultPickup = selectedLocationText || data?.location.suggested || data?.location.city || "Current location";
   const animatedSearchText = selectedLocationText || searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
   const cheapestCar = useMemo(
     () =>
@@ -368,8 +369,12 @@ export function HousingScreen({
 
   useEffect(() => {
     if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
-    const focusedQuery = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
-    const query = focusedQuery || rideForm.destination || rideForm.origin;
+    const query = (rideFocusedField === "origin" ? rideForm.origin : rideForm.destination).trim();
+    if (!query) {
+      setRideSuggestions([]);
+      setRideSuggestionsBusy(false);
+      return;
+    }
     const timer = setTimeout(() => {
       setRideSuggestionsBusy(true);
       getRidePlaceSuggestions(rideForm.city || data?.location.city || "Denver, CO", query)
@@ -390,12 +395,15 @@ export function HousingScreen({
   function openRidePlanner() {
     setMode("ride");
     setRidePlannerStage("plan");
-    setRideFocusedField(rideForm.destination ? "destination" : "destination");
+    setRideFocusedField("destination");
+    setRideSuggestions([]);
+    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setRideForm((current) => ({
       ...current,
-      city: current.city || data?.location.city || "Denver, CO",
-      origin: current.origin || selectedLocationText || data?.location.city || "Denver, CO",
+      city: data?.location.city || current.city || "Denver, CO",
+      origin: rideDefaultPickup,
+      destination: "",
       rideType: current.rideType || "GENERAL_REQUEST"
     }));
     setRidePlannerOpen(true);
