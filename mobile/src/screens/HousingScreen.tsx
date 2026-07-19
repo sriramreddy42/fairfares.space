@@ -83,9 +83,9 @@ const rideServicePosters: Array<{
     key: "scheduled",
     type: "SCHEDULED_REQUEST",
     title: "Scheduled rides",
-    subtitle: "Same trip again and again",
+    subtitle: "Repeat commute, class, or airport pickup",
     stat: "Example: Lone Tree to DU every Mon-Fri at 8:00 AM",
-    insight: "Best for office commutes, classes, airport shuttles, or any repeated pickup plan.",
+    insight: "Use this when the same ride repeats. Each day still becomes its own ride so one skipped day does not break the whole schedule.",
     tint: "#8a5a00",
     icon: appAssets.ride,
     register: "Tell us pickup, drop-off, days, start date, pickup time, seats, and notes. Example: Lone Tree to DU, Mon-Fri, 8:00 AM.",
@@ -96,9 +96,9 @@ const rideServicePosters: Array<{
     key: "general",
     type: "GENERAL_REQUEST",
     title: "General rides",
-    subtitle: "One ride for now or later",
+    subtitle: "One pickup and one drop-off",
     stat: "Example: Denver to Union Station today at 6:00 PM",
-    insight: "Best for a normal city ride from one place to another.",
+    insight: "Use this for a normal local ride. FairFares resolves both places with Google, estimates distance, then shows ride options.",
     tint: "#243b73",
     icon: appAssets.ride,
     register: "Enter where you are, where you are going, pickup date/time, seats, luggage, and notes.",
@@ -109,9 +109,9 @@ const rideServicePosters: Array<{
     key: "carpool",
     type: "CARPOOL_REQUEST",
     title: "Carpool",
-    subtitle: "Longer trips or shared seats",
+    subtitle: "Shared route, shared cost",
     stat: "Example: Denver to Colorado Springs or Denver to Cincinnati",
-    insight: "Best for out-of-city trips, shared routes, and splitting trip cost.",
+    insight: "Use this for long trips or when riders and drivers are already going the same direction. Detour and seats must be visible.",
     tint: "#0f5f4b",
     icon: appAssets.ride,
     register: "Enter route, date/time, seats, luggage, max pickup distance, and contribution per seat.",
@@ -121,6 +121,12 @@ const rideServicePosters: Array<{
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
+const rideLaunchReadiness = [
+  "Approved driver profile, license, insurance, vehicle, and inspection are required before accepting rides.",
+  "Every ride needs a clear status trail from requested to completed, cancelled, no-show, or disputed.",
+  "Safety controls must include share trip, pickup PIN, report/block, urgent support, and audit history.",
+  "Payments must use idempotency keys so duplicate taps cannot create duplicate charges."
+];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const rideChoiceOptions = [
   { key: "electric", title: "FairFares Electric", meta: "Lower-emission ride", multiplier: 0.95, eta: "5 min", seats: 4 },
@@ -586,8 +592,8 @@ export function HousingScreen({
       const radius = Number(result.dispatch?.nearestRadius || 0);
       setRideRequestStatus(
         notifiedCount
-          ? `Request sent to ${notifiedCount} registered driver${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. If no one accepts, FairFares can expand the search to 20 and 30 miles.`
-          : "Ride request posted. No registered driver offers are currently inside 30 miles, so nearby drivers will see it when they come online or list an offer."
+          ? `Pilot request saved and queued for ${notifiedCount} registered driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. A ride is not confirmed until an approved driver accepts and safety checks are present.`
+          : "Pilot request saved. No registered driver offers are currently inside 30 miles, so nearby drivers will see it when they come online or list an approved offer."
       );
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
@@ -1109,7 +1115,7 @@ export function HousingScreen({
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles.
+                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. Public launch still requires approved drivers, insurance checks, safety tools, and payment controls.
                 </Text>
                 {rideChoiceOptions.map((option) => {
                   const selected = option.key === selectedRideChoice;
@@ -1177,6 +1183,11 @@ export function HousingScreen({
               <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
             ))}
           </View>
+          <View style={styles.ridePilotNote}>
+            <Text style={styles.ridePilotNoteText}>
+              Controlled pilot: rides require approved drivers, verified documents, safety controls, and payment checks before public launch.
+            </Text>
+          </View>
           <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
             <Text style={styles.rideHeroPlanText}>Where to?</Text>
             <Text style={styles.rideHeroPlanMeta}>Plan route with Google places</Text>
@@ -1233,6 +1244,18 @@ export function HousingScreen({
                 <Text style={styles.rideServiceStepText}>{step}</Text>
               </View>
             ))}
+            <View style={styles.rideReadinessCard}>
+              <Text style={styles.rideServiceDetailLabel}>Pilot readiness</Text>
+              <Text style={styles.rideServiceDetailText}>
+                This ride flow should stay in controlled pilot mode until these blockers are fully wired and tested.
+              </Text>
+              {rideLaunchReadiness.map((item) => (
+                <View key={item} style={styles.rideReadinessItem}>
+                  <Text style={styles.rideReadinessCheck}>✓</Text>
+                  <Text style={styles.rideReadinessText}>{item}</Text>
+                </View>
+              ))}
+            </View>
             <Text style={styles.rideServiceDetailLabel}>What you enter</Text>
             <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
             <Text style={styles.rideServiceDetailLabel}>Where to start</Text>
@@ -1704,6 +1727,15 @@ const styles = StyleSheet.create({
   rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
   rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
+  ridePilotNote: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,193,7,0.24)",
+    backgroundColor: "rgba(255,193,7,0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 9
+  },
+  ridePilotNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   ridePosterSection: { gap: theme.spacing.md },
   ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
@@ -1774,6 +1806,17 @@ const styles = StyleSheet.create({
   rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
   rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideReadinessCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,193,7,0.28)",
+    backgroundColor: "rgba(255,193,7,0.08)",
+    padding: 12,
+    gap: 8
+  },
+  rideReadinessItem: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  rideReadinessCheck: { color: theme.colors.green, fontSize: 14, lineHeight: 19, fontWeight: "900" },
+  rideReadinessText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideServicePlanButton: { marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
   rideServicePlanButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideModeSection: { gap: theme.spacing.md },
