@@ -134,6 +134,13 @@ const rideSafetyActions = [
   { label: "Report issue", icon: "!", body: "Flag safety, behavior, pickup, or route concerns." },
   { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
+const rideOwnerSteps = [
+  "List your route, seats, vehicle notes, detour limit, and availability.",
+  "FairFares shows rider requests that match your route and pickup radius.",
+  "You accept or decline. After acceptance, rider sees ETA, route, and chat.",
+  "Payment is agreed directly between rider and driver during this pilot."
+];
+const rideOwnerRequestStates = ["New", "Accepted", "En route", "Arrived", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const rideChoiceOptions = [
   { key: "electric", title: "FairFares Electric", meta: "Lower-emission ride", multiplier: 0.95, eta: "5 min", seats: 4 },
@@ -327,6 +334,7 @@ export function HousingScreen({
   const [selectedRideChoice, setSelectedRideChoice] = useState("standard");
   const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("general");
   const [rideRequestStatus, setRideRequestStatus] = useState("");
+  const [rideOwnerOpen, setRideOwnerOpen] = useState(false);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -477,6 +485,41 @@ export function HousingScreen({
     onBottomTabsHiddenChange?.(false);
   }
 
+  function openRideOwnerTracker() {
+    setMode("ride");
+    setRideOwnerOpen(true);
+    onBottomTabsHiddenChange?.(true);
+  }
+
+  function closeRideOwnerTracker() {
+    setRideOwnerOpen(false);
+    onBottomTabsHiddenChange?.(false);
+  }
+
+  function startRideOfferListing() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before listing your car.");
+      return;
+    }
+    setRideOwnerOpen(false);
+    setSelectedRideService("carpool");
+    setRidePlannerStage("plan");
+    setRideFocusedField("origin");
+    setRideRequestStatus("");
+    setRideForm((current) => ({
+      ...current,
+      city: data?.location.city || current.city || "Denver, CO",
+      origin: rideDefaultPickup,
+      destination: "",
+      rideType: "CARPOOL_OFFER",
+      seats: current.seats === "1" ? "3" : current.seats,
+      maxPickupDistanceMiles: current.maxPickupDistanceMiles || "5",
+      notes: current.notes || "Driver offering seats. Vehicle details and approval documents required before accepting riders."
+    }));
+    setRidePlannerOpen(true);
+    onBottomTabsHiddenChange?.(true);
+  }
+
   function selectRidePlace(place: RidePlaceSuggestion) {
     updateRideForm(rideFocusedField, place.label);
     if (rideFocusedField === "origin") {
@@ -619,6 +662,89 @@ export function HousingScreen({
     const destination = rideForm.destination || rideForm.city || "Denver, CO";
     const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
     void Linking.openURL(url);
+  }
+
+  function renderRideOwnerTracker() {
+    const requestRows = rideRows.filter((ride) => ride.role === "RIDER").slice(0, 3);
+    return (
+      <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
+        <View style={styles.rideOwnerScreen}>
+          <ScrollView contentContainerStyle={styles.rideOwnerContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.rideOwnerHeader}>
+              <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRideOwnerTracker}>
+                <Text style={styles.ridePlannerBackText}>‹</Text>
+              </TouchableOpacity>
+              <View style={styles.rideOwnerHeaderCopy}>
+                <Text style={styles.rideOwnerEyebrow}>Driver workspace</Text>
+                <Text style={styles.rideOwnerTitle}>List your car</Text>
+              </View>
+            </View>
+
+            <View style={styles.rideOwnerHero}>
+              <Image source={appAssets.ride} style={styles.rideOwnerHeroIcon} resizeMode="contain" />
+              <View style={styles.rideOwnerHeroCopy}>
+                <Text style={styles.rideOwnerHeroTitle}>Offer rides, then track requests here.</Text>
+                <Text style={styles.rideOwnerHeroText}>
+                  Car owners list their route and seats first. Rider requests appear here with pickup, destination, distance, and status after matching.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.rideOwnerActionRow}>
+              <TouchableOpacity style={styles.rideOwnerPrimaryButton} onPress={startRideOfferListing}>
+                <Text style={styles.rideOwnerPrimaryText}>List car / offer seats</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.rideOwnerSecondaryButton} onPress={openRideGoogleMaps}>
+                <Text style={styles.rideOwnerSecondaryText}>Open map</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.rideOwnerCard}>
+              <Text style={styles.rideOwnerSectionTitle}>How owners handle requests</Text>
+              {rideOwnerSteps.map((step, index) => (
+                <View key={step} style={styles.rideOwnerStep}>
+                  <Text style={styles.rideOwnerStepNumber}>{index + 1}</Text>
+                  <Text style={styles.rideOwnerStepText}>{step}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.rideOwnerCard}>
+              <Text style={styles.rideOwnerSectionTitle}>Request tracker</Text>
+              <View style={styles.rideOwnerStatusWrap}>
+                {rideOwnerRequestStates.map((state) => (
+                  <Text key={state} style={styles.rideOwnerStatusPill}>{state}</Text>
+                ))}
+              </View>
+              {requestRows.length ? (
+                requestRows.map((ride) => (
+                  <View key={ride.id} style={styles.rideOwnerRequestCard}>
+                    <View style={styles.rideOwnerRequestTop}>
+                      <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
+                      <Text style={styles.rideOwnerRequestBadge}>{ride.status || "New"}</Text>
+                    </View>
+                    <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
+                    <View style={styles.rideOwnerRequestFacts}>
+                      <Text style={styles.rideOwnerRequestFact}>{ride.distanceMiles ? `${Number(ride.distanceMiles).toFixed(1)} mi` : "Distance pending"}</Text>
+                      <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
+                      <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
+                    </View>
+                    <Text style={styles.rideOwnerRequestMeta}>Accepting a request should unlock live route, ETA, pickup PIN, and chat.</Text>
+                  </View>
+                ))
+              ) : (
+                <View style={styles.rideOwnerEmpty}>
+                  <Text style={styles.rideOwnerEmptyTitle}>No rider requests yet.</Text>
+                  <Text style={styles.rideOwnerEmptyText}>
+                    Once your car/route is listed and a rider matches it, requests show here. Until backend driver approval and live location are wired, this stays in pilot mode.
+                  </Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    );
   }
 
   function updateRentalSearch(key: keyof RentalSearchInput, value: string | boolean) {
@@ -1118,11 +1244,11 @@ export function HousingScreen({
                   <Text style={styles.rideMapOpenButtonText}>Open Google Maps</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.rideChoiceSheet}>
+              <ScrollView style={styles.rideChoiceSheet} contentContainerStyle={styles.rideChoiceSheetContent} showsVerticalScrollIndicator={false}>
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. No in-app ride payment is collected; any contribution is agreed directly with the driver.
+                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. When a driver accepts, the ride moves to live route, ETA, pickup PIN, and chat. No in-app ride payment is collected.
                 </Text>
                 <View style={styles.rideChoiceLifecycle}>
                   <Text style={styles.rideChoiceLifecycleTitle}>After you request</Text>
@@ -1176,7 +1302,7 @@ export function HousingScreen({
                     <Text style={styles.rideLaterButtonText}>▣</Text>
                   </TouchableOpacity>
                 </View>
-              </View>
+              </ScrollView>
             </View>
           )}
         </KeyboardAvoidingView>
@@ -1213,10 +1339,19 @@ export function HousingScreen({
               Controlled pilot: rides require approved drivers, verified documents, lifecycle tracking, and safety controls before public launch.
             </Text>
           </View>
-          <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
-            <Text style={styles.rideHeroPlanText}>Where to?</Text>
-            <Text style={styles.rideHeroPlanMeta}>Plan route with Google places</Text>
-          </TouchableOpacity>
+          <View style={styles.rideHeroActionRow}>
+            <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
+              <Text style={styles.rideHeroPlanText}>Where to?</Text>
+              <Text style={styles.rideHeroPlanMeta}>Google places</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rideHeroOwnerButton} onPress={openRideOwnerTracker}>
+              <Image source={appAssets.ride} style={styles.rideHeroOwnerIcon} resizeMode="contain" />
+              <View style={styles.rideHeroOwnerCopy}>
+                <Text style={styles.rideHeroOwnerTitle}>List car</Text>
+                <Text style={styles.rideHeroOwnerMeta}>Track requests</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.ridePosterSection}>
@@ -1319,6 +1454,7 @@ export function HousingScreen({
 
   return (
     <>
+    {renderRideOwnerTracker()}
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
@@ -2044,8 +2180,9 @@ const styles = StyleSheet.create({
   rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
   rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideHeroActionRow: { marginTop: theme.spacing.md, flexDirection: "row", gap: 10 },
   rideHeroPlanButton: {
-    marginTop: theme.spacing.md,
+    flex: 1,
     minHeight: 62,
     borderRadius: theme.radius.pill,
     backgroundColor: "rgba(255,255,255,0.10)",
@@ -2054,8 +2191,98 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.md,
     justifyContent: "center"
   },
-  rideHeroPlanText: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
-  rideHeroPlanMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", marginTop: 2 },
+  rideHeroPlanText: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
+  rideHeroPlanMeta: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", marginTop: 2 },
+  rideHeroOwnerButton: {
+    width: 128,
+    minHeight: 62,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.28)",
+    backgroundColor: "rgba(59,130,246,0.10)",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7
+  },
+  rideHeroOwnerIcon: { width: 36, height: 32 },
+  rideHeroOwnerCopy: { flex: 1, minWidth: 0 },
+  rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", marginTop: 2 },
+  rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 30, fontWeight: "600" },
+  rideOwnerScreen: { flex: 1, backgroundColor: "#101010" },
+  rideOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 44, gap: 16 },
+  rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
+  rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2 },
+  rideOwnerTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900" },
+  rideOwnerHero: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(15,23,42,0.78)",
+    padding: 16,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "center"
+  },
+  rideOwnerHeroIcon: { width: 74, height: 58 },
+  rideOwnerHeroCopy: { flex: 1, minWidth: 0 },
+  rideOwnerHeroTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
+  rideOwnerHeroText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800", marginTop: 6 },
+  rideOwnerActionRow: { flexDirection: "row", gap: 10 },
+  rideOwnerPrimaryButton: { flex: 1, minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  rideOwnerPrimaryText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideOwnerSecondaryButton: { minWidth: 104, minHeight: 52, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  rideOwnerSecondaryText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rideOwnerCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 14,
+    gap: 12
+  },
+  rideOwnerSectionTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  rideOwnerStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  rideOwnerStepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    overflow: "hidden",
+    textAlign: "center",
+    lineHeight: 24,
+    backgroundColor: theme.colors.accent,
+    color: theme.colors.text,
+    fontSize: 11,
+    fontWeight: "900"
+  },
+  rideOwnerStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideOwnerStatusWrap: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  rideOwnerStatusPill: {
+    color: theme.colors.soft,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(0,0,0,0.20)",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    overflow: "hidden",
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  rideOwnerRequestCard: { borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 12, gap: 8 },
+  rideOwnerRequestTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  rideOwnerRequestTitle: { flex: 1, color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  rideOwnerRequestBadge: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.13)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
+  rideOwnerRequestRoute: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
+  rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerEmpty: { borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 14, gap: 6 },
+  rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   ridePlannerScreen: { flex: 1, backgroundColor: "#111" },
   ridePlannerContent: { paddingTop: 26, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
@@ -2133,7 +2360,8 @@ const styles = StyleSheet.create({
   rideMapLabelText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   rideMapOpenButton: { position: "absolute", right: 16, top: 34, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
   rideMapOpenButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
-  rideChoiceSheet: { maxHeight: "64%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24, gap: 12 },
+  rideChoiceSheet: { maxHeight: "72%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  rideChoiceSheetContent: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 46, gap: 12 },
   rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
   rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideChoiceLifecycle: {
