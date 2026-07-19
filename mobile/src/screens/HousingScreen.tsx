@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, createMobileRide, getCars, getRides, quoteRentalCar } from "../api/client";
+import { Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { absoluteAssetUrl, createMobileRide, getCars, getRides, getRidePlaceSuggestions, quoteRentalCar, rideMapUrl, RidePlaceSuggestion } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
@@ -74,6 +74,11 @@ const rideOptionPanels = [
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const rideChoiceOptions = [
+  { key: "electric", title: "FairFares Electric", meta: "Lower-emission ride", multiplier: 0.95, eta: "5 min", seats: 4 },
+  { key: "standard", title: "FairFares Ride", meta: "Everyday reliable pickup", multiplier: 1, eta: "2 min", seats: 4 },
+  { key: "xl", title: "FairFares XL", meta: "More seats and luggage room", multiplier: 1.58, eta: "4 min", seats: 6 },
+];
 const timeOptions = Array.from({ length: 48 }, (_, index) => {
   const hour = Math.floor(index / 2);
   const minute = index % 2 === 0 ? "00" : "30";
@@ -253,8 +258,16 @@ export function HousingScreen({
   const [rideRows, setRideRows] = useState<RidePost[]>([]);
   const [rideBusy, setRideBusy] = useState(false);
   const [ridePosted, setRidePosted] = useState(false);
+  const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
+  const [ridePlannerStage, setRidePlannerStage] = useState<"plan" | "choices">("plan");
+  const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
+  const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
+  const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
+  const [selectedRideChoice, setSelectedRideChoice] = useState("standard");
+  const [rideRequestStatus, setRideRequestStatus] = useState("");
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
+  const ridePlanSubmittingRef = useRef(false);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
@@ -353,11 +366,129 @@ export function HousingScreen({
     }
   }, [selectedNeed]);
 
+  useEffect(() => {
+    if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
+    const focusedQuery = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
+    const query = focusedQuery || rideForm.destination || rideForm.origin;
+    const timer = setTimeout(() => {
+      setRideSuggestionsBusy(true);
+      getRidePlaceSuggestions(rideForm.city || data?.location.city || "Denver, CO", query)
+        .then(setRideSuggestions)
+        .catch(() => setRideSuggestions([]))
+        .finally(() => setRideSuggestionsBusy(false));
+    }, 260);
+    return () => clearTimeout(timer);
+  }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
+
   function updateScrollVisibility(y: number) {
     const previous = lastScrollYRef.current;
     if (Math.abs(y - previous) < 18) return;
     onBottomTabsHiddenChange?.(y > previous && y > 80);
     lastScrollYRef.current = y;
+  }
+
+  function openRidePlanner() {
+    setMode("ride");
+    setRidePlannerStage("plan");
+    setRideFocusedField(rideForm.destination ? "destination" : "destination");
+    setRideRequestStatus("");
+    setRideForm((current) => ({
+      ...current,
+      city: current.city || data?.location.city || "Denver, CO",
+      origin: current.origin || selectedLocationText || data?.location.city || "Denver, CO",
+      rideType: current.rideType || "GENERAL_REQUEST"
+    }));
+    setRidePlannerOpen(true);
+    onBottomTabsHiddenChange?.(true);
+  }
+
+  function closeRidePlanner() {
+    setRidePlannerOpen(false);
+    onBottomTabsHiddenChange?.(false);
+  }
+
+  function selectRidePlace(place: RidePlaceSuggestion) {
+    updateRideForm(rideFocusedField, place.label);
+    if (rideFocusedField === "origin") {
+      setRideFocusedField("destination");
+    }
+  }
+
+  function ridePlanComplete() {
+    return Boolean(rideForm.origin.trim() && rideForm.destination.trim());
+  }
+
+  function rideMilesEstimate() {
+    const matched = rideRows.find((ride) => ride.distanceMiles !== null);
+    if (matched?.distanceMiles !== null && matched?.distanceMiles !== undefined) {
+      return Math.max(1, Number(matched.distanceMiles) + 3);
+    }
+    const origin = rideForm.origin.toLowerCase();
+    const destination = rideForm.destination.toLowerCase();
+    if (origin.includes("airport") || destination.includes("airport")) return 24;
+    if (origin.includes("union") || destination.includes("union")) return 5;
+    return 8;
+  }
+
+  function rideChoicePrice(multiplier: number) {
+    const miles = rideMilesEstimate();
+    return `$${(6.5 + miles * 1.15 * multiplier).toFixed(2)}`;
+  }
+
+  async function planRideRoute() {
+    if (ridePlanSubmittingRef.current) return;
+    if (!rideForm.destination.trim()) {
+      Alert.alert("Destination needed", "Enter where you want to go.");
+      return;
+    }
+    ridePlanSubmittingRef.current = true;
+    const effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
+    let effectiveDestination = rideForm.destination.trim();
+    setRideBusy(true);
+    try {
+      const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
+      if (destinationMatches[0]?.label) {
+        effectiveDestination = destinationMatches[0].label;
+      }
+      setRideForm((current) => ({
+        ...current,
+        origin: effectiveOrigin,
+        destination: effectiveDestination
+      }));
+      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, rideForm.rideType);
+      setRideRows(rides);
+      setRidePlannerStage("choices");
+    } catch (error) {
+      Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");
+    } finally {
+      setRideBusy(false);
+      ridePlanSubmittingRef.current = false;
+    }
+  }
+
+  async function requestPlannedRide() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before requesting a ride so drivers can message you.");
+      return;
+    }
+    const selected = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
+    setRideBusy(true);
+    try {
+      const ride = await createMobileRide({
+        ...rideForm,
+        rideType: "GENERAL_REQUEST",
+        notes: [rideForm.notes, `${selected.title} selected. Notify registered drivers within 10 miles first, then expand to 20 and 30 miles if no one accepts.`]
+          .filter(Boolean)
+          .join(" ")
+      });
+      setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+      setRidePosted(true);
+      setRideRequestStatus("Request sent to nearby registered drivers within 10 miles. FairFares expands the search to 20 and 30 miles if no one accepts.");
+    } catch (error) {
+      Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
+    } finally {
+      setRideBusy(false);
+    }
   }
 
   function openPostMap(post: HousingPost) {
@@ -704,6 +835,185 @@ export function HousingScreen({
     }
   }
 
+  function renderRidePlannerModal() {
+    const activeInputValue = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
+    const mapUri = ridePlanComplete() ? rideMapUrl(rideForm.city, rideForm.origin, rideForm.destination) : "";
+    const primaryChoice = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
+    const routeButtonWebProps =
+      Platform.OS === "web"
+        ? ({ onClick: planRideRoute } as React.ComponentProps<typeof Pressable> & { onClick: () => void })
+        : {};
+    return (
+      <Modal visible={ridePlannerOpen} animationType="slide" onRequestClose={closeRidePlanner}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.ridePlannerScreen}>
+          {ridePlannerStage === "plan" ? (
+            <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.ridePlannerContent}>
+              <View style={styles.ridePlannerHandle} />
+              <View style={styles.ridePlannerHeader}>
+                <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRidePlanner}>
+                  <Text style={styles.ridePlannerBackText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.ridePlannerTitle}>Plan your ride</Text>
+                <View style={styles.ridePlannerBack} />
+              </View>
+
+              <View style={styles.ridePlannerPillRow}>
+                <TouchableOpacity style={styles.ridePlannerPill}>
+                  <Text style={styles.ridePlannerPillText}>◷ Pickup now</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.ridePlannerPill}>
+                  <Text style={styles.ridePlannerPillText}>♙ For me</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.rideRouteInputCard}>
+                <View style={styles.rideRouteRail}>
+                  <View style={styles.rideRouteDot} />
+                  <View style={styles.rideRouteRailLine} />
+                  <View style={styles.rideRouteSquare} />
+                </View>
+                <View style={styles.rideRouteInputs}>
+                  <TextInput
+                    value={rideForm.origin}
+                    onFocus={() => setRideFocusedField("origin")}
+                    onChangeText={(text) => {
+                      setRideFocusedField("origin");
+                      updateRideForm("origin", text);
+                    }}
+                    placeholder="Pickup location"
+                    placeholderTextColor={theme.colors.muted}
+                    style={[styles.rideRouteInput, rideFocusedField === "origin" && styles.rideRouteInputActive]}
+                  />
+                  <TextInput
+                    value={rideForm.destination}
+                    onFocus={() => setRideFocusedField("destination")}
+                    onChangeText={(text) => {
+                      setRideFocusedField("destination");
+                      updateRideForm("destination", text);
+                    }}
+                    onSubmitEditing={planRideRoute}
+                    placeholder="Where to?"
+                    placeholderTextColor={theme.colors.muted}
+                    style={[styles.rideRouteInput, rideFocusedField === "destination" && styles.rideRouteInputActive]}
+                  />
+                </View>
+                <TouchableOpacity style={styles.rideRoutePlus} onPress={() => setRideFocusedField("destination")}>
+                  <Text style={styles.rideRoutePlusText}>+</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.rideSavedRow}>
+                <TouchableOpacity style={styles.rideSavedItem}>
+                  <Text style={styles.rideSavedIcon}>▣</Text>
+                  <View>
+                    <Text style={styles.rideSavedTitle}>Work</Text>
+                    <Text style={styles.rideSavedMeta}>Starbucks</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.rideSavedItem}>
+                  <Text style={styles.rideSavedIcon}>☆</Text>
+                  <Text style={styles.rideSavedTitle}>Saved places</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.rideSuggestionList}>
+                {rideSuggestionsBusy ? <Text style={styles.rideSuggestionHelp}>Loading nearby places...</Text> : null}
+                {!rideSuggestionsBusy && !rideSuggestions.length && activeInputValue.trim() ? (
+                  <Text style={styles.rideSuggestionHelp}>No exact places yet. Try a landmark like Union Station or an address.</Text>
+                ) : null}
+                {rideSuggestions.map((place) => (
+                  <TouchableOpacity key={`${place.label}-${place.source}`} style={styles.rideSuggestionRow} onPress={() => selectRidePlace(place)}>
+                    <View style={styles.rideSuggestionDistance}>
+                      <Text style={styles.rideSuggestionIcon}>
+                        {place.source === "recent" ? "◷" : place.main.toLowerCase().includes("airport") ? "✈" : place.main.toLowerCase().includes("station") ? "▤" : "⌖"}
+                      </Text>
+                      <Text style={styles.rideSuggestionMiles}>{place.distanceMiles !== null ? `${place.distanceMiles} mi` : ""}</Text>
+                    </View>
+                    <View style={styles.rideSuggestionCopy}>
+                      <Text style={styles.rideSuggestionTitle}>{place.main}</Text>
+                      <Text style={styles.rideSuggestionMeta} numberOfLines={1}>{place.secondary}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity style={styles.rideUtilityRow}>
+                  <Text style={styles.rideUtilityIcon}>◎</Text>
+                  <Text style={styles.rideUtilityText}>Search in a different city</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.rideUtilityRow}>
+                  <Text style={styles.rideUtilityIcon}>⌖</Text>
+                  <Text style={styles.rideUtilityText}>Set location on map</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Pressable style={styles.ridePlannerSearchButton} onPress={planRideRoute} onPressIn={planRideRoute} disabled={rideBusy} {...routeButtonWebProps}>
+                <Text style={styles.ridePlannerSearchText}>{rideBusy ? "Finding rides..." : "Find rides"}</Text>
+              </Pressable>
+            </ScrollView>
+          ) : (
+            <View style={styles.rideChoiceScreen}>
+              <View style={styles.rideChoiceMap}>
+                {mapUri ? <Image source={{ uri: mapUri }} style={styles.rideChoiceMapImage} resizeMode="cover" /> : null}
+                <TouchableOpacity style={styles.rideMapBackButton} onPress={() => setRidePlannerStage("plan")}>
+                  <Text style={styles.rideMapBackText}>‹</Text>
+                </TouchableOpacity>
+                <View style={styles.rideMapRouteLine} />
+                <View style={[styles.rideMapCarDot, { top: "24%", left: "70%" }]} />
+                <View style={[styles.rideMapCarDot, { top: "42%", left: "54%" }]} />
+                <View style={styles.rideMapPickupLabel}>
+                  <Text style={styles.rideMapLabelText} numberOfLines={1}>{rideForm.origin || "Pickup"}</Text>
+                </View>
+                <View style={styles.rideMapDestinationLabel}>
+                  <Text style={styles.rideMapLabelText} numberOfLines={1}>{rideForm.destination || "Destination"}</Text>
+                </View>
+              </View>
+              <View style={styles.rideChoiceSheet}>
+                <View style={styles.ridePlannerHandle} />
+                <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
+                <Text style={styles.rideDriverNotify}>
+                  Drivers within 10 miles are notified first. If no one accepts, FairFares expands to 20 and 30 miles.
+                </Text>
+                {rideChoiceOptions.map((option) => {
+                  const selected = option.key === selectedRideChoice;
+                  return (
+                    <TouchableOpacity key={option.key} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(option.key)}>
+                      <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
+                      <View style={styles.rideChoiceCopy}>
+                        <Text style={styles.rideChoiceName}>{option.title} <Text style={styles.rideChoiceSeats}>♟ {option.seats}</Text></Text>
+                        <Text style={styles.rideChoiceMeta}>{option.eta} · {rideMilesEstimate()} mi route</Text>
+                      </View>
+                      <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <View style={styles.ridePaymentRow}>
+                  <Text style={styles.ridePaymentIcon}>▣</Text>
+                  <View style={styles.rideChoiceCopy}>
+                    <Text style={styles.rideChoiceName}>Personal</Text>
+                    <Text style={styles.rideChoiceMeta}>FairFares wallet / Apple Pay ready</Text>
+                  </View>
+                  <Text style={styles.ridePaymentArrow}>›</Text>
+                </View>
+                {rideRequestStatus ? (
+                  <View style={styles.rideRequestStatus}>
+                    <Text style={styles.rideRequestStatusText}>{rideRequestStatus}</Text>
+                  </View>
+                ) : null}
+                <View style={styles.rideChoiceButtonRow}>
+                  <TouchableOpacity style={styles.rideChoiceButton} onPress={requestPlannedRide} disabled={rideBusy}>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Choose ${primaryChoice.title.replace("FairFares ", "")}`}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.rideLaterButton}>
+                    <Text style={styles.rideLaterButtonText}>▣</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  }
+
   function renderRideOnly() {
     const isScheduled = rideForm.rideType === "SCHEDULED_REQUEST";
     const isOffer = rideForm.rideType === "CARPOOL_OFFER";
@@ -739,6 +1049,10 @@ export function HousingScreen({
               </View>
             ))}
           </View>
+          <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
+            <Text style={styles.rideHeroPlanText}>Where to?</Text>
+            <Text style={styles.rideHeroPlanMeta}>Plan route with Google places</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.rideModeSection}>
@@ -885,6 +1199,7 @@ export function HousingScreen({
   }
 
   return (
+    <>
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
@@ -910,10 +1225,10 @@ export function HousingScreen({
         </View>
 
         <View style={styles.stickySearch}>
-          <TouchableOpacity style={styles.searchBar} onPress={onOpenSearch}>
+          <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-            <Text style={styles.searchText} numberOfLines={1}>{animatedSearchText}</Text>
-            <Text style={styles.later}>Search</Text>
+            <Text style={styles.searchText} numberOfLines={1}>{mode === "ride" ? (rideForm.destination || `Hi, ${displayName}`) : animatedSearchText}</Text>
+            <Text style={styles.later}>{mode === "ride" ? "Later" : "Search"}</Text>
           </TouchableOpacity>
         </View>
 
@@ -1128,8 +1443,10 @@ export function HousingScreen({
           </View>
         </View>
       </Modal>
-      {renderPickerModal()}
     </ScrollView>
+    {renderRidePlannerModal()}
+    {renderPickerModal()}
+    </>
   );
 }
 
@@ -1465,5 +1782,87 @@ const styles = StyleSheet.create({
   rideFactGreen: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }
+  rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideHeroPlanButton: {
+    marginTop: theme.spacing.md,
+    minHeight: 62,
+    borderRadius: theme.radius.pill,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: theme.spacing.md,
+    justifyContent: "center"
+  },
+  rideHeroPlanText: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  rideHeroPlanMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", marginTop: 2 },
+  ridePlannerScreen: { flex: 1, backgroundColor: "#111" },
+  ridePlannerContent: { paddingTop: 26, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
+  ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
+  ridePlannerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
+  ridePlannerBack: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  ridePlannerBackText: { color: theme.colors.text, fontSize: 40, lineHeight: 42, fontWeight: "500" },
+  ridePlannerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  ridePlannerPillRow: { flexDirection: "row", gap: 10 },
+  ridePlannerPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
+  ridePlannerPillText: { color: theme.colors.soft, fontWeight: "900", fontSize: 15 },
+  rideRouteInputCard: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: theme.colors.soft, borderRadius: 14, padding: 10, gap: 10 },
+  rideRouteRail: { width: 18, alignItems: "center" },
+  rideRouteDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.text },
+  rideRouteRailLine: { width: 3, height: 42, backgroundColor: theme.colors.muted },
+  rideRouteSquare: { width: 12, height: 12, backgroundColor: theme.colors.text },
+  rideRouteInputs: { flex: 1, gap: 2 },
+  rideRouteInput: { minHeight: 44, color: theme.colors.text, fontSize: 18, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.10)", paddingHorizontal: 0 },
+  rideRouteInputActive: { borderBottomColor: theme.colors.blue },
+  rideRoutePlus: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  rideRoutePlusText: { color: theme.colors.text, fontSize: 28, lineHeight: 30 },
+  rideSavedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  rideSavedItem: { flex: 1, minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12 },
+  rideSavedIcon: { color: theme.colors.soft, fontSize: 22 },
+  rideSavedTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideSavedMeta: { color: theme.colors.muted, fontSize: 14 },
+  rideSuggestionList: { borderTopWidth: 1, borderTopColor: theme.colors.line },
+  rideSuggestionHelp: { color: theme.colors.muted, fontSize: 14, paddingVertical: 12, fontWeight: "800" },
+  rideSuggestionRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
+  rideSuggestionDistance: { width: 56, alignItems: "center" },
+  rideSuggestionIcon: { color: theme.colors.soft, fontSize: 22 },
+  rideSuggestionMiles: { color: theme.colors.muted, fontSize: 12, marginTop: 2 },
+  rideSuggestionCopy: { flex: 1, minWidth: 0 },
+  rideSuggestionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  rideSuggestionMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 2 },
+  rideUtilityRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
+  rideUtilityIcon: { color: theme.colors.soft, fontSize: 22, width: 42, textAlign: "center" },
+  rideUtilityText: { color: theme.colors.soft, fontSize: 16, fontWeight: "900" },
+  ridePlannerSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 58, alignItems: "center", justifyContent: "center", marginTop: 4 },
+  ridePlannerSearchText: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  rideChoiceScreen: { flex: 1, backgroundColor: "#111" },
+  rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
+  rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
+  rideMapBackButton: { position: "absolute", top: 34, left: 22, width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
+  rideMapBackText: { color: theme.colors.text, fontSize: 42, lineHeight: 44 },
+  rideMapRouteLine: { position: "absolute", left: "24%", right: "18%", top: "31%", height: 6, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.90)", transform: [{ rotate: "42deg" }] },
+  rideMapCarDot: { position: "absolute", width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.text, borderWidth: 5, borderColor: theme.colors.green },
+  rideMapPickupLabel: { position: "absolute", top: 78, left: 82, right: 80, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
+  rideMapDestinationLabel: { position: "absolute", bottom: 78, right: 28, left: 120, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
+  rideMapLabelText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rideChoiceSheet: { maxHeight: "64%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24, gap: 12 },
+  rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
+  rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideChoiceRow: { minHeight: 76, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: "transparent" },
+  rideChoiceRowActive: { borderColor: theme.colors.text, backgroundColor: "rgba(255,255,255,0.04)" },
+  rideChoiceIcon: { width: 54, height: 42 },
+  rideChoiceCopy: { flex: 1, minWidth: 0 },
+  rideChoiceName: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  rideChoiceSeats: { color: theme.colors.soft, fontSize: 14 },
+  rideChoiceMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 3 },
+  rideChoicePrice: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, backgroundColor: theme.colors.panel2, paddingHorizontal: 12 },
+  ridePaymentIcon: { color: theme.colors.text, fontSize: 22 },
+  ridePaymentArrow: { color: theme.colors.soft, fontSize: 28 },
+  rideRequestStatus: { backgroundColor: "rgba(34,197,94,0.13)", borderWidth: 1, borderColor: "rgba(34,197,94,0.35)", borderRadius: 14, padding: 12 },
+  rideRequestStatusText: { color: theme.colors.green, fontSize: 13, lineHeight: 18, fontWeight: "900" },
+  rideChoiceButtonRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
+  rideChoiceButtonText: { color: theme.colors.bg, fontSize: 18, fontWeight: "900" },
+  rideLaterButton: { width: 58, height: 58, borderRadius: 12, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  rideLaterButtonText: { color: theme.colors.text, fontSize: 24 }
 });

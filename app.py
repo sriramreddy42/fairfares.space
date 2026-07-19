@@ -11774,6 +11774,86 @@ def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: 
     return resolved or fallback or city_label or "Location open"
 
 
+def ride_place_icon_source(label: str) -> str:
+    label = (label or "").lower()
+    if "airport" in label or "(den)" in label:
+        return "airport"
+    if "station" in label or "rtd" in label or "amtrak" in label:
+        return "transit"
+    if "apartment" in label or "apt" in label:
+        return "home"
+    return "place"
+
+
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[dict[str, object]]:
+    city = normalize_accommodation_place_label(city or "Denver, CO")
+    query = normalize_accommodation_place_label(query)
+    city_point = ride_point(city)
+    labels: list[tuple[str, str]] = []
+
+    def add_label(label: str, source: str) -> None:
+        clean = dedupe_repeated_location_label(normalize_accommodation_place_label(label))
+        if not clean:
+            return
+        if any(existing.lower() == clean.lower() for existing, _ in labels):
+            return
+        labels.append((clean, source))
+
+    normalized_query = re.sub(r"[^a-z0-9]+", " ", query.lower()).strip()
+    if re.search(r"\b(unin|unio|union)\b", normalized_query):
+        add_label("Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
+        add_label("Denver Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
+
+    google_query = query
+    if google_query:
+        for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2):
+            add_label(label, "google")
+
+    fallback_places = [
+        "Denver International Airport (DEN), 8500 Pena Blvd, Denver, CO",
+        "Union Station, 1701 Wynkoop St, Denver, CO",
+        "Denver Union Station, 1701 Wynkoop St, Denver, CO",
+        "300 East Seventeenth Apartments, 300 E 17th Ave, Denver, CO",
+        "2523 W Houstoun Waring Cir, Littleton, CO",
+        "1855 W Union Ave, Englewood, CO",
+        "Tracks, 3500 Walnut St, Denver, CO",
+        "Larimer Lounge, 2721 Larimer St, Denver, CO",
+    ]
+    for label in fallback_places:
+        normalized_label = re.sub(r"[^a-z0-9]+", " ", label.lower())
+        if not normalized_query:
+            add_label(label, "recent")
+        elif normalized_query in normalized_label:
+            add_label(label, "fallback")
+        elif "unin" in normalized_query and "union station" in normalized_label:
+            add_label(label, "fallback")
+
+    suggestions: list[dict[str, object]] = []
+    for label, source in labels:
+        point = ride_point(label, city)
+        lat = float(point.get("lat") or 0)
+        lng = float(point.get("lng") or 0)
+        city_lat = float(city_point.get("lat") or 0)
+        city_lng = float(city_point.get("lng") or 0)
+        distance = round(distance_miles_between(city_lat, city_lng, lat, lng), 1) if lat and lng and city_lat and city_lng else None
+        parts = [part.strip() for part in label.split(",") if part.strip()]
+        suggestions.append(
+            {
+                "label": label,
+                "main": parts[0] if parts else label,
+                "secondary": ", ".join(parts[1:]) if len(parts) > 1 else city,
+                "distanceMiles": distance,
+                "lat": lat,
+                "lng": lng,
+                "source": source,
+                "icon": ride_place_icon_source(label),
+            }
+        )
+        if len(suggestions) >= max(1, min(int(limit or 10), 20)):
+            break
+    return suggestions
+
+
 def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object], pickup_date: str = "", pickup_time: str = "") -> int:
     score = 55
     origin_lat = float(row_value(row, "origin_lat") or 0)
@@ -14752,6 +14832,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/location-options":
             self.api_mobile_location_options(parsed)
+            return
+        if parsed.path == "/api/mobile/ride-places":
+            self.api_mobile_ride_places(parsed)
+            return
+        if parsed.path == "/api/mobile/ride-map":
+            self.api_mobile_ride_map(parsed)
             return
         if parsed.path == "/api/mobile/bootstrap":
             self.api_mobile_bootstrap(parsed)
@@ -22854,6 +22940,77 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
         self.send_json(accommodation_location_options(query, area))
+
+    def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        query = clean_text_value((params.get("q", params.get("query", [""]))[0] or ""), 180)
+        try:
+            limit = int(params.get("limit", ["10"])[0] or 10)
+        except ValueError:
+            limit = 10
+        self.send_json(
+            {
+                "ok": True,
+                "city": city,
+                "query": query,
+                "suggestions": ride_place_suggestions(city, query, limit=limit),
+                "placesEnabled": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
+            }
+        )
+
+    def api_mobile_ride_map(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        origin = clean_text_value((params.get("origin", [""])[0] or ""), 180)
+        destination = clean_text_value((params.get("destination", [""])[0] or ""), 180)
+        origin_point = ride_point(origin or city, city)
+        destination_point = ride_point(destination or city, city)
+        origin_lat = float(origin_point.get("lat") or 0)
+        origin_lng = float(origin_point.get("lng") or 0)
+        dest_lat = float(destination_point.get("lat") or 0)
+        dest_lng = float(destination_point.get("lng") or 0)
+        maps_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip() or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+        if maps_key and origin_lat and origin_lng and dest_lat and dest_lng:
+            map_params: list[tuple[str, str]] = [
+                ("size", "640x420"),
+                ("scale", "2"),
+                ("maptype", "roadmap"),
+                ("style", "feature:all|element:labels.text.fill|color:0xd8dee9"),
+                ("style", "feature:all|element:geometry|color:0x1b2430"),
+                ("style", "feature:road|element:geometry|color:0x4b5563"),
+                ("style", "feature:water|element:geometry|color:0x0f2537"),
+                ("path", f"color:0xffffff|weight:6|{origin_lat},{origin_lng}|{dest_lat},{dest_lng}"),
+                ("markers", f"color:green|label:A|{origin_lat},{origin_lng}"),
+                ("markers", f"color:red|label:B|{dest_lat},{dest_lng}"),
+                ("key", maps_key),
+            ]
+            try:
+                url = f"https://maps.googleapis.com/maps/api/staticmap?{urllib.parse.urlencode(map_params)}"
+                with urllib.request.urlopen(url, timeout=8) as response:
+                    data = response.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "public, max-age=300")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            except Exception:
+                pass
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
+<rect width="640" height="420" fill="#111"/>
+<g stroke="#2b2f36" stroke-width="2">{''.join(f'<path d="M {x} 0 L {x + 120} 420"/>' for x in range(-160, 720, 80))}{''.join(f'<path d="M 0 {y} L 640 {y - 80}"/>' for y in range(40, 500, 70))}</g>
+<path d="M 120 94 C 245 150 330 232 512 315" fill="none" stroke="#f5f5f5" stroke-width="8" stroke-linecap="round"/>
+<circle cx="120" cy="94" r="16" fill="#20b26b"/><circle cx="512" cy="315" r="16" fill="#ef4444"/>
+<rect x="142" y="65" rx="8" width="250" height="46" fill="#161616"/><text x="158" y="94" font-family="Arial" font-size="22" fill="#fff">{html.escape(ride_display_label(origin or city, origin_point, city))}</text>
+<rect x="252" y="284" rx="8" width="300" height="56" fill="#161616"/><text x="268" y="318" font-family="Arial" font-size="22" fill="#fff">{html.escape(ride_display_label(destination or city, destination_point, city))}</text>
+</svg>"""
+        data = svg.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Cache-Control", "public, max-age=120")
+        self.end_headers()
+        self.wfile.write(data)
 
     def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)

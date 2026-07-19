@@ -53,6 +53,7 @@ const API_CANDIDATES = uniqueUrls(
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
+const API_REQUEST_TIMEOUT_MS = 10000;
 
 function browserStorage() {
   return (globalThis as unknown as {
@@ -92,7 +93,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let lastError = "";
   for (const baseUrl of API_CANDIDATES) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4500);
+    const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
       const text = await response.text();
@@ -157,6 +158,27 @@ export async function getRides(city: string, origin = "", destination = "", ride
   if (rideType) params.set("type", rideType);
   const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?${params.toString()}`);
   return payload.rides || [];
+}
+
+export type RidePlaceSuggestion = {
+  label: string;
+  main: string;
+  secondary: string;
+  distanceMiles: number | null;
+  lat: number;
+  lng: number;
+  source: string;
+};
+
+export async function getRidePlaceSuggestions(city: string, query = "") {
+  const params = new URLSearchParams({ city, q: query, limit: "12" });
+  const payload = await request<{ ok: boolean; suggestions: RidePlaceSuggestion[] }>(`/api/mobile/ride-places?${params.toString()}`);
+  return payload.suggestions || [];
+}
+
+export function rideMapUrl(city: string, origin: string, destination: string) {
+  const params = new URLSearchParams({ city, origin, destination });
+  return `${API_CANDIDATES[0] || API_URL}/api/mobile/ride-map?${params.toString()}`;
 }
 
 export async function createMobileRide(input: RideInput) {
