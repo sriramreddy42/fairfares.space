@@ -1154,9 +1154,6 @@ export function HousingScreen({
   }
 
   function renderRideOnly() {
-    const isScheduled = rideForm.rideType === "SCHEDULED_REQUEST";
-    const isOffer = rideForm.rideType === "CARPOOL_OFFER";
-    const activeMode = rideModes.find((item) => item.type === rideForm.rideType) || rideModes[0];
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService) || rideServicePosters[1];
     return (
       <>
@@ -1213,20 +1210,21 @@ export function HousingScreen({
               );
             })}
           </ScrollView>
-          <View style={styles.rideInsightCard}>
-            <View style={styles.rideInsightImageWrap}>
-              <Image source={activeService.icon} style={styles.rideInsightImage} resizeMode="contain" />
-            </View>
-            <View style={styles.rideInsightCopy}>
-              <Text style={styles.rideInsightTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
-              <Text style={styles.rideInsightMeta}>{activeService.stat} · {activeService.insight}</Text>
-            </View>
-          </View>
           <View style={styles.rideServiceDetail}>
-            <Text style={styles.rideServiceDetailTitle}>How {activeService.title.toLowerCase()} work</Text>
-            <Text style={styles.rideServiceDetailLabel}>Register</Text>
-            <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
-            <Text style={styles.rideServiceDetailLabel}>Flow</Text>
+            <View style={styles.rideServiceDetailHeader}>
+              <View style={styles.rideServiceDetailIconWrap}>
+                <Image source={activeService.icon} style={styles.rideServiceDetailIcon} resizeMode="contain" />
+              </View>
+              <View style={styles.rideServiceDetailCopy}>
+                <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
+                <Text style={styles.rideServiceDetailText}>{activeService.insight}</Text>
+              </View>
+            </View>
+            <View style={styles.rideExampleBox}>
+              <Text style={styles.rideServiceDetailLabel}>Example</Text>
+              <Text style={styles.rideServiceDetailText}>{activeService.stat}</Text>
+            </View>
+            <Text style={styles.rideServiceDetailLabel}>How it works</Text>
             {activeService.works.map((step, index) => (
               <View key={step} style={styles.rideServiceStep}>
                 <View style={styles.rideServiceStepDot}>
@@ -1235,149 +1233,14 @@ export function HousingScreen({
                 <Text style={styles.rideServiceStepText}>{step}</Text>
               </View>
             ))}
-            <Text style={styles.rideServiceDetailLabel}>Access</Text>
+            <Text style={styles.rideServiceDetailLabel}>What you enter</Text>
+            <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
+            <Text style={styles.rideServiceDetailLabel}>Where to start</Text>
             <Text style={styles.rideServiceDetailText}>{activeService.access}</Text>
-          </View>
-        </View>
-
-        <View style={styles.rideModeSection}>
-          <Text style={styles.rideSectionEyebrow}>Choose your ride flow</Text>
-          <View style={styles.rideModeGrid}>
-            {rideModes.map((item) => (
-              <TouchableOpacity
-                key={item.type}
-                style={[styles.rideModeCard, rideForm.rideType === item.type && styles.rideModeCardActive]}
-                onPress={() => updateRideType(item.type)}
-              >
-                <View style={styles.rideModeIconWrap}>
-                  <Image source={appAssets.ride} style={styles.rideModeIcon} resizeMode="contain" />
-                </View>
-                <View style={styles.rideModeCopyBlock}>
-                  <Text style={[styles.rideModeTitle, rideForm.rideType === item.type && styles.rideModeTitleActive]}>{item.title}</Text>
-                  <Text style={[styles.rideModeCopy, rideForm.rideType === item.type && styles.rideModeCopyActive]}>{item.copy}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={styles.rideFlowStrip}>
-            {rideFlowSteps.map((step, index) => (
-              <View key={step} style={styles.rideFlowStep}>
-                <View style={styles.rideFlowDot}>
-                  <Text style={styles.rideFlowDotText}>{index + 1}</Text>
-                </View>
-                <Text style={styles.rideFlowText}>{step}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.rideActiveSummary}>
-          <View>
-            <Text style={styles.rideSummaryTitle}>{activeMode.title}</Text>
-            <Text style={styles.rideSummaryCopy}>{activeMode.copy}</Text>
-          </View>
-          <Text style={styles.rideSummaryStatus}>{rideRows.length ? `${rideRows.length} matches` : "Ready"}</Text>
-        </View>
-
-        <View style={styles.rideForm}>
-          <Text style={styles.rideFormTitle}>{isOffer ? "Offer ride seats" : isScheduled ? "Create recurring ride" : "Find a ride"}</Text>
-          <View style={styles.rideInputRow}>
-            <View style={styles.rideInputIconWrap}>
-              <Image source={appAssets.search} style={styles.rideInputIcon} resizeMode="contain" />
-            </View>
-            <TextInput value={rideForm.city} onChangeText={(text) => updateRideForm("city", text)} placeholder="Metro city, e.g. Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideInlineInput]} />
-          </View>
-          <TextInput value={rideForm.origin} onChangeText={(text) => updateRideForm("origin", text)} placeholder="Pickup, campus, area, or building" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
-          <TextInput value={rideForm.destination} onChangeText={(text) => updateRideForm("destination", text)} placeholder="Destination city, area, or building" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
-          {isScheduled ? (
-            <>
-              <View style={styles.carTwoCol}>
-                <TextInput value={rideForm.startDate} onChangeText={(text) => updateRideForm("startDate", text)} placeholder="Start date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
-                <TextInput value={rideForm.endDate} onChangeText={(text) => updateRideForm("endDate", text)} placeholder="End date optional" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
-              </View>
-              <View style={styles.rideChipWrap}>
-                {rideDays.map((day) => (
-                  <TouchableOpacity key={day} style={[styles.rideChip, rideForm.daysOfWeek.includes(day) && styles.rideChipActive]} onPress={() => toggleRideDay(day)}>
-                    <Text style={[styles.rideChipText, rideForm.daysOfWeek.includes(day) && styles.rideChipTextActive]}>{day}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          ) : (
-            <TextInput value={rideForm.pickupDate} onChangeText={(text) => updateRideForm("pickupDate", text)} placeholder="Pickup date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
-          )}
-          <View style={styles.carTwoCol}>
-            <TextInput value={rideForm.pickupTime} onChangeText={(text) => updateRideForm("pickupTime", text)} placeholder="Pickup time" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
-            <TextInput value={rideForm.seats} onChangeText={(text) => updateRideForm("seats", text)} placeholder="Seats" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
-          </View>
-          {isOffer ? (
-            <View style={styles.carTwoCol}>
-              <TextInput value={rideForm.maxDetourMinutes} onChangeText={(text) => updateRideForm("maxDetourMinutes", text)} placeholder="Max detour min" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
-              <TextInput value={rideForm.contributionPerSeat} onChangeText={(text) => updateRideForm("contributionPerSeat", text)} placeholder="$ per seat" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
-            </View>
-          ) : (
-            <View style={styles.carTwoCol}>
-              <TextInput value={rideForm.departureFlexMinutes} onChangeText={(text) => updateRideForm("departureFlexMinutes", text)} placeholder="Flex min" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
-              <TextInput value={rideForm.maxPickupDistanceMiles} onChangeText={(text) => updateRideForm("maxPickupDistanceMiles", text)} placeholder="Walk/pickup mi" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
-            </View>
-          )}
-          <TextInput value={rideForm.luggage} onChangeText={(text) => updateRideForm("luggage", text)} placeholder="Luggage, accessibility, or ride preferences" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
-          <TextInput value={rideForm.notes} onChangeText={(text) => updateRideForm("notes", text)} placeholder="Notes for the driver/passenger" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideNotes]} multiline />
-          <View style={styles.rideActions}>
-            <TouchableOpacity style={styles.rideSecondaryButton} onPress={searchRides} disabled={rideBusy}>
-              <Text style={styles.rideSecondaryText}>{rideBusy ? "Searching..." : "Search rides"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.ridePrimaryButton} onPress={postRide} disabled={rideBusy}>
-              <Text style={styles.ridePrimaryText}>{rideBusy ? "Saving..." : isOffer ? "Offer ride" : "Post request"}</Text>
+            <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRidePlanner}>
+              <Text style={styles.rideServicePlanButtonText}>Plan this ride</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        <SectionHeader title={rideRows.length || ridePosted ? "Ride matches" : "Ride options"} />
-        <View style={styles.rideResults}>
-          {rideRows.length ? (
-            rideRows.map((ride) => (
-              <View key={ride.id} style={styles.rideResultCard}>
-                <View style={styles.rideMapPreview}>
-                  <View style={styles.rideMapGridA} />
-                  <View style={styles.rideMapGridB} />
-                  <View style={styles.rideRouteLine} />
-                  <View style={[styles.rideMapPin, styles.rideMapPinStart]} />
-                  <View style={[styles.rideMapPin, styles.rideMapPinEnd]} />
-                  <Text style={styles.rideMapDistance}>
-                    {ride.distanceMiles !== null ? `${ride.distanceMiles} mi from pickup` : `${ride.matchScore}% route match`}
-                  </Text>
-                </View>
-                <View style={styles.rideResultTop}>
-                  <Text style={styles.rideResultType}>{ride.typeLabel}</Text>
-                  <Text style={styles.rideScore}>{ride.matchScore}/100</Text>
-                </View>
-                <Text style={styles.rideResultTitle}>{ride.title}</Text>
-                <Text style={styles.rideRoute}>{ride.origin} → {ride.destination}</Text>
-                <View style={styles.rideFactRow}>
-                  <Text style={styles.rideFact}>{ride.pickupDate || ride.startDate}</Text>
-                  <Text style={styles.rideFact}>{ride.pickupTime}</Text>
-                  <Text style={styles.rideFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
-                </View>
-                <View style={styles.rideFactRow}>
-                  {ride.distanceMiles !== null ? <Text style={styles.rideFactGreen}>{ride.distanceMiles} mi from pickup</Text> : null}
-                  {ride.contributionPerSeat ? <Text style={styles.rideFactGreen}>${ride.contributionPerSeat}/seat</Text> : null}
-                  {ride.maxDetourMinutes ? <Text style={styles.rideFact}>{ride.maxDetourMinutes} min detour</Text> : null}
-                  {ride.maxPickupDistanceMiles ? <Text style={styles.rideFact}>{ride.maxPickupDistanceMiles} mi pickup range</Text> : null}
-                </View>
-                {ride.daysOfWeek.length ? <Text style={styles.rideSmall}>Runs {ride.daysOfWeek.join(", ")}</Text> : null}
-                {ride.notes ? <Text style={styles.rideSmall}>{ride.notes}</Text> : null}
-                <TouchableOpacity style={styles.rideRequestButton} onPress={() => Alert.alert("Ride request", "Messaging and seat requests will use FairFares chat for this ride.")}>
-                  <Text style={styles.rideRequestButtonText}>{ride.role === "DRIVER" ? "Request seat" : "Message rider"}</Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          ) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No ride matches loaded yet.</Text>
-              <Text style={styles.emptyText}>Search a route or create the first request/offer.</Text>
-            </View>
-          )}
         </View>
       </>
     );
@@ -1885,13 +1748,34 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     gap: 9
   },
+  rideServiceDetailHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  rideServiceDetailIconWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  rideServiceDetailIcon: { width: 42, height: 42 },
+  rideServiceDetailCopy: { flex: 1, minWidth: 0 },
   rideServiceDetailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideExampleBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 12,
+    gap: 4
+  },
   rideServiceStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
   rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideServicePlanButton: { marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  rideServicePlanButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideModeSection: { gap: theme.spacing.md },
   rideSectionEyebrow: { color: theme.colors.accent, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
