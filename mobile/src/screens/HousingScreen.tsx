@@ -66,10 +66,58 @@ const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "CARPOOL_REQUEST", title: "Find carpool", copy: "Match with drivers going your direction." },
   { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List seats, detour, luggage, and contribution." }
 ];
-const rideOptionPanels = [
-  { title: "Scheduled Rides", copy: "Daily commute made easy." },
-  { title: "General Rides", copy: "Request a ride when you need it." },
-  { title: "Carpool", copy: "Share the ride. Share the cost." }
+const rideServicePosters: Array<{
+  key: "scheduled" | "general" | "carpool";
+  type: RideType;
+  title: string;
+  subtitle: string;
+  stat: string;
+  insight: string;
+  tint: string;
+  icon: ImageSourcePropType;
+  register: string;
+  works: string[];
+  access: string;
+}> = [
+  {
+    key: "scheduled",
+    type: "SCHEDULED_REQUEST",
+    title: "Scheduled rides",
+    subtitle: "Daily commute, classes, airport runs",
+    stat: "Recurring routes",
+    insight: "Create once. FairFares keeps the trip pattern ready.",
+    tint: "#8a5a00",
+    icon: appAssets.ride,
+    register: "Add pickup, drop-off, start date, commute days, preferred pickup time, and seats.",
+    works: ["FairFares saves your recurring route.", "Matching drivers see the schedule and route fit.", "Accepted rides appear in Activity with status and chat."],
+    access: "Open Ride, choose Scheduled, then create the recurring request."
+  },
+  {
+    key: "general",
+    type: "GENERAL_REQUEST",
+    title: "General rides",
+    subtitle: "Point-to-point rides for today or later",
+    stat: "Live driver search",
+    insight: "Drivers nearby are notified first, then the radius expands if needed.",
+    tint: "#243b73",
+    icon: appAssets.ride,
+    register: "Enter pickup, destination, pickup date/time, seats, and ride notes.",
+    works: ["Google Places resolves pickup and destination.", "FairFares estimates distance and route cost.", "Drivers within range can accept and message you."],
+    access: "Tap Where to?, choose a ride option, then send the request."
+  },
+  {
+    key: "carpool",
+    type: "CARPOOL_REQUEST",
+    title: "Carpool",
+    subtitle: "Share routes, seats, and trip cost",
+    stat: "Route based matches",
+    insight: "Match by direction and pickup range, not only the same city.",
+    tint: "#0f5f4b",
+    icon: appAssets.ride,
+    register: "Set origin, destination, travel date/time, seats needed, luggage, and max pickup range.",
+    works: ["Passengers search trips on the same route.", "Drivers list seats and detour limits.", "Seat requests and confirmations happen through FairFares chat."],
+    access: "Choose Find carpool to request a seat, or Offer a ride to list open seats."
+  }
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
@@ -264,6 +312,7 @@ export function HousingScreen({
   const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
   const [selectedRideChoice, setSelectedRideChoice] = useState("standard");
+  const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("general");
   const [rideRequestStatus, setRideRequestStatus] = useState("");
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
@@ -436,6 +485,22 @@ export function HousingScreen({
     if (origin.includes("airport") || destination.includes("airport")) return 24;
     if (origin.includes("union") || destination.includes("union")) return 5;
     return 8;
+  }
+
+  function selectRideService(service: (typeof rideServicePosters)[number]) {
+    setSelectedRideService(service.key);
+    updateRideForm("rideType", service.type);
+  }
+
+  function updateRideType(type: RideType) {
+    updateRideForm("rideType", type);
+    if (type === "SCHEDULED_REQUEST") {
+      setSelectedRideService("scheduled");
+    } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_OFFER") {
+      setSelectedRideService("carpool");
+    } else {
+      setSelectedRideService("general");
+    }
   }
 
   function rideChoicePrice(multiplier: number) {
@@ -1037,6 +1102,7 @@ export function HousingScreen({
     const isScheduled = rideForm.rideType === "SCHEDULED_REQUEST";
     const isOffer = rideForm.rideType === "CARPOOL_OFFER";
     const activeMode = rideModes.find((item) => item.type === rideForm.rideType) || rideModes[0];
+    const activeService = rideServicePosters.find((item) => item.key === selectedRideService) || rideServicePosters[1];
     return (
       <>
         <View style={styles.rideHero}>
@@ -1059,19 +1125,64 @@ export function HousingScreen({
               <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
             ))}
           </View>
-          <View style={styles.rideOptionPanel}>
-            {rideOptionPanels.map((item, index) => (
-              <View key={item.title} style={[styles.rideOptionPanelItem, index < rideOptionPanels.length - 1 && styles.rideOptionPanelDivider]}>
-                <Image source={appAssets.ride} style={styles.rideOptionPanelIcon} resizeMode="contain" />
-                <Text style={styles.rideOptionPanelTitle}>{item.title}</Text>
-                <Text style={styles.rideOptionPanelCopy}>{item.copy}</Text>
-              </View>
-            ))}
-          </View>
           <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
             <Text style={styles.rideHeroPlanText}>Where to?</Text>
             <Text style={styles.rideHeroPlanMeta}>Plan route with Google places</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.ridePosterSection}>
+          <View style={styles.ridePosterHeader}>
+            <Text style={styles.rideSectionEyebrow}>Ride services</Text>
+            <Text style={styles.ridePosterHint}>Tap a card to learn and start</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePosterCarousel}>
+            {rideServicePosters.map((service) => {
+              const selected = service.key === selectedRideService;
+              return (
+                <TouchableOpacity
+                  key={service.key}
+                  activeOpacity={0.88}
+                  style={[styles.ridePosterCard, { backgroundColor: service.tint }, selected && styles.ridePosterCardActive]}
+                  onPress={() => selectRideService(service)}
+                >
+                  <View style={styles.ridePosterCopy}>
+                    <Text style={styles.ridePosterTitle}>{service.title}</Text>
+                    <Text style={styles.ridePosterSubtitle}>{service.subtitle}</Text>
+                    <Text style={styles.ridePosterButton}>Learn more</Text>
+                  </View>
+                  <View style={styles.ridePosterArt}>
+                    <Image source={service.icon} style={styles.ridePosterIcon} resizeMode="contain" />
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          <View style={styles.rideInsightCard}>
+            <View style={styles.rideInsightImageWrap}>
+              <Image source={activeService.icon} style={styles.rideInsightImage} resizeMode="contain" />
+            </View>
+            <View style={styles.rideInsightCopy}>
+              <Text style={styles.rideInsightTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
+              <Text style={styles.rideInsightMeta}>{activeService.stat} · {activeService.insight}</Text>
+            </View>
+          </View>
+          <View style={styles.rideServiceDetail}>
+            <Text style={styles.rideServiceDetailTitle}>How {activeService.title.toLowerCase()} work</Text>
+            <Text style={styles.rideServiceDetailLabel}>Register</Text>
+            <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
+            <Text style={styles.rideServiceDetailLabel}>Flow</Text>
+            {activeService.works.map((step, index) => (
+              <View key={step} style={styles.rideServiceStep}>
+                <View style={styles.rideServiceStepDot}>
+                  <Text style={styles.rideServiceStepDotText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.rideServiceStepText}>{step}</Text>
+              </View>
+            ))}
+            <Text style={styles.rideServiceDetailLabel}>Access</Text>
+            <Text style={styles.rideServiceDetailText}>{activeService.access}</Text>
+          </View>
         </View>
 
         <View style={styles.rideModeSection}>
@@ -1081,7 +1192,7 @@ export function HousingScreen({
               <TouchableOpacity
                 key={item.type}
                 style={[styles.rideModeCard, rideForm.rideType === item.type && styles.rideModeCardActive]}
-                onPress={() => updateRideForm("rideType", item.type)}
+                onPress={() => updateRideType(item.type)}
               >
                 <View style={styles.rideModeIconWrap}>
                   <Image source={appAssets.ride} style={styles.rideModeIcon} resizeMode="contain" />
@@ -1675,12 +1786,57 @@ const styles = StyleSheet.create({
   rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
   rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
-  rideOptionPanel: { flexDirection: "row", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", borderRadius: theme.radius.lg, backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" },
-  rideOptionPanelItem: { flex: 1, minHeight: 88, padding: 7, alignItems: "center", justifyContent: "center", gap: 4 },
-  rideOptionPanelDivider: { borderRightWidth: 1, borderRightColor: "rgba(255,255,255,0.14)" },
-  rideOptionPanelIcon: { width: 30, height: 30 },
-  rideOptionPanelTitle: { color: theme.colors.text, textAlign: "center", fontSize: 12, fontWeight: "900" },
-  rideOptionPanelCopy: { color: theme.colors.soft, textAlign: "center", fontSize: 11, lineHeight: 15, fontWeight: "700" },
+  ridePosterSection: { gap: theme.spacing.md },
+  ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
+  ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
+  ridePosterCarousel: { gap: 12, paddingRight: 18 },
+  ridePosterCard: {
+    width: 310,
+    minHeight: 150,
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    flexDirection: "row",
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  ridePosterCardActive: { borderColor: theme.colors.text, shadowOpacity: 0.42 },
+  ridePosterCopy: { flex: 1, padding: 16, justifyContent: "space-between", gap: 12 },
+  ridePosterTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "900" },
+  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 14, paddingVertical: 8, fontSize: 13, fontWeight: "900" },
+  ridePosterArt: { width: 116, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
+  ridePosterIcon: { width: 78, height: 78 },
+  rideInsightCard: {
+    borderRadius: theme.radius.lg,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)"
+  },
+  rideInsightImageWrap: { height: 112, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
+  rideInsightImage: { width: 116, height: 78 },
+  rideInsightCopy: { padding: theme.spacing.md, gap: 5 },
+  rideInsightTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "900" },
+  rideInsightMeta: { color: theme.colors.soft, fontSize: 15, lineHeight: 21, fontWeight: "800" },
+  rideServiceDetail: {
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(15,23,42,0.76)",
+    padding: theme.spacing.md,
+    gap: 9
+  },
+  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
+  rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideServiceStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
+  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideModeSection: { gap: theme.spacing.md },
   rideSectionEyebrow: { color: theme.colors.accent, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
