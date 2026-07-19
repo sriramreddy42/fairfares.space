@@ -125,7 +125,14 @@ const rideLaunchReadiness = [
   "Approved driver profile, license, insurance, vehicle, and inspection are required before accepting rides.",
   "Every ride needs a clear status trail from requested to completed, cancelled, no-show, or disputed.",
   "Safety controls must include share trip, pickup PIN, report/block, urgent support, and audit history.",
-  "Payments must use idempotency keys so duplicate taps cannot create duplicate charges."
+  "Payments are handled directly between rider and driver for now; FairFares only records the agreed trip details."
+];
+const rideLifecycleStates = ["Requested", "Matching", "Accepted", "En route", "Arrived", "In progress", "Completed"];
+const rideSafetyActions = [
+  { label: "Share trip", icon: "↗", body: "Send route, driver, vehicle, and status to a trusted contact." },
+  { label: "Pickup PIN", icon: "#", body: "Confirm the passenger and vehicle before the ride starts." },
+  { label: "Report issue", icon: "!", body: "Flag safety, behavior, pickup, or route concerns." },
+  { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const rideChoiceOptions = [
@@ -592,7 +599,7 @@ export function HousingScreen({
       const radius = Number(result.dispatch?.nearestRadius || 0);
       setRideRequestStatus(
         notifiedCount
-          ? `Pilot request saved and queued for ${notifiedCount} registered driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. A ride is not confirmed until an approved driver accepts and safety checks are present.`
+          ? `Pilot request saved and queued for ${notifiedCount} registered driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. A ride is not confirmed until an approved driver accepts. Any ride contribution is agreed directly between rider and driver.`
           : "Pilot request saved. No registered driver offers are currently inside 30 miles, so nearby drivers will see it when they come online or list an approved offer."
       );
     } catch (error) {
@@ -1115,8 +1122,16 @@ export function HousingScreen({
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. Public launch still requires approved drivers, insurance checks, safety tools, and payment controls.
+                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. No in-app ride payment is collected; any contribution is agreed directly with the driver.
                 </Text>
+                <View style={styles.rideChoiceLifecycle}>
+                  <Text style={styles.rideChoiceLifecycleTitle}>After you request</Text>
+                  <View style={styles.rideChoiceLifecycleSteps}>
+                    {["Requested", "Matching", "Accepted", "Completed"].map((state) => (
+                      <Text key={state} style={styles.rideChoiceLifecyclePill}>{state}</Text>
+                    ))}
+                  </View>
+                </View>
                 {rideChoiceOptions.map((option) => {
                   const selected = option.key === selectedRideChoice;
                   return (
@@ -1126,17 +1141,27 @@ export function HousingScreen({
                         <Text style={styles.rideChoiceName}>{option.title} <Text style={styles.rideChoiceSeats}>♟ {option.seats}</Text></Text>
                         <Text style={styles.rideChoiceMeta}>{option.eta} · {rideMilesEstimate()} mi route</Text>
                       </View>
-                      <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
+                      <View style={styles.rideChoiceContribution}>
+                        <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
+                        <Text style={styles.rideChoicePriceMeta}>suggested</Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 })}
                 <View style={styles.ridePaymentRow}>
-                  <Text style={styles.ridePaymentIcon}>▣</Text>
+                  <Text style={styles.ridePaymentIcon}>✓</Text>
                   <View style={styles.rideChoiceCopy}>
-                    <Text style={styles.rideChoiceName}>Personal</Text>
-                    <Text style={styles.rideChoiceMeta}>FairFares wallet / Apple Pay ready</Text>
+                    <Text style={styles.rideChoiceName}>Direct agreement</Text>
+                    <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments in this pilot.</Text>
                   </View>
-                  <Text style={styles.ridePaymentArrow}>›</Text>
+                </View>
+                <View style={styles.rideSafetyGrid}>
+                  {rideSafetyActions.map((action) => (
+                    <View key={action.label} style={styles.rideSafetyChip}>
+                      <Text style={styles.rideSafetyIcon}>{action.icon}</Text>
+                      <Text style={styles.rideSafetyLabel}>{action.label}</Text>
+                    </View>
+                  ))}
                 </View>
                 {rideRequestStatus ? (
                   <View style={styles.rideRequestStatus}>
@@ -1145,7 +1170,7 @@ export function HousingScreen({
                 ) : null}
                 <View style={styles.rideChoiceButtonRow}>
                   <TouchableOpacity style={styles.rideChoiceButton} onPress={requestPlannedRide} disabled={rideBusy}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Choose ${primaryChoice.title.replace("FairFares ", "")}`}</Text>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Request ${primaryChoice.title.replace("FairFares ", "")}`}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.rideLaterButton}>
                     <Text style={styles.rideLaterButtonText}>▣</Text>
@@ -1185,7 +1210,7 @@ export function HousingScreen({
           </View>
           <View style={styles.ridePilotNote}>
             <Text style={styles.ridePilotNoteText}>
-              Controlled pilot: rides require approved drivers, verified documents, safety controls, and payment checks before public launch.
+              Controlled pilot: rides require approved drivers, verified documents, lifecycle tracking, and safety controls before public launch.
             </Text>
           </View>
           <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
@@ -1253,6 +1278,29 @@ export function HousingScreen({
                 <View key={item} style={styles.rideReadinessItem}>
                   <Text style={styles.rideReadinessCheck}>✓</Text>
                   <Text style={styles.rideReadinessText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.rideLifecycleCard}>
+              <Text style={styles.rideServiceDetailLabel}>Ride lifecycle</Text>
+              <View style={styles.rideLifecycleWrap}>
+                {rideLifecycleStates.map((state, index) => (
+                  <View key={state} style={styles.rideLifecyclePill}>
+                    <Text style={styles.rideLifecycleNumber}>{index + 1}</Text>
+                    <Text style={styles.rideLifecycleText}>{state}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+            <View style={styles.rideSafetyCard}>
+              <Text style={styles.rideServiceDetailLabel}>Safety controls</Text>
+              {rideSafetyActions.map((action) => (
+                <View key={action.label} style={styles.rideSafetyRow}>
+                  <Text style={styles.rideSafetyRowIcon}>{action.icon}</Text>
+                  <View style={styles.rideSafetyRowCopy}>
+                    <Text style={styles.rideSafetyRowTitle}>{action.label}</Text>
+                    <Text style={styles.rideSafetyRowBody}>{action.body}</Text>
+                  </View>
                 </View>
               ))}
             </View>
@@ -1817,6 +1865,62 @@ const styles = StyleSheet.create({
   rideReadinessItem: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   rideReadinessCheck: { color: theme.colors.green, fontSize: 14, lineHeight: 19, fontWeight: "900" },
   rideReadinessText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideLifecycleCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 12,
+    gap: 8
+  },
+  rideLifecycleWrap: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  rideLifecyclePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 9,
+    paddingVertical: 7
+  },
+  rideLifecycleNumber: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    overflow: "hidden",
+    color: theme.colors.text,
+    backgroundColor: theme.colors.accent,
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 18,
+    fontWeight: "900"
+  },
+  rideLifecycleText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
+  rideSafetyCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.22)",
+    backgroundColor: "rgba(59,130,246,0.08)",
+    padding: 12,
+    gap: 9
+  },
+  rideSafetyRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  rideSafetyRowIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    color: theme.colors.text,
+    textAlign: "center",
+    lineHeight: 28,
+    fontWeight: "900"
+  },
+  rideSafetyRowCopy: { flex: 1, minWidth: 0 },
+  rideSafetyRowTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
+  rideSafetyRowBody: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   rideServicePlanButton: { marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
   rideServicePlanButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideModeSection: { gap: theme.spacing.md },
@@ -2032,6 +2136,29 @@ const styles = StyleSheet.create({
   rideChoiceSheet: { maxHeight: "64%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24, gap: 12 },
   rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
   rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideChoiceLifecycle: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    gap: 7
+  },
+  rideChoiceLifecycleTitle: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
+  rideChoiceLifecycleSteps: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  rideChoiceLifecyclePill: {
+    color: theme.colors.soft,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(0,0,0,0.22)",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    overflow: "hidden",
+    fontSize: 11,
+    fontWeight: "900"
+  },
   rideChoiceRow: { minHeight: 76, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: "transparent" },
   rideChoiceRowActive: { borderColor: theme.colors.text, backgroundColor: "rgba(255,255,255,0.04)" },
   rideChoiceIcon: { width: 54, height: 42 },
@@ -2039,10 +2166,28 @@ const styles = StyleSheet.create({
   rideChoiceName: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   rideChoiceSeats: { color: theme.colors.soft, fontSize: 14 },
   rideChoiceMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 3 },
+  rideChoiceContribution: { alignItems: "flex-end", gap: 1 },
   rideChoicePrice: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  rideChoicePriceMeta: { color: theme.colors.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
   ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, backgroundColor: theme.colors.panel2, paddingHorizontal: 12 },
   ridePaymentIcon: { color: theme.colors.text, fontSize: 22 },
   ridePaymentArrow: { color: theme.colors.soft, fontSize: 28 },
+  rideSafetyGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rideSafetyChip: {
+    width: "48%",
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
+  rideSafetyIcon: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideSafetyLabel: { flex: 1, color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
   rideRequestStatus: { backgroundColor: "rgba(34,197,94,0.13)", borderWidth: 1, borderColor: "rgba(34,197,94,0.35)", borderRadius: 14, padding: 12 },
   rideRequestStatusText: { color: theme.colors.green, fontSize: 13, lineHeight: 18, fontWeight: "900" },
   rideChoiceButtonRow: { flexDirection: "row", alignItems: "center", gap: 10 },
