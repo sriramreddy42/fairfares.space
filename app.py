@@ -3853,6 +3853,22 @@ def init_db() -> None:
                 FOREIGN KEY(assigned_driver_user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS ride_dispatch_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_ride_post_id INTEGER NOT NULL,
+                driver_ride_post_id INTEGER NOT NULL,
+                driver_user_id INTEGER NOT NULL,
+                radius_miles INTEGER NOT NULL DEFAULT 10,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                distance_miles REAL NOT NULL DEFAULT 0,
+                notified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                responded_at TEXT,
+                UNIQUE(request_ride_post_id, driver_ride_post_id),
+                FOREIGN KEY(request_ride_post_id) REFERENCES ride_posts(id),
+                FOREIGN KEY(driver_ride_post_id) REFERENCES ride_posts(id),
+                FOREIGN KEY(driver_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -11977,6 +11993,64 @@ def create_ride_instances(con: sqlite3.Connection, ride_post_id: int, start_date
                 (ride_post_id, current.isoformat(), pickup_time),
             )
         current += timedelta(days=1)
+
+
+def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sqlite3.Row, requester_user_id: int) -> dict[str, object]:
+    if row_value(request_row, "ride_type") not in {"GENERAL_REQUEST", "CARPOOL_REQUEST"}:
+        return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+    request_lat = float(row_value(request_row, "origin_lat") or 0)
+    request_lng = float(row_value(request_row, "origin_lng") or 0)
+    if not request_lat or not request_lng:
+        return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+    driver_rows = con.execute(
+        """
+        SELECT *
+        FROM ride_posts
+        WHERE status = 'ACTIVE'
+          AND ride_type = 'CARPOOL_OFFER'
+          AND user_id != ?
+          AND origin_lat != 0
+          AND origin_lng != 0
+        """,
+        (requester_user_id,),
+    ).fetchall()
+    buckets: list[dict[str, object]] = []
+    notified_count = 0
+    nearest_radius = 0
+    for radius in (10, 20, 30):
+        bucket_count = 0
+        for driver in driver_rows:
+            distance = distance_miles_between(
+                request_lat,
+                request_lng,
+                float(row_value(driver, "origin_lat") or 0),
+                float(row_value(driver, "origin_lng") or 0),
+            )
+            if distance > radius:
+                continue
+            cursor = con.execute(
+                """
+                INSERT OR IGNORE INTO ride_dispatch_notifications
+                (request_ride_post_id, driver_ride_post_id, driver_user_id, radius_miles, distance_miles)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    int(row_value(request_row, "id") or 0),
+                    int(row_value(driver, "id") or 0),
+                    int(row_value(driver, "user_id") or 0),
+                    radius,
+                    round(distance, 2),
+                ),
+            )
+            if cursor.rowcount:
+                bucket_count += 1
+        if bucket_count and not nearest_radius:
+            nearest_radius = radius
+        notified_count += bucket_count
+        buckets.append({"radiusMiles": radius, "notifiedCount": bucket_count})
+        if bucket_count:
+            break
+    return {"notifiedCount": notified_count, "nearestRadius": nearest_radius, "radiusBuckets": buckets}
 
 
 def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
@@ -22970,7 +23044,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         origin_lng = float(origin_point.get("lng") or 0)
         dest_lat = float(destination_point.get("lat") or 0)
         dest_lng = float(destination_point.get("lng") or 0)
-        maps_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip() or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+        maps_key = (
+            os.environ.get("GOOGLE_STATIC_MAPS_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+        )
         if maps_key and origin_lat and origin_lng and dest_lat and dest_lng:
             map_params: list[tuple[str, str]] = [
                 ("size", "640x420"),
@@ -22991,12 +23069,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     data = response.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
+                self.send_header("X-FairFares-Map-Source", "google-static-maps")
                 self.send_header("Cache-Control", "public, max-age=300")
                 self.end_headers()
                 self.wfile.write(data)
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"Ride map Google Static Maps fallback: {type(exc).__name__}: {exc}")
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
 <rect width="640" height="420" fill="#111"/>
 <g stroke="#2b2f36" stroke-width="2">{''.join(f'<path d="M {x} 0 L {x + 120} 420"/>' for x in range(-160, 720, 80))}{''.join(f'<path d="M 0 {y} L 640 {y - 80}"/>' for y in range(40, 500, 70))}</g>
@@ -23008,6 +23087,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         data = svg.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("X-FairFares-Map-Source", "fallback")
         self.send_header("Cache-Control", "public, max-age=120")
         self.end_headers()
         self.wfile.write(data)
@@ -23669,7 +23749,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if ride_type == "SCHEDULED_REQUEST":
                 create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
-        self.send_json({"ok": True, "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None}, 201)
+            dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+        self.send_json(
+            {
+                "ok": True,
+                "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None,
+                "dispatch": dispatch,
+            },
+            201,
+        )
 
     def api_mobile_create_housing(self) -> None:
         user = self.current_user()

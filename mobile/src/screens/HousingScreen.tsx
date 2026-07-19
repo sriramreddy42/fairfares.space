@@ -474,16 +474,24 @@ export function HousingScreen({
     const selected = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
     setRideBusy(true);
     try {
-      const ride = await createMobileRide({
+      const result = await createMobileRide({
         ...rideForm,
         rideType: "GENERAL_REQUEST",
-        notes: [rideForm.notes, `${selected.title} selected. Notify registered drivers within 10 miles first, then expand to 20 and 30 miles if no one accepts.`]
+        notes: [rideForm.notes, `${selected.title} selected.`]
           .filter(Boolean)
           .join(" ")
       });
+      const ride = result.ride;
+      if (!ride) throw new Error("Ride request was not saved.");
       setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
       setRidePosted(true);
-      setRideRequestStatus("Request sent to nearby registered drivers within 10 miles. FairFares expands the search to 20 and 30 miles if no one accepts.");
+      const notifiedCount = Number(result.dispatch?.notifiedCount || 0);
+      const radius = Number(result.dispatch?.nearestRadius || 0);
+      setRideRequestStatus(
+        notifiedCount
+          ? `Request sent to ${notifiedCount} registered driver${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. If no one accepts, FairFares can expand the search to 20 and 30 miles.`
+          : "Ride request posted. No registered driver offers are currently inside 30 miles, so nearby drivers will see it when they come online or list an offer."
+      );
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
     } finally {
@@ -494,6 +502,13 @@ export function HousingScreen({
   function openPostMap(post: HousingPost) {
     const query = post.lat && post.lng ? `${post.lat},${post.lng}` : `${post.title} ${post.location} ${post.area}`.trim();
     void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`);
+  }
+
+  function openRideGoogleMaps() {
+    const origin = rideForm.origin || selectedLocationText || rideForm.city || "Denver, CO";
+    const destination = rideForm.destination || rideForm.city || "Denver, CO";
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    void Linking.openURL(url);
   }
 
   function updateRentalSearch(key: keyof RentalSearchInput, value: string | boolean) {
@@ -824,7 +839,9 @@ export function HousingScreen({
     }
     setRideBusy(true);
     try {
-      const ride = await createMobileRide(rideForm);
+      const result = await createMobileRide(rideForm);
+      const ride = result.ride;
+      if (!ride) throw new Error("Ride was not saved.");
       setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
       setRidePosted(true);
       Alert.alert("Ride posted", ride.type === "SCHEDULED_REQUEST" ? "Your recurring ride was created with daily ride instances." : "Your ride is live.");
@@ -956,21 +973,15 @@ export function HousingScreen({
                 <TouchableOpacity style={styles.rideMapBackButton} onPress={() => setRidePlannerStage("plan")}>
                   <Text style={styles.rideMapBackText}>‹</Text>
                 </TouchableOpacity>
-                <View style={styles.rideMapRouteLine} />
-                <View style={[styles.rideMapCarDot, { top: "24%", left: "70%" }]} />
-                <View style={[styles.rideMapCarDot, { top: "42%", left: "54%" }]} />
-                <View style={styles.rideMapPickupLabel}>
-                  <Text style={styles.rideMapLabelText} numberOfLines={1}>{rideForm.origin || "Pickup"}</Text>
-                </View>
-                <View style={styles.rideMapDestinationLabel}>
-                  <Text style={styles.rideMapLabelText} numberOfLines={1}>{rideForm.destination || "Destination"}</Text>
-                </View>
+                <TouchableOpacity style={styles.rideMapOpenButton} onPress={openRideGoogleMaps}>
+                  <Text style={styles.rideMapOpenButtonText}>Open Google Maps</Text>
+                </TouchableOpacity>
               </View>
               <View style={styles.rideChoiceSheet}>
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  Drivers within 10 miles are notified first. If no one accepts, FairFares expands to 20 and 30 miles.
+                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles.
                 </Text>
                 {rideChoiceOptions.map((option) => {
                   const selected = option.key === selectedRideChoice;
@@ -1844,6 +1855,8 @@ const styles = StyleSheet.create({
   rideMapPickupLabel: { position: "absolute", top: 78, left: 82, right: 80, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
   rideMapDestinationLabel: { position: "absolute", bottom: 78, right: 28, left: 120, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
   rideMapLabelText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rideMapOpenButton: { position: "absolute", right: 16, top: 34, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
+  rideMapOpenButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rideChoiceSheet: { maxHeight: "64%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24, gap: 12 },
   rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
   rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },

@@ -123,6 +123,15 @@ export type RidePost = {
   createdAt: string;
 };
 
+export type RideDispatchSummary = {
+  notifiedCount: number;
+  nearestRadius: number;
+  radiusBuckets: Array<{
+    radiusMiles: number;
+    notifiedCount: number;
+  }>;
+};
+
 export type RideInput = {
   rideType: RideType;
   city: string;

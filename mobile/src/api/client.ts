@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, RideInput, RidePost, RideType, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideInput, RidePost, RideType, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -182,12 +182,12 @@ export function rideMapUrl(city: string, origin: string, destination: string) {
 }
 
 export async function createMobileRide(input: RideInput) {
-  const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides", {
+  const payload = await request<{ ok: boolean; ride: RidePost; dispatch?: RideDispatchSummary }>("/api/mobile/rides", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });
-  return payload.ride;
+  return { ride: payload.ride, dispatch: payload.dispatch };
 }
 
 export type AccommodationLocationLookup = {
