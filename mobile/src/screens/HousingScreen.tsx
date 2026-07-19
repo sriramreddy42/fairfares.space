@@ -66,6 +66,13 @@ const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "CARPOOL_REQUEST", title: "Find carpool", copy: "Match with drivers going your direction." },
   { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List seats, detour, luggage, and contribution." }
 ];
+const rideOptionPanels = [
+  { title: "Scheduled Rides", copy: "Daily commute made easy." },
+  { title: "General Rides", copy: "Request a ride when you need it." },
+  { title: "Carpool", copy: "Share the ride. Share the cost." }
+];
+const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
+const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const timeOptions = Array.from({ length: 48 }, (_, index) => {
   const hour = Math.floor(index / 2);
@@ -700,17 +707,42 @@ export function HousingScreen({
   function renderRideOnly() {
     const isScheduled = rideForm.rideType === "SCHEDULED_REQUEST";
     const isOffer = rideForm.rideType === "CARPOOL_OFFER";
+    const activeMode = rideModes.find((item) => item.type === rideForm.rideType) || rideModes[0];
     return (
       <>
         <View style={styles.rideHero}>
-          <View style={styles.rideHeroTop}>
-            <Image source={appAssets.ride} style={styles.rideHeroIcon} resizeMode="contain" />
-            <View style={styles.rideHeroCopy}>
-              <Text style={styles.rideEyebrow}>FairFares rides</Text>
-              <Text style={styles.rideTitle}>Where are you going?</Text>
-              <Text style={styles.rideMeta}>Scheduled rides, ride requests, and route-aware carpools.</Text>
+          <View style={styles.rideBrandRow}>
+            <Image source={appAssets.logo} style={styles.rideBrandLogo} resizeMode="contain" />
+            <View style={styles.rideOptionPill}>
+              <Text style={styles.rideOptionPillText}>3 ride options</Text>
             </View>
           </View>
+          <View style={styles.rideHeroTop}>
+            <View style={styles.rideHeroCopy}>
+              <Text style={styles.rideEyebrow}>FairFares rides</Text>
+              <Text style={styles.rideTitle}>Ride together. <Text style={styles.rideTitleAccent}>Save together.</Text></Text>
+              <Text style={styles.rideMeta}>Scheduled. Flexible. Together.</Text>
+            </View>
+            <Image source={appAssets.ride} style={styles.rideHeroIcon} resizeMode="contain" />
+          </View>
+          <View style={styles.rideFeatureRow}>
+            {rideFeatureBadges.map((badge) => (
+              <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
+            ))}
+          </View>
+          <View style={styles.rideOptionPanel}>
+            {rideOptionPanels.map((item, index) => (
+              <View key={item.title} style={[styles.rideOptionPanelItem, index < rideOptionPanels.length - 1 && styles.rideOptionPanelDivider]}>
+                <Image source={appAssets.ride} style={styles.rideOptionPanelIcon} resizeMode="contain" />
+                <Text style={styles.rideOptionPanelTitle}>{item.title}</Text>
+                <Text style={styles.rideOptionPanelCopy}>{item.copy}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.rideModeSection}>
+          <Text style={styles.rideSectionEyebrow}>Choose your ride flow</Text>
           <View style={styles.rideModeGrid}>
             {rideModes.map((item) => (
               <TouchableOpacity
@@ -718,11 +750,34 @@ export function HousingScreen({
                 style={[styles.rideModeCard, rideForm.rideType === item.type && styles.rideModeCardActive]}
                 onPress={() => updateRideForm("rideType", item.type)}
               >
-                <Text style={[styles.rideModeTitle, rideForm.rideType === item.type && styles.rideModeTitleActive]}>{item.title}</Text>
-                <Text style={[styles.rideModeCopy, rideForm.rideType === item.type && styles.rideModeCopyActive]}>{item.copy}</Text>
+                <View style={styles.rideModeIconWrap}>
+                  <Image source={appAssets.ride} style={styles.rideModeIcon} resizeMode="contain" />
+                </View>
+                <View style={styles.rideModeCopyBlock}>
+                  <Text style={[styles.rideModeTitle, rideForm.rideType === item.type && styles.rideModeTitleActive]}>{item.title}</Text>
+                  <Text style={[styles.rideModeCopy, rideForm.rideType === item.type && styles.rideModeCopyActive]}>{item.copy}</Text>
+                </View>
               </TouchableOpacity>
             ))}
           </View>
+          <View style={styles.rideFlowStrip}>
+            {rideFlowSteps.map((step, index) => (
+              <View key={step} style={styles.rideFlowStep}>
+                <View style={styles.rideFlowDot}>
+                  <Text style={styles.rideFlowDotText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.rideFlowText}>{step}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.rideActiveSummary}>
+          <View>
+            <Text style={styles.rideSummaryTitle}>{activeMode.title}</Text>
+            <Text style={styles.rideSummaryCopy}>{activeMode.copy}</Text>
+          </View>
+          <Text style={styles.rideSummaryStatus}>{rideRows.length ? `${rideRows.length} matches` : "Ready"}</Text>
         </View>
 
         <View style={styles.rideForm}>
@@ -784,6 +839,16 @@ export function HousingScreen({
           {rideRows.length ? (
             rideRows.map((ride) => (
               <View key={ride.id} style={styles.rideResultCard}>
+                <View style={styles.rideMapPreview}>
+                  <View style={styles.rideMapGridA} />
+                  <View style={styles.rideMapGridB} />
+                  <View style={styles.rideRouteLine} />
+                  <View style={[styles.rideMapPin, styles.rideMapPinStart]} />
+                  <View style={[styles.rideMapPin, styles.rideMapPinEnd]} />
+                  <Text style={styles.rideMapDistance}>
+                    {ride.distanceMiles !== null ? `${ride.distanceMiles} mi from pickup` : `${ride.matchScore}% route match`}
+                  </Text>
+                </View>
                 <View style={styles.rideResultTop}>
                   <Text style={styles.rideResultType}>{ride.typeLabel}</Text>
                   <Text style={styles.rideScore}>{ride.matchScore}/100</Text>
@@ -799,9 +864,13 @@ export function HousingScreen({
                   {ride.distanceMiles !== null ? <Text style={styles.rideFactGreen}>{ride.distanceMiles} mi from pickup</Text> : null}
                   {ride.contributionPerSeat ? <Text style={styles.rideFactGreen}>${ride.contributionPerSeat}/seat</Text> : null}
                   {ride.maxDetourMinutes ? <Text style={styles.rideFact}>{ride.maxDetourMinutes} min detour</Text> : null}
+                  {ride.maxPickupDistanceMiles ? <Text style={styles.rideFact}>{ride.maxPickupDistanceMiles} mi pickup range</Text> : null}
                 </View>
                 {ride.daysOfWeek.length ? <Text style={styles.rideSmall}>Runs {ride.daysOfWeek.join(", ")}</Text> : null}
                 {ride.notes ? <Text style={styles.rideSmall}>{ride.notes}</Text> : null}
+                <TouchableOpacity style={styles.rideRequestButton} onPress={() => Alert.alert("Ride request", "Messaging and seat requests will use FairFares chat for this ride.")}>
+                  <Text style={styles.rideRequestButtonText}>{ride.role === "DRIVER" ? "Request seat" : "Message rider"}</Text>
+                </TouchableOpacity>
               </View>
             ))
           ) : (
@@ -1249,36 +1318,64 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "rgba(17,24,39,0.82)",
-    padding: theme.spacing.md,
-    gap: theme.spacing.md,
+    backgroundColor: "#090d12",
+    padding: 12,
+    gap: 12,
     shadowColor: "#000",
     shadowOpacity: 0.28,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 }
   },
+  rideBrandRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  rideBrandLogo: { width: 106, height: 38 },
+  rideOptionPill: { backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7 },
+  rideOptionPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
   rideHeroTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
-  rideHeroIcon: { width: 74, height: 74 },
+  rideHeroIcon: { width: 62, height: 62 },
   rideHeroCopy: { flex: 1, minWidth: 0 },
   rideEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, textTransform: "uppercase" },
-  rideTitle: { color: theme.colors.text, fontSize: 31, lineHeight: 35, fontWeight: "900", marginTop: 3 },
-  rideMeta: { color: theme.colors.muted, fontSize: 14, lineHeight: 19, fontWeight: "800", marginTop: 4 },
+  rideTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 31, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
+  rideTitleAccent: { color: theme.colors.accent },
+  rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
+  rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
+  rideOptionPanel: { flexDirection: "row", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", borderRadius: theme.radius.lg, backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" },
+  rideOptionPanelItem: { flex: 1, minHeight: 88, padding: 7, alignItems: "center", justifyContent: "center", gap: 4 },
+  rideOptionPanelDivider: { borderRightWidth: 1, borderRightColor: "rgba(255,255,255,0.14)" },
+  rideOptionPanelIcon: { width: 30, height: 30 },
+  rideOptionPanelTitle: { color: theme.colors.text, textAlign: "center", fontSize: 12, fontWeight: "900" },
+  rideOptionPanelCopy: { color: theme.colors.soft, textAlign: "center", fontSize: 11, lineHeight: 15, fontWeight: "700" },
+  rideModeSection: { gap: theme.spacing.md },
+  rideSectionEyebrow: { color: theme.colors.accent, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideModeCard: {
     width: "48%",
-    minHeight: 108,
+    minHeight: 132,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(255,255,255,0.06)",
     padding: 12,
-    justifyContent: "space-between"
+    justifyContent: "space-between",
+    gap: 8
   },
-  rideModeCardActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(80,124,255,0.24)" },
+  rideModeCardActive: { borderColor: theme.colors.accent, backgroundColor: "rgba(255,59,48,0.18)" },
+  rideModeIconWrap: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  rideModeIcon: { width: 34, height: 34 },
+  rideModeCopyBlock: { gap: 4 },
   rideModeTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
   rideModeTitleActive: { color: theme.colors.text },
   rideModeCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 7 },
   rideModeCopyActive: { color: theme.colors.soft },
+  rideFlowStrip: { flexDirection: "row", flexWrap: "wrap", gap: 8, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 10, backgroundColor: "rgba(255,255,255,0.04)" },
+  rideFlowStep: { width: "48%", flexDirection: "row", alignItems: "center", gap: 8 },
+  rideFlowDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
+  rideFlowDotText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  rideFlowText: { color: theme.colors.soft, flex: 1, fontSize: 12, fontWeight: "800" },
+  rideActiveSummary: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.05)", padding: theme.spacing.md },
+  rideSummaryTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  rideSummaryCopy: { color: theme.colors.muted, maxWidth: 220, marginTop: 4, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideSummaryStatus: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideForm: {
     borderRadius: theme.radius.lg,
     borderWidth: 1,
@@ -1350,6 +1447,14 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     gap: 9
   },
+  rideMapPreview: { height: 132, borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#18202a", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", marginBottom: 4 },
+  rideMapGridA: { position: "absolute", left: -20, right: -20, top: 42, height: 1, backgroundColor: "rgba(255,255,255,0.13)", transform: [{ rotate: "-8deg" }] },
+  rideMapGridB: { position: "absolute", left: -20, right: -20, top: 88, height: 1, backgroundColor: "rgba(255,255,255,0.10)", transform: [{ rotate: "12deg" }] },
+  rideRouteLine: { position: "absolute", left: 50, right: 50, top: 62, height: 5, borderRadius: 5, backgroundColor: theme.colors.blue, transform: [{ rotate: "-10deg" }] },
+  rideMapPin: { position: "absolute", width: 18, height: 18, borderRadius: 9, borderWidth: 3, borderColor: theme.colors.text },
+  rideMapPinStart: { left: 44, top: 64, backgroundColor: theme.colors.green },
+  rideMapPinEnd: { right: 44, top: 42, backgroundColor: theme.colors.accent },
+  rideMapDistance: { position: "absolute", right: 10, bottom: 10, color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.58)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideResultTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   rideResultType: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase" },
   rideScore: { color: theme.colors.bg, backgroundColor: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 5, overflow: "hidden", fontWeight: "900" },
@@ -1358,5 +1463,7 @@ const styles = StyleSheet.create({
   rideFactRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   rideFact: { color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.07)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideFactGreen: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
-  rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" }
+  rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
+  rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }
 });

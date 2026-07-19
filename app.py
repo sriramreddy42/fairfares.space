@@ -11764,6 +11764,16 @@ def ride_point(query: str, city: str = "") -> dict[str, object]:
     return point
 
 
+def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: str = "") -> str:
+    fallback = dedupe_repeated_location_label(raw_label)
+    resolved = dedupe_repeated_location_label(str(resolved_point.get("label") or ""))
+    city_label = normalize_accommodation_place_label(city)
+    city_root = city_label.split(",", 1)[0].strip().lower()
+    if fallback and resolved and city_root and resolved.lower() == city_root and fallback.lower() != city_root:
+        return fallback
+    return resolved or fallback or city_label or "Location open"
+
+
 def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object], pickup_date: str = "", pickup_time: str = "") -> int:
     score = 55
     origin_lat = float(row_value(row, "origin_lat") or 0)
@@ -23444,8 +23454,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         origin_point = ride_point(origin, city)
         destination_point = ride_point(destination, city)
-        origin_label = dedupe_repeated_location_label(str(origin_point.get("label") or origin))
-        destination_label = dedupe_repeated_location_label(str(destination_point.get("label") or destination))
+        origin_label = ride_display_label(origin, origin_point, city)
+        destination_label = ride_display_label(destination, destination_point, city)
         public_id = ride_public_id()
         title = clean_text_value(payload.get("title"), 160)
         if not title:

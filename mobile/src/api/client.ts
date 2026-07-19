@@ -19,6 +19,15 @@ function metroHostApiUrl() {
   return `http://${host}:${API_PORT}`;
 }
 
+function browserLocalApiUrl() {
+  const locationLike = (globalThis as unknown as { location?: { hostname?: string } }).location;
+  const host = locationLike?.hostname || "";
+  if (host === "localhost" || host === "127.0.0.1") {
+    return `http://127.0.0.1:${API_PORT}`;
+  }
+  return "";
+}
+
 function uniqueUrls(urls: string[]) {
   return urls.filter((url, index) => url && urls.indexOf(url) === index);
 }
@@ -39,7 +48,7 @@ export const API_URL =
 
 const API_CANDIDATES = uniqueUrls(
   Platform.OS === "web"
-    ? [EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl()]
+    ? [browserLocalApiUrl(), EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl()]
     : [EXPLICIT_API_URL, metroHostApiUrl(), "http://127.0.0.1:8010"]
 );
 
