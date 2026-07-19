@@ -445,7 +445,7 @@ export async function getChatMessages(conversationId: string) {
 }
 
 export async function startChatForPost(postId: string, message: string) {
-  return request<{ ok: boolean; conversation: { id: string; subject: string; communityId?: string }; message: ChatMessage | null }>("/api/chat/conversations", {
+  return request<{ ok: boolean; conversation: { id: string; subject: string; communityId?: string; otherName?: string }; message: ChatMessage | null }>("/api/chat/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ post_id: postId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })

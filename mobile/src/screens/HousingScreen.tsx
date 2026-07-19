@@ -83,14 +83,14 @@ const rideServicePosters: Array<{
     key: "scheduled",
     type: "SCHEDULED_REQUEST",
     title: "Scheduled rides",
-    subtitle: "Repeat commute, class, or airport pickup",
-    stat: "Example: Lone Tree to DU every Mon-Fri at 8:00 AM",
-    insight: "Use this when the same ride repeats. Each day still becomes its own ride so one skipped day does not break the whole schedule.",
+    subtitle: "Repeat commute, class, or airport runs",
+    stat: "Example: Lone Tree to DU every weekday at 8:00 AM.",
+    insight: "Best for rides that happen again and again. Set the route once, then track each confirmed day in Activity.",
     tint: "#8a5a00",
     icon: appAssets.ride,
-    register: "Tell us pickup, drop-off, days, start date, pickup time, seats, and notes. Example: Lone Tree to DU, Mon-Fri, 8:00 AM.",
-    works: ["We create the repeated ride pattern.", "Drivers who fit that route can accept it.", "Every confirmed day appears in Activity with status and chat."],
-    access: "After entering pickup and drop-off, choose Scheduled when the trip repeats."
+    register: "Enter pickup, destination, days, time, seats, and notes.",
+    works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and FChat for each accepted ride."],
+    access: "Choose this when the same route repeats."
   },
   {
     key: "general",
@@ -98,12 +98,12 @@ const rideServicePosters: Array<{
     title: "General rides",
     subtitle: "One pickup and one drop-off",
     stat: "Example: Denver to Union Station today at 6:00 PM",
-    insight: "Use this for a normal local ride. FairFares resolves both places with Google, estimates distance, then shows ride options.",
+    insight: "Best for a simple local ride today or later. Enter pickup and destination, then request nearby driver offers.",
     tint: "#243b73",
     icon: appAssets.ride,
-    register: "Enter where you are, where you are going, pickup date/time, seats, luggage, and notes.",
-    works: ["Google Places corrects addresses, landmarks, and typos.", "FairFares estimates distance and trip cost.", "Nearby registered drivers are notified first."],
-    access: "Choose General for a one-time ride inside or near the city."
+    register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
+    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat when a driver accepts."],
+    access: "Choose this for one ride inside or near the city."
   },
   {
     key: "carpool",
@@ -111,12 +111,12 @@ const rideServicePosters: Array<{
     title: "Carpool",
     subtitle: "Shared route, shared cost",
     stat: "Example: Denver to Colorado Springs or Denver to Cincinnati",
-    insight: "Use this for long trips or when riders and drivers are already going the same direction. Detour and seats must be visible.",
+    insight: "Best when riders and drivers are already going the same direction. Useful for longer trips, airport runs, or shared commutes.",
     tint: "#0f5f4b",
     icon: appAssets.ride,
-    register: "Enter route, date/time, seats, luggage, max pickup distance, and contribution per seat.",
-    works: ["FairFares matches routes going the same direction.", "Drivers list open seats and detour limits.", "Passengers request a seat and chat before confirmation."],
-    access: "Choose Carpool for city-to-city, long-distance, or shared-cost rides."
+    register: "Enter route, date/time, seats, luggage, pickup radius, and contribution.",
+    works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
+    access: "Choose this for city-to-city, long-distance, or shared-cost rides."
   }
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
@@ -130,12 +130,11 @@ const rideSafetyActions = [
   { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
 const rideOwnerSteps = [
-  "List your route, seats, vehicle notes, detour limit, and availability.",
-  "FairFares shows rider requests that match your route and pickup radius.",
-  "You accept or decline. After acceptance, the rider sees ETA, route, pickup PIN, and FChat.",
-  "Any ride contribution is agreed directly between rider and driver."
+  "List the route, seats, timing, luggage space, and detour limit.",
+  "Review matching rider requests with pickup, destination, and distance.",
+  "Accept a request to unlock ETA, pickup PIN, route notes, and FChat."
 ];
-const rideOwnerRequestStates = ["New", "Accepted", "En route", "Arrived", "Completed"];
+const rideOwnerRequestStates = ["Listed", "Request", "Accepted", "Arriving", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const rideChoiceOptions = [
   { key: "electric", title: "FairFares Electric", meta: "Lower-emission ride", multiplier: 0.95, eta: "5 min", seats: 4 },
@@ -509,7 +508,7 @@ export function HousingScreen({
       rideType: "CARPOOL_OFFER",
       seats: current.seats === "1" ? "3" : current.seats,
       maxPickupDistanceMiles: current.maxPickupDistanceMiles || "5",
-      notes: current.notes || "Driver offering seats. Vehicle details and approval documents required before accepting riders."
+      notes: current.notes || "Driver offering seats on this route. Include vehicle, seat count, luggage space, timing, and detour limit."
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
@@ -619,13 +618,17 @@ export function HousingScreen({
       Alert.alert("Login required", "Please login before requesting a ride so drivers can message you.");
       return;
     }
+    const selectedOffer = selectedRideChoice.startsWith("offer:")
+      ? rideRows.find((ride) => `offer:${ride.id}` === selectedRideChoice)
+      : null;
     const selected = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
+    const selectedLabel = selectedOffer?.title || selected.title;
     setRideBusy(true);
     try {
       const result = await createMobileRide({
         ...rideForm,
         rideType: rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_REQUEST" : rideForm.rideType,
-        notes: [rideForm.notes, `${selected.title} selected.`]
+        notes: [rideForm.notes, `${selectedLabel} selected.`]
           .filter(Boolean)
           .join(" ")
       });
@@ -664,7 +667,7 @@ export function HousingScreen({
   }
 
   function renderRideOwnerTracker() {
-    const requestRows = rideRows.filter((ride) => ride.role === "RIDER").slice(0, 3);
+    const requestRows = rideRows.slice(0, 5);
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
         <View style={styles.rideOwnerScreen}>
@@ -675,23 +678,23 @@ export function HousingScreen({
               </TouchableOpacity>
               <View style={styles.rideOwnerHeaderCopy}>
                 <Text style={styles.rideOwnerEyebrow}>Driver workspace</Text>
-                <Text style={styles.rideOwnerTitle}>List your car</Text>
+                <Text style={styles.rideOwnerTitle}>Offer a ride</Text>
               </View>
             </View>
 
             <View style={styles.rideOwnerHero}>
               <Image source={appAssets.ride} style={styles.rideOwnerHeroIcon} resizeMode="contain" />
               <View style={styles.rideOwnerHeroCopy}>
-                <Text style={styles.rideOwnerHeroTitle}>Offer rides, then track requests here.</Text>
+                <Text style={styles.rideOwnerHeroTitle}>List your route and available seats.</Text>
                 <Text style={styles.rideOwnerHeroText}>
-                  Car owners list their route and seats first. Rider requests appear here with pickup, destination, distance, and status after matching.
+                  Add your pickup route, destination, seats, timing, and detour limit. Matching rider requests show here with status and FChat access.
                 </Text>
               </View>
             </View>
 
             <View style={styles.rideOwnerActionRow}>
               <TouchableOpacity style={styles.rideOwnerPrimaryButton} onPress={startRideOfferListing}>
-                <Text style={styles.rideOwnerPrimaryText}>List car / offer seats</Text>
+                <Text style={styles.rideOwnerPrimaryText}>List route / seats</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.rideOwnerSecondaryButton} onPress={openRideGoogleMaps}>
                 <Text style={styles.rideOwnerSecondaryText}>Open map</Text>
@@ -699,7 +702,7 @@ export function HousingScreen({
             </View>
 
             <View style={styles.rideOwnerCard}>
-              <Text style={styles.rideOwnerSectionTitle}>How owners handle requests</Text>
+              <Text style={styles.rideOwnerSectionTitle}>How it works</Text>
               {rideOwnerSteps.map((step, index) => (
                 <View key={step} style={styles.rideOwnerStep}>
                   <Text style={styles.rideOwnerStepNumber}>{index + 1}</Text>
@@ -720,7 +723,7 @@ export function HousingScreen({
                   <View key={ride.id} style={styles.rideOwnerRequestCard}>
                     <View style={styles.rideOwnerRequestTop}>
                       <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
-                      <Text style={styles.rideOwnerRequestBadge}>{ride.status || "New"}</Text>
+                      <Text style={styles.rideOwnerRequestBadge}>{ride.role === "DRIVER" ? "Listed" : ride.status || "New"}</Text>
                     </View>
                     <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
                     <View style={styles.rideOwnerRequestFacts}>
@@ -728,7 +731,9 @@ export function HousingScreen({
                       <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
                       <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
                     </View>
-                    <Text style={styles.rideOwnerRequestMeta}>After acceptance, use FChat for ETA, pickup PIN, route notes, and rider questions.</Text>
+                    <Text style={styles.rideOwnerRequestMeta}>
+                      {ride.role === "DRIVER" ? "Your route is listed. Rider requests that fit this route will appear here." : "After acceptance, use FChat for ETA, pickup PIN, route notes, and rider questions."}
+                    </Text>
                     <TouchableOpacity style={styles.rideOwnerChatButton} onPress={onOpenMessenger}>
                       <Image source={appAssets.fchat} style={styles.rideOwnerChatIcon} resizeMode="contain" />
                       <Text style={styles.rideOwnerChatText}>Open FChat</Text>
@@ -737,9 +742,9 @@ export function HousingScreen({
                 ))
               ) : (
                 <View style={styles.rideOwnerEmpty}>
-                  <Text style={styles.rideOwnerEmptyTitle}>No rider requests yet.</Text>
+                  <Text style={styles.rideOwnerEmptyTitle}>No ride activity yet.</Text>
                   <Text style={styles.rideOwnerEmptyText}>
-                    Once your car or route is listed and a rider matches it, requests show here with status, route details, and FChat access.
+                    List a route first. When riders match or request your seats, this tracker shows route details, status, and FChat.
                   </Text>
                 </View>
               )}
@@ -1095,6 +1100,7 @@ export function HousingScreen({
     const activeInputValue = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
     const mapUri = ridePlanComplete() ? rideMapUrl(rideForm.city, rideForm.origin, rideForm.destination) : "";
     const primaryChoice = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
+    const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER").slice(0, 3);
     const routeButtonWebProps =
       Platform.OS === "web"
         ? ({ onClick: planRideRoute } as React.ComponentProps<typeof Pressable> & { onClick: () => void })
@@ -1251,32 +1257,45 @@ export function HousingScreen({
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  After you request, nearby driver offers are checked within 10 miles first, then 20 and 30 miles. When a driver accepts, use FChat for ETA, pickup PIN, and pickup notes.
+                  {driverOffers.length
+                    ? "These driver offers match your route. Pick one to request the seat, then coordinate ETA, pickup PIN, and pickup notes in FChat."
+                    : "No live driver offer is selected yet. Send the request and FairFares will notify nearby drivers first, then expand the radius if needed."}
                 </Text>
-                <View style={styles.rideChoiceLifecycle}>
-                  <Text style={styles.rideChoiceLifecycleTitle}>After you request</Text>
-                  <View style={styles.rideChoiceLifecycleSteps}>
-                    {["Requested", "Matching", "Accepted", "Completed"].map((state) => (
-                      <Text key={state} style={styles.rideChoiceLifecyclePill}>{state}</Text>
-                    ))}
-                  </View>
-                </View>
-                {rideChoiceOptions.map((option) => {
-                  const selected = option.key === selectedRideChoice;
-                  return (
-                    <TouchableOpacity key={option.key} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(option.key)}>
-                      <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
-                      <View style={styles.rideChoiceCopy}>
-                        <Text style={styles.rideChoiceName}>{option.title} <Text style={styles.rideChoiceSeats}>♟ {option.seats}</Text></Text>
-                        <Text style={styles.rideChoiceMeta}>{option.eta} · {rideMilesEstimate()} mi route</Text>
-                      </View>
-                      <View style={styles.rideChoiceContribution}>
-                        <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
-                        <Text style={styles.rideChoicePriceMeta}>suggested</Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
+                {driverOffers.length ? (
+                  driverOffers.map((offer) => {
+                    const selected = selectedRideChoice === `offer:${offer.id}`;
+                    return (
+                      <TouchableOpacity key={offer.id} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(`offer:${offer.id}`)}>
+                        <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
+                        <View style={styles.rideChoiceCopy}>
+                          <Text style={styles.rideChoiceName} numberOfLines={1}>{offer.title || offer.typeLabel} <Text style={styles.rideChoiceSeats}>♟ {offer.seats}</Text></Text>
+                          <Text style={styles.rideChoiceMeta} numberOfLines={1}>{offer.distanceMiles ? `${Number(offer.distanceMiles).toFixed(1)} mi route` : "Route distance pending"} · {offer.pickupTime || "time open"}</Text>
+                        </View>
+                        <View style={styles.rideChoiceContribution}>
+                          <Text style={styles.rideChoicePrice}>{offer.contributionPerSeat ? `$${Number(offer.contributionPerSeat).toFixed(2)}` : "Open"}</Text>
+                          <Text style={styles.rideChoicePriceMeta}>driver offer</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                ) : (
+                  rideChoiceOptions.map((option) => {
+                    const selected = option.key === selectedRideChoice;
+                    return (
+                      <TouchableOpacity key={option.key} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(option.key)}>
+                        <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
+                        <View style={styles.rideChoiceCopy}>
+                          <Text style={styles.rideChoiceName}>{option.title} <Text style={styles.rideChoiceSeats}>♟ {option.seats}</Text></Text>
+                          <Text style={styles.rideChoiceMeta}>{option.eta} · {rideMilesEstimate()} mi route</Text>
+                        </View>
+                        <View style={styles.rideChoiceContribution}>
+                          <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
+                          <Text style={styles.rideChoicePriceMeta}>suggested</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
                 <View style={styles.ridePaymentRow}>
                   <Text style={styles.ridePaymentIcon}>✓</Text>
                   <View style={styles.rideChoiceCopy}>
@@ -1303,7 +1322,7 @@ export function HousingScreen({
                 ) : null}
                 <View style={styles.rideChoiceButtonRow}>
                   <TouchableOpacity style={styles.rideChoiceButton} onPress={requestPlannedRide} disabled={rideBusy}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Request ${primaryChoice.title.replace("FairFares ", "")}`}</Text>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Request ${selectedRideChoice.startsWith("offer:") ? "offer" : primaryChoice.title.replace("FairFares ", "")}`}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.rideLaterButton}>
                     <Text style={styles.rideLaterButtonText}>▣</Text>
@@ -1406,36 +1425,16 @@ export function HousingScreen({
                 <Text style={styles.rideServiceStepText}>{step}</Text>
               </View>
             ))}
-            <View style={styles.rideLifecycleCard}>
-              <Text style={styles.rideServiceDetailLabel}>Ride lifecycle</Text>
-              <View style={styles.rideLifecycleWrap}>
-                {rideLifecycleStates.map((state, index) => (
-                  <View key={state} style={styles.rideLifecyclePill}>
-                    <Text style={styles.rideLifecycleNumber}>{index + 1}</Text>
-                    <Text style={styles.rideLifecycleText}>{state}</Text>
-                  </View>
-                ))}
-              </View>
+            <View style={styles.rideExampleBox}>
+              <Text style={styles.rideServiceDetailLabel}>What you enter</Text>
+              <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
             </View>
-            <View style={styles.rideSafetyCard}>
-              <Text style={styles.rideServiceDetailLabel}>Safety controls</Text>
-              {rideSafetyActions.map((action) => (
-                <View key={action.label} style={styles.rideSafetyRow}>
-                  <Text style={styles.rideSafetyRowIcon}>{action.icon}</Text>
-                  <View style={styles.rideSafetyRowCopy}>
-                    <Text style={styles.rideSafetyRowTitle}>{action.label}</Text>
-                    <Text style={styles.rideSafetyRowBody}>{action.body}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-            <Text style={styles.rideServiceDetailLabel}>What you enter</Text>
-            <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
-            <Text style={styles.rideServiceDetailLabel}>Where to start</Text>
-            <Text style={styles.rideServiceDetailText}>{activeService.access}</Text>
             <View style={styles.rideServiceActionRow}>
               <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRidePlanner}>
                 <Text style={styles.rideServicePlanButtonText}>Plan this ride</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRideOwnerTracker}>
+                <Text style={styles.rideServicePlanButtonText}>List seats</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.rideServiceChatButton} onPress={onOpenMessenger}>
                 <Image source={appAssets.fchat} style={styles.rideServiceChatIcon} resizeMode="contain" />
@@ -2343,8 +2342,8 @@ const styles = StyleSheet.create({
   rideMapLabelText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   rideMapOpenButton: { position: "absolute", right: 16, top: 34, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
   rideMapOpenButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
-  rideChoiceSheet: { maxHeight: "72%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24 },
-  rideChoiceSheetContent: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 46, gap: 12 },
+  rideChoiceSheet: { maxHeight: "76%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  rideChoiceSheetContent: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 86, gap: 12 },
   rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
   rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideChoiceLifecycle: {

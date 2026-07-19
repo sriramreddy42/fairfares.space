@@ -11720,6 +11720,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "lng": float(row_value(row, "lng") or 0),
         "imageUrl": preview_image,
         "images": images,
+        "posterName": row_value(row, "contact_name") or "FairFares member",
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),

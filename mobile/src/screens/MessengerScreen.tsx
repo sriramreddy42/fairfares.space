@@ -59,6 +59,10 @@ function presenceLabel(conversation: ChatConversation | null) {
   return lastSeen ? `Active ${lastSeen} ago` : "Offline";
 }
 
+function listingPosterName(post: HousingPost | null) {
+  return post?.posterName?.trim() || "Listing poster";
+}
+
 export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPendingPost, onThreadModeChange }: Props) {
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
@@ -199,7 +203,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
           communityId: response.conversation.communityId,
           kind: response.conversation.communityId ? "GROUP" : "HOST_GUEST",
           subject: response.conversation.subject || pendingPost.title,
-          otherName: pendingPost.title,
+          otherName: response.conversation.otherName || listingPosterName(pendingPost),
           lastMessage: cleanMessage,
           lastMessageAt: new Date().toISOString(),
           unread: 0
@@ -388,12 +392,14 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
             <BackIcon />
           </TouchableOpacity>
           <View style={styles.threadAvatar}>
-            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || activeSubject || "Chat")}</Text>
+            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || listingPosterName(pendingPost) || activeSubject || "Chat")}</Text>
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </View>
           <View style={styles.threadHeaderCopy}>
-            <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || activeSubject || pendingPost?.title || "FairFares chat"}</Text>
-            <Text style={styles.threadHeaderMeta}>{presenceLabel(activeConversation)}</Text>
+            <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || listingPosterName(pendingPost) || "FairFares chat"}</Text>
+            <Text style={styles.threadHeaderMeta} numberOfLines={1}>
+              {pendingPost?.title || (activeConversation?.communityId ? activeSubject || presenceLabel(activeConversation) : presenceLabel(activeConversation))}
+            </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions}><DotsIcon /></TouchableOpacity>
         </View>

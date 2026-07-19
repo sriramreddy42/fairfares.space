@@ -18,6 +18,7 @@ export type HousingPost = {
   lng: number;
   imageUrl: string;
   images: string[];
+  posterName?: string;
   daysLeft: number;
   expiryLabel: string;
   roommateIntent: boolean;
