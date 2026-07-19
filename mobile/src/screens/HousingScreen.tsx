@@ -121,24 +121,19 @@ const rideServicePosters: Array<{
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
-const rideLaunchReadiness = [
-  "Approved driver profile, license, insurance, vehicle, and inspection are required before accepting rides.",
-  "Every ride needs a clear status trail from requested to completed, cancelled, no-show, or disputed.",
-  "Safety controls must include share trip, pickup PIN, report/block, urgent support, and audit history.",
-  "Payments are handled directly between rider and driver for now; FairFares only records the agreed trip details."
-];
 const rideLifecycleStates = ["Requested", "Matching", "Accepted", "En route", "Arrived", "In progress", "Completed"];
 const rideSafetyActions = [
   { label: "Share trip", icon: "↗", body: "Send route, driver, vehicle, and status to a trusted contact." },
   { label: "Pickup PIN", icon: "#", body: "Confirm the passenger and vehicle before the ride starts." },
+  { label: "FChat", icon: "💬", body: "Message the driver or rider about pickup, PIN, route changes, and arrival." },
   { label: "Report issue", icon: "!", body: "Flag safety, behavior, pickup, or route concerns." },
   { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
 const rideOwnerSteps = [
   "List your route, seats, vehicle notes, detour limit, and availability.",
   "FairFares shows rider requests that match your route and pickup radius.",
-  "You accept or decline. After acceptance, rider sees ETA, route, and chat.",
-  "Payment is agreed directly between rider and driver during this pilot."
+  "You accept or decline. After acceptance, the rider sees ETA, route, pickup PIN, and FChat.",
+  "Any ride contribution is agreed directly between rider and driver."
 ];
 const rideOwnerRequestStates = ["New", "Accepted", "En route", "Arrived", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -642,9 +637,13 @@ export function HousingScreen({
       const radius = Number(result.dispatch?.nearestRadius || 0);
       setRideRequestStatus(
         notifiedCount
-          ? `Pilot request saved and queued for ${notifiedCount} registered driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. A ride is not confirmed until an approved driver accepts. Any ride contribution is agreed directly between rider and driver.`
-          : "Pilot request saved. No registered driver offers are currently inside 30 miles, so nearby drivers will see it when they come online or list an approved offer."
+          ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. When someone accepts, use FChat for pickup notes, ETA, and the pickup PIN.`
+          : "Request saved. FairFares will keep checking nearby driver offers, and FChat will be available once a driver accepts."
       );
+      Alert.alert("Ride request sent", "When a driver accepts, you can coordinate the pickup, ETA, and PIN in FChat.", [
+        { text: "Stay here", style: "cancel" },
+        { text: "Open FChat", onPress: onOpenMessenger }
+      ]);
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
     } finally {
@@ -729,14 +728,18 @@ export function HousingScreen({
                       <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
                       <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
                     </View>
-                    <Text style={styles.rideOwnerRequestMeta}>Accepting a request should unlock live route, ETA, pickup PIN, and chat.</Text>
+                    <Text style={styles.rideOwnerRequestMeta}>After acceptance, use FChat for ETA, pickup PIN, route notes, and rider questions.</Text>
+                    <TouchableOpacity style={styles.rideOwnerChatButton} onPress={onOpenMessenger}>
+                      <Image source={appAssets.fchat} style={styles.rideOwnerChatIcon} resizeMode="contain" />
+                      <Text style={styles.rideOwnerChatText}>Open FChat</Text>
+                    </TouchableOpacity>
                   </View>
                 ))
               ) : (
                 <View style={styles.rideOwnerEmpty}>
                   <Text style={styles.rideOwnerEmptyTitle}>No rider requests yet.</Text>
                   <Text style={styles.rideOwnerEmptyText}>
-                    Once your car/route is listed and a rider matches it, requests show here. Until backend driver approval and live location are wired, this stays in pilot mode.
+                    Once your car or route is listed and a rider matches it, requests show here with status, route details, and FChat access.
                   </Text>
                 </View>
               )}
@@ -1248,7 +1251,7 @@ export function HousingScreen({
                 <View style={styles.ridePlannerHandle} />
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
-                  After you request, FairFares checks registered driver offers within 10 miles first, then 20 and 30 miles. When a driver accepts, the ride moves to live route, ETA, pickup PIN, and chat. No in-app ride payment is collected.
+                  After you request, nearby driver offers are checked within 10 miles first, then 20 and 30 miles. When a driver accepts, use FChat for ETA, pickup PIN, and pickup notes.
                 </Text>
                 <View style={styles.rideChoiceLifecycle}>
                   <Text style={styles.rideChoiceLifecycleTitle}>After you request</Text>
@@ -1278,8 +1281,12 @@ export function HousingScreen({
                   <Text style={styles.ridePaymentIcon}>✓</Text>
                   <View style={styles.rideChoiceCopy}>
                     <Text style={styles.rideChoiceName}>Direct agreement</Text>
-                    <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments in this pilot.</Text>
+                    <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments for this ride. Agree directly with the driver.</Text>
                   </View>
+                  <TouchableOpacity style={styles.rideInlineChatButton} onPress={onOpenMessenger}>
+                    <Image source={appAssets.fchat} style={styles.rideInlineChatIcon} resizeMode="contain" />
+                    <Text style={styles.rideInlineChatText}>FChat</Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={styles.rideSafetyGrid}>
                   {rideSafetyActions.map((action) => (
@@ -1333,11 +1340,6 @@ export function HousingScreen({
             {rideFeatureBadges.map((badge) => (
               <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
             ))}
-          </View>
-          <View style={styles.ridePilotNote}>
-            <Text style={styles.ridePilotNoteText}>
-              Controlled pilot: rides require approved drivers, verified documents, lifecycle tracking, and safety controls before public launch.
-            </Text>
           </View>
           <View style={styles.rideHeroActionRow}>
             <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
@@ -1404,18 +1406,6 @@ export function HousingScreen({
                 <Text style={styles.rideServiceStepText}>{step}</Text>
               </View>
             ))}
-            <View style={styles.rideReadinessCard}>
-              <Text style={styles.rideServiceDetailLabel}>Pilot readiness</Text>
-              <Text style={styles.rideServiceDetailText}>
-                This ride flow should stay in controlled pilot mode until these blockers are fully wired and tested.
-              </Text>
-              {rideLaunchReadiness.map((item) => (
-                <View key={item} style={styles.rideReadinessItem}>
-                  <Text style={styles.rideReadinessCheck}>✓</Text>
-                  <Text style={styles.rideReadinessText}>{item}</Text>
-                </View>
-              ))}
-            </View>
             <View style={styles.rideLifecycleCard}>
               <Text style={styles.rideServiceDetailLabel}>Ride lifecycle</Text>
               <View style={styles.rideLifecycleWrap}>
@@ -1443,9 +1433,15 @@ export function HousingScreen({
             <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
             <Text style={styles.rideServiceDetailLabel}>Where to start</Text>
             <Text style={styles.rideServiceDetailText}>{activeService.access}</Text>
-            <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRidePlanner}>
-              <Text style={styles.rideServicePlanButtonText}>Plan this ride</Text>
-            </TouchableOpacity>
+            <View style={styles.rideServiceActionRow}>
+              <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRidePlanner}>
+                <Text style={styles.rideServicePlanButtonText}>Plan this ride</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.rideServiceChatButton} onPress={onOpenMessenger}>
+                <Image source={appAssets.fchat} style={styles.rideServiceChatIcon} resizeMode="contain" />
+                <Text style={styles.rideServiceChatText}>FChat</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </>
@@ -1911,15 +1907,6 @@ const styles = StyleSheet.create({
   rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
   rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
-  ridePilotNote: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,193,7,0.24)",
-    backgroundColor: "rgba(255,193,7,0.08)",
-    paddingHorizontal: 12,
-    paddingVertical: 9
-  },
-  ridePilotNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   ridePosterSection: { gap: theme.spacing.md },
   ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
@@ -1990,17 +1977,6 @@ const styles = StyleSheet.create({
   rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
   rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
-  rideReadinessCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255,193,7,0.28)",
-    backgroundColor: "rgba(255,193,7,0.08)",
-    padding: 12,
-    gap: 8
-  },
-  rideReadinessItem: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  rideReadinessCheck: { color: theme.colors.green, fontSize: 14, lineHeight: 19, fontWeight: "900" },
-  rideReadinessText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideLifecycleCard: {
     borderRadius: 16,
     borderWidth: 1,
@@ -2057,8 +2033,12 @@ const styles = StyleSheet.create({
   rideSafetyRowCopy: { flex: 1, minWidth: 0 },
   rideSafetyRowTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
   rideSafetyRowBody: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
-  rideServicePlanButton: { marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  rideServiceActionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rideServicePlanButton: { flex: 1, marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
   rideServicePlanButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideServiceChatButton: { minWidth: 94, minHeight: 48, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.06)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 10 },
+  rideServiceChatIcon: { width: 24, height: 24 },
+  rideServiceChatText: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
   rideModeSection: { gap: theme.spacing.md },
   rideSectionEyebrow: { color: theme.colors.accent, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
@@ -2280,6 +2260,9 @@ const styles = StyleSheet.create({
   rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
   rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerChatButton: { alignSelf: "flex-start", minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(59,130,246,0.18)", borderWidth: 1, borderColor: "rgba(59,130,246,0.42)", flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11 },
+  rideOwnerChatIcon: { width: 22, height: 22 },
+  rideOwnerChatText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rideOwnerEmpty: { borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 14, gap: 6 },
   rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
@@ -2400,6 +2383,9 @@ const styles = StyleSheet.create({
   ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, backgroundColor: theme.colors.panel2, paddingHorizontal: 12 },
   ridePaymentIcon: { color: theme.colors.text, fontSize: 22 },
   ridePaymentArrow: { color: theme.colors.soft, fontSize: 28 },
+  rideInlineChatButton: { minHeight: 38, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.08)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 9 },
+  rideInlineChatIcon: { width: 20, height: 20 },
+  rideInlineChatText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
   rideSafetyGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideSafetyChip: {
     width: "48%",
