@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, RideInput, RidePost, RideType, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -141,6 +141,22 @@ export async function getHousing(city: string, area: string, need: string, categ
   const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "50" });
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
   return payload.posts;
+}
+
+export async function getRides(city: string, origin = "", destination = "", rideType: RideType | "" = "") {
+  const params = new URLSearchParams({ city, origin, destination, limit: "50" });
+  if (rideType) params.set("type", rideType);
+  const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?${params.toString()}`);
+  return payload.rides || [];
+}
+
+export async function createMobileRide(input: RideInput) {
+  const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  return payload.ride;
 }
 
 export type AccommodationLocationLookup = {

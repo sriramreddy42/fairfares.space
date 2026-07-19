@@ -298,8 +298,7 @@ export default function App() {
 
   async function selectNeed(need: string) {
     if (need === "ride_need" || need === "ride_offer") {
-      setSelectedService("cars");
-      setActiveTab("services");
+      setActiveTab("housing");
       return;
     }
     setSelectedNeed(need);
@@ -473,8 +472,7 @@ export default function App() {
       setActiveTab("housing");
       void selectNeed("");
     } else if (action === "Ride") {
-      setSelectedService("cars");
-      setActiveTab("services");
+      setActiveTab("housing");
     } else if (action === "Explorer" || action === "Deals") {
       setSelectedService(action === "Explorer" ? "explorer" : "deals");
       setActiveTab("services");

@@ -91,6 +91,60 @@ export type ServiceItem = {
   sort_order?: number;
 };
 
+export type RideType = "SCHEDULED_REQUEST" | "GENERAL_REQUEST" | "CARPOOL_REQUEST" | "CARPOOL_OFFER";
+
+export type RidePost = {
+  id: string;
+  type: RideType;
+  typeLabel: string;
+  role: "RIDER" | "DRIVER";
+  title: string;
+  origin: string;
+  destination: string;
+  city: string;
+  pickupDate: string;
+  pickupTime: string;
+  startDate: string;
+  endDate: string;
+  daysOfWeek: string[];
+  seats: number;
+  luggage: string;
+  accessibility: string;
+  maxDetourMinutes: number;
+  maxPickupDistanceMiles: number;
+  departureFlexMinutes: number;
+  contributionPerSeat: number;
+  approvalRequired: boolean;
+  preferences: string;
+  notes: string;
+  status: string;
+  distanceMiles: number | null;
+  matchScore: number;
+  createdAt: string;
+};
+
+export type RideInput = {
+  rideType: RideType;
+  city: string;
+  origin: string;
+  destination: string;
+  pickupDate: string;
+  pickupTime: string;
+  startDate: string;
+  endDate: string;
+  daysOfWeek: string[];
+  seats: string;
+  luggage: string;
+  accessibility: string;
+  maxDetourMinutes: string;
+  maxPickupDistanceMiles: string;
+  departureFlexMinutes: string;
+  contributionPerSeat: string;
+  approvalRequired: boolean;
+  preferences: string;
+  notes: string;
+};
+
 export type Car = {
   id: number;
   name: string;

@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, ImageBackground, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, getCars, quoteRentalCar } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getRides, quoteRentalCar } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, Car, HousingPost, RentalQuote, RentalSearchInput } from "../types";
+import { BootstrapPayload, Car, HousingPost, RentalQuote, RentalSearchInput, RideInput, RidePost, RideType } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -60,6 +60,13 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
 const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
 const renterAgeOptions = ["21-24", "25+"];
+const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
+  { type: "GENERAL_REQUEST", title: "Request a ride", copy: "Point-to-point ride for today or later." },
+  { type: "SCHEDULED_REQUEST", title: "Scheduled", copy: "Recurring commute with daily ride instances." },
+  { type: "CARPOOL_REQUEST", title: "Find carpool", copy: "Match with drivers going your direction." },
+  { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List seats, detour, luggage, and contribution." }
+];
+const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const timeOptions = Array.from({ length: 48 }, (_, index) => {
   const hour = Math.floor(index / 2);
   const minute = index % 2 === 0 ? "00" : "30";
@@ -177,6 +184,28 @@ const initialRentalSearch: RentalSearchInput = {
   additionalDriverAge: ""
 };
 
+const initialRideForm: RideInput = {
+  rideType: "GENERAL_REQUEST",
+  city: "Denver, CO",
+  origin: "",
+  destination: "",
+  pickupDate: isoDateFromNow(1),
+  pickupTime: "8:00 AM",
+  startDate: isoDateFromNow(1),
+  endDate: "",
+  daysOfWeek: ["Mon", "Tue", "Wed", "Thu", "Fri"],
+  seats: "1",
+  luggage: "1 small bag",
+  accessibility: "",
+  maxDetourMinutes: "15",
+  maxPickupDistanceMiles: "5",
+  departureFlexMinutes: "30",
+  contributionPerSeat: "",
+  approvalRequired: true,
+  preferences: "No smoking",
+  notes: ""
+};
+
 export function HousingScreen({
   data,
   posts,
@@ -213,6 +242,10 @@ export function HousingScreen({
   const [rentalQuote, setRentalQuote] = useState<RentalQuote | null>(null);
   const [rentalCheckoutInfo, setRentalCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
+  const [rideForm, setRideForm] = useState<RideInput>(initialRideForm);
+  const [rideRows, setRideRows] = useState<RidePost[]>([]);
+  const [rideBusy, setRideBusy] = useState(false);
+  const [ridePosted, setRidePosted] = useState(false);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
@@ -295,6 +328,23 @@ export function HousingScreen({
     setRentalCars(cars);
     setRentalSearched(false);
   }, [cars]);
+
+  useEffect(() => {
+    setRideForm((current) => ({
+      ...current,
+      city: data?.location.city || current.city
+    }));
+  }, [data?.location.city]);
+
+  useEffect(() => {
+    if (selectedNeed === "ride_need" || selectedNeed === "ride_offer") {
+      setMode("ride");
+      setRideForm((current) => ({
+        ...current,
+        rideType: selectedNeed === "ride_offer" ? "CARPOOL_OFFER" : current.rideType
+      }));
+    }
+  }, [selectedNeed]);
 
   function updateScrollVisibility(y: number) {
     const previous = lastScrollYRef.current;
@@ -604,6 +654,167 @@ export function HousingScreen({
     );
   }
 
+  function updateRideForm<K extends keyof RideInput>(key: K, value: RideInput[K]) {
+    setRideForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleRideDay(day: string) {
+    setRideForm((current) => ({
+      ...current,
+      daysOfWeek: current.daysOfWeek.includes(day)
+        ? current.daysOfWeek.filter((item) => item !== day)
+        : [...current.daysOfWeek, day]
+    }));
+  }
+
+  async function searchRides() {
+    setRideBusy(true);
+    try {
+      const rides = await getRides(rideForm.city, rideForm.origin, rideForm.destination, rideForm.rideType);
+      setRideRows(rides);
+    } catch (error) {
+      Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");
+    } finally {
+      setRideBusy(false);
+    }
+  }
+
+  async function postRide() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before posting or offering a ride.");
+      return;
+    }
+    setRideBusy(true);
+    try {
+      const ride = await createMobileRide(rideForm);
+      setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+      setRidePosted(true);
+      Alert.alert("Ride posted", ride.type === "SCHEDULED_REQUEST" ? "Your recurring ride was created with daily ride instances." : "Your ride is live.");
+    } catch (error) {
+      Alert.alert("Ride post failed", error instanceof Error ? error.message : "Unable to post this ride.");
+    } finally {
+      setRideBusy(false);
+    }
+  }
+
+  function renderRideOnly() {
+    const isScheduled = rideForm.rideType === "SCHEDULED_REQUEST";
+    const isOffer = rideForm.rideType === "CARPOOL_OFFER";
+    return (
+      <>
+        <View style={styles.rideHero}>
+          <View style={styles.rideHeroTop}>
+            <Image source={appAssets.ride} style={styles.rideHeroIcon} resizeMode="contain" />
+            <View style={styles.rideHeroCopy}>
+              <Text style={styles.rideEyebrow}>FairFares rides</Text>
+              <Text style={styles.rideTitle}>Where are you going?</Text>
+              <Text style={styles.rideMeta}>Scheduled rides, ride requests, and route-aware carpools.</Text>
+            </View>
+          </View>
+          <View style={styles.rideModeGrid}>
+            {rideModes.map((item) => (
+              <TouchableOpacity
+                key={item.type}
+                style={[styles.rideModeCard, rideForm.rideType === item.type && styles.rideModeCardActive]}
+                onPress={() => updateRideForm("rideType", item.type)}
+              >
+                <Text style={[styles.rideModeTitle, rideForm.rideType === item.type && styles.rideModeTitleActive]}>{item.title}</Text>
+                <Text style={[styles.rideModeCopy, rideForm.rideType === item.type && styles.rideModeCopyActive]}>{item.copy}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.rideForm}>
+          <Text style={styles.rideFormTitle}>{isOffer ? "Offer ride seats" : isScheduled ? "Create recurring ride" : "Find a ride"}</Text>
+          <View style={styles.rideInputRow}>
+            <View style={styles.rideInputIconWrap}>
+              <Image source={appAssets.search} style={styles.rideInputIcon} resizeMode="contain" />
+            </View>
+            <TextInput value={rideForm.city} onChangeText={(text) => updateRideForm("city", text)} placeholder="Metro city, e.g. Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideInlineInput]} />
+          </View>
+          <TextInput value={rideForm.origin} onChangeText={(text) => updateRideForm("origin", text)} placeholder="Pickup, campus, area, or building" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
+          <TextInput value={rideForm.destination} onChangeText={(text) => updateRideForm("destination", text)} placeholder="Destination city, area, or building" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
+          {isScheduled ? (
+            <>
+              <View style={styles.carTwoCol}>
+                <TextInput value={rideForm.startDate} onChangeText={(text) => updateRideForm("startDate", text)} placeholder="Start date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
+                <TextInput value={rideForm.endDate} onChangeText={(text) => updateRideForm("endDate", text)} placeholder="End date optional" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
+              </View>
+              <View style={styles.rideChipWrap}>
+                {rideDays.map((day) => (
+                  <TouchableOpacity key={day} style={[styles.rideChip, rideForm.daysOfWeek.includes(day) && styles.rideChipActive]} onPress={() => toggleRideDay(day)}>
+                    <Text style={[styles.rideChipText, rideForm.daysOfWeek.includes(day) && styles.rideChipTextActive]}>{day}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          ) : (
+            <TextInput value={rideForm.pickupDate} onChangeText={(text) => updateRideForm("pickupDate", text)} placeholder="Pickup date YYYY-MM-DD" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
+          )}
+          <View style={styles.carTwoCol}>
+            <TextInput value={rideForm.pickupTime} onChangeText={(text) => updateRideForm("pickupTime", text)} placeholder="Pickup time" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideHalfInput]} />
+            <TextInput value={rideForm.seats} onChangeText={(text) => updateRideForm("seats", text)} placeholder="Seats" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
+          </View>
+          {isOffer ? (
+            <View style={styles.carTwoCol}>
+              <TextInput value={rideForm.maxDetourMinutes} onChangeText={(text) => updateRideForm("maxDetourMinutes", text)} placeholder="Max detour min" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
+              <TextInput value={rideForm.contributionPerSeat} onChangeText={(text) => updateRideForm("contributionPerSeat", text)} placeholder="$ per seat" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
+            </View>
+          ) : (
+            <View style={styles.carTwoCol}>
+              <TextInput value={rideForm.departureFlexMinutes} onChangeText={(text) => updateRideForm("departureFlexMinutes", text)} placeholder="Flex min" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
+              <TextInput value={rideForm.maxPickupDistanceMiles} onChangeText={(text) => updateRideForm("maxPickupDistanceMiles", text)} placeholder="Walk/pickup mi" placeholderTextColor={theme.colors.muted} keyboardType="number-pad" style={[styles.rideInput, styles.rideHalfInput]} />
+            </View>
+          )}
+          <TextInput value={rideForm.luggage} onChangeText={(text) => updateRideForm("luggage", text)} placeholder="Luggage, accessibility, or ride preferences" placeholderTextColor={theme.colors.muted} style={styles.rideInput} />
+          <TextInput value={rideForm.notes} onChangeText={(text) => updateRideForm("notes", text)} placeholder="Notes for the driver/passenger" placeholderTextColor={theme.colors.muted} style={[styles.rideInput, styles.rideNotes]} multiline />
+          <View style={styles.rideActions}>
+            <TouchableOpacity style={styles.rideSecondaryButton} onPress={searchRides} disabled={rideBusy}>
+              <Text style={styles.rideSecondaryText}>{rideBusy ? "Searching..." : "Search rides"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.ridePrimaryButton} onPress={postRide} disabled={rideBusy}>
+              <Text style={styles.ridePrimaryText}>{rideBusy ? "Saving..." : isOffer ? "Offer ride" : "Post request"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <SectionHeader title={rideRows.length || ridePosted ? "Ride matches" : "Ride options"} />
+        <View style={styles.rideResults}>
+          {rideRows.length ? (
+            rideRows.map((ride) => (
+              <View key={ride.id} style={styles.rideResultCard}>
+                <View style={styles.rideResultTop}>
+                  <Text style={styles.rideResultType}>{ride.typeLabel}</Text>
+                  <Text style={styles.rideScore}>{ride.matchScore}/100</Text>
+                </View>
+                <Text style={styles.rideResultTitle}>{ride.title}</Text>
+                <Text style={styles.rideRoute}>{ride.origin} → {ride.destination}</Text>
+                <View style={styles.rideFactRow}>
+                  <Text style={styles.rideFact}>{ride.pickupDate || ride.startDate}</Text>
+                  <Text style={styles.rideFact}>{ride.pickupTime}</Text>
+                  <Text style={styles.rideFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
+                </View>
+                <View style={styles.rideFactRow}>
+                  {ride.distanceMiles !== null ? <Text style={styles.rideFactGreen}>{ride.distanceMiles} mi from pickup</Text> : null}
+                  {ride.contributionPerSeat ? <Text style={styles.rideFactGreen}>${ride.contributionPerSeat}/seat</Text> : null}
+                  {ride.maxDetourMinutes ? <Text style={styles.rideFact}>{ride.maxDetourMinutes} min detour</Text> : null}
+                </View>
+                {ride.daysOfWeek.length ? <Text style={styles.rideSmall}>Runs {ride.daysOfWeek.join(", ")}</Text> : null}
+                {ride.notes ? <Text style={styles.rideSmall}>{ride.notes}</Text> : null}
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No ride matches loaded yet.</Text>
+              <Text style={styles.emptyText}>Search a route or create the first request/offer.</Text>
+            </View>
+          )}
+        </View>
+      </>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -619,8 +830,12 @@ export function HousingScreen({
 
         <View style={styles.topTabs}>
           {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
-            <TouchableOpacity key={item} onPress={() => onTopAction(item)} style={[styles.topTab, item === "Housing" && styles.topTabActive]}>
-              <Text style={[styles.topTabText, item === "Housing" && styles.topTabTextActive]}>{item}</Text>
+            <TouchableOpacity
+              key={item}
+              onPress={() => (item === "Ride" ? setMode("ride") : item === "Housing" ? setMode("housing") : onTopAction(item))}
+              style={[styles.topTab, ((item === "Ride" && mode === "ride") || (item === "Housing" && mode !== "ride" && mode !== "cheapCars")) && styles.topTabActive]}
+            >
+              <Text style={[styles.topTabText, ((item === "Ride" && mode === "ride") || (item === "Housing" && mode !== "ride" && mode !== "cheapCars")) && styles.topTabTextActive]}>{item}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -661,13 +876,13 @@ export function HousingScreen({
         </TouchableOpacity>
       </View>
 
-      {mode === "cheapCars" ? renderRentalCarsOnly() : (
+      {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
         <>
 
       <SectionHeader title="Create a post" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
         {quickActions.map((action) => (
-          <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => onNeedSelect(action.need)}>
+          <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => action.need.startsWith("ride") ? setMode("ride") : onNeedSelect(action.need)}>
             <View style={[styles.quickBubble, selectedNeed === action.need && styles.quickBubbleActive]}>
               <Image source={action.icon} style={styles.quickIcon} resizeMode="contain" />
             </View>
@@ -1029,5 +1244,119 @@ const styles = StyleSheet.create({
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "800" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
-  detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" }
+  detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideHero: {
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(17,24,39,0.82)",
+    padding: theme.spacing.md,
+    gap: theme.spacing.md,
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  rideHeroTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
+  rideHeroIcon: { width: 74, height: 74 },
+  rideHeroCopy: { flex: 1, minWidth: 0 },
+  rideEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, textTransform: "uppercase" },
+  rideTitle: { color: theme.colors.text, fontSize: 31, lineHeight: 35, fontWeight: "900", marginTop: 3 },
+  rideMeta: { color: theme.colors.muted, fontSize: 14, lineHeight: 19, fontWeight: "800", marginTop: 4 },
+  rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  rideModeCard: {
+    width: "48%",
+    minHeight: 108,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    padding: 12,
+    justifyContent: "space-between"
+  },
+  rideModeCardActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(80,124,255,0.24)" },
+  rideModeTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  rideModeTitleActive: { color: theme.colors.text },
+  rideModeCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 7 },
+  rideModeCopyActive: { color: theme.colors.soft },
+  rideForm: {
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(24,24,27,0.78)",
+    padding: theme.spacing.md,
+    gap: 10
+  },
+  rideFormTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  rideInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: theme.radius.md,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    overflow: "hidden"
+  },
+  rideInputIconWrap: { width: 50, alignItems: "center", justifyContent: "center" },
+  rideInputIcon: { width: 27, height: 27 },
+  rideInput: {
+    minHeight: 52,
+    borderRadius: theme.radius.md,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    color: theme.colors.text,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    fontWeight: "800"
+  },
+  rideInlineInput: { flex: 1, backgroundColor: "transparent", borderRadius: 0 },
+  rideHalfInput: { flex: 1 },
+  rideChipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rideChip: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  rideChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  rideChipText: { color: theme.colors.soft, fontWeight: "900" },
+  rideChipTextActive: { color: theme.colors.bg },
+  rideNotes: { minHeight: 86, paddingTop: 12, textAlignVertical: "top" },
+  rideActions: { flexDirection: "row", gap: 10 },
+  rideSecondaryButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: theme.colors.blue,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  rideSecondaryText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
+  ridePrimaryButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  ridePrimaryText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
+  rideResults: { gap: theme.spacing.md },
+  rideResultCard: {
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(17,24,39,0.78)",
+    padding: theme.spacing.md,
+    gap: 9
+  },
+  rideResultTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  rideResultType: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase" },
+  rideScore: { color: theme.colors.bg, backgroundColor: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 5, overflow: "hidden", fontWeight: "900" },
+  rideResultTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 24, fontWeight: "900" },
+  rideRoute: { color: theme.colors.soft, fontSize: 15, lineHeight: 20, fontWeight: "800" },
+  rideFactRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  rideFact: { color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.07)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
+  rideFactGreen: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
+  rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" }
 });

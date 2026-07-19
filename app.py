@@ -3805,6 +3805,54 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS ride_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                user_id INTEGER NOT NULL,
+                ride_type TEXT NOT NULL DEFAULT 'GENERAL_REQUEST',
+                rider_role TEXT NOT NULL DEFAULT 'RIDER',
+                title TEXT NOT NULL DEFAULT '',
+                origin_label TEXT NOT NULL DEFAULT '',
+                origin_lat REAL NOT NULL DEFAULT 0,
+                origin_lng REAL NOT NULL DEFAULT 0,
+                destination_label TEXT NOT NULL DEFAULT '',
+                destination_lat REAL NOT NULL DEFAULT 0,
+                destination_lng REAL NOT NULL DEFAULT 0,
+                city_label TEXT NOT NULL DEFAULT '',
+                pickup_date TEXT NOT NULL DEFAULT '',
+                pickup_time TEXT NOT NULL DEFAULT '',
+                start_date TEXT NOT NULL DEFAULT '',
+                end_date TEXT NOT NULL DEFAULT '',
+                days_of_week TEXT NOT NULL DEFAULT '',
+                seats INTEGER NOT NULL DEFAULT 1,
+                luggage TEXT NOT NULL DEFAULT '',
+                accessibility TEXT NOT NULL DEFAULT '',
+                max_detour_minutes INTEGER NOT NULL DEFAULT 0,
+                max_pickup_distance_miles REAL NOT NULL DEFAULT 0,
+                departure_flex_minutes INTEGER NOT NULL DEFAULT 0,
+                contribution_per_seat REAL NOT NULL DEFAULT 0,
+                approval_required INTEGER NOT NULL DEFAULT 1,
+                preferences TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ride_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ride_post_id INTEGER NOT NULL,
+                instance_date TEXT NOT NULL,
+                pickup_time TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                assigned_driver_user_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ride_post_id, instance_date, pickup_time),
+                FOREIGN KEY(ride_post_id) REFERENCES ride_posts(id),
+                FOREIGN KEY(assigned_driver_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -4685,6 +4733,33 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "accommodation_posts", "expired_at", "expired_at TEXT")
         ensure_column(con, "accommodation_posts", "renewed_at", "renewed_at TEXT")
+        ensure_column(con, "ride_posts", "public_id", "public_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "ride_type", "ride_type TEXT NOT NULL DEFAULT 'GENERAL_REQUEST'")
+        ensure_column(con, "ride_posts", "rider_role", "rider_role TEXT NOT NULL DEFAULT 'RIDER'")
+        ensure_column(con, "ride_posts", "title", "title TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "origin_label", "origin_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "origin_lat", "origin_lat REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "origin_lng", "origin_lng REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "destination_label", "destination_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "destination_lat", "destination_lat REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "destination_lng", "destination_lng REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "city_label", "city_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "pickup_date", "pickup_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "pickup_time", "pickup_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "start_date", "start_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "end_date", "end_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "days_of_week", "days_of_week TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "seats", "seats INTEGER NOT NULL DEFAULT 1")
+        ensure_column(con, "ride_posts", "luggage", "luggage TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "accessibility", "accessibility TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "max_detour_minutes", "max_detour_minutes INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "max_pickup_distance_miles", "max_pickup_distance_miles REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "departure_flex_minutes", "departure_flex_minutes INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "contribution_per_seat", "contribution_per_seat REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_posts", "approval_required", "approval_required INTEGER NOT NULL DEFAULT 1")
+        ensure_column(con, "ride_posts", "preferences", "preferences TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "notes", "notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
         ensure_column(con, "chat_conversations", "conversation_type", "conversation_type TEXT NOT NULL DEFAULT 'DIRECT'")
         ensure_column(con, "chat_conversations", "accommodation_post_id", "accommodation_post_id INTEGER")
         ensure_column(con, "chat_conversations", "booking_id", "booking_id INTEGER")
@@ -11641,6 +11716,179 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+RIDE_TYPE_LABELS = {
+    "SCHEDULED_REQUEST": "Scheduled ride",
+    "GENERAL_REQUEST": "Ride request",
+    "CARPOOL_REQUEST": "Find carpool",
+    "CARPOOL_OFFER": "Offer a ride",
+}
+
+RIDE_TYPES = set(RIDE_TYPE_LABELS)
+RIDE_ROLES = {"RIDER", "DRIVER"}
+
+
+def ride_public_id() -> str:
+    return f"FRD-{secrets.token_hex(4).upper()}"
+
+
+def normalize_ride_type(value: object) -> str:
+    clean = str(value or "").strip().upper()
+    aliases = {
+        "SCHEDULED": "SCHEDULED_REQUEST",
+        "REQUEST": "GENERAL_REQUEST",
+        "GENERAL": "GENERAL_REQUEST",
+        "NEED_RIDE": "GENERAL_REQUEST",
+        "FIND_CARPOOL": "CARPOOL_REQUEST",
+        "CARPOOL": "CARPOOL_REQUEST",
+        "OFFER": "CARPOOL_OFFER",
+        "DRIVE": "CARPOOL_OFFER",
+        "PROVIDE_RIDE": "CARPOOL_OFFER",
+    }
+    clean = aliases.get(clean, clean)
+    return clean if clean in RIDE_TYPES else "GENERAL_REQUEST"
+
+
+def ride_role_for_type(ride_type: str) -> str:
+    return "DRIVER" if ride_type == "CARPOOL_OFFER" else "RIDER"
+
+
+def ride_point(query: str, city: str = "") -> dict[str, object]:
+    clean_query = normalize_accommodation_place_label(query)
+    clean_city = normalize_accommodation_place_label(city)
+    lookup_query = clean_query
+    if clean_city and clean_query and clean_city.lower() not in clean_query.lower():
+        lookup_query = f"{clean_query}, {clean_city}"
+    point = accommodation_location_point(lookup_query or clean_city)
+    if not float(point.get("lat") or 0) and clean_query:
+        point = accommodation_location_point(clean_query)
+    return point
+
+
+def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object], pickup_date: str = "", pickup_time: str = "") -> int:
+    score = 55
+    origin_lat = float(row_value(row, "origin_lat") or 0)
+    origin_lng = float(row_value(row, "origin_lng") or 0)
+    dest_lat = float(row_value(row, "destination_lat") or 0)
+    dest_lng = float(row_value(row, "destination_lng") or 0)
+    query_origin_lat = float(origin_point.get("lat") or 0)
+    query_origin_lng = float(origin_point.get("lng") or 0)
+    query_dest_lat = float(destination_point.get("lat") or 0)
+    query_dest_lng = float(destination_point.get("lng") or 0)
+    if origin_lat and origin_lng and query_origin_lat and query_origin_lng:
+        pickup_distance = distance_miles_between(query_origin_lat, query_origin_lng, origin_lat, origin_lng)
+        score += max(0, 20 - int(pickup_distance * 2))
+    if dest_lat and dest_lng and query_dest_lat and query_dest_lng:
+        drop_distance = distance_miles_between(query_dest_lat, query_dest_lng, dest_lat, dest_lng)
+        score += max(0, 15 - int(drop_distance * 2))
+    if pickup_date and pickup_date == row_value(row, "pickup_date"):
+        score += 5
+    if pickup_time and pickup_time == row_value(row, "pickup_time"):
+        score += 5
+    if row_value(row, "ride_type") == "CARPOOL_OFFER":
+        score += 5
+    return max(0, min(score, 100))
+
+
+def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None = None, destination_point: dict[str, object] | None = None) -> dict[str, object]:
+    origin_point = origin_point or {}
+    destination_point = destination_point or {}
+    origin_lat = float(row_value(row, "origin_lat") or 0)
+    origin_lng = float(row_value(row, "origin_lng") or 0)
+    query_origin_lat = float(origin_point.get("lat") or 0)
+    query_origin_lng = float(origin_point.get("lng") or 0)
+    pickup_distance = (
+        round(distance_miles_between(query_origin_lat, query_origin_lng, origin_lat, origin_lng), 1)
+        if origin_lat and origin_lng and query_origin_lat and query_origin_lng
+        else None
+    )
+    return {
+        "id": row_value(row, "public_id"),
+        "type": row_value(row, "ride_type"),
+        "typeLabel": RIDE_TYPE_LABELS.get(row_value(row, "ride_type"), "Ride"),
+        "role": row_value(row, "rider_role"),
+        "title": row_value(row, "title"),
+        "origin": row_value(row, "origin_label"),
+        "destination": row_value(row, "destination_label"),
+        "city": row_value(row, "city_label"),
+        "pickupDate": row_value(row, "pickup_date") or row_value(row, "start_date"),
+        "pickupTime": row_value(row, "pickup_time"),
+        "startDate": row_value(row, "start_date"),
+        "endDate": row_value(row, "end_date"),
+        "daysOfWeek": [item.strip() for item in row_value(row, "days_of_week").split(",") if item.strip()],
+        "seats": int(row_value(row, "seats") or 1),
+        "luggage": row_value(row, "luggage"),
+        "accessibility": row_value(row, "accessibility"),
+        "maxDetourMinutes": int(row_value(row, "max_detour_minutes") or 0),
+        "maxPickupDistanceMiles": float(row_value(row, "max_pickup_distance_miles") or 0),
+        "departureFlexMinutes": int(row_value(row, "departure_flex_minutes") or 0),
+        "contributionPerSeat": float(row_value(row, "contribution_per_seat") or 0),
+        "approvalRequired": bool(int(row_value(row, "approval_required") or 0)),
+        "preferences": row_value(row, "preferences"),
+        "notes": row_value(row, "notes"),
+        "status": row_value(row, "status"),
+        "distanceMiles": pickup_distance,
+        "matchScore": ride_score(row, origin_point, destination_point),
+        "createdAt": row_value(row, "created_at"),
+    }
+
+
+def mobile_ride_posts(city: str = "", ride_type: str = "", origin: str = "", destination: str = "", limit: int = 30) -> list[dict[str, object]]:
+    city = normalize_accommodation_place_label(city or "Denver, CO")
+    ride_type = normalize_ride_type(ride_type) if ride_type else ""
+    origin_point = ride_point(origin, city) if origin else ride_point(city)
+    destination_point = ride_point(destination, city) if destination else {}
+    clauses = ["status = 'ACTIVE'"]
+    values: list[object] = []
+    if ride_type:
+        clauses.append("ride_type = ?")
+        values.append(ride_type)
+    if city:
+        city_root = city.split(",", 1)[0].strip()
+        clauses.append("(lower(city_label) LIKE lower(?) OR lower(origin_label) LIKE lower(?) OR lower(destination_label) LIKE lower(?))")
+        values.extend([f"%{city_root}%", f"%{city_root}%", f"%{city_root}%"])
+    sql = f"""
+        SELECT *
+        FROM ride_posts
+        WHERE {' AND '.join(clauses)}
+        ORDER BY datetime(created_at) DESC
+        LIMIT ?
+    """
+    values.append(max(1, min(int(limit or 30), 80)))
+    with db() as con:
+        rows = con.execute(sql, values).fetchall()
+    payloads = [mobile_ride_payload(row, origin_point, destination_point) for row in rows]
+    if origin or destination:
+        payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("distanceMiles") or 9999)))
+    return payloads
+
+
+def create_ride_instances(con: sqlite3.Connection, ride_post_id: int, start_date: str, end_date: str, days_of_week: str, pickup_time: str) -> None:
+    if not start_date or not days_of_week:
+        return
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    except ValueError:
+        return
+    try:
+        end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else start + timedelta(days=30)
+    except ValueError:
+        end = start + timedelta(days=30)
+    end = min(end, start + timedelta(days=120))
+    selected_days = {item.strip().lower()[:3] for item in days_of_week.split(",") if item.strip()}
+    day_names = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    current = start
+    while current <= end:
+        if day_names[current.weekday()] in selected_days:
+            con.execute(
+                """
+                INSERT OR IGNORE INTO ride_instances (ride_post_id, instance_date, pickup_time)
+                VALUES (?, ?, ?)
+                """,
+                (ride_post_id, current.isoformat(), pickup_time),
+            )
+        current += timedelta(days=1)
+
+
 def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
     public_fields = (
         "id", "name", "brand", "model", "year", "category", "type", "fuel_type",
@@ -14501,6 +14749,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
             return
+        if parsed.path == "/api/mobile/rides":
+            self.api_mobile_rides(parsed)
+            return
         if parsed.path == "/api/mobile/rentals":
             self.api_mobile_rentals(parsed)
             return
@@ -14625,6 +14876,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/housing": self.api_mobile_create_housing,
+            "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
             "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
@@ -22622,6 +22874,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_mobile_rides(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        origin = clean_text_value((params.get("origin", [""])[0] or ""), 180)
+        destination = clean_text_value((params.get("destination", [""])[0] or ""), 180)
+        raw_ride_type = params.get("type", params.get("rideType", [""]))[0] if params.get("type") or params.get("rideType") else ""
+        ride_type = normalize_ride_type(raw_ride_type) if raw_ride_type else ""
+        try:
+            limit = int(params.get("limit", ["30"])[0] or 30)
+        except ValueError:
+            limit = 30
+        rides = mobile_ride_posts(city=city, ride_type=ride_type, origin=origin, destination=destination, limit=limit)
+        self.send_json(
+            {
+                "ok": True,
+                "city": city,
+                "origin": origin,
+                "destination": destination,
+                "type": ride_type,
+                "rides": rides,
+                "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
+            }
+        )
+
     def api_mobile_rentals(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         location = (params.get("location", [""])[0] or "").strip()
@@ -23122,6 +23398,111 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": status}, 502)
             return
         self.send_json({"ok": True, "url": url, "paymentOption": payment_option, "amount": checkout_amount})
+
+    def api_mobile_create_ride(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before posting a ride."}, 401)
+            return
+        payload = self.read_json_body()
+        ride_type = normalize_ride_type(payload.get("rideType") or payload.get("type"))
+        rider_role = ride_role_for_type(ride_type)
+        city = clean_text_value(payload.get("city") or "Denver, CO", 120) or "Denver, CO"
+        origin = clean_text_value(payload.get("origin") or payload.get("pickup") or "", 180)
+        destination = clean_text_value(payload.get("destination") or payload.get("dropoff") or "", 180)
+        pickup_date = clean_text_value(payload.get("pickupDate") or payload.get("pickup_date") or "", 30)
+        pickup_time = clean_text_value(payload.get("pickupTime") or payload.get("pickup_time") or "", 30)
+        start_date = clean_text_value(payload.get("startDate") or payload.get("start_date") or pickup_date, 30)
+        end_date = clean_text_value(payload.get("endDate") or payload.get("end_date") or "", 30)
+        raw_days = payload.get("daysOfWeek") or payload.get("days_of_week") or []
+        if isinstance(raw_days, list):
+            days_of_week = ",".join(clean_text_value(item, 12) for item in raw_days if clean_text_value(item, 12))
+        else:
+            days_of_week = clean_text_value(raw_days, 120)
+        seats = max(1, min(int(float_from_value(payload.get("seats") or "1") or 1), 8))
+        luggage = clean_text_value(payload.get("luggage"), 120)
+        accessibility = clean_text_value(payload.get("accessibility"), 160)
+        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "0")), 180))
+        max_pickup_distance = max(0, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "0"), 100))
+        flex_minutes = max(0, min(int(float_from_value(payload.get("departureFlexMinutes") or payload.get("departure_flex_minutes") or "0")), 240))
+        contribution = max(0, min(float_from_value(payload.get("contributionPerSeat") or payload.get("contribution_per_seat") or "0"), 5000))
+        approval_required = 0 if str(payload.get("approvalRequired") or payload.get("approval_required") or "").lower() in {"0", "false", "no"} else 1
+        preferences = clean_text_value(payload.get("preferences"), 240)
+        notes = clean_multiline_text_value(payload.get("notes"), 1200)
+        if not origin or not destination:
+            self.send_json({"ok": False, "error": "Pickup and destination are required."}, 400)
+            return
+        if not pickup_time:
+            self.send_json({"ok": False, "error": "Pickup time is required."}, 400)
+            return
+        if ride_type == "SCHEDULED_REQUEST":
+            if not start_date or not days_of_week:
+                self.send_json({"ok": False, "error": "Scheduled rides need start date and days of week."}, 400)
+                return
+        elif not pickup_date:
+            self.send_json({"ok": False, "error": "Pickup date is required."}, 400)
+            return
+        origin_point = ride_point(origin, city)
+        destination_point = ride_point(destination, city)
+        origin_label = dedupe_repeated_location_label(str(origin_point.get("label") or origin))
+        destination_label = dedupe_repeated_location_label(str(destination_point.get("label") or destination))
+        public_id = ride_public_id()
+        title = clean_text_value(payload.get("title"), 160)
+        if not title:
+            if ride_type == "CARPOOL_OFFER":
+                title = f"Ride offered from {origin_label} to {destination_label}"
+            elif ride_type == "SCHEDULED_REQUEST":
+                title = f"Recurring ride from {origin_label} to {destination_label}"
+            else:
+                title = f"Need a ride from {origin_label} to {destination_label}"
+        with db() as con:
+            while con.execute("SELECT 1 FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone():
+                public_id = ride_public_id()
+            cursor = con.execute(
+                """
+                INSERT INTO ride_posts
+                (public_id, user_id, ride_type, rider_role, title, origin_label, origin_lat, origin_lng,
+                 destination_label, destination_lat, destination_lng, city_label, pickup_date, pickup_time,
+                 start_date, end_date, days_of_week, seats, luggage, accessibility, max_detour_minutes,
+                 max_pickup_distance_miles, departure_flex_minutes, contribution_per_seat, approval_required,
+                 preferences, notes, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                """,
+                (
+                    public_id,
+                    int(row_value(user, "id") or 0),
+                    ride_type,
+                    rider_role,
+                    title,
+                    origin_label,
+                    float(origin_point.get("lat") or 0),
+                    float(origin_point.get("lng") or 0),
+                    destination_label,
+                    float(destination_point.get("lat") or 0),
+                    float(destination_point.get("lng") or 0),
+                    city,
+                    pickup_date,
+                    pickup_time,
+                    start_date,
+                    end_date,
+                    days_of_week,
+                    seats,
+                    luggage,
+                    accessibility,
+                    max_detour_minutes,
+                    max_pickup_distance,
+                    flex_minutes,
+                    contribution,
+                    approval_required,
+                    preferences,
+                    notes,
+                ),
+            )
+            ride_post_id = int(cursor.lastrowid)
+            if ride_type == "SCHEDULED_REQUEST":
+                create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
+            row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
+        self.send_json({"ok": True, "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None}, 201)
 
     def api_mobile_create_housing(self) -> None:
         user = self.current_user()
