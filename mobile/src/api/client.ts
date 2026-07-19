@@ -48,7 +48,7 @@ export const API_URL =
 
 const API_CANDIDATES = uniqueUrls(
   Platform.OS === "web"
-    ? [browserLocalApiUrl(), EXPLICIT_API_URL, "http://127.0.0.1:8010", metroHostApiUrl()]
+    ? [EXPLICIT_API_URL, browserLocalApiUrl(), "http://127.0.0.1:8010", metroHostApiUrl()]
     : [EXPLICIT_API_URL, metroHostApiUrl(), "http://127.0.0.1:8010"]
 );
 
@@ -66,6 +66,11 @@ function browserStorage() {
 }
 
 let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+let activeApiBase = API_URL;
+
+function currentApiBase() {
+  return activeApiBase || API_URL;
+}
 
 export function setAuthToken(token: string) {
   authToken = token;
@@ -108,6 +113,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
         throw httpError;
       }
+      activeApiBase = baseUrl;
       return payload;
     } catch (error) {
       if ((error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus) {
@@ -136,7 +142,7 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
 export function absoluteAssetUrl(value: string) {
   if (!value) return "";
   if (/^https?:\/\//i.test(value)) return value;
-  return `${API_URL}${value.startsWith("/") ? value : `/${value}`}`;
+  return `${currentApiBase()}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
 export async function getBootstrap(city = "Denver, CO") {
@@ -177,8 +183,8 @@ export async function getRidePlaceSuggestions(city: string, query = "") {
 }
 
 export function rideMapUrl(city: string, origin: string, destination: string) {
-  const params = new URLSearchParams({ city, origin, destination });
-  return `${API_CANDIDATES[0] || API_URL}/api/mobile/ride-map?${params.toString()}`;
+  const params = new URLSearchParams({ city, origin, destination, v: "google-static-20260719" });
+  return `${currentApiBase()}/api/mobile/ride-map?${params.toString()}`;
 }
 
 export async function createMobileRide(input: RideInput) {

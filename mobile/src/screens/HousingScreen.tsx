@@ -83,40 +83,40 @@ const rideServicePosters: Array<{
     key: "scheduled",
     type: "SCHEDULED_REQUEST",
     title: "Scheduled rides",
-    subtitle: "Daily commute, classes, airport runs",
-    stat: "Recurring routes",
-    insight: "Create once. FairFares keeps the trip pattern ready.",
+    subtitle: "Same trip again and again",
+    stat: "Example: Lone Tree to DU every Mon-Fri at 8:00 AM",
+    insight: "Best for office commutes, classes, airport shuttles, or any repeated pickup plan.",
     tint: "#8a5a00",
     icon: appAssets.ride,
-    register: "Add pickup, drop-off, start date, commute days, preferred pickup time, and seats.",
-    works: ["FairFares saves your recurring route.", "Matching drivers see the schedule and route fit.", "Accepted rides appear in Activity with status and chat."],
-    access: "Open Ride, choose Scheduled, then create the recurring request."
+    register: "Tell us pickup, drop-off, days, start date, pickup time, seats, and notes. Example: Lone Tree to DU, Mon-Fri, 8:00 AM.",
+    works: ["We create the repeated ride pattern.", "Drivers who fit that route can accept it.", "Every confirmed day appears in Activity with status and chat."],
+    access: "After entering pickup and drop-off, choose Scheduled when the trip repeats."
   },
   {
     key: "general",
     type: "GENERAL_REQUEST",
     title: "General rides",
-    subtitle: "Point-to-point rides for today or later",
-    stat: "Live driver search",
-    insight: "Drivers nearby are notified first, then the radius expands if needed.",
+    subtitle: "One ride for now or later",
+    stat: "Example: Denver to Union Station today at 6:00 PM",
+    insight: "Best for a normal city ride from one place to another.",
     tint: "#243b73",
     icon: appAssets.ride,
-    register: "Enter pickup, destination, pickup date/time, seats, and ride notes.",
-    works: ["Google Places resolves pickup and destination.", "FairFares estimates distance and route cost.", "Drivers within range can accept and message you."],
-    access: "Tap Where to?, choose a ride option, then send the request."
+    register: "Enter where you are, where you are going, pickup date/time, seats, luggage, and notes.",
+    works: ["Google Places corrects addresses, landmarks, and typos.", "FairFares estimates distance and trip cost.", "Nearby registered drivers are notified first."],
+    access: "Choose General for a one-time ride inside or near the city."
   },
   {
     key: "carpool",
     type: "CARPOOL_REQUEST",
     title: "Carpool",
-    subtitle: "Share routes, seats, and trip cost",
-    stat: "Route based matches",
-    insight: "Match by direction and pickup range, not only the same city.",
+    subtitle: "Longer trips or shared seats",
+    stat: "Example: Denver to Colorado Springs or Denver to Cincinnati",
+    insight: "Best for out-of-city trips, shared routes, and splitting trip cost.",
     tint: "#0f5f4b",
     icon: appAssets.ride,
-    register: "Set origin, destination, travel date/time, seats needed, luggage, and max pickup range.",
-    works: ["Passengers search trips on the same route.", "Drivers list seats and detour limits.", "Seat requests and confirmations happen through FairFares chat."],
-    access: "Choose Find carpool to request a seat, or Offer a ride to list open seats."
+    register: "Enter route, date/time, seats, luggage, max pickup distance, and contribution per seat.",
+    works: ["FairFares matches routes going the same direction.", "Drivers list open seats and detour limits.", "Passengers request a seat and chat before confirmation."],
+    access: "Choose Carpool for city-to-city, long-distance, or shared-cost rides."
   }
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
@@ -475,16 +475,35 @@ export function HousingScreen({
     return Boolean(rideForm.origin.trim() && rideForm.destination.trim());
   }
 
-  function rideMilesEstimate() {
-    const matched = rideRows.find((ride) => ride.distanceMiles !== null);
+  function estimateRideMiles(originValue = rideForm.origin, destinationValue = rideForm.destination, rows = rideRows) {
+    const matched = rows.find((ride) => ride.distanceMiles !== null);
     if (matched?.distanceMiles !== null && matched?.distanceMiles !== undefined) {
       return Math.max(1, Number(matched.distanceMiles) + 3);
     }
-    const origin = rideForm.origin.toLowerCase();
-    const destination = rideForm.destination.toLowerCase();
+    const origin = originValue.toLowerCase();
+    const destination = destinationValue.toLowerCase();
     if (origin.includes("airport") || destination.includes("airport")) return 24;
     if (origin.includes("union") || destination.includes("union")) return 5;
+    if (origin.includes("colorado springs") || destination.includes("colorado springs")) return 69;
+    if (origin.includes("fort collins") || destination.includes("fort collins")) return 64;
+    if (origin.includes("cincinnati") || destination.includes("cincinnati")) return 1180;
+    if (origin.includes("indianapolis") || destination.includes("indianapolis")) return 1080;
+    if (origin.includes("chicago") || destination.includes("chicago")) return 1000;
+    if (origin.includes("dallas") || destination.includes("dallas")) return 790;
+    if (origin.includes("salt lake") || destination.includes("salt lake")) return 520;
+    if (rows.length) {
+      const rowMiles = rows.find((ride) => ride.distanceMiles !== null)?.distanceMiles;
+      if (rowMiles !== null && rowMiles !== undefined) return Math.max(1, Number(rowMiles) + 3);
+    }
     return 8;
+  }
+
+  function rideMilesEstimate() {
+    return estimateRideMiles();
+  }
+
+  function shouldSuggestCarpool(origin: string, destination: string) {
+    return estimateRideMiles(origin, destination, []) >= 50;
   }
 
   function selectRideService(service: (typeof rideServicePosters)[number]) {
@@ -523,12 +542,17 @@ export function HousingScreen({
       if (destinationMatches[0]?.label) {
         effectiveDestination = destinationMatches[0].label;
       }
+      const nextRideType: RideType = shouldSuggestCarpool(effectiveOrigin, effectiveDestination) ? "CARPOOL_REQUEST" : rideForm.rideType;
+      if (nextRideType === "CARPOOL_REQUEST") {
+        setSelectedRideService("carpool");
+      }
       setRideForm((current) => ({
         ...current,
         origin: effectiveOrigin,
-        destination: effectiveDestination
+        destination: effectiveDestination,
+        rideType: nextRideType
       }));
-      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, rideForm.rideType);
+      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, nextRideType);
       setRideRows(rides);
       setRidePlannerStage("choices");
     } catch (error) {
@@ -549,7 +573,7 @@ export function HousingScreen({
     try {
       const result = await createMobileRide({
         ...rideForm,
-        rideType: "GENERAL_REQUEST",
+        rideType: rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_REQUEST" : rideForm.rideType,
         notes: [rideForm.notes, `${selected.title} selected.`]
           .filter(Boolean)
           .join(" ")
@@ -992,6 +1016,31 @@ export function HousingScreen({
                 </TouchableOpacity>
               </View>
 
+              {rideForm.destination.trim() ? (
+                <View style={styles.rideTypePrompt}>
+                  <Text style={styles.rideTypePromptTitle}>What kind of ride is this?</Text>
+                  <Text style={styles.rideTypePromptCopy}>
+                    Pick General for one trip, Scheduled when it repeats, or Carpool for long-distance and shared-cost rides.
+                  </Text>
+                  <View style={styles.rideTypePromptGrid}>
+                    {rideServicePosters.map((service) => {
+                      const selected = service.key === selectedRideService;
+                      const shortHint = service.key === "scheduled" ? "Repeats" : service.key === "carpool" ? "Long/shared" : "One-time";
+                      return (
+                        <TouchableOpacity
+                          key={service.key}
+                          style={[styles.rideTypePromptChip, selected && styles.rideTypePromptChipActive]}
+                          onPress={() => selectRideService(service)}
+                        >
+                          <Text style={[styles.rideTypePromptChipTitle, selected && styles.rideTypePromptChipTitleActive]}>{service.title}</Text>
+                          <Text style={[styles.rideTypePromptChipMeta, selected && styles.rideTypePromptChipMetaActive]}>{shortHint}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+
               <View style={styles.rideSavedRow}>
                 <TouchableOpacity style={styles.rideSavedItem}>
                   <Text style={styles.rideSavedIcon}>▣</Text>
@@ -1025,11 +1074,17 @@ export function HousingScreen({
                     </View>
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={styles.rideUtilityRow}>
+                <TouchableOpacity
+                  style={styles.rideUtilityRow}
+                  onPress={() => {
+                    updateRideForm("city", "");
+                    setRideFocusedField("origin");
+                  }}
+                >
                   <Text style={styles.rideUtilityIcon}>◎</Text>
                   <Text style={styles.rideUtilityText}>Search in a different city</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.rideUtilityRow}>
+                <TouchableOpacity style={styles.rideUtilityRow} onPress={openRideGoogleMaps}>
                   <Text style={styles.rideUtilityIcon}>⌖</Text>
                   <Text style={styles.rideUtilityText}>Set location on map</Text>
                 </TouchableOpacity>
@@ -1990,6 +2045,32 @@ const styles = StyleSheet.create({
   rideRouteInputActive: { borderBottomColor: theme.colors.blue },
   rideRoutePlus: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   rideRoutePlusText: { color: theme.colors.text, fontSize: 28, lineHeight: 30 },
+  rideTypePrompt: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 12,
+    gap: 9
+  },
+  rideTypePromptTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideTypePromptCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideTypePromptGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rideTypePromptChip: {
+    flexGrow: 1,
+    minWidth: "30%",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  rideTypePromptChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  rideTypePromptChipTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
+  rideTypePromptChipTitleActive: { color: theme.colors.bg },
+  rideTypePromptChipMeta: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "900" },
+  rideTypePromptChipMetaActive: { color: theme.colors.bg },
   rideSavedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
   rideSavedItem: { flex: 1, minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12 },
   rideSavedIcon: { color: theme.colors.soft, fontSize: 22 },
