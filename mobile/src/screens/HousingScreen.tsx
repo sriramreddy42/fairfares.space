@@ -35,21 +35,25 @@ type Props = {
 const quickLinks: Array<{
   key: "earn" | "cheapRide" | "carpoolMove";
   title: string;
+  accent: string;
 }> = [
   {
     key: "earn",
-    title: "List anywhere in the USA and earn money"
+    title: "List anywhere in the USA",
+    accent: theme.colors.brand
   },
   {
     key: "cheapRide",
-    title: "Get cheap rides anywhere in the USA"
+    title: "Get cheap rides anywhere in the USA",
+    accent: theme.colors.blue
   },
   {
     key: "carpoolMove",
-    title: "Moving to another state? Try carpool"
+    title: "Moving to another state? Try carpool",
+    accent: "#9b5cff"
   }
 ];
-const quickLinkWords = ["LIST & EARN", "CHEAP RIDES", "CARPOOL MOVES"];
+const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 
 const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
   { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place" },
@@ -2170,20 +2174,23 @@ export function HousingScreen({
       {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
         <>
 
-      <View style={styles.quickHeader}>
-        <Text style={styles.quickEyebrow}>Quick links</Text>
-        <Text style={styles.quickHeaderTitle}>Find rides, rentals, and roommate options anywhere in the USA.</Text>
+      <View style={styles.quickHero}>
+        <Text style={styles.quickPill}>Quick links</Text>
+        <Text style={styles.quickHeaderTitle}>
+          Find rides, rentals, and roommate options <Text style={styles.quickTitleAccent}>anywhere</Text> in the USA.
+        </Text>
         <Text style={styles.quickAnimatedWord}>
           {quickLinkAnimatedWord}
           <Text style={styles.quickCursor}>|</Text>
         </Text>
-      </View>
-      <View style={styles.quickLinkList}>
-        {quickLinks.map((link) => (
-          <TouchableOpacity key={link.key} style={styles.quickLinkTextButton} onPress={() => openQuickLink(link.key)}>
-            <Text style={styles.quickLinkTitle}>{link.title}</Text>
-          </TouchableOpacity>
-        ))}
+        <View style={styles.quickTextList}>
+          {quickLinks.map((link) => (
+            <TouchableOpacity key={link.key} activeOpacity={0.82} style={styles.quickTextLink} onPress={() => openQuickLink(link.key)}>
+              <View style={[styles.quickTextDot, { backgroundColor: link.accent }]} />
+              <Text style={styles.quickTextTitle}>{link.title}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
       <SectionHeader title="Create a post" />
@@ -2382,14 +2389,42 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
   segmentText: { color: theme.colors.soft, fontSize: 17, fontWeight: "900" },
   segmentTextActive: { color: theme.colors.text },
-  quickHeader: { gap: 8, paddingTop: 4 },
-  quickEyebrow: { color: theme.colors.brand, fontSize: 12, textTransform: "uppercase", fontWeight: "900" },
-  quickHeaderTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 31, fontWeight: "900" },
-  quickAnimatedWord: { color: "#ff3d6e", fontSize: 34, lineHeight: 40, fontWeight: "900" },
+  quickHero: {
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(3,8,18,0.96)",
+    padding: theme.spacing.md,
+    gap: 12,
+    overflow: "hidden"
+  },
+  quickPill: {
+    alignSelf: "flex-start",
+    color: theme.colors.brand,
+    backgroundColor: "rgba(24,184,132,0.18)",
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    overflow: "hidden",
+    fontSize: 12,
+    textTransform: "uppercase",
+    fontWeight: "900"
+  },
+  quickHeaderTitle: { color: theme.colors.text, fontSize: 23, lineHeight: 29, fontWeight: "900", maxWidth: 310 },
+  quickTitleAccent: { color: "#15e1ba" },
+  quickAnimatedWord: { color: "#ff3d6e", fontSize: 33, lineHeight: 38, fontWeight: "900", letterSpacing: 0 },
   quickCursor: { color: theme.colors.text, fontWeight: "400" },
-  quickLinkList: { gap: 8 },
-  quickLinkTextButton: { alignSelf: "flex-start", paddingVertical: 2 },
-  quickLinkTitle: { color: theme.colors.soft, fontSize: 16, lineHeight: 21, fontWeight: "900", textDecorationLine: "underline" },
+  quickTextList: { gap: 8, paddingTop: 2 },
+  quickTextLink: {
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.32)",
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9
+  },
+  quickTextDot: { width: 8, height: 8, borderRadius: 4 },
+  quickTextTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 23, fontWeight: "900" },
   postActionGrid: { gap: 10 },
   postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
   postActionIcon: { width: 42, height: 42 },
