@@ -93,8 +93,7 @@ const rideServicePosters: Array<{
   stat: string;
   insight: string;
   tint: string;
-  icon: ImageSourcePropType;
-  symbol: string;
+  glyph: "scheduled" | "general" | "carpool";
   register: string;
   works: string[];
   access: string;
@@ -107,8 +106,7 @@ const rideServicePosters: Array<{
     stat: "Example: Lone Tree to DU every weekday at 8:00 AM.",
     insight: "Best for rides that happen again and again. Set the route once, then track each confirmed day in Activity.",
     tint: "#8a5a00",
-    icon: appAssets.ride,
-    symbol: "CAL",
+    glyph: "scheduled",
     register: "Enter pickup, destination, days, time, seats, and notes.",
     works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and FChat for each accepted ride."],
     access: "Choose this when the same route repeats."
@@ -121,8 +119,7 @@ const rideServicePosters: Array<{
     stat: "Example: Denver to Union Station today at 6:00 PM",
     insight: "Best for a simple local ride today or later. Enter pickup and destination, then request nearby driver offers.",
     tint: "#243b73",
-    icon: appAssets.ride,
-    symbol: "GO",
+    glyph: "general",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
     works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat when a driver accepts."],
     access: "Choose this for one ride inside or near the city."
@@ -135,8 +132,7 @@ const rideServicePosters: Array<{
     stat: "Example: Denver to Colorado Springs or Denver to Cincinnati",
     insight: "Best when riders and drivers are already going the same direction. Useful for longer trips, airport runs, or shared commutes.",
     tint: "#0f5f4b",
-    icon: appAssets.ride,
-    symbol: "POOL",
+    glyph: "carpool",
     register: "Enter route, date/time, seats, luggage, pickup radius, and contribution.",
     works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
     access: "Choose this for city-to-city, long-distance, or shared-cost rides."
@@ -1996,6 +1992,39 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService) || rideServicePosters[1];
+    const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
+      <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
+        {glyph === "scheduled" ? (
+          <>
+            <View style={[styles.rideGlyphCalendar, small && styles.rideGlyphCalendarSmall]}>
+              <View style={styles.rideGlyphCalendarTop} />
+              <View style={styles.rideGlyphGrid}>
+                {[0, 1, 2, 3].map((dot) => (
+                  <View key={dot} style={styles.rideGlyphDot} />
+                ))}
+              </View>
+            </View>
+            <View style={[styles.rideGlyphClock, small && styles.rideGlyphClockSmall]} />
+          </>
+        ) : (
+          <>
+            {glyph === "carpool" ? (
+              <View style={styles.rideGlyphPeople}>
+                {[0, 1, 2].map((dot) => (
+                  <View key={dot} style={[styles.rideGlyphPerson, small && styles.rideGlyphPersonSmall]} />
+                ))}
+              </View>
+            ) : null}
+            <View style={[styles.rideGlyphCarTop, small && styles.rideGlyphCarTopSmall]} />
+            <View style={[styles.rideGlyphCarBody, small && styles.rideGlyphCarBodySmall]} />
+            <View style={styles.rideGlyphWheelRow}>
+              <View style={[styles.rideGlyphWheel, small && styles.rideGlyphWheelSmall]} />
+              <View style={[styles.rideGlyphWheel, small && styles.rideGlyphWheelSmall]} />
+            </View>
+          </>
+        )}
+      </View>
+    );
     return (
       <>
         <View style={styles.rideHero}>
@@ -2011,7 +2040,7 @@ export function HousingScreen({
               <Text style={styles.rideTitle}>Ride together. <Text style={styles.rideTitleAccent}>Save together.</Text></Text>
               <Text style={styles.rideMeta}>Scheduled. Flexible. Together.</Text>
             </View>
-            <Image source={appAssets.ride} style={styles.rideHeroIcon} resizeMode="contain" />
+            {renderRideGlyph(activeService.glyph)}
           </View>
           <View style={styles.rideFeatureRow}>
             {rideFeatureBadges.map((badge) => (
@@ -2019,12 +2048,8 @@ export function HousingScreen({
             ))}
           </View>
           <View style={styles.rideHeroActionRow}>
-            <TouchableOpacity style={styles.rideHeroPlanButton} onPress={openRidePlanner}>
-              <Text style={styles.rideHeroPlanText}>Where to?</Text>
-              <Text style={styles.rideHeroPlanMeta}>Google places</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={styles.rideHeroOwnerButton} onPress={openRideOwnerTracker}>
-              <Image source={appAssets.ride} style={styles.rideHeroOwnerIcon} resizeMode="contain" />
+              {renderRideGlyph("general", true)}
               <View style={styles.rideHeroOwnerCopy}>
                 <Text style={styles.rideHeroOwnerTitle}>List car</Text>
                 <Text style={styles.rideHeroOwnerMeta}>Track requests</Text>
@@ -2054,8 +2079,7 @@ export function HousingScreen({
                     <Text style={styles.ridePosterButton}>Learn more</Text>
                   </View>
                   <View style={styles.ridePosterArt}>
-                    <Image source={service.icon} style={styles.ridePosterIcon} resizeMode="contain" />
-                    <Text style={styles.ridePosterSymbol}>{service.symbol}</Text>
+                    {renderRideGlyph(service.glyph)}
                   </View>
                 </TouchableOpacity>
               );
@@ -2064,8 +2088,7 @@ export function HousingScreen({
           <View style={styles.rideServiceDetail}>
             <View style={styles.rideServiceDetailHeader}>
               <View style={styles.rideServiceDetailIconWrap}>
-                <Image source={activeService.icon} style={styles.rideServiceDetailIcon} resizeMode="contain" />
-                <Text style={styles.rideServiceDetailSymbol}>{activeService.symbol}</Text>
+                {renderRideGlyph(activeService.glyph, true)}
               </View>
               <View style={styles.rideServiceDetailCopy}>
                 <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
@@ -2585,7 +2608,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "#090d12",
     padding: 12,
-    gap: 12,
+    gap: 10,
     shadowColor: "#000",
     shadowOpacity: 0.28,
     shadowRadius: 18,
@@ -2596,7 +2619,6 @@ const styles = StyleSheet.create({
   rideOptionPill: { backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7 },
   rideOptionPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
   rideHeroTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
-  rideHeroIcon: { width: 62, height: 62 },
   rideHeroCopy: { flex: 1, minWidth: 0 },
   rideEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, textTransform: "uppercase" },
   rideTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 31, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
@@ -2627,8 +2649,25 @@ const styles = StyleSheet.create({
   ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 18, fontWeight: "800" },
   ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 14, paddingVertical: 8, fontSize: 13, fontWeight: "900" },
   ridePosterArt: { width: 116, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
-  ridePosterIcon: { width: 78, height: 78 },
-  ridePosterSymbol: { color: theme.colors.text, fontSize: 20, fontWeight: "900", letterSpacing: 0.8 },
+  rideGlyphWrap: { width: 78, height: 78, alignItems: "center", justifyContent: "center" },
+  rideGlyphWrapSmall: { width: 42, height: 42 },
+  rideGlyphCalendar: { width: 48, height: 46, borderRadius: 8, borderWidth: 3, borderColor: theme.colors.text, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.04)" },
+  rideGlyphCalendarSmall: { width: 30, height: 28, borderRadius: 6, borderWidth: 2 },
+  rideGlyphCalendarTop: { height: 10, backgroundColor: theme.colors.accent },
+  rideGlyphGrid: { flexDirection: "row", flexWrap: "wrap", gap: 5, padding: 7 },
+  rideGlyphDot: { width: 6, height: 6, borderRadius: 2, backgroundColor: theme.colors.text },
+  rideGlyphClock: { position: "absolute", right: 8, bottom: 9, width: 23, height: 23, borderRadius: 12, borderWidth: 3, borderColor: theme.colors.text, backgroundColor: "#111827" },
+  rideGlyphClockSmall: { right: 4, bottom: 4, width: 14, height: 14, borderRadius: 7, borderWidth: 2 },
+  rideGlyphPeople: { position: "absolute", top: 5, flexDirection: "row", gap: 5 },
+  rideGlyphPerson: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.text },
+  rideGlyphPersonSmall: { width: 7, height: 7, borderRadius: 4 },
+  rideGlyphCarTop: { width: 44, height: 20, borderTopLeftRadius: 14, borderTopRightRadius: 14, borderWidth: 3, borderBottomWidth: 0, borderColor: theme.colors.text, marginTop: 12 },
+  rideGlyphCarTopSmall: { width: 28, height: 12, borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 2, borderBottomWidth: 0, marginTop: 8 },
+  rideGlyphCarBody: { width: 64, height: 24, borderRadius: 10, backgroundColor: theme.colors.text, marginTop: -1 },
+  rideGlyphCarBodySmall: { width: 38, height: 15, borderRadius: 7 },
+  rideGlyphWheelRow: { width: 54, flexDirection: "row", justifyContent: "space-between", marginTop: -5 },
+  rideGlyphWheel: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#05070a", borderWidth: 2, borderColor: theme.colors.text },
+  rideGlyphWheelSmall: { width: 8, height: 8, borderRadius: 4, borderWidth: 1 },
   rideInsightCard: {
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -2658,8 +2697,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  rideServiceDetailIcon: { width: 42, height: 42 },
-  rideServiceDetailSymbol: { color: theme.colors.text, fontSize: 9, fontWeight: "900", marginTop: -5 },
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
   rideServiceDetailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
@@ -2859,21 +2896,9 @@ const styles = StyleSheet.create({
   rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
   rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  rideHeroActionRow: { marginTop: theme.spacing.md, flexDirection: "row", gap: 10 },
-  rideHeroPlanButton: {
-    flex: 1,
-    minHeight: 62,
-    borderRadius: theme.radius.pill,
-    backgroundColor: "rgba(255,255,255,0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: theme.spacing.md,
-    justifyContent: "center"
-  },
-  rideHeroPlanText: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
-  rideHeroPlanMeta: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", marginTop: 2 },
+  rideHeroActionRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   rideHeroOwnerButton: {
-    width: 128,
+    width: 166,
     minHeight: 62,
     borderRadius: 22,
     borderWidth: 1,
@@ -2885,7 +2910,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7
   },
-  rideHeroOwnerIcon: { width: 36, height: 32 },
   rideHeroOwnerCopy: { flex: 1, minWidth: 0 },
   rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", marginTop: 2 },
