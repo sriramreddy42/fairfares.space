@@ -32,11 +32,26 @@ type Props = {
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
 };
 
-const quickActions: Array<{ label: string; icon: ImageSourcePropType; need: string }> = [
-  { label: "Need a place", icon: appAssets.bed, need: "need_place" },
-  { label: "Need roommates", icon: appAssets.roommates, need: "need_roommates" },
-  { label: "Need a ride", icon: appAssets.ride, need: "ride_need" },
-  { label: "Offer a ride", icon: appAssets.ride, need: "ride_offer" }
+const quickLinks: Array<{
+  key: "earn" | "cheapRide" | "carpoolMove";
+  title: string;
+  body: string;
+}> = [
+  {
+    key: "earn",
+    title: "List anywhere in the USA and earn money",
+    body: "Offer seats for a local ride, scheduled route, or carpool."
+  },
+  {
+    key: "cheapRide",
+    title: "Get cheap rides anywhere in the USA",
+    body: "Search pickup, destination, timing, and nearby ride options."
+  },
+  {
+    key: "carpoolMove",
+    title: "Moving to another state? Try carpool",
+    body: "Plan a longer trip and match with people going the same way."
+  }
 ];
 
 const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
@@ -590,6 +605,21 @@ export function HousingScreen({
     } finally {
       setRideDriverBusy(false);
     }
+  }
+
+  function openQuickLink(key: (typeof quickLinks)[number]["key"]) {
+    if (key === "earn") {
+      void openRideOwnerTracker();
+      return;
+    }
+    openRidePlanner();
+    if (key === "carpoolMove") {
+      setSelectedRideService("carpool");
+      setRideForm((current) => ({ ...current, rideType: "CARPOOL_REQUEST" }));
+      return;
+    }
+    setSelectedRideService("general");
+    setRideForm((current) => ({ ...current, rideType: "GENERAL_REQUEST" }));
   }
 
   function closeRideOwnerTracker() {
@@ -2130,16 +2160,18 @@ export function HousingScreen({
         <Text style={styles.quickHeaderTitle}>Quick links</Text>
         <Text style={styles.quickHeaderText}>List anywhere in the USA, find cheaper rides, or plan a move with carpool options.</Text>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
-        {quickActions.map((action) => (
-          <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => action.need.startsWith("ride") ? setMode("ride") : onNeedSelect(action.need)}>
-            <View style={[styles.quickBubble, selectedNeed === action.need && styles.quickBubbleActive]}>
-              <Image source={action.icon} style={styles.quickIcon} resizeMode="contain" />
+      <View style={styles.quickLinkList}>
+        {quickLinks.map((link) => (
+          <TouchableOpacity key={link.key} style={styles.quickLinkCard} onPress={() => openQuickLink(link.key)}>
+            <View style={styles.quickLinkDot} />
+            <View style={styles.quickLinkCopy}>
+              <Text style={styles.quickLinkTitle}>{link.title}</Text>
+              <Text style={styles.quickLinkBody}>{link.body}</Text>
             </View>
-            <Text style={[styles.quickLabel, selectedNeed === action.need && styles.quickLabelActive]}>{action.label}</Text>
+            <Text style={styles.quickLinkArrow}>{">"}</Text>
           </TouchableOpacity>
         ))}
-      </ScrollView>
+      </View>
 
       <SectionHeader title="Create a post" />
       <View style={styles.postActionGrid}>
@@ -2340,13 +2372,13 @@ const styles = StyleSheet.create({
   quickHeader: { gap: 4 },
   quickHeaderTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 39, fontWeight: "900" },
   quickHeaderText: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "800", maxWidth: 320 },
-  quickRow: { gap: theme.spacing.md },
-  quickAction: { width: 92, alignItems: "center", gap: 9 },
-  quickBubble: { width: 78, height: 78, borderRadius: 39, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  quickBubbleActive: { backgroundColor: theme.colors.brand },
-  quickIcon: { width: 52, height: 52 },
-  quickLabel: { color: theme.colors.soft, fontSize: 13, textAlign: "center", fontWeight: "800" },
-  quickLabelActive: { color: theme.colors.text },
+  quickLinkList: { gap: 10 },
+  quickLinkCard: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.md, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 11 },
+  quickLinkDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: theme.colors.brand },
+  quickLinkCopy: { flex: 1, minWidth: 0 },
+  quickLinkTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  quickLinkBody: { color: theme.colors.muted, marginTop: 3, fontSize: 13, lineHeight: 17, fontWeight: "700" },
+  quickLinkArrow: { color: theme.colors.soft, fontSize: 20, fontWeight: "900" },
   postActionGrid: { gap: 10 },
   postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
   postActionIcon: { width: 42, height: 42 },
