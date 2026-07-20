@@ -166,6 +166,11 @@ export async function getRides(city: string, origin = "", destination = "", ride
   return payload.rides || [];
 }
 
+export async function getRideActivity() {
+  const payload = await request<{ ok: boolean; rides: RidePost[] }>("/api/mobile/rides/activity");
+  return payload.rides || [];
+}
+
 export type RidePlaceSuggestion = {
   label: string;
   main: string;

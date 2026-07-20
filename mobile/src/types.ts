@@ -132,6 +132,12 @@ export type RidePost = {
   routeDeviationMiles?: number | null;
   matchScore: number;
   createdAt: string;
+  activityRole?: "MINE" | "DRIVER_NOTIFICATION";
+  dispatchStatus?: string;
+  dispatchNotifiedCount?: number;
+  dispatchNearestRadius?: number;
+  dispatchNotifiedAt?: string;
+  dispatchRespondedAt?: string;
 };
 
 export type RideDispatchSummary = {

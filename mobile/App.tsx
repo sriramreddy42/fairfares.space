@@ -605,7 +605,20 @@ export default function App() {
         onThreadModeChange={setBottomTabsHidden}
       />
     ) : activeTab === "activity" ? (
-      <DashboardScreen data={data} />
+      <DashboardScreen
+        data={data}
+        onReserveRide={() => {
+          setActiveTab("housing");
+          setSelectedNeed("ride_need");
+        }}
+        onRideMessage={openRideMessage}
+        onOpenHousing={() => setActiveTab("housing")}
+        onOpenServices={() => {
+          setSelectedService("cars");
+          setActiveTab("services");
+        }}
+        onRequireLogin={() => setLoginOpen(true)}
+      />
     ) : activeTab === "profile" ? (
       <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} />
     ) : activeTab === "services" ? (

@@ -15285,6 +15285,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rides":
             self.api_mobile_rides(parsed)
             return
+        if parsed.path == "/api/mobile/rides/activity":
+            self.api_mobile_ride_activity()
+            return
         if parsed.path == "/api/mobile/rides/driver-profile":
             self.api_mobile_ride_driver_profile()
             return
@@ -23518,6 +23521,77 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
+
+    def api_mobile_ride_activity(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to view ride activity."}, 401)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            own_rows = con.execute(
+                """
+                SELECT ride_posts.*,
+                       (
+                           SELECT COUNT(*)
+                           FROM ride_dispatch_notifications
+                           WHERE ride_dispatch_notifications.request_ride_post_id = ride_posts.id
+                       ) AS dispatch_notified_count,
+                       (
+                           SELECT MIN(radius_miles)
+                           FROM ride_dispatch_notifications
+                           WHERE ride_dispatch_notifications.request_ride_post_id = ride_posts.id
+                       ) AS dispatch_nearest_radius
+                FROM ride_posts
+                WHERE user_id = ?
+                ORDER BY datetime(created_at) DESC
+                LIMIT 80
+                """,
+                (user_id,),
+            ).fetchall()
+            incoming_rows = con.execute(
+                """
+                SELECT requests.*,
+                       notifications.status AS dispatch_status,
+                       notifications.radius_miles AS dispatch_nearest_radius,
+                       notifications.distance_miles AS dispatch_distance_miles,
+                       notifications.notified_at AS dispatch_notified_at,
+                       notifications.responded_at AS dispatch_responded_at
+                FROM ride_dispatch_notifications notifications
+                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                WHERE notifications.driver_user_id = ?
+                ORDER BY datetime(notifications.notified_at) DESC
+                LIMIT 80
+                """,
+                (user_id,),
+            ).fetchall()
+
+        rides: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for row in own_rows:
+            payload = mobile_ride_payload(row)
+            payload["activityRole"] = "MINE"
+            payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
+            payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
+            public_id = str(payload.get("id") or "")
+            if public_id:
+                seen.add(public_id)
+            rides.append(payload)
+        for row in incoming_rows:
+            payload = mobile_ride_payload(row)
+            public_id = str(payload.get("id") or "")
+            if public_id in seen:
+                continue
+            payload["activityRole"] = "DRIVER_NOTIFICATION"
+            payload["dispatchStatus"] = row_value(row, "dispatch_status") or "PENDING"
+            payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
+            payload["pickupDistanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
+            payload["distanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
+            payload["dispatchNotifiedAt"] = row_value(row, "dispatch_notified_at")
+            payload["dispatchRespondedAt"] = row_value(row, "dispatch_responded_at")
+            rides.append(payload)
+        rides.sort(key=lambda item: str(item.get("createdAt") or item.get("dispatchNotifiedAt") or ""), reverse=True)
+        self.send_json({"ok": True, "rides": rides[:100]})
 
     def api_mobile_ride_driver_profile(self) -> None:
         user = self.current_user()

@@ -35,24 +35,21 @@ type Props = {
 const quickLinks: Array<{
   key: "earn" | "cheapRide" | "carpoolMove";
   title: string;
-  body: string;
 }> = [
   {
     key: "earn",
-    title: "List anywhere in the USA and earn money",
-    body: "Offer seats for a local ride, scheduled route, or carpool."
+    title: "List anywhere in the USA and earn money"
   },
   {
     key: "cheapRide",
-    title: "Get cheap rides anywhere in the USA",
-    body: "Search pickup, destination, timing, and nearby ride options."
+    title: "Get cheap rides anywhere in the USA"
   },
   {
     key: "carpoolMove",
-    title: "Moving to another state? Try carpool",
-    body: "Plan a longer trip and match with people going the same way."
+    title: "Moving to another state? Try carpool"
   }
 ];
+const quickLinkWords = ["LIST & EARN", "CHEAP RIDES", "CARPOOL MOVES"];
 
 const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
   { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place" },
@@ -406,6 +403,8 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
+  const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
+  const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
@@ -452,6 +451,8 @@ export function HousingScreen({
         : housingSearchPhrases;
   const activeSearchPhrase = activeSearchPhrases[searchPhraseIndex % activeSearchPhrases.length] || activeSearchPhrases[0];
   const searchBarText = activeSearchPhrase;
+  const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
+  const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
   const cheapestCar = useMemo(
     () =>
       [...(rentalCars.length ? rentalCars : cars)]
@@ -519,6 +520,19 @@ export function HousingScreen({
   useEffect(() => {
     setSearchPhraseIndex(0);
   }, [mode]);
+
+  useEffect(() => {
+    const isComplete = quickLinkLetterCount >= currentQuickLinkWord.length;
+    const timer = setTimeout(() => {
+      if (isComplete) {
+        setQuickLinkWordIndex((value) => (value + 1) % quickLinkWords.length);
+        setQuickLinkLetterCount(1);
+        return;
+      }
+      setQuickLinkLetterCount((value) => value + 1);
+    }, isComplete ? 1200 : 85);
+    return () => clearTimeout(timer);
+  }, [currentQuickLinkWord.length, quickLinkLetterCount]);
 
   useEffect(() => {
     setRentalCars(cars);
@@ -2157,18 +2171,17 @@ export function HousingScreen({
         <>
 
       <View style={styles.quickHeader}>
-        <Text style={styles.quickHeaderTitle}>Quick links</Text>
-        <Text style={styles.quickHeaderText}>List anywhere in the USA, find cheaper rides, or plan a move with carpool options.</Text>
+        <Text style={styles.quickEyebrow}>Quick links</Text>
+        <Text style={styles.quickHeaderTitle}>Find rides, rentals, and roommate options anywhere in the USA.</Text>
+        <Text style={styles.quickAnimatedWord}>
+          {quickLinkAnimatedWord}
+          <Text style={styles.quickCursor}>|</Text>
+        </Text>
       </View>
       <View style={styles.quickLinkList}>
         {quickLinks.map((link) => (
-          <TouchableOpacity key={link.key} style={styles.quickLinkCard} onPress={() => openQuickLink(link.key)}>
-            <View style={styles.quickLinkDot} />
-            <View style={styles.quickLinkCopy}>
-              <Text style={styles.quickLinkTitle}>{link.title}</Text>
-              <Text style={styles.quickLinkBody}>{link.body}</Text>
-            </View>
-            <Text style={styles.quickLinkArrow}>{">"}</Text>
+          <TouchableOpacity key={link.key} style={styles.quickLinkTextButton} onPress={() => openQuickLink(link.key)}>
+            <Text style={styles.quickLinkTitle}>{link.title}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -2369,16 +2382,14 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
   segmentText: { color: theme.colors.soft, fontSize: 17, fontWeight: "900" },
   segmentTextActive: { color: theme.colors.text },
-  quickHeader: { gap: 4 },
-  quickHeaderTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 39, fontWeight: "900" },
-  quickHeaderText: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "800", maxWidth: 320 },
-  quickLinkList: { gap: 10 },
-  quickLinkCard: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.md, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 11 },
-  quickLinkDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: theme.colors.brand },
-  quickLinkCopy: { flex: 1, minWidth: 0 },
-  quickLinkTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
-  quickLinkBody: { color: theme.colors.muted, marginTop: 3, fontSize: 13, lineHeight: 17, fontWeight: "700" },
-  quickLinkArrow: { color: theme.colors.soft, fontSize: 20, fontWeight: "900" },
+  quickHeader: { gap: 8, paddingTop: 4 },
+  quickEyebrow: { color: theme.colors.brand, fontSize: 12, textTransform: "uppercase", fontWeight: "900" },
+  quickHeaderTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 31, fontWeight: "900" },
+  quickAnimatedWord: { color: "#ff3d6e", fontSize: 34, lineHeight: 40, fontWeight: "900" },
+  quickCursor: { color: theme.colors.text, fontWeight: "400" },
+  quickLinkList: { gap: 8 },
+  quickLinkTextButton: { alignSelf: "flex-start", paddingVertical: 2 },
+  quickLinkTitle: { color: theme.colors.soft, fontSize: 16, lineHeight: 21, fontWeight: "900", textDecorationLine: "underline" },
   postActionGrid: { gap: 10 },
   postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
   postActionIcon: { width: 42, height: 42 },
