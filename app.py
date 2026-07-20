@@ -476,8 +476,30 @@ ACCOMMODATION_STATIC_POINTS = {
     "denver metro area": (39.7392, -104.9903),
     "union station": (39.7527, -105.0008),
     "union station, denver, co": (39.7527, -105.0008),
+    "denver union station": (39.7527, -105.0008),
+    "union station bus concourse": (39.7541, -105.0009),
+    "denver international airport": (39.8561, -104.6737),
+    "denver international airport (den)": (39.8561, -104.6737),
+    "den": (39.8561, -104.6737),
+    "den - united terminal": (39.8561, -104.6737),
     "du": (39.6781, -104.9618),
     "university of denver": (39.6781, -104.9618),
+    "du campus denver": (39.6781, -104.9618),
+    "downtown denver": (39.7472, -104.9903),
+    "16th street mall denver": (39.7477, -104.9957),
+    "300 east seventeenth apartments": (39.7437, -104.9826),
+    "300 e 17th ave denver": (39.7437, -104.9826),
+    "larimer lounge": (39.7590, -104.9849),
+    "2700 larimer street denver": (39.7590, -104.9849),
+    "tracks": (39.7705, -104.9795),
+    "denver tech center": (39.6266, -104.8966),
+    "dtc denver": (39.6266, -104.8966),
+    "aurora town center": (39.7048, -104.8202),
+    "town center at aurora": (39.7048, -104.8202),
+    "pearl street mall boulder": (40.0181, -105.2781),
+    "2523 w houstoun waring cir littleton": (39.5948, -105.0360),
+    "englewood civic center": (39.6478, -104.9878),
+    "arapahoe road centennial": (39.5946, -104.8724),
     "aurora, co": (39.7294, -104.8319),
     "englewood, co": (39.6478, -104.9878),
     "littleton, co": (39.6133, -105.0166),
@@ -3869,11 +3891,37 @@ def init_db() -> None:
                 FOREIGN KEY(driver_user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS ride_driver_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE,
+                vehicle_make_model TEXT NOT NULL DEFAULT '',
+                vehicle_year TEXT NOT NULL DEFAULT '',
+                vehicle_color TEXT NOT NULL DEFAULT '',
+                license_plate TEXT NOT NULL DEFAULT '',
+                license_state TEXT NOT NULL DEFAULT '',
+                insurance_provider TEXT NOT NULL DEFAULT '',
+                insurance_policy_last4 TEXT NOT NULL DEFAULT '',
+                service_types TEXT NOT NULL DEFAULT '',
+                availability_days TEXT NOT NULL DEFAULT '',
+                availability_start_time TEXT NOT NULL DEFAULT '',
+                availability_end_time TEXT NOT NULL DEFAULT '',
+                seat_count INTEGER NOT NULL DEFAULT 4,
+                luggage_space TEXT NOT NULL DEFAULT '',
+                max_detour_minutes INTEGER NOT NULL DEFAULT 15,
+                max_pickup_distance_miles REAL NOT NULL DEFAULT 10,
+                review_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
+                review_notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
                 conversation_type TEXT NOT NULL DEFAULT 'DIRECT',
                 accommodation_post_id INTEGER,
+                ride_post_id INTEGER,
                 booking_id INTEGER,
                 community_id INTEGER,
                 subject TEXT NOT NULL DEFAULT '',
@@ -3882,6 +3930,7 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_message_at TEXT,
                 FOREIGN KEY(accommodation_post_id) REFERENCES accommodation_posts(id),
+                FOREIGN KEY(ride_post_id) REFERENCES ride_posts(id),
                 FOREIGN KEY(booking_id) REFERENCES bookings(id),
                 FOREIGN KEY(community_id) REFERENCES chat_communities(id)
             );
@@ -4651,6 +4700,13 @@ def init_db() -> None:
         ensure_column(con, "bookings", "security_deposit_payment_intent_id", "security_deposit_payment_intent_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "post_return_charge_amount", "post_return_charge_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "post_return_charge_notes", "post_return_charge_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "owner_user_id", "owner_user_id INTEGER")
+        ensure_column(con, "cars", "listing_source", "listing_source TEXT NOT NULL DEFAULT 'FAIRFARES_FLEET'")
+        ensure_column(con, "cars", "review_status", "review_status TEXT NOT NULL DEFAULT 'APPROVED'")
+        ensure_column(con, "cars", "owner_notes", "owner_notes TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "available_from_date", "available_from_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "available_to_date", "available_to_date TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "cars", "owner_contact_preference", "owner_contact_preference TEXT NOT NULL DEFAULT 'FCHAT'")
         ensure_column(con, "bookings", "pickup_odometer_image", "pickup_odometer_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_fuel_image", "pickup_fuel_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_interior_front_image", "pickup_interior_front_image TEXT NOT NULL DEFAULT ''")
@@ -4776,8 +4832,26 @@ def init_db() -> None:
         ensure_column(con, "ride_posts", "preferences", "preferences TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "notes", "notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
+        ensure_column(con, "ride_driver_profiles", "vehicle_make_model", "vehicle_make_model TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "vehicle_year", "vehicle_year TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "vehicle_color", "vehicle_color TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "license_plate", "license_plate TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "license_state", "license_state TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "insurance_provider", "insurance_provider TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "insurance_policy_last4", "insurance_policy_last4 TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "service_types", "service_types TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "availability_days", "availability_days TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "availability_start_time", "availability_start_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "availability_end_time", "availability_end_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "seat_count", "seat_count INTEGER NOT NULL DEFAULT 4")
+        ensure_column(con, "ride_driver_profiles", "luggage_space", "luggage_space TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_driver_profiles", "max_detour_minutes", "max_detour_minutes INTEGER NOT NULL DEFAULT 15")
+        ensure_column(con, "ride_driver_profiles", "max_pickup_distance_miles", "max_pickup_distance_miles REAL NOT NULL DEFAULT 10")
+        ensure_column(con, "ride_driver_profiles", "review_status", "review_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW'")
+        ensure_column(con, "ride_driver_profiles", "review_notes", "review_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_conversations", "conversation_type", "conversation_type TEXT NOT NULL DEFAULT 'DIRECT'")
         ensure_column(con, "chat_conversations", "accommodation_post_id", "accommodation_post_id INTEGER")
+        ensure_column(con, "chat_conversations", "ride_post_id", "ride_post_id INTEGER")
         ensure_column(con, "chat_conversations", "booking_id", "booking_id INTEGER")
         ensure_column(con, "chat_conversations", "community_id", "community_id INTEGER")
         ensure_column(con, "chat_conversations", "subject", "subject TEXT NOT NULL DEFAULT ''")
@@ -5278,6 +5352,75 @@ def ensure_default_car_inventory() -> None:
         )
 
 
+def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite3.Row:
+    brand = clean_text_value(payload.get("brand"), 40)
+    model = clean_text_value(payload.get("model"), 60)
+    name = clean_text_value(payload.get("name"), 100) or " ".join(part for part in (brand, model) if part).strip()
+    category = clean_text_value(payload.get("category"), 40) or "Economy"
+    vehicle_type = clean_text_value(payload.get("type") or payload.get("vehicleType"), 40) or category
+    fuel_type = clean_text_value(payload.get("fuelType") or payload.get("fuel_type"), 40) or "Gasoline"
+    transmission = clean_text_value(payload.get("transmission"), 40) or "Automatic"
+    location = clean_text_value(payload.get("location") or payload.get("pickupLocation") or payload.get("pickup_location"), 140)
+    daily_price = float_from_value(payload.get("dailyPrice") or payload.get("daily_price") or payload.get("price") or 0)
+    seats = int(float_from_value(payload.get("seats") or 5) or 5)
+    bags = int(float_from_value(payload.get("bags") or 2) or 2)
+    doors = int(float_from_value(payload.get("doors") or 4) or 4)
+    year = int(float_from_value(payload.get("year") or 0) or 0)
+    license_plate = clean_text_value(payload.get("licensePlate") or payload.get("license_plate"), 24)
+    if not name or not location or daily_price <= 0:
+        raise ValueError("Vehicle name, pickup location, and daily price are required.")
+    if year and (year < 1990 or year > datetime.now().year + 2):
+        raise ValueError("Use a valid vehicle year.")
+    if seats < 1 or seats > 15 or bags < 0 or bags > 12 or doors < 2 or doors > 6:
+        raise ValueError("Use realistic seats, bags, and doors.")
+    if daily_price < 10 or daily_price > 500:
+        raise ValueError("Daily price must be between $10 and $500.")
+    features = clean_text_value(payload.get("features"), 300) or "Owner listed|FChat available|Review pending"
+    image_url = clean_text_value(payload.get("imageUrl") or payload.get("image_url"), 300)
+    color = clean_text_value(payload.get("color"), 40)
+    available_from = clean_text_value(payload.get("availableFrom") or payload.get("available_from"), 20)
+    available_to = clean_text_value(payload.get("availableTo") or payload.get("available_to"), 20)
+    notes = clean_text_value(payload.get("notes") or payload.get("ownerNotes") or payload.get("owner_notes"), 500)
+    with db() as con:
+        cursor = con.execute(
+            """
+            INSERT INTO cars
+            (name, brand, model, year, category, type, fuel_type, seats, bags, doors, transmission,
+             daily_price, total_price, badge, color, features, location, image_url, status, license_plate,
+             owner_user_id, listing_source, review_status, owner_notes, available_from_date, available_to_date,
+             owner_contact_preference, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Owner listed', ?, ?, ?, ?, 'AVAILABLE', ?,
+                    ?, 'OWNER_LISTING', 'PENDING_REVIEW', ?, ?, ?, 'FCHAT', 1000)
+            """,
+            (
+                name,
+                brand,
+                model,
+                year or None,
+                category,
+                vehicle_type,
+                fuel_type,
+                seats,
+                bags,
+                doors,
+                transmission,
+                daily_price,
+                round(daily_price * 7, 2),
+                color,
+                features,
+                location,
+                image_url,
+                license_plate,
+                user_id,
+                notes,
+                available_from,
+                available_to,
+            ),
+        )
+        car_id = int(cursor.lastrowid)
+        return con.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
+
+
 def get_cars() -> list[sqlite3.Row]:
     expire_stale_booking_holds()
     ensure_default_car_inventory()
@@ -5307,9 +5450,18 @@ def get_cars() -> list[sqlite3.Row]:
             ) active ON active.car_id = cars.id
                     AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
             WHERE UPPER(TRIM(cars.status)) NOT IN ('MAINTENANCE', 'DELETED')
+              AND UPPER(TRIM(COALESCE(cars.review_status, 'APPROVED'))) = 'APPROVED'
             ORDER BY daily_price ASC, sort_order, id
             """
         ).fetchall()
+
+
+def car_is_publicly_rentable(row: sqlite3.Row | dict[str, object] | None) -> bool:
+    if not row:
+        return False
+    status = str(row_value(row, "status") or "").strip().upper()
+    review_status = str(row_value(row, "review_status") or "APPROVED").strip().upper()
+    return status not in {"MAINTENANCE", "DELETED"} and review_status == "APPROVED"
 
 
 def split_inventory_locations(value: object) -> list[str]:
@@ -10192,7 +10344,7 @@ def create_booking_for_user(
     for candidate in candidates:
         if not candidate:
             continue
-        if candidate["status"].strip().upper() == "MAINTENANCE":
+        if not car_is_publicly_rentable(candidate):
             continue
         active_booking = active_booking_conflict_for_car(candidate["id"], requested_start, requested_end)
         active_return = parse_booking_datetime(
@@ -10292,7 +10444,7 @@ def build_booking_preview(
     additional_driver_age: str = "",
 ) -> dict[str, object] | None:
     car = get_car(car_id)
-    if not car:
+    if not car_is_publicly_rentable(car):
         return None
     pickup_date, return_date, pickup_time, return_time, rental_days, _requested_start, _requested_end = normalize_booking_window(
         days,
@@ -10437,7 +10589,7 @@ def ensure_booking_for_user(
         ):
             return existing
         requested_car = get_car(car_id)
-        if requested_car and requested_car["status"].strip().upper() != "MAINTENANCE":
+        if car_is_publicly_rentable(requested_car):
             try:
                 return create_booking_for_user(
                     user_id,
@@ -11896,18 +12048,38 @@ def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_po
     return max(0, min(score, 100))
 
 
-def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None = None, destination_point: dict[str, object] | None = None) -> dict[str, object]:
-    origin_point = origin_point or {}
-    destination_point = destination_point or {}
+def ride_route_match_metrics(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object]) -> dict[str, object]:
     origin_lat = float(row_value(row, "origin_lat") or 0)
     origin_lng = float(row_value(row, "origin_lng") or 0)
+    dest_lat = float(row_value(row, "destination_lat") or 0)
+    dest_lng = float(row_value(row, "destination_lng") or 0)
     query_origin_lat = float(origin_point.get("lat") or 0)
     query_origin_lng = float(origin_point.get("lng") or 0)
+    query_dest_lat = float(destination_point.get("lat") or 0)
+    query_dest_lng = float(destination_point.get("lng") or 0)
     pickup_distance = (
         round(distance_miles_between(query_origin_lat, query_origin_lng, origin_lat, origin_lng), 1)
         if origin_lat and origin_lng and query_origin_lat and query_origin_lng
         else None
     )
+    dropoff_distance = (
+        round(distance_miles_between(query_dest_lat, query_dest_lng, dest_lat, dest_lng), 1)
+        if dest_lat and dest_lng and query_dest_lat and query_dest_lng
+        else None
+    )
+    known_distances = [distance for distance in (pickup_distance, dropoff_distance) if distance is not None]
+    route_deviation = round(max(known_distances), 1) if known_distances else None
+    return {
+        "pickupDistanceMiles": pickup_distance,
+        "dropoffDistanceMiles": dropoff_distance,
+        "routeDeviationMiles": route_deviation,
+    }
+
+
+def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None = None, destination_point: dict[str, object] | None = None) -> dict[str, object]:
+    origin_point = origin_point or {}
+    destination_point = destination_point or {}
+    route_metrics = ride_route_match_metrics(row, origin_point, destination_point)
     return {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
@@ -11933,10 +12105,74 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
         "preferences": row_value(row, "preferences"),
         "notes": row_value(row, "notes"),
         "status": row_value(row, "status"),
-        "distanceMiles": pickup_distance,
+        "distanceMiles": route_metrics.get("pickupDistanceMiles"),
+        "pickupDistanceMiles": route_metrics.get("pickupDistanceMiles"),
+        "dropoffDistanceMiles": route_metrics.get("dropoffDistanceMiles"),
+        "routeDeviationMiles": route_metrics.get("routeDeviationMiles"),
         "matchScore": ride_score(row, origin_point, destination_point),
         "createdAt": row_value(row, "created_at"),
     }
+
+
+def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, object]:
+    if not row:
+        return {
+            "exists": False,
+            "reviewStatus": "NOT_STARTED",
+            "serviceTypes": [],
+            "availabilityDays": [],
+            "readyForOffers": False,
+            "missing": [
+                "Vehicle make/model",
+                "License plate and state",
+                "Insurance provider",
+                "Service types",
+                "Availability",
+            ],
+        }
+    service_types = [item.strip() for item in row_value(row, "service_types").split(",") if item.strip()]
+    availability_days = [item.strip() for item in row_value(row, "availability_days").split(",") if item.strip()]
+    missing = []
+    if not row_value(row, "vehicle_make_model"):
+        missing.append("Vehicle make/model")
+    if not row_value(row, "license_plate") or not row_value(row, "license_state"):
+        missing.append("License plate and state")
+    if not row_value(row, "insurance_provider"):
+        missing.append("Insurance provider")
+    if not service_types:
+        missing.append("Service types")
+    if not availability_days or not row_value(row, "availability_start_time") or not row_value(row, "availability_end_time"):
+        missing.append("Availability")
+    review_status = row_value(row, "review_status") or "PENDING_REVIEW"
+    return {
+        "exists": True,
+        "vehicleMakeModel": row_value(row, "vehicle_make_model"),
+        "vehicleYear": row_value(row, "vehicle_year"),
+        "vehicleColor": row_value(row, "vehicle_color"),
+        "licensePlate": row_value(row, "license_plate"),
+        "licenseState": row_value(row, "license_state"),
+        "insuranceProvider": row_value(row, "insurance_provider"),
+        "insurancePolicyLast4": row_value(row, "insurance_policy_last4"),
+        "serviceTypes": service_types,
+        "availabilityDays": availability_days,
+        "availabilityStartTime": row_value(row, "availability_start_time"),
+        "availabilityEndTime": row_value(row, "availability_end_time"),
+        "seatCount": int(row_value(row, "seat_count") or 4),
+        "luggageSpace": row_value(row, "luggage_space"),
+        "maxDetourMinutes": int(row_value(row, "max_detour_minutes") or 15),
+        "maxPickupDistanceMiles": float(row_value(row, "max_pickup_distance_miles") or 10),
+        "reviewStatus": review_status,
+        "reviewNotes": row_value(row, "review_notes"),
+        "readyForOffers": not missing and review_status in {"PENDING_REVIEW", "APPROVED"},
+        "missing": missing,
+        "updatedAt": row_value(row, "updated_at"),
+    }
+
+
+def get_ride_driver_profile(user_id: int) -> dict[str, object]:
+    with db() as con:
+        row = con.execute("SELECT * FROM ride_driver_profiles WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+    return mobile_ride_driver_profile_payload(row)
 
 
 def mobile_ride_posts(city: str = "", ride_type: str = "", origin: str = "", destination: str = "", limit: int = 30) -> list[dict[str, object]]:
@@ -11965,6 +12201,16 @@ def mobile_ride_posts(city: str = "", ride_type: str = "", origin: str = "", des
         rows = con.execute(sql, values).fetchall()
     payloads = [mobile_ride_payload(row, origin_point, destination_point) for row in rows]
     if origin or destination:
+        if origin and destination:
+            route_filtered = []
+            for item in payloads:
+                pickup_distance = item.get("pickupDistanceMiles")
+                dropoff_distance = item.get("dropoffDistanceMiles")
+                pickup_ok = pickup_distance is None or float(pickup_distance) <= 30
+                dropoff_ok = dropoff_distance is None or float(dropoff_distance) <= 30
+                if pickup_ok and dropoff_ok:
+                    route_filtered.append(item)
+            payloads = route_filtered
         payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("distanceMiles") or 9999)))
     return payloads
 
@@ -11997,10 +12243,12 @@ def create_ride_instances(con: sqlite3.Connection, ride_post_id: int, start_date
 
 
 def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sqlite3.Row, requester_user_id: int) -> dict[str, object]:
-    if row_value(request_row, "ride_type") not in {"GENERAL_REQUEST", "CARPOOL_REQUEST"}:
+    if row_value(request_row, "ride_type") not in {"SCHEDULED_REQUEST", "GENERAL_REQUEST", "CARPOOL_REQUEST"}:
         return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
     request_lat = float(row_value(request_row, "origin_lat") or 0)
     request_lng = float(row_value(request_row, "origin_lng") or 0)
+    request_dest_lat = float(row_value(request_row, "destination_lat") or 0)
+    request_dest_lng = float(row_value(request_row, "destination_lng") or 0)
     if not request_lat or not request_lng:
         return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
     driver_rows = con.execute(
@@ -12029,6 +12277,16 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
             )
             if distance > radius:
                 continue
+            driver_dest_lat = float(row_value(driver, "destination_lat") or 0)
+            driver_dest_lng = float(row_value(driver, "destination_lng") or 0)
+            if request_dest_lat and request_dest_lng and driver_dest_lat and driver_dest_lng:
+                dropoff_distance = distance_miles_between(request_dest_lat, request_dest_lng, driver_dest_lat, driver_dest_lng)
+                allowed_dropoff_deviation = max(
+                    10.0,
+                    min(30.0, max(float(row_value(driver, "max_pickup_distance_miles") or 0), float(radius))),
+                )
+                if dropoff_distance > allowed_dropoff_deviation:
+                    continue
             cursor = con.execute(
                 """
                 INSERT OR IGNORE INTO ride_dispatch_notifications
@@ -12059,6 +12317,7 @@ def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object
         "id", "name", "brand", "model", "year", "category", "type", "fuel_type",
         "seats", "bags", "doors", "transmission", "daily_price", "badge",
         "features", "location", "image_url", "booked_until_date", "booked_until_time",
+        "listing_source", "review_status", "available_from_date", "available_to_date",
     )
     return {field: row_value(row, field) for field in public_fields}
 
@@ -13006,17 +13265,25 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
     last_read_id = int(row_value(row, "last_read_message_id") or 0)
     community_public_id = row_value(row, "community_public_id")
     community_name = row_value(row, "community_name")
+    ride_public_id = row_value(row, "ride_public_id")
+    ride_route = " → ".join(
+        bit for bit in (row_value(row, "ride_origin_label"), row_value(row, "ride_destination_label")) if bit
+    )
     other_online = int(row_value(row, "other_online") or 0) > 0
     return {
         "id": row_value(row, "public_id"),
         "conversationId": int(row_value(row, "id") or 0),
         "postId": row_value(row, "post_public_id"),
+        "rideId": ride_public_id,
         "communityId": community_public_id,
-        "kind": row_value(row, "conversation_type") or ("GROUP" if community_public_id else "DIRECT"),
+        "kind": row_value(row, "conversation_type") or ("GROUP" if community_public_id else "RIDE" if ride_public_id else "DIRECT"),
         "status": row_value(row, "status") or "ACTIVE",
-        "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or "Accommodation chat",
+        "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or row_value(row, "ride_title") or "FairFares chat",
         "postTitle": row_value(row, "post_title"),
         "postCategory": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "post_category"), "Housing"),
+        "rideTitle": row_value(row, "ride_title"),
+        "rideType": row_value(row, "ride_type"),
+        "rideRoute": ride_route,
         "otherName": community_name or row_value(row, "other_name") or "FairFares member",
         "otherUserId": int(row_value(row, "other_user_id") or 0),
         "otherOnline": other_online if not community_public_id else False,
@@ -13036,17 +13303,34 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                posts.public_id AS post_public_id,
                posts.title AS post_title,
                posts.category AS post_category,
+               rides.public_id AS ride_public_id,
+               rides.title AS ride_title,
+               rides.ride_type AS ride_type,
+               rides.origin_label AS ride_origin_label,
+               rides.destination_label AS ride_destination_label,
                communities.public_id AS community_public_id,
                communities.name AS community_name,
-               communities.kind AS community_kind
+               communities.kind AS community_kind,
+               participant.last_read_message_id,
+               participant.muted_at,
+               participant.blocked_at,
+               other_user.id AS other_user_id,
+               other_user.name AS other_name,
+               MAX(other_sessions.last_seen_at) AS other_last_seen_at,
+               MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
         JOIN chat_participants participant ON participant.conversation_id = conversations.id
         LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        LEFT JOIN ride_posts rides ON rides.id = conversations.ride_post_id
         LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
+        LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
+        LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+        LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
         WHERE conversations.id = ? AND participant.user_id = ?
+        GROUP BY conversations.id
         LIMIT 1
         """,
-        (conversation_id, user_id),
+        (user_id, conversation_id, user_id),
     ).fetchone()
 
 
@@ -13057,17 +13341,34 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                posts.public_id AS post_public_id,
                posts.title AS post_title,
                posts.category AS post_category,
+               rides.public_id AS ride_public_id,
+               rides.title AS ride_title,
+               rides.ride_type AS ride_type,
+               rides.origin_label AS ride_origin_label,
+               rides.destination_label AS ride_destination_label,
                communities.public_id AS community_public_id,
                communities.name AS community_name,
-               communities.kind AS community_kind
+               communities.kind AS community_kind,
+               participant.last_read_message_id,
+               participant.muted_at,
+               participant.blocked_at,
+               other_user.id AS other_user_id,
+               other_user.name AS other_name,
+               MAX(other_sessions.last_seen_at) AS other_last_seen_at,
+               MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
         JOIN chat_participants participant ON participant.conversation_id = conversations.id
         LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+        LEFT JOIN ride_posts rides ON rides.id = conversations.ride_post_id
         LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
+        LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
+        LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+        LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
         WHERE conversations.public_id = ? AND participant.user_id = ?
+        GROUP BY conversations.id
         LIMIT 1
         """,
-        (public_id, user_id),
+        (user_id, public_id, user_id),
     ).fetchone()
 
 
@@ -13121,6 +13422,61 @@ def get_or_create_accommodation_conversation(
         VALUES (?, 'HOST_GUEST', ?, ?, CURRENT_TIMESTAMP)
         """,
         (public_id, post["id"], row_value(post, "title")),
+    )
+    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, sender_id),
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, recipient_id),
+    )
+    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
+
+
+def get_or_create_ride_conversation(
+    con: sqlite3.Connection,
+    ride_public_id: str,
+    sender: sqlite3.Row,
+) -> tuple[sqlite3.Row | None, str]:
+    ride = con.execute(
+        "SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1",
+        (ride_public_id,),
+    ).fetchone()
+    if not ride:
+        return None, "Ride post was not found."
+    if row_value(ride, "status") != "ACTIVE":
+        return None, "That ride is no longer active."
+    sender_id = int(row_value(sender, "id") or 0)
+    recipient_id = int(row_value(ride, "user_id") or 0)
+    if not recipient_id or recipient_id == sender_id:
+        return None, "This ride cannot receive chat messages from this account."
+    recipient = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (recipient_id,)).fetchone()
+    if not recipient:
+        return None, "This ride owner does not have an active FairFares account."
+    existing = con.execute(
+        """
+        SELECT conversations.*
+        FROM chat_conversations conversations
+        JOIN chat_participants p1 ON p1.conversation_id = conversations.id AND p1.user_id = ?
+        JOIN chat_participants p2 ON p2.conversation_id = conversations.id AND p2.user_id = ?
+        WHERE conversations.ride_post_id = ?
+        LIMIT 1
+        """,
+        (sender_id, recipient_id, ride["id"]),
+    ).fetchone()
+    if existing:
+        return existing, ""
+    route = " -> ".join(bit for bit in (row_value(ride, "origin_label"), row_value(ride, "destination_label")) if bit)
+    subject = row_value(ride, "title") or route or "FairFares ride"
+    public_id = chat_public_id()
+    con.execute(
+        """
+        INSERT INTO chat_conversations (public_id, conversation_type, ride_post_id, subject, last_message_at)
+        VALUES (?, 'RIDE', ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (public_id, ride["id"], subject),
     )
     conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
     con.execute(
@@ -13231,6 +13587,11 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    posts.public_id AS post_public_id,
                    posts.title AS post_title,
                    posts.category AS post_category,
+                   rides.public_id AS ride_public_id,
+                   rides.title AS ride_title,
+                   rides.ride_type AS ride_type,
+                   rides.origin_label AS ride_origin_label,
+                   rides.destination_label AS ride_destination_label,
                    communities.public_id AS community_public_id,
                    communities.name AS community_name,
                    communities.kind AS community_kind,
@@ -13247,6 +13608,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             FROM chat_conversations conversations
             JOIN chat_participants participant ON participant.conversation_id = conversations.id AND participant.user_id = ?
             LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+            LEFT JOIN ride_posts rides ON rides.id = conversations.ride_post_id
             LEFT JOIN chat_messages last_message ON last_message.id = (
                 SELECT id FROM chat_messages
                 WHERE conversation_id = conversations.id AND deleted_at IS NULL
@@ -14923,8 +15285,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rides":
             self.api_mobile_rides(parsed)
             return
+        if parsed.path == "/api/mobile/rides/driver-profile":
+            self.api_mobile_ride_driver_profile()
+            return
         if parsed.path == "/api/mobile/rentals":
             self.api_mobile_rentals(parsed)
+            return
+        if parsed.path == "/api/mobile/rentals/owner-listings":
+            self.api_mobile_rental_owner_listings()
             return
         if parsed.path == "/api/mobile/rentals/bookings":
             self.api_mobile_rental_bookings()
@@ -15048,8 +15416,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/rides": self.api_mobile_create_ride,
+            "/api/mobile/rides/driver-profile": self.api_mobile_save_ride_driver_profile,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
+            "/api/mobile/rentals/listing": self.api_mobile_create_rental_listing,
             "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
             "/api/mobile/rentals/cancel-request": self.api_mobile_rental_cancel_request,
             "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
@@ -16037,14 +16407,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "conversation": {
-                    "id": row_value(conversation, "public_id"),
-                    "kind": row_value(conversation, "conversation_type") or ("GROUP" if row_value(conversation, "community_id") else "DIRECT"),
-                    "status": row_value(conversation, "status") or "ACTIVE",
-                    "subject": row_value(conversation, "community_name") or row_value(conversation, "subject") or row_value(conversation, "post_title") or "Accommodation chat",
-                    "postId": row_value(conversation, "post_public_id"),
-                    "communityId": row_value(conversation, "community_public_id"),
-                },
+                "conversation": chat_row_payload(conversation, current_user_id),
                 "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
                 "hasMore": has_more,
                 "nextBefore": int(row_value(messages[0], "id") or 0) if has_more and messages else 0,
@@ -16061,8 +16424,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """,
             (conversation["id"], sender["id"]),
         ).fetchall()
-        conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
-        post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
+        if row_value(conversation, "ride_public_id") or row_value(conversation, "ride_post_id"):
+            conversation_url = f"{self.public_origin()}/dashboard?tab=rides#rides"
+            post_title = row_value(conversation, "subject") or row_value(conversation, "ride_title") or "a FairFares ride"
+        else:
+            conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
+            post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
         for recipient in recipients:
             email = normalize_email(row_value(recipient, "email"))
             if not email:
@@ -16086,12 +16453,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         post_public_id = (form.get("post_id") or "").strip()
+        ride_public_id = (form.get("ride_id") or "").strip()
         community_public_id = (form.get("community_id") or "").strip()
         raw_message_text = (form.get("message") or "").strip()
-        message_text = raw_message_text or ("Hi, I am interested in this accommodation post." if post_public_id else "")
+        message_text = raw_message_text or (
+            "Hi, I am interested in this accommodation post."
+            if post_public_id
+            else "Hi, I am interested in this ride."
+            if ride_public_id
+            else ""
+        )
         client_message_id = (form.get("client_message_id") or "").strip()
-        if not post_public_id and not community_public_id:
-            self.send_json({"ok": False, "message": "Choose a housing post or group first."}, 400)
+        if not post_public_id and not ride_public_id and not community_public_id:
+            self.send_json({"ok": False, "message": "Choose a housing post, ride, or group first."}, 400)
             return
         if len(message_text) > 2000:
             self.send_json({"ok": False, "message": "Message is too long."}, 400)
@@ -16099,6 +16473,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             if community_public_id:
                 conversation, error = get_or_create_community_conversation(con, community_public_id, user)
+            elif ride_public_id:
+                conversation, error = get_or_create_ride_conversation(con, ride_public_id, user)
             else:
                 conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
             if not conversation:
@@ -16112,14 +16488,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
             if message:
                 self.notify_chat_recipients(con, full_conversation, user, message)
+            conversation_payload = chat_row_payload(full_conversation, int(user["id"]))
         self.send_json(
             {
                 "ok": True,
-                "conversation": {
-                    "id": row_value(conversation, "public_id"),
-                    "subject": row_value(full_conversation, "community_name") or row_value(conversation, "subject"),
-                    "communityId": row_value(full_conversation, "community_public_id"),
-                },
+                "conversation": conversation_payload,
                 "message": chat_message_payload(message, int(user["id"])) if message else None,
             }
         )
@@ -23146,6 +23519,96 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_mobile_ride_driver_profile(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to manage driver details."}, 401)
+            return
+        self.send_json({"ok": True, "profile": get_ride_driver_profile(int(row_value(user, "id") or 0))})
+
+    def api_mobile_save_ride_driver_profile(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to manage driver details."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        raw_service_types = payload.get("serviceTypes") or payload.get("service_types") or []
+        if isinstance(raw_service_types, list):
+            service_types = ",".join(
+                item for item in (normalize_ride_type(str(value)) for value in raw_service_types) if item
+            )
+        else:
+            service_types = ",".join(
+                item for item in (normalize_ride_type(value.strip()) for value in str(raw_service_types).split(",")) if item
+            )
+        raw_days = payload.get("availabilityDays") or payload.get("availability_days") or []
+        if isinstance(raw_days, list):
+            availability_days = ",".join(clean_text_value(value, 12) for value in raw_days if clean_text_value(value, 12))
+        else:
+            availability_days = clean_text_value(raw_days, 120)
+        vehicle_make_model = clean_text_value(payload.get("vehicleMakeModel") or payload.get("vehicle_make_model"), 120)
+        license_plate = clean_text_value(payload.get("licensePlate") or payload.get("license_plate"), 40)
+        license_state = clean_text_value(payload.get("licenseState") or payload.get("license_state"), 40).upper()
+        insurance_provider = clean_text_value(payload.get("insuranceProvider") or payload.get("insurance_provider"), 120)
+        seat_count = max(1, min(int(float_from_value(payload.get("seatCount") or payload.get("seat_count") or "4") or 4), 8))
+        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "15") or 15), 180))
+        max_pickup_distance = max(1, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "10") or 10, 100))
+        with db() as con:
+            existing = con.execute("SELECT * FROM ride_driver_profiles WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+            review_status = row_value(existing, "review_status") or "PENDING_REVIEW" if existing else "PENDING_REVIEW"
+            if review_status == "APPROVED":
+                review_status = "PENDING_REVIEW"
+            con.execute(
+                """
+                INSERT INTO ride_driver_profiles
+                (user_id, vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state,
+                 insurance_provider, insurance_policy_last4, service_types, availability_days,
+                 availability_start_time, availability_end_time, seat_count, luggage_space,
+                 max_detour_minutes, max_pickup_distance_miles, review_status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    vehicle_make_model = excluded.vehicle_make_model,
+                    vehicle_year = excluded.vehicle_year,
+                    vehicle_color = excluded.vehicle_color,
+                    license_plate = excluded.license_plate,
+                    license_state = excluded.license_state,
+                    insurance_provider = excluded.insurance_provider,
+                    insurance_policy_last4 = excluded.insurance_policy_last4,
+                    service_types = excluded.service_types,
+                    availability_days = excluded.availability_days,
+                    availability_start_time = excluded.availability_start_time,
+                    availability_end_time = excluded.availability_end_time,
+                    seat_count = excluded.seat_count,
+                    luggage_space = excluded.luggage_space,
+                    max_detour_minutes = excluded.max_detour_minutes,
+                    max_pickup_distance_miles = excluded.max_pickup_distance_miles,
+                    review_status = excluded.review_status,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    user_id,
+                    vehicle_make_model,
+                    clean_text_value(payload.get("vehicleYear") or payload.get("vehicle_year"), 12),
+                    clean_text_value(payload.get("vehicleColor") or payload.get("vehicle_color"), 40),
+                    license_plate,
+                    license_state,
+                    insurance_provider,
+                    clean_text_value(payload.get("insurancePolicyLast4") or payload.get("insurance_policy_last4"), 8),
+                    service_types,
+                    availability_days,
+                    clean_text_value(payload.get("availabilityStartTime") or payload.get("availability_start_time"), 30),
+                    clean_text_value(payload.get("availabilityEndTime") or payload.get("availability_end_time"), 30),
+                    seat_count,
+                    clean_text_value(payload.get("luggageSpace") or payload.get("luggage_space"), 120),
+                    max_detour_minutes,
+                    max_pickup_distance,
+                    review_status,
+                ),
+            )
+            row = con.execute("SELECT * FROM ride_driver_profiles WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+        self.send_json({"ok": True, "profile": mobile_ride_driver_profile_payload(row)})
+
     def api_mobile_rentals(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         location = (params.get("location", [""])[0] or "").strip()
@@ -23165,6 +23628,65 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "cars": [mobile_car_payload(car) for car in cars],
                 "cheapest": mobile_car_payload(cars[0]) if cars else None,
+            }
+        )
+
+    def api_mobile_rental_owner_listings(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to view your rental car listings."}, 401)
+            return
+        with db() as con:
+            rows = con.execute(
+                """
+                SELECT cars.*,
+                       active.dropoff_date AS booked_until_date,
+                       active.dropoff_time AS booked_until_time,
+                       active.booking_status AS active_booking_status
+                FROM cars
+                LEFT JOIN (
+                    SELECT b.*
+                    FROM bookings b
+                    JOIN (
+                        SELECT car_id, MAX(id) AS latest_id
+                        FROM bookings
+                        WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                           OR (
+                               booking_status = 'PENDING_HOLD'
+                               AND payment_status = 'HOLD_PENDING'
+                               AND hold_expires_at IS NOT NULL
+                               AND datetime(hold_expires_at) > datetime('now')
+                           )
+                        GROUP BY car_id
+                    ) latest ON latest.latest_id = b.id
+                ) active ON active.car_id = cars.id
+                WHERE cars.owner_user_id = ?
+                  AND UPPER(TRIM(cars.status)) != 'DELETED'
+                ORDER BY cars.id DESC
+                """,
+                (int(row_value(user, "id") or 0),),
+            ).fetchall()
+        self.send_json({"ok": True, "cars": [mobile_car_payload(row) for row in rows]})
+
+    def api_mobile_create_rental_listing(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before listing your car."}, 401)
+            return
+        payload = self.read_json_body()
+        try:
+            car = create_owner_car_listing(int(row_value(user, "id") or 0), payload)
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        except Exception:
+            self.send_json({"ok": False, "error": "Unable to save this car listing right now."}, 500)
+            return
+        self.send_json(
+            {
+                "ok": True,
+                "car": mobile_car_payload(car),
+                "message": "Car listing saved. FairFares will review owner documents before public handoff.",
             }
         )
 
@@ -23690,6 +24212,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         elif not pickup_date:
             self.send_json({"ok": False, "error": "Pickup date is required."}, 400)
             return
+        if ride_type == "CARPOOL_OFFER":
+            profile = get_ride_driver_profile(int(row_value(user, "id") or 0))
+            if not profile.get("readyForOffers"):
+                missing = ", ".join(str(item) for item in profile.get("missing", [])[:3])
+                self.send_json(
+                    {
+                        "ok": False,
+                        "error": f"Complete your driver profile before listing seats{': ' + missing if missing else ''}.",
+                        "profile": profile,
+                    },
+                    400,
+                )
+                return
         origin_point = ride_point(origin, city)
         destination_point = ride_point(destination, city)
         origin_label = ride_display_label(origin, origin_point, city)

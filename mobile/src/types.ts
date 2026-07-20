@@ -43,9 +43,16 @@ export type FairFaresUser = {
 export type ChatConversation = {
   id: string;
   communityId?: string;
-  kind?: "DIRECT" | "GROUP" | "HOST_GUEST" | "BOOKING" | "SUPPORT";
+  postId?: string;
+  rideId?: string;
+  kind?: "DIRECT" | "GROUP" | "HOST_GUEST" | "BOOKING" | "SUPPORT" | "RIDE";
   status?: string;
   subject: string;
+  postTitle?: string;
+  postCategory?: string;
+  rideTitle?: string;
+  rideType?: string;
+  rideRoute?: string;
   otherName: string;
   otherUserId?: number;
   otherOnline?: boolean;
@@ -120,6 +127,9 @@ export type RidePost = {
   notes: string;
   status: string;
   distanceMiles: number | null;
+  pickupDistanceMiles?: number | null;
+  dropoffDistanceMiles?: number | null;
+  routeDeviationMiles?: number | null;
   matchScore: number;
   createdAt: string;
 };
@@ -131,6 +141,30 @@ export type RideDispatchSummary = {
     radiusMiles: number;
     notifiedCount: number;
   }>;
+};
+
+export type RideDriverProfile = {
+  exists: boolean;
+  vehicleMakeModel?: string;
+  vehicleYear?: string;
+  vehicleColor?: string;
+  licensePlate?: string;
+  licenseState?: string;
+  insuranceProvider?: string;
+  insurancePolicyLast4?: string;
+  serviceTypes: RideType[];
+  availabilityDays: string[];
+  availabilityStartTime?: string;
+  availabilityEndTime?: string;
+  seatCount?: number;
+  luggageSpace?: string;
+  maxDetourMinutes?: number;
+  maxPickupDistanceMiles?: number;
+  reviewStatus: string;
+  reviewNotes?: string;
+  readyForOffers: boolean;
+  missing: string[];
+  updatedAt?: string;
 };
 
 export type RideInput = {
@@ -175,6 +209,32 @@ export type Car = {
   image_url: string;
   booked_until_date: string;
   booked_until_time: string;
+  listing_source?: string;
+  review_status?: string;
+  available_from_date?: string;
+  available_to_date?: string;
+};
+
+export type RentalCarListingInput = {
+  name?: string;
+  brand?: string;
+  model?: string;
+  year?: string;
+  category?: string;
+  type?: string;
+  fuelType?: string;
+  seats?: string;
+  bags?: string;
+  doors?: string;
+  transmission?: string;
+  dailyPrice: string;
+  color?: string;
+  location: string;
+  licensePlate?: string;
+  availableFrom?: string;
+  availableTo?: string;
+  features?: string;
+  notes?: string;
 };
 
 export type RentalBooking = {

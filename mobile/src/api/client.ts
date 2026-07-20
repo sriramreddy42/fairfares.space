@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideInput, RidePost, RideType, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
 
 declare const process: {
@@ -196,6 +196,20 @@ export async function createMobileRide(input: RideInput) {
   return { ride: payload.ride, dispatch: payload.dispatch };
 }
 
+export async function getRideDriverProfile() {
+  const payload = await request<{ ok: boolean; profile: RideDriverProfile }>("/api/mobile/rides/driver-profile");
+  return payload.profile;
+}
+
+export async function saveRideDriverProfile(input: Partial<RideDriverProfile>) {
+  const payload = await request<{ ok: boolean; profile: RideDriverProfile }>("/api/mobile/rides/driver-profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  return payload.profile;
+}
+
 export type AccommodationLocationLookup = {
   ok: boolean;
   metro: string;
@@ -246,6 +260,19 @@ export async function getCars(location = "", category = "") {
   const query = params.toString();
   const payload = await request<{ cars: Car[]; cheapest?: Car | null }>(`/api/mobile/rentals${query ? `?${query}` : ""}`);
   return payload.cars || [];
+}
+
+export async function getMyRentalCarListings() {
+  const payload = await request<{ ok: boolean; cars: Car[] }>("/api/mobile/rentals/owner-listings");
+  return payload.cars || [];
+}
+
+export async function listRentalCar(details: RentalCarListingInput) {
+  return request<{ ok: boolean; car: Car; message: string }>("/api/mobile/rentals/listing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(details)
+  });
 }
 
 function rentalPayload(carId: number, details?: Partial<RentalSearchInput>) {
@@ -439,21 +466,29 @@ export async function getChatCommunities() {
 }
 
 export async function getChatMessages(conversationId: string) {
-  return request<{ ok: boolean; conversation: { id: string; subject: string; postId?: string; communityId?: string; kind?: string; status?: string }; messages: ChatMessage[]; hasMore: boolean; nextBefore: number }>(
+  return request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; hasMore: boolean; nextBefore: number }>(
     `/api/chat/messages?conversation_id=${encodeURIComponent(conversationId)}`
   );
 }
 
 export async function startChatForPost(postId: string, message: string) {
-  return request<{ ok: boolean; conversation: { id: string; subject: string; communityId?: string; otherName?: string }; message: ChatMessage | null }>("/api/chat/conversations", {
+  return request<{ ok: boolean; conversation: ChatConversation; message: ChatMessage | null }>("/api/chat/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ post_id: postId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
   });
 }
 
+export async function startChatForRide(rideId: string, message: string) {
+  return request<{ ok: boolean; conversation: ChatConversation; message: ChatMessage | null }>("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ ride_id: rideId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
 export async function openCommunityChat(communityId: string) {
-  return request<{ ok: boolean; conversation: { id: string; subject: string; communityId?: string }; message: ChatMessage | null }>("/api/chat/conversations", {
+  return request<{ ok: boolean; conversation: ChatConversation; message: ChatMessage | null }>("/api/chat/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId })

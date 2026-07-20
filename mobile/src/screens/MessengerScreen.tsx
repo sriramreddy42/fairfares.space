@@ -14,17 +14,20 @@ import {
   openCommunityChat,
   reportChatMessage,
   sendChatMessage,
-  startChatForPost
+  startChatForPost,
+  startChatForRide
 } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
-import { BootstrapPayload, ChatConversation, ChatMessage, Community, HousingPost } from "../types";
+import { BootstrapPayload, ChatConversation, ChatMessage, Community, HousingPost, RidePost } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
   pendingPost: HousingPost | null;
+  pendingRide: RidePost | null;
   onRequireLogin: () => void;
   onClearPendingPost?: () => void;
+  onClearPendingRide?: () => void;
   onThreadModeChange?: (active: boolean) => void;
 };
 
@@ -63,14 +66,19 @@ function listingPosterName(post: HousingPost | null) {
   return post?.posterName?.trim() || "Listing poster";
 }
 
-export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPendingPost, onThreadModeChange }: Props) {
+function rideContextLabel(ride: RidePost | null) {
+  if (!ride) return "";
+  return ride.title || [ride.origin, ride.destination].filter(Boolean).join(" -> ") || "FairFares ride";
+}
+
+export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin, onClearPendingPost, onClearPendingRide, onThreadModeChange }: Props) {
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState("");
-  const [activeSubject, setActiveSubject] = useState(pendingPost?.title || "");
+  const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState("");
@@ -79,7 +87,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
   const [threadLoading, setThreadLoading] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupDraft, setGroupDraft] = useState(blankGroup);
-  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost));
+  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
 
   useEffect(() => {
     setConversations(data?.chat.conversations || []);
@@ -95,6 +103,16 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
       setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
     }
   }, [pendingPost?.id]);
+
+  useEffect(() => {
+    if (pendingRide) {
+      setActiveConversationId("");
+      setActiveConversation(null);
+      setActiveSubject(rideContextLabel(pendingRide));
+      setMessages([]);
+      setMessageText(`Hi, I am interested in this ride from ${pendingRide.origin} to ${pendingRide.destination}. Is it still available?`);
+    }
+  }, [pendingRide?.id]);
 
   useEffect(() => {
     if (signedIn) {
@@ -158,9 +176,15 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
       setActiveSubject(payload.conversation.subject || conversation.subject);
       setActiveConversation({
         ...conversation,
+        ...payload.conversation,
         kind: (payload.conversation.kind as ChatConversation["kind"]) || conversation.kind,
         status: payload.conversation.status || conversation.status,
-        communityId: payload.conversation.communityId || conversation.communityId
+        communityId: payload.conversation.communityId || conversation.communityId,
+        otherName: payload.conversation.otherName || conversation.otherName,
+        otherOnline: payload.conversation.otherOnline ?? conversation.otherOnline,
+        otherLastSeenAt: payload.conversation.otherLastSeenAt || conversation.otherLastSeenAt,
+        mutedAt: payload.conversation.mutedAt || conversation.mutedAt,
+        blockedAt: payload.conversation.blockedAt || conversation.blockedAt
       });
       setMessages(payload.messages || []);
       const lastMessage = payload.messages[payload.messages.length - 1];
@@ -204,6 +228,21 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
           kind: response.conversation.communityId ? "GROUP" : "HOST_GUEST",
           subject: response.conversation.subject || pendingPost.title,
           otherName: response.conversation.otherName || listingPosterName(pendingPost),
+          lastMessage: cleanMessage,
+          lastMessageAt: new Date().toISOString(),
+          unread: 0
+        });
+        setMessages(response.message ? [response.message] : []);
+      } else if (pendingRide) {
+        const response = await startChatForRide(pendingRide.id, cleanMessage);
+        setActiveConversationId(response.conversation.id);
+        setActiveSubject(response.conversation.subject || rideContextLabel(pendingRide));
+        setActiveConversation({
+          ...response.conversation,
+          id: response.conversation.id,
+          kind: response.conversation.kind || "RIDE",
+          subject: response.conversation.subject || rideContextLabel(pendingRide),
+          otherName: response.conversation.otherName || "Ride owner",
           lastMessage: cleanMessage,
           lastMessageAt: new Date().toISOString(),
           unread: 0
@@ -377,6 +416,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
     setMessageText("");
     setEditingMessageId(null);
     onClearPendingPost?.();
+    onClearPendingRide?.();
     onThreadModeChange?.(false);
   }
 
@@ -392,13 +432,13 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
             <BackIcon />
           </TouchableOpacity>
           <View style={styles.threadAvatar}>
-            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || listingPosterName(pendingPost) || activeSubject || "Chat")}</Text>
+            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || listingPosterName(pendingPost) || rideContextLabel(pendingRide) || activeSubject || "Chat")}</Text>
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </View>
           <View style={styles.threadHeaderCopy}>
-            <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || listingPosterName(pendingPost) || "FairFares chat"}</Text>
+            <Text style={styles.threadHeaderTitle} numberOfLines={1}>{activeConversation?.otherName || listingPosterName(pendingPost) || (pendingRide ? "Ride owner" : "") || "FairFares chat"}</Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {pendingPost?.title || (activeConversation?.communityId ? activeSubject || presenceLabel(activeConversation) : presenceLabel(activeConversation))}
+              {pendingPost?.title || rideContextLabel(pendingRide) || activeConversation?.rideRoute || (activeConversation?.communityId ? activeSubject || presenceLabel(activeConversation) : presenceLabel(activeConversation))}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions}><DotsIcon /></TouchableOpacity>
@@ -548,7 +588,7 @@ export function MessengerScreen({ data, pendingPost, onRequireLogin, onClearPend
             <View style={styles.avatar}><Text style={styles.avatarText}>{initials(chat.otherName || chat.subject || "Chat")}</Text></View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={styles.chatLast} numberOfLines={1}>{chat.lastMessage || chat.subject || "No messages yet."}</Text>
+              <Text style={styles.chatLast} numberOfLines={1}>{chat.lastMessage || chat.rideRoute || chat.subject || "No messages yet."}</Text>
             </View>
             <View style={styles.chatMeta}>
               <Text style={styles.chatTime}>{relativeTime(chat.lastMessageAt)}</Text>

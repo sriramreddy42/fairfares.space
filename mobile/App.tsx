@@ -9,7 +9,7 @@ import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
-import { BootstrapPayload, Car, HousingPost, RentalSearchInput, ServiceItem } from "./src/types";
+import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 
 const emptyListingForm: MobileHousingPostInput = {
   postMode: "HAVE_PLACE",
@@ -127,6 +127,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
+  const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
@@ -228,6 +229,16 @@ export default function App() {
 
   function openMessage(post: HousingPost) {
     setPendingPost(post);
+    setPendingRide(null);
+    setActiveTab("messenger");
+    if (!data?.user) {
+      setLoginOpen(true);
+    }
+  }
+
+  function openRideMessage(ride: RidePost) {
+    setPendingRide(ride);
+    setPendingPost(null);
     setActiveTab("messenger");
     if (!data?.user) {
       setLoginOpen(true);
@@ -587,8 +598,10 @@ export default function App() {
       <MessengerScreen
         data={data}
         pendingPost={pendingPost}
+        pendingRide={pendingRide}
         onRequireLogin={() => setLoginOpen(true)}
         onClearPendingPost={() => setPendingPost(null)}
+        onClearPendingRide={() => setPendingRide(null)}
         onThreadModeChange={setBottomTabsHidden}
       />
     ) : activeTab === "activity" ? (
@@ -617,6 +630,7 @@ export default function App() {
         selectedBudget={selectedBudget}
         selectedSort={selectedSort}
         onMessage={openMessage}
+        onRideMessage={openRideMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
         onAreaSelect={selectArea}
@@ -647,6 +661,7 @@ export default function App() {
         selectedBudget={selectedBudget}
         selectedSort={selectedSort}
         onMessage={openMessage}
+        onRideMessage={openRideMessage}
         onOpenMessenger={() => setActiveTab("messenger")}
         onNeedSelect={selectNeed}
         onAreaSelect={selectArea}

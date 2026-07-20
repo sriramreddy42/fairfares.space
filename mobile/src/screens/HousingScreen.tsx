@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, createMobileRide, getCars, getRides, getRidePlaceSuggestions, quoteRentalCar, rideMapUrl, RidePlaceSuggestion } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, Car, HousingPost, RentalQuote, RentalSearchInput, RideInput, RidePost, RideType } from "../types";
+import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -17,6 +17,7 @@ type Props = {
   selectedBudget: string;
   selectedSort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc";
   onMessage: (post: HousingPost) => void;
+  onRideMessage: (ride: RidePost) => void;
   onOpenMessenger: () => void;
   onNeedSelect: (need: string) => void;
   onAreaSelect: (area: string) => void;
@@ -32,10 +33,10 @@ type Props = {
 };
 
 const quickActions: Array<{ label: string; icon: ImageSourcePropType; need: string }> = [
-  { label: "I need a place", icon: appAssets.bed, need: "need_place" },
+  { label: "Need a place", icon: appAssets.bed, need: "need_place" },
   { label: "Need roommates", icon: appAssets.roommates, need: "need_roommates" },
-  { label: "I need a ride", icon: appAssets.ride, need: "ride_need" },
-  { label: "I provide a ride", icon: appAssets.ride, need: "ride_offer" }
+  { label: "Need a ride", icon: appAssets.ride, need: "ride_need" },
+  { label: "Offer a ride", icon: appAssets.ride, need: "ride_offer" }
 ];
 
 const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
@@ -50,7 +51,9 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
   { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
 ];
 
-const searchPhrases = ["Search city", "Search area", "Search building"];
+const housingSearchPhrases = ["Search housing anywhere in the USA", "Search a city, area, or building", "Find roommates near your preferred area"];
+const rideSearchPhrases = ["Search your ride here", "Where do you want to go?", "Find carpool options near you"];
+const rentalSearchPhrases = ["Search rental cars anywhere in the USA", "Find airport pickup cars", "Compare daily and weekly rates"];
 const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Distance ↑", value: "distanceAsc" },
   { label: "Distance ↓", value: "distanceDesc" },
@@ -75,6 +78,7 @@ const rideServicePosters: Array<{
   insight: string;
   tint: string;
   icon: ImageSourcePropType;
+  symbol: string;
   register: string;
   works: string[];
   access: string;
@@ -88,6 +92,7 @@ const rideServicePosters: Array<{
     insight: "Best for rides that happen again and again. Set the route once, then track each confirmed day in Activity.",
     tint: "#8a5a00",
     icon: appAssets.ride,
+    symbol: "CAL",
     register: "Enter pickup, destination, days, time, seats, and notes.",
     works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and FChat for each accepted ride."],
     access: "Choose this when the same route repeats."
@@ -101,6 +106,7 @@ const rideServicePosters: Array<{
     insight: "Best for a simple local ride today or later. Enter pickup and destination, then request nearby driver offers.",
     tint: "#243b73",
     icon: appAssets.ride,
+    symbol: "GO",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
     works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat when a driver accepts."],
     access: "Choose this for one ride inside or near the city."
@@ -114,9 +120,43 @@ const rideServicePosters: Array<{
     insight: "Best when riders and drivers are already going the same direction. Useful for longer trips, airport runs, or shared commutes.",
     tint: "#0f5f4b",
     icon: appAssets.ride,
+    symbol: "POOL",
     register: "Enter route, date/time, seats, luggage, pickup radius, and contribution.",
     works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
     access: "Choose this for city-to-city, long-distance, or shared-cost rides."
+  }
+];
+const rideOfferSurfaces: Array<{
+  key: "scheduled" | "general" | "carpool";
+  title: string;
+  subtitle: string;
+  note: string;
+  type: RideType;
+  symbol: string;
+}> = [
+  {
+    key: "scheduled",
+    title: "Offer scheduled ride",
+    subtitle: "Daily or weekly commute seats",
+    note: "Driver can offer recurring seats on this schedule. Include weekdays, pickup window, seat count, and detour limit.",
+    type: "CARPOOL_OFFER",
+    symbol: "CAL"
+  },
+  {
+    key: "general",
+    title: "Offer general ride",
+    subtitle: "One-time local pickup",
+    note: "Driver can offer a one-time ride. Include pickup area, drop-off area, available time, seats, and contribution.",
+    type: "CARPOOL_OFFER",
+    symbol: "GO"
+  },
+  {
+    key: "carpool",
+    title: "Offer carpool",
+    subtitle: "Shared route and seats",
+    note: "Driver can offer open seats on a shared route. Include route, seat count, luggage space, timing, and pickup radius.",
+    type: "CARPOOL_OFFER",
+    symbol: "POOL"
   }
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
@@ -141,6 +181,27 @@ const rideChoiceOptions = [
   { key: "standard", title: "FairFares Ride", meta: "Everyday reliable pickup", multiplier: 1, eta: "2 min", seats: 4 },
   { key: "xl", title: "FairFares XL", meta: "More seats and luggage room", multiplier: 1.58, eta: "4 min", seats: 6 },
 ];
+const blankRideDriverProfile: RideDriverProfile = {
+  exists: false,
+  vehicleMakeModel: "",
+  vehicleYear: "",
+  vehicleColor: "",
+  licensePlate: "",
+  licenseState: "",
+  insuranceProvider: "",
+  insurancePolicyLast4: "",
+  serviceTypes: ["GENERAL_REQUEST", "SCHEDULED_REQUEST", "CARPOOL_OFFER"],
+  availabilityDays: ["Mon", "Tue", "Wed", "Thu", "Fri"],
+  availabilityStartTime: "7:00 AM",
+  availabilityEndTime: "7:00 PM",
+  seatCount: 4,
+  luggageSpace: "1 small bag",
+  maxDetourMinutes: 15,
+  maxPickupDistanceMiles: 10,
+  reviewStatus: "NOT_STARTED",
+  readyForOffers: false,
+  missing: []
+};
 const timeOptions = Array.from({ length: 48 }, (_, index) => {
   const hour = Math.floor(index / 2);
   const minute = index % 2 === 0 ? "00" : "30";
@@ -258,6 +319,28 @@ const initialRentalSearch: RentalSearchInput = {
   additionalDriverAge: ""
 };
 
+const initialRentalListingDraft: RentalCarListingInput = {
+  name: "",
+  brand: "",
+  model: "",
+  year: "",
+  category: "Sedan",
+  type: "Economy",
+  fuelType: "Gas",
+  seats: "5",
+  bags: "2",
+  doors: "4",
+  transmission: "Automatic",
+  dailyPrice: "",
+  color: "",
+  location: "Denver International Airport (DEN)",
+  licensePlate: "",
+  availableFrom: isoDateFromNow(1),
+  availableTo: isoDateFromNow(30),
+  features: "Airport pickup, no hidden fees, insured vehicle",
+  notes: ""
+};
+
 const initialRideForm: RideInput = {
   rideType: "GENERAL_REQUEST",
   city: "Denver, CO",
@@ -290,6 +373,7 @@ export function HousingScreen({
   selectedBudget,
   selectedSort,
   onMessage,
+  onRideMessage,
   onOpenMessenger,
   onNeedSelect,
   onAreaSelect,
@@ -307,7 +391,6 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
-  const [searchLetterCount, setSearchLetterCount] = useState(1);
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
@@ -316,6 +399,10 @@ export function HousingScreen({
   const [rentalQuote, setRentalQuote] = useState<RentalQuote | null>(null);
   const [rentalCheckoutInfo, setRentalCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [rentalPicker, setRentalPicker] = useState<null | "pickupLocation" | "returnLocation" | "pickupDate" | "returnDate" | "pickupTime" | "returnTime" | "renterAge">(null);
+  const [rentalOwnerOpen, setRentalOwnerOpen] = useState(false);
+  const [rentalOwnerBusy, setRentalOwnerBusy] = useState(false);
+  const [rentalOwnerCars, setRentalOwnerCars] = useState<Car[]>([]);
+  const [rentalListingDraft, setRentalListingDraft] = useState<RentalCarListingInput>(initialRentalListingDraft);
   const [rideForm, setRideForm] = useState<RideInput>(initialRideForm);
   const [rideRows, setRideRows] = useState<RidePost[]>([]);
   const [rideBusy, setRideBusy] = useState(false);
@@ -329,6 +416,10 @@ export function HousingScreen({
   const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("general");
   const [rideRequestStatus, setRideRequestStatus] = useState("");
   const [rideOwnerOpen, setRideOwnerOpen] = useState(false);
+  const [selectedRideOfferSurface, setSelectedRideOfferSurface] = useState<"scheduled" | "general" | "carpool">("general");
+  const [rideDriverProfile, setRideDriverProfile] = useState<RideDriverProfile | null>(null);
+  const [rideDriverDraft, setRideDriverDraft] = useState<RideDriverProfile>(blankRideDriverProfile);
+  const [rideDriverBusy, setRideDriverBusy] = useState(false);
   const { width: viewportWidth } = useWindowDimensions();
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -338,7 +429,14 @@ export function HousingScreen({
     ? selectedLocationText.split("·").pop()?.trim()
     : data?.location.suggested || data?.location.city || "";
   const rideDefaultPickup = selectedLocationText || data?.location.suggested || data?.location.city || "Current location";
-  const animatedSearchText = selectedLocationText || searchPhrases[searchPhraseIndex].slice(0, searchLetterCount);
+  const activeSearchPhrases =
+    mode === "ride"
+      ? rideSearchPhrases
+      : mode === "cheapCars"
+        ? rentalSearchPhrases
+        : housingSearchPhrases;
+  const activeSearchPhrase = activeSearchPhrases[searchPhraseIndex % activeSearchPhrases.length] || activeSearchPhrases[0];
+  const searchBarText = activeSearchPhrase;
   const cheapestCar = useMemo(
     () =>
       [...(rentalCars.length ? rentalCars : cars)]
@@ -397,17 +495,15 @@ export function HousingScreen({
   const detailImageWidth = Math.max(260, Math.min(viewportWidth - theme.spacing.md * 4, 620));
 
   useEffect(() => {
-    const phrase = searchPhrases[searchPhraseIndex];
     const timer = setTimeout(() => {
-      if (searchLetterCount < phrase.length) {
-        setSearchLetterCount((value) => value + 1);
-      } else {
-        setSearchPhraseIndex((value) => (value + 1) % searchPhrases.length);
-        setSearchLetterCount(1);
-      }
-    }, searchLetterCount < phrase.length ? 95 : 900);
+      setSearchPhraseIndex((value) => (value + 1) % activeSearchPhrases.length);
+    }, 1800);
     return () => clearTimeout(timer);
-  }, [searchLetterCount, searchPhraseIndex]);
+  }, [activeSearchPhrases.length, searchPhraseIndex]);
+
+  useEffect(() => {
+    setSearchPhraseIndex(0);
+  }, [mode]);
 
   useEffect(() => {
     setRentalCars(cars);
@@ -479,10 +575,21 @@ export function HousingScreen({
     onBottomTabsHiddenChange?.(false);
   }
 
-  function openRideOwnerTracker() {
+  async function openRideOwnerTracker() {
     setMode("ride");
     setRideOwnerOpen(true);
     onBottomTabsHiddenChange?.(true);
+    if (!data?.user) return;
+    setRideDriverBusy(true);
+    try {
+      const profile = await getRideDriverProfile();
+      setRideDriverProfile(profile);
+      setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
+    } catch {
+      setRideDriverProfile(null);
+    } finally {
+      setRideDriverBusy(false);
+    }
   }
 
   function closeRideOwnerTracker() {
@@ -490,13 +597,66 @@ export function HousingScreen({
     onBottomTabsHiddenChange?.(false);
   }
 
+  function updateRideDriverDraft<K extends keyof RideDriverProfile>(key: K, value: RideDriverProfile[K]) {
+    setRideDriverDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleRideDriverListValue(key: "serviceTypes" | "availabilityDays", value: string) {
+    setRideDriverDraft((current) => {
+      const currentValues = new Set((current[key] || []) as string[]);
+      if (currentValues.has(value)) {
+        currentValues.delete(value);
+      } else {
+        currentValues.add(value);
+      }
+      return { ...current, [key]: Array.from(currentValues) } as RideDriverProfile;
+    });
+  }
+
+  function selectRideOfferSurface(surface: (typeof rideOfferSurfaces)[number]) {
+    setSelectedRideOfferSurface(surface.key);
+    setRideDriverDraft((current) => {
+      const nextTypes = new Set(current.serviceTypes || []);
+      if (surface.key === "scheduled") nextTypes.add("SCHEDULED_REQUEST");
+      if (surface.key === "general") nextTypes.add("GENERAL_REQUEST");
+      nextTypes.add("CARPOOL_OFFER");
+      return {
+        ...current,
+        serviceTypes: Array.from(nextTypes) as RideType[]
+      };
+    });
+  }
+
+  async function saveRideOwnerProfile() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before saving driver details.");
+      return;
+    }
+    setRideDriverBusy(true);
+    try {
+      const profile = await saveRideDriverProfile(rideDriverDraft);
+      setRideDriverProfile(profile);
+      setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
+      Alert.alert("Driver profile saved", profile.readyForOffers ? "You can now list route and available seats." : `Add missing details: ${(profile.missing || []).join(", ")}`);
+    } catch (error) {
+      Alert.alert("Could not save driver profile", error instanceof Error ? error.message : "Try again.");
+    } finally {
+      setRideDriverBusy(false);
+    }
+  }
+
   function startRideOfferListing() {
     if (!data?.user) {
       Alert.alert("Login required", "Please login before listing your car.");
       return;
     }
+    if (!rideDriverProfile?.readyForOffers) {
+      Alert.alert("Driver profile needed", "Save vehicle, insurance, service type, and availability details before listing route/seats.");
+      return;
+    }
+    const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface) || rideOfferSurfaces[1];
     setRideOwnerOpen(false);
-    setSelectedRideService("carpool");
+    setSelectedRideService(offerSurface.key);
     setRidePlannerStage("plan");
     setRideFocusedField("origin");
     setRideRequestStatus("");
@@ -505,10 +665,11 @@ export function HousingScreen({
       city: data?.location.city || current.city || "Denver, CO",
       origin: rideDefaultPickup,
       destination: "",
-      rideType: "CARPOOL_OFFER",
-      seats: current.seats === "1" ? "3" : current.seats,
-      maxPickupDistanceMiles: current.maxPickupDistanceMiles || "5",
-      notes: current.notes || "Driver offering seats on this route. Include vehicle, seat count, luggage space, timing, and detour limit."
+      rideType: offerSurface.type,
+      seats: current.seats === "1" ? String(rideDriverDraft.seatCount || 3) : current.seats,
+      maxPickupDistanceMiles: current.maxPickupDistanceMiles || String(rideDriverDraft.maxPickupDistanceMiles || 5),
+      preferences: current.preferences || offerSurface.title,
+      notes: current.notes || offerSurface.note
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
@@ -692,12 +853,176 @@ export function HousingScreen({
               </View>
             </View>
 
+            <View style={styles.rideOwnerOfferGrid}>
+              {rideOfferSurfaces.map((surface) => {
+                const selected = surface.key === selectedRideOfferSurface;
+                return (
+                  <TouchableOpacity
+                    key={surface.key}
+                    style={[styles.rideOwnerOfferCard, selected && styles.rideOwnerOfferCardActive]}
+                    onPress={() => selectRideOfferSurface(surface)}
+                  >
+                    <View style={[styles.rideOwnerOfferIcon, selected && styles.rideOwnerOfferIconActive]}>
+                      <Text style={styles.rideOwnerOfferIconText}>{surface.symbol}</Text>
+                    </View>
+                    <Text style={styles.rideOwnerOfferTitle}>{surface.title}</Text>
+                    <Text style={styles.rideOwnerOfferSubtitle}>{surface.subtitle}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             <View style={styles.rideOwnerActionRow}>
               <TouchableOpacity style={styles.rideOwnerPrimaryButton} onPress={startRideOfferListing}>
-                <Text style={styles.rideOwnerPrimaryText}>List route / seats</Text>
+                <Text style={styles.rideOwnerPrimaryText}>{rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface)?.title || "List route / seats"}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.rideOwnerSecondaryButton} onPress={openRideGoogleMaps}>
                 <Text style={styles.rideOwnerSecondaryText}>Open map</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.rideOwnerCard}>
+              <View style={styles.rideOwnerRequestTop}>
+                <Text style={styles.rideOwnerSectionTitle}>Driver profile</Text>
+                <Text style={styles.rideOwnerRequestBadge}>
+                  {rideDriverProfile?.readyForOffers ? "Ready" : rideDriverProfile?.reviewStatus?.replace(/_/g, " ") || "Not started"}
+                </Text>
+              </View>
+              <Text style={styles.rideOwnerEmptyText}>
+                Save your vehicle, insurance, services, and availability. FairFares reviews the profile before rider requests can be accepted.
+              </Text>
+              <TextInput
+                style={styles.rideOwnerInput}
+                placeholder="Vehicle make/model, e.g. Toyota Camry"
+                placeholderTextColor={theme.colors.muted}
+                value={rideDriverDraft.vehicleMakeModel || ""}
+                onChangeText={(value) => updateRideDriverDraft("vehicleMakeModel", value)}
+              />
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Year"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rideDriverDraft.vehicleYear || ""}
+                  onChangeText={(value) => updateRideDriverDraft("vehicleYear", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Color"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rideDriverDraft.vehicleColor || ""}
+                  onChangeText={(value) => updateRideDriverDraft("vehicleColor", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Plate"
+                  placeholderTextColor={theme.colors.muted}
+                  autoCapitalize="characters"
+                  value={rideDriverDraft.licensePlate || ""}
+                  onChangeText={(value) => updateRideDriverDraft("licensePlate", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="State"
+                  placeholderTextColor={theme.colors.muted}
+                  autoCapitalize="characters"
+                  value={rideDriverDraft.licenseState || ""}
+                  onChangeText={(value) => updateRideDriverDraft("licenseState", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Insurance provider"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rideDriverDraft.insuranceProvider || ""}
+                  onChangeText={(value) => updateRideDriverDraft("insuranceProvider", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Policy last 4"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={rideDriverDraft.insurancePolicyLast4 || ""}
+                  onChangeText={(value) => updateRideDriverDraft("insurancePolicyLast4", value)}
+                />
+              </View>
+              <Text style={styles.rideOwnerFieldLabel}>Services you can provide</Text>
+              <View style={styles.rideOwnerStatusWrap}>
+                {[
+                  ["GENERAL_REQUEST", "General rides"],
+                  ["SCHEDULED_REQUEST", "Scheduled rides"],
+                  ["CARPOOL_OFFER", "Carpool seats"]
+                ].map(([value, label]) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[styles.rideOwnerStatusPill, rideDriverDraft.serviceTypes.includes(value as RideType) && styles.rideOwnerStatusPillActive]}
+                    onPress={() => toggleRideDriverListValue("serviceTypes", value)}
+                  >
+                    <Text style={styles.rideOwnerStatusPillText}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.rideOwnerFieldLabel}>Availability</Text>
+              <View style={styles.rideOwnerStatusWrap}>
+                {rideDays.map((day) => (
+                  <TouchableOpacity
+                    key={day}
+                    style={[styles.rideOwnerStatusPill, rideDriverDraft.availabilityDays.includes(day) && styles.rideOwnerStatusPillActive]}
+                    onPress={() => toggleRideDriverListValue("availabilityDays", day)}
+                  >
+                    <Text style={styles.rideOwnerStatusPillText}>{day}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Start time"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rideDriverDraft.availabilityStartTime || ""}
+                  onChangeText={(value) => updateRideDriverDraft("availabilityStartTime", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="End time"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rideDriverDraft.availabilityEndTime || ""}
+                  onChangeText={(value) => updateRideDriverDraft("availabilityEndTime", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Seats"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={String(rideDriverDraft.seatCount || "")}
+                  onChangeText={(value) => updateRideDriverDraft("seatCount", Number(value) || 1)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Pickup radius mi"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={String(rideDriverDraft.maxPickupDistanceMiles || "")}
+                  onChangeText={(value) => updateRideDriverDraft("maxPickupDistanceMiles", Number(value) || 10)}
+                />
+              </View>
+              <TextInput
+                style={styles.rideOwnerInput}
+                placeholder="Luggage space, e.g. 2 carry-ons"
+                placeholderTextColor={theme.colors.muted}
+                value={rideDriverDraft.luggageSpace || ""}
+                onChangeText={(value) => updateRideDriverDraft("luggageSpace", value)}
+              />
+              {rideDriverProfile?.missing?.length ? (
+                <Text style={styles.rideOwnerMissing}>Missing: {rideDriverProfile.missing.join(", ")}</Text>
+              ) : null}
+              <TouchableOpacity style={styles.rideOwnerSaveButton} onPress={saveRideOwnerProfile} disabled={rideDriverBusy}>
+                <Text style={styles.rideOwnerSaveText}>{rideDriverBusy ? "Saving..." : "Save driver profile"}</Text>
               </TouchableOpacity>
             </View>
 
@@ -751,6 +1076,278 @@ export function HousingScreen({
             </View>
           </ScrollView>
         </View>
+      </Modal>
+    );
+  }
+
+  function updateRentalListingDraft<K extends keyof RentalCarListingInput>(key: K, value: RentalCarListingInput[K]) {
+    setRentalListingDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  async function openRentalOwnerForm() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before listing a rental car.");
+      return;
+    }
+    setRentalOwnerOpen(true);
+    setRentalOwnerBusy(true);
+    try {
+      const ownerCars = await getMyRentalCarListings();
+      setRentalOwnerCars(ownerCars);
+    } catch {
+      setRentalOwnerCars([]);
+    } finally {
+      setRentalOwnerBusy(false);
+    }
+  }
+
+  function closeRentalOwnerForm() {
+    setRentalOwnerOpen(false);
+  }
+
+  async function submitRentalListing() {
+    if (!data?.user) {
+      Alert.alert("Login required", "Please login before listing a rental car.");
+      return;
+    }
+    const missing = [
+      !rentalListingDraft.name?.trim() && !(`${rentalListingDraft.brand || ""} ${rentalListingDraft.model || ""}`.trim()) ? "vehicle name" : "",
+      !rentalListingDraft.dailyPrice?.trim() ? "daily price" : "",
+      !rentalListingDraft.location?.trim() ? "pickup location" : "",
+      !rentalListingDraft.licensePlate?.trim() ? "license plate" : "",
+      !rentalListingDraft.availableFrom?.trim() ? "available from date" : ""
+    ].filter(Boolean);
+    if (missing.length) {
+      Alert.alert("More details needed", `Add ${missing.join(", ")} before submitting for review.`);
+      return;
+    }
+    setRentalOwnerBusy(true);
+    try {
+      const payload = await listRentalCar({
+        ...rentalListingDraft,
+        name: rentalListingDraft.name?.trim() || `${rentalListingDraft.brand || ""} ${rentalListingDraft.model || ""}`.trim(),
+        dailyPrice: String(rentalListingDraft.dailyPrice || "").replace(/[^0-9.]/g, "")
+      });
+      if (payload.car) {
+        setRentalOwnerCars((current) => [payload.car, ...current.filter((car) => car.id !== payload.car.id)]);
+        setRentalCars((current) => [payload.car, ...current.filter((car) => car.id !== payload.car.id)]);
+        setRentalSearched(true);
+      }
+      setRentalListingDraft(initialRentalListingDraft);
+      Alert.alert("Car submitted", payload.message || "Your rental car listing was submitted for review.");
+    } catch (error) {
+      Alert.alert("Could not list car", error instanceof Error ? error.message : "Try again.");
+    } finally {
+      setRentalOwnerBusy(false);
+    }
+  }
+
+  function renderRentalOwnerModal() {
+    const categoryOptions = ["Sedan", "SUV", "Minivan", "Compact"];
+    const fuelOptions = ["Gas", "Hybrid", "Electric"];
+    return (
+      <Modal visible={rentalOwnerOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={closeRentalOwnerForm}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.rentalOwnerScreen}>
+          <ScrollView contentContainerStyle={styles.rentalOwnerContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <View style={styles.rentalOwnerHeader}>
+              <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRentalOwnerForm}>
+                <Text style={styles.ridePlannerBackText}>‹</Text>
+              </TouchableOpacity>
+              <View style={styles.rentalOwnerHeaderCopy}>
+                <Text style={styles.rideOwnerEyebrow}>Car owner</Text>
+                <Text style={styles.rideOwnerTitle}>List your car</Text>
+              </View>
+            </View>
+
+            <View style={styles.rentalOwnerHero}>
+              <Image source={appAssets.carFallback} style={styles.rentalOwnerHeroIcon} resizeMode="contain" />
+              <View style={styles.rideOwnerHeroCopy}>
+                <Text style={styles.rideOwnerHeroTitle}>Submit vehicle, docs, availability, and pickup details.</Text>
+                <Text style={styles.rideOwnerHeroText}>
+                  FairFares reviews owner listings before they appear in rental search. Keep pickup notes and document readiness clear.
+                </Text>
+              </View>
+            </View>
+
+            {rentalOwnerCars.length ? (
+              <View style={styles.rentalOwnerCard}>
+                <Text style={styles.rideOwnerSectionTitle}>Your rental cars</Text>
+                {rentalOwnerCars.slice(0, 4).map((car) => (
+                  <View key={car.id} style={styles.rentalOwnerSavedCar}>
+                    <Text style={styles.rentalOwnerSavedTitle} numberOfLines={1}>{car.name}</Text>
+                    <Text style={styles.rentalOwnerSavedMeta}>{car.location || "Pickup location open"} · ${Number(car.daily_price || 0).toFixed(2)}/day</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            <View style={styles.rentalOwnerCard}>
+              <Text style={styles.rideOwnerSectionTitle}>Vehicle details</Text>
+              <TextInput
+                style={styles.rideOwnerInput}
+                placeholder="Listing title, e.g. Nissan Versa near DEN"
+                placeholderTextColor={theme.colors.muted}
+                value={rentalListingDraft.name || ""}
+                onChangeText={(value) => updateRentalListingDraft("name", value)}
+              />
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Brand"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.brand || ""}
+                  onChangeText={(value) => updateRentalListingDraft("brand", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Model"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.model || ""}
+                  onChangeText={(value) => updateRentalListingDraft("model", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Year"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={rentalListingDraft.year || ""}
+                  onChangeText={(value) => updateRentalListingDraft("year", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Color"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.color || ""}
+                  onChangeText={(value) => updateRentalListingDraft("color", value)}
+                />
+              </View>
+              <Text style={styles.rideOwnerFieldLabel}>Category</Text>
+              <View style={styles.rideOwnerStatusWrap}>
+                {categoryOptions.map((category) => (
+                  <TouchableOpacity
+                    key={category}
+                    style={[styles.rideOwnerStatusPill, rentalListingDraft.category === category && styles.rideOwnerStatusPillActive]}
+                    onPress={() => updateRentalListingDraft("category", category)}
+                  >
+                    <Text style={styles.rideOwnerStatusPillText}>{category}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.rideOwnerFieldLabel}>Fuel type</Text>
+              <View style={styles.rideOwnerStatusWrap}>
+                {fuelOptions.map((fuel) => (
+                  <TouchableOpacity
+                    key={fuel}
+                    style={[styles.rideOwnerStatusPill, rentalListingDraft.fuelType === fuel && styles.rideOwnerStatusPillActive]}
+                    onPress={() => updateRentalListingDraft("fuelType", fuel)}
+                  >
+                    <Text style={styles.rideOwnerStatusPillText}>{fuel}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Seats"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={rentalListingDraft.seats || ""}
+                  onChangeText={(value) => updateRentalListingDraft("seats", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Bags"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={rentalListingDraft.bags || ""}
+                  onChangeText={(value) => updateRentalListingDraft("bags", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Doors"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="number-pad"
+                  value={rentalListingDraft.doors || ""}
+                  onChangeText={(value) => updateRentalListingDraft("doors", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Transmission"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.transmission || ""}
+                  onChangeText={(value) => updateRentalListingDraft("transmission", value)}
+                />
+              </View>
+            </View>
+
+            <View style={styles.rentalOwnerCard}>
+              <Text style={styles.rideOwnerSectionTitle}>Availability and pricing</Text>
+              <TextInput
+                style={styles.rideOwnerInput}
+                placeholder="Pickup location, e.g. DEN or 1665 Logan St Denver"
+                placeholderTextColor={theme.colors.muted}
+                value={rentalListingDraft.location || ""}
+                onChangeText={(value) => updateRentalListingDraft("location", value)}
+              />
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Available from YYYY-MM-DD"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.availableFrom || ""}
+                  onChangeText={(value) => updateRentalListingDraft("availableFrom", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Available to"
+                  placeholderTextColor={theme.colors.muted}
+                  value={rentalListingDraft.availableTo || ""}
+                  onChangeText={(value) => updateRentalListingDraft("availableTo", value)}
+                />
+              </View>
+              <View style={styles.rideOwnerInputRow}>
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="Daily price"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="decimal-pad"
+                  value={rentalListingDraft.dailyPrice}
+                  onChangeText={(value) => updateRentalListingDraft("dailyPrice", value)}
+                />
+                <TextInput
+                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
+                  placeholder="License plate"
+                  placeholderTextColor={theme.colors.muted}
+                  autoCapitalize="characters"
+                  value={rentalListingDraft.licensePlate || ""}
+                  onChangeText={(value) => updateRentalListingDraft("licensePlate", value)}
+                />
+              </View>
+              <TextInput
+                style={styles.rideOwnerInput}
+                placeholder="Features, e.g. airport pickup, child seat, snow tires"
+                placeholderTextColor={theme.colors.muted}
+                value={rentalListingDraft.features || ""}
+                onChangeText={(value) => updateRentalListingDraft("features", value)}
+              />
+              <TextInput
+                style={[styles.rideOwnerInput, styles.rentalOwnerNotes]}
+                placeholder="Documents, insurance, pickup instructions, restrictions, and owner notes"
+                placeholderTextColor={theme.colors.muted}
+                value={rentalListingDraft.notes || ""}
+                onChangeText={(value) => updateRentalListingDraft("notes", value)}
+                multiline
+              />
+              <TouchableOpacity style={styles.rentalOwnerSubmit} onPress={submitRentalListing} disabled={rentalOwnerBusy}>
+                <Text style={styles.rentalOwnerSubmitText}>{rentalOwnerBusy ? "Submitting..." : "Submit car for review"}</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     );
   }
@@ -900,6 +1497,18 @@ export function HousingScreen({
             </View>
           </View>
         </ImageBackground>
+        <View style={styles.rentalOwnerCta}>
+          <View style={styles.rentalOwnerCtaIconWrap}>
+            <Image source={appAssets.carFallback} style={styles.rentalOwnerCtaIcon} resizeMode="contain" />
+          </View>
+          <View style={styles.rentalOwnerCtaCopy}>
+            <Text style={styles.rentalOwnerCtaTitle}>Own a car?</Text>
+            <Text style={styles.rentalOwnerCtaText}>List vehicle details, availability, pickup notes, and documents for review.</Text>
+          </View>
+          <TouchableOpacity style={styles.rentalOwnerCtaButton} onPress={openRentalOwnerForm}>
+            <Text style={styles.rentalOwnerCtaButtonText}>List</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.carSearchPanel}>
           <Text style={styles.carSearchTitle}>Search rental cars</Text>
           <Text style={styles.carFieldLabel}>Pickup location</Text>
@@ -1101,6 +1710,7 @@ export function HousingScreen({
     const mapUri = ridePlanComplete() ? rideMapUrl(rideForm.city, rideForm.origin, rideForm.destination) : "";
     const primaryChoice = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
     const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER").slice(0, 3);
+    const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const routeButtonWebProps =
       Platform.OS === "web"
         ? ({ onClick: planRideRoute } as React.ComponentProps<typeof Pressable> & { onClick: () => void })
@@ -1302,7 +1912,7 @@ export function HousingScreen({
                     <Text style={styles.rideChoiceName}>Direct agreement</Text>
                     <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments for this ride. Agree directly with the driver.</Text>
                   </View>
-                  <TouchableOpacity style={styles.rideInlineChatButton} onPress={onOpenMessenger}>
+                  <TouchableOpacity style={styles.rideInlineChatButton} onPress={() => selectedDriverOffer ? onRideMessage(selectedDriverOffer) : onOpenMessenger()}>
                     <Image source={appAssets.fchat} style={styles.rideInlineChatIcon} resizeMode="contain" />
                     <Text style={styles.rideInlineChatText}>FChat</Text>
                   </TouchableOpacity>
@@ -1397,6 +2007,7 @@ export function HousingScreen({
                   </View>
                   <View style={styles.ridePosterArt}>
                     <Image source={service.icon} style={styles.ridePosterIcon} resizeMode="contain" />
+                    <Text style={styles.ridePosterSymbol}>{service.symbol}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -1406,6 +2017,7 @@ export function HousingScreen({
             <View style={styles.rideServiceDetailHeader}>
               <View style={styles.rideServiceDetailIconWrap}>
                 <Image source={activeService.icon} style={styles.rideServiceDetailIcon} resizeMode="contain" />
+                <Text style={styles.rideServiceDetailSymbol}>{activeService.symbol}</Text>
               </View>
               <View style={styles.rideServiceDetailCopy}>
                 <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
@@ -1450,6 +2062,7 @@ export function HousingScreen({
   return (
     <>
     {renderRideOwnerTracker()}
+    {renderRentalOwnerModal()}
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
@@ -1477,7 +2090,7 @@ export function HousingScreen({
         <View style={styles.stickySearch}>
           <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-            <Text style={styles.searchText} numberOfLines={1}>{mode === "ride" ? (rideForm.destination || `Hi, ${displayName}`) : animatedSearchText}</Text>
+            <Text style={styles.searchText} numberOfLines={1}>{searchBarText}</Text>
             <Text style={styles.later}>{mode === "ride" ? "Later" : "Search"}</Text>
           </TouchableOpacity>
         </View>
@@ -1513,7 +2126,10 @@ export function HousingScreen({
       {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
         <>
 
-      <SectionHeader title="Create a post" />
+      <View style={styles.quickHeader}>
+        <Text style={styles.quickHeaderTitle}>Quick links</Text>
+        <Text style={styles.quickHeaderText}>List anywhere in the USA, find cheaper rides, or plan a move with carpool options.</Text>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
         {quickActions.map((action) => (
           <TouchableOpacity key={action.label} style={styles.quickAction} onPress={() => action.need.startsWith("ride") ? setMode("ride") : onNeedSelect(action.need)}>
@@ -1525,6 +2141,7 @@ export function HousingScreen({
         ))}
       </ScrollView>
 
+      <SectionHeader title="Create a post" />
       <View style={styles.postActionGrid}>
         {postActions.map((action) => (
           <TouchableOpacity key={action.intent} style={styles.postActionCard} onPress={() => onPostNeed(action.intent)}>
@@ -1711,15 +2328,18 @@ const styles = StyleSheet.create({
   topTabText: { color: theme.colors.muted, fontSize: 18, fontWeight: "900" },
   topTabTextActive: { color: theme.colors.text },
   stickySearch: { backgroundColor: theme.colors.bg, paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  searchBar: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
+  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
   searchIcon: { width: 30, height: 30 },
-  searchText: { color: theme.colors.soft, flex: 1, fontSize: 20, fontWeight: "800" },
-  later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, fontWeight: "900" },
-  segment: { backgroundColor: "#252a7a", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5 },
-  segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
-  segmentActive: { backgroundColor: theme.colors.text },
+  searchText: { color: theme.colors.soft, flex: 1, fontSize: 18, fontWeight: "800" },
+  later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 13, paddingVertical: 10, fontWeight: "900" },
+  segment: { backgroundColor: "rgba(80,92,255,0.30)", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)" },
+  segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13, borderWidth: 1, borderColor: "transparent" },
+  segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
   segmentText: { color: theme.colors.soft, fontSize: 17, fontWeight: "900" },
-  segmentTextActive: { color: theme.colors.blue },
+  segmentTextActive: { color: theme.colors.text },
+  quickHeader: { gap: 4 },
+  quickHeaderTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 39, fontWeight: "900" },
+  quickHeaderText: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "800", maxWidth: 320 },
   quickRow: { gap: theme.spacing.md },
   quickAction: { width: 92, alignItems: "center", gap: 9 },
   quickBubble: { width: 78, height: 78, borderRadius: 39, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
@@ -1930,6 +2550,7 @@ const styles = StyleSheet.create({
   ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 14, paddingVertical: 8, fontSize: 13, fontWeight: "900" },
   ridePosterArt: { width: 116, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
   ridePosterIcon: { width: 78, height: 78 },
+  ridePosterSymbol: { color: theme.colors.text, fontSize: 20, fontWeight: "900", letterSpacing: 0.8 },
   rideInsightCard: {
     borderRadius: theme.radius.lg,
     overflow: "hidden",
@@ -1960,6 +2581,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   rideServiceDetailIcon: { width: 42, height: 42 },
+  rideServiceDetailSymbol: { color: theme.colors.text, fontSize: 9, fontWeight: "900", marginTop: -5 },
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
   rideServiceDetailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
@@ -2190,6 +2812,23 @@ const styles = StyleSheet.create({
   rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", marginTop: 2 },
   rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 30, fontWeight: "600" },
+  rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  rideOwnerOfferCard: {
+    width: "48%",
+    minHeight: 132,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    padding: 12,
+    gap: 8
+  },
+  rideOwnerOfferCardActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(59,130,246,0.18)" },
+  rideOwnerOfferIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  rideOwnerOfferIconActive: { backgroundColor: theme.colors.blue },
+  rideOwnerOfferIconText: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
+  rideOwnerOfferTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "900" },
+  rideOwnerOfferSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
   rideOwnerScreen: { flex: 1, backgroundColor: "#101010" },
   rideOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 44, gap: 16 },
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -2224,6 +2863,25 @@ const styles = StyleSheet.create({
     gap: 12
   },
   rideOwnerSectionTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  rideOwnerInputRow: { flexDirection: "row", gap: 9 },
+  rideOwnerInput: {
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.09)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    color: theme.colors.text,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  rideOwnerHalfInput: { flex: 1, minWidth: 0 },
+  rideOwnerFieldLabel: { color: theme.colors.soft, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
+  rideOwnerStatusPillActive: { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.20)" },
+  rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerSaveButton: { minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
+  rideOwnerSaveText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   rideOwnerStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   rideOwnerStepNumber: {
     width: 24,
@@ -2265,6 +2923,52 @@ const styles = StyleSheet.create({
   rideOwnerEmpty: { borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 14, gap: 6 },
   rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rentalOwnerCta: {
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(15,23,42,0.74)",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  rentalOwnerCtaIconWrap: { width: 58, height: 58, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  rentalOwnerCtaIcon: { width: 46, height: 36 },
+  rentalOwnerCtaCopy: { flex: 1, minWidth: 0 },
+  rentalOwnerCtaTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  rentalOwnerCtaText: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 3 },
+  rentalOwnerCtaButton: { minWidth: 74, minHeight: 44, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
+  rentalOwnerCtaButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rentalOwnerScreen: { flex: 1, backgroundColor: "#101010" },
+  rentalOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 72, gap: 16 },
+  rentalOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rentalOwnerHeaderCopy: { flex: 1, minWidth: 0 },
+  rentalOwnerHero: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(15,23,42,0.78)",
+    padding: 16,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "center"
+  },
+  rentalOwnerHeroIcon: { width: 76, height: 56 },
+  rentalOwnerCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 14,
+    gap: 12
+  },
+  rentalOwnerSavedCar: { borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 12, gap: 3 },
+  rentalOwnerSavedTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rentalOwnerSavedMeta: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
+  rentalOwnerNotes: { minHeight: 96, paddingTop: 12, textAlignVertical: "top" },
+  rentalOwnerSubmit: { minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
+  rentalOwnerSubmitText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   ridePlannerScreen: { flex: 1, backgroundColor: "#111" },
   ridePlannerContent: { paddingTop: 26, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
