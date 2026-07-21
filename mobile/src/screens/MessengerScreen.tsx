@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
+  absoluteAssetUrl,
   blockChatUser,
   createChatCommunity,
   deleteChatMessage,
@@ -69,6 +70,10 @@ function listingPosterName(post: HousingPost | null) {
 function rideContextLabel(ride: RidePost | null) {
   if (!ride) return "";
   return ride.title || [ride.origin, ride.destination].filter(Boolean).join(" -> ") || "FairFares ride";
+}
+
+function chatPhotoUrl(value?: string) {
+  return value ? absoluteAssetUrl(value) : "";
 }
 
 export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin, onClearPendingPost, onClearPendingRide, onThreadModeChange }: Props) {
@@ -181,6 +186,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
         status: payload.conversation.status || conversation.status,
         communityId: payload.conversation.communityId || conversation.communityId,
         otherName: payload.conversation.otherName || conversation.otherName,
+        otherPhotoUrl: payload.conversation.otherPhotoUrl || conversation.otherPhotoUrl,
         otherOnline: payload.conversation.otherOnline ?? conversation.otherOnline,
         otherLastSeenAt: payload.conversation.otherLastSeenAt || conversation.otherLastSeenAt,
         mutedAt: payload.conversation.mutedAt || conversation.mutedAt,
@@ -228,6 +234,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           kind: response.conversation.communityId ? "GROUP" : "HOST_GUEST",
           subject: response.conversation.subject || pendingPost.title,
           otherName: response.conversation.otherName || listingPosterName(pendingPost),
+          otherPhotoUrl: response.conversation.otherPhotoUrl,
           lastMessage: cleanMessage,
           lastMessageAt: new Date().toISOString(),
           unread: 0
@@ -243,6 +250,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           kind: response.conversation.kind || "RIDE",
           subject: response.conversation.subject || rideContextLabel(pendingRide),
           otherName: response.conversation.otherName || "Ride owner",
+          otherPhotoUrl: response.conversation.otherPhotoUrl,
           lastMessage: cleanMessage,
           lastMessageAt: new Date().toISOString(),
           unread: 0
@@ -432,7 +440,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
             <BackIcon />
           </TouchableOpacity>
           <View style={styles.threadAvatar}>
-            <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || listingPosterName(pendingPost) || rideContextLabel(pendingRide) || activeSubject || "Chat")}</Text>
+            {chatPhotoUrl(activeConversation?.otherPhotoUrl) ? (
+              <Image source={{ uri: chatPhotoUrl(activeConversation?.otherPhotoUrl) }} style={styles.threadAvatarImage} />
+            ) : (
+              <Text style={styles.threadAvatarText}>{initials(activeConversation?.otherName || listingPosterName(pendingPost) || rideContextLabel(pendingRide) || activeSubject || "Chat")}</Text>
+            )}
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </View>
           <View style={styles.threadHeaderCopy}>
@@ -474,7 +486,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
                 </View>
               </View>
               {!message.mine ? (
-                <View style={styles.smallAvatar}><Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text></View>
+                <View style={styles.smallAvatar}>
+                  {chatPhotoUrl(message.senderPhotoUrl) ? (
+                    <Image source={{ uri: chatPhotoUrl(message.senderPhotoUrl) }} style={styles.smallAvatarImage} />
+                  ) : (
+                    <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>
+                  )}
+                </View>
               ) : null}
             </View>
           ))}
@@ -585,7 +603,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       >
         {(tab === "All" || tab === "Unread" || tab === "Groups") && filteredConversations.map((chat) => (
           <TouchableOpacity key={chat.id} style={styles.chatRow} onPress={() => openConversation(chat)}>
-            <View style={styles.avatar}><Text style={styles.avatarText}>{initials(chat.otherName || chat.subject || "Chat")}</Text></View>
+            <View style={styles.avatar}>
+              {chatPhotoUrl(chat.otherPhotoUrl) ? (
+                <Image source={{ uri: chatPhotoUrl(chat.otherPhotoUrl) }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>{initials(chat.otherName || chat.subject || "Chat")}</Text>
+              )}
+            </View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
               <Text style={styles.chatLast} numberOfLines={1}>{chat.lastMessage || chat.rideRoute || chat.subject || "No messages yet."}</Text>
@@ -666,51 +690,53 @@ const styles = StyleSheet.create({
   threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 18 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
   eyebrow: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  title: { color: theme.colors.text, fontSize: 32, fontWeight: "900" },
+  title: { color: theme.colors.text, fontSize: 28, fontWeight: "900" },
   chatBrandWrap: { flex: 1, minWidth: 0, gap: 2 },
-  chatBrand: { width: 152, height: 48 },
+  chatBrand: { width: 132, height: 42 },
   headerIcons: { flexDirection: "row", gap: 8, marginLeft: "auto", marginRight: 10 },
-  headerIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  headerIconText: { color: theme.colors.muted, fontSize: 19, fontWeight: "900" },
-  iconButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  iconButtonText: { color: theme.colors.text, fontSize: 23, fontWeight: "800", marginTop: -2 },
-  search: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 16, minHeight: 48, fontSize: 16 },
+  headerIcon: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  headerIconText: { color: theme.colors.muted, fontSize: 17, fontWeight: "900" },
+  iconButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  iconButtonText: { color: theme.colors.text, fontSize: 20, fontWeight: "800", marginTop: -2 },
+  search: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 14, minHeight: 44, fontSize: 15 },
   tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: theme.spacing.md },
   tab: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
   activeTab: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
   tabText: { color: theme.colors.text, fontWeight: "900" },
   activeTabText: { color: theme.colors.bg },
   loginGate: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10 },
-  loginTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
-  loginCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
+  loginTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  loginCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
   loginButtonText: { color: theme.colors.text, fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
-  sectionTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
-  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 48, fontSize: 15 },
+  sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 13, minHeight: 45, fontSize: 14 },
   multiline: { minHeight: 82, paddingTop: 13, textAlignVertical: "top" },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
-  primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   threadHeader: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  backButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
   backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: theme.colors.blue, left: 2 },
   backLineTop: { transform: [{ rotate: "-45deg" }], top: 6 },
   backLineBottom: { transform: [{ rotate: "45deg" }], bottom: 5 },
-  threadAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
+  threadAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  threadAvatarImage: { width: "100%", height: "100%" },
   threadAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 15 },
   activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.green, borderWidth: 2, borderColor: theme.colors.bg },
   threadHeaderCopy: { flex: 1 },
-  threadHeaderTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  threadHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   threadHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", marginTop: 1 },
-  headerAction: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.blue },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingVertical: 16, gap: 10, flexGrow: 1, justifyContent: "flex-end" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-end", gap: 8 },
   threadMessageRowMine: { justifyContent: "flex-start" },
-  smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center" },
+  smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
@@ -756,11 +782,12 @@ const styles = StyleSheet.create({
   cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
   list: { flex: 1 },
   chatRow: { flexDirection: "row", alignItems: "center", paddingVertical: 13, gap: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  avatarImage: { width: "100%", height: "100%" },
   groupAvatar: { backgroundColor: "#172138" },
-  avatarText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
+  avatarText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
   chatCopy: { flex: 1 },
-  chatName: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  chatName: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "700" },
   chatLast: { color: theme.colors.muted, marginTop: 3 },
   chatMeta: { alignItems: "flex-end", minWidth: 34, gap: 6 },
@@ -768,6 +795,6 @@ const styles = StyleSheet.create({
   unread: { backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, overflow: "hidden", paddingHorizontal: 8, fontWeight: "900" },
   memberCount: { color: theme.colors.muted, fontWeight: "900" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
-  chevron: { color: theme.colors.muted, fontSize: 30, marginTop: -2 },
+  chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "800", textAlign: "center", padding: theme.spacing.lg }
 });

@@ -12,11 +12,11 @@ const tabs: Array<{
   iconWidth: number;
   iconHeight: number;
 }> = [
-  { key: "home", label: "Home", icon: appAssets.navHome, iconWidth: 31, iconHeight: 31 },
-  { key: "services", label: "Services", icon: appAssets.navServices, iconWidth: 31, iconHeight: 31 },
-  { key: "activity", label: "Activity", icon: appAssets.navActivity, iconWidth: 31, iconHeight: 31 },
-  { key: "messenger", label: "Fchat", icon: appAssets.fchat, iconWidth: 43, iconHeight: 31 },
-  { key: "profile", label: "Account", icon: appAssets.profile, iconWidth: 31, iconHeight: 31 }
+  { key: "home", label: "Home", icon: appAssets.navHome, iconWidth: 25, iconHeight: 25 },
+  { key: "services", label: "Services", icon: appAssets.navServices, iconWidth: 25, iconHeight: 25 },
+  { key: "activity", label: "Activity", icon: appAssets.navActivity, iconWidth: 25, iconHeight: 25 },
+  { key: "messenger", label: "Fchat", icon: appAssets.fchat, iconWidth: 34, iconHeight: 25 },
+  { key: "profile", label: "Account", icon: appAssets.profile, iconWidth: 25, iconHeight: 25 }
 ];
 
 type Props = {
@@ -63,31 +63,31 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    marginHorizontal: 18,
+    marginHorizontal: 20,
     marginTop: 4,
     marginBottom: 14,
-    height: 76,
-    backgroundColor: "#191919",
-    borderRadius: 36,
+    height: 64,
+    backgroundColor: "rgba(25,25,25,0.96)",
+    borderRadius: 32,
     borderWidth: 1,
     borderColor: "#2e2e2f",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
-    paddingHorizontal: 8
+    paddingHorizontal: 6
   },
   item: {
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
-    minWidth: 54
+    gap: 3,
+    minWidth: 48
   },
   active: {
     borderRadius: 28
   },
   icon: {
-    width: 44,
-    height: 31,
+    width: 38,
+    height: 26,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: theme.colors.muted,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800"
   },
   activeLabel: {
@@ -109,14 +109,14 @@ const styles = StyleSheet.create({
   },
   badge: {
     position: "absolute",
-    top: -8,
-    right: -8,
+    top: -7,
+    right: -7,
     backgroundColor: theme.colors.accent,
     color: theme.colors.text,
     borderRadius: 10,
-    minWidth: 18,
+    minWidth: 16,
     textAlign: "center",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "900",
     overflow: "hidden"
   }

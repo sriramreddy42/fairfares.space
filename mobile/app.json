@@ -8,14 +8,24 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.fairfares.mobile",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance."
+      }
     },
     "android": {
       "package": "com.fairfares.mobile",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#101010"
       }
     },
+    "plugins": [
+      "expo-location"
+    ],
     "extra": {
       "apiUrl": "http://127.0.0.1:8010"
     }

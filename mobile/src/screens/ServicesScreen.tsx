@@ -34,6 +34,10 @@ type Props = {
   selected: ServiceKey;
   onSelect: (service: ServiceKey) => void;
   onOpenHousing: () => void;
+  onOpenRide: () => void;
+  onOpenMessenger: () => void;
+  onOpenActivity: () => void;
+  onOpenProfile: () => void;
   onRequireLogin: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
 };
@@ -72,7 +76,16 @@ function mergeBooking(rows: RentalServiceBooking[], updated?: RentalServiceBooki
   return rows.map((booking) => (booking.id === updated.id ? updated : booking));
 }
 
-export function ServicesScreen({ user, onRequireLogin, onOpenHousing, onSelect }: Props) {
+export function ServicesScreen({
+  user,
+  onRequireLogin,
+  onOpenHousing,
+  onOpenRide,
+  onOpenMessenger,
+  onOpenActivity,
+  onOpenProfile,
+  onSelect
+}: Props) {
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [view, setView] = useState<ServicesView>("grid");
   const [selectedBookingId, setSelectedBookingId] = useState("");
@@ -186,6 +199,17 @@ export function ServicesScreen({ user, onRequireLogin, onOpenHousing, onSelect }
   }
 
   function openPanel(mode: PanelMode) {
+    requireBooking(() => setPanelMode(mode));
+  }
+
+  function openRentalTools() {
+    onSelect("cars");
+    setPanelMode(null);
+    setView("rental");
+  }
+
+  function openRentalPanel(mode: Exclude<PanelMode, null>) {
+    openRentalTools();
     requireBooking(() => setPanelMode(mode));
   }
 
@@ -319,33 +343,17 @@ export function ServicesScreen({ user, onRequireLogin, onOpenHousing, onSelect }
   const selectedDocument = selectedDocumentSet?.docs?.[selectedDocName] || null;
   const selectedUpgrade = selectedBooking?.upgradeOptions?.find((option) => option.id === selectedVehicleId) || null;
   const estimatedPrice = selectedUpgrade?.estimatedTotalLabel || selectedBooking?.totalLabel || "";
-  const goAnywhereTiles: ServiceTile[] = [
-    { label: "Ride", icon: appAssets.ride, badge: "5%", onPress: () => onSelect("cars") },
-    { label: "Reserve", emoji: "📅", badge: "Promo", onPress: () => onSelect("cars") },
-    { label: "Hotels", icon: appAssets.bed, badge: "New" },
-    { label: "Transit", emoji: "🚋" },
-    { label: "2-Wheels", emoji: "🛴" },
-    { label: "Rental Cars", emoji: "🚘", badge: "Promo", onPress: () => setView("rental") },
-    { label: "Group Ride", icon: appAssets.ride },
-    { label: "Hourly", emoji: "🚘" },
-    { label: "Teens", emoji: "🎒" },
-    { label: "Seniors", emoji: "🚶" },
-    { label: "Housing", icon: appAssets.bed, onPress: onOpenHousing },
-    { label: "FChat", icon: appAssets.fchat }
+  const fairFaresTiles: ServiceTile[] = [
+    { label: "Housing", icon: appAssets.bed, badge: "Posts", badgeTone: "green", onPress: onOpenHousing },
+    { label: "Ride", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
+    { label: "Rental Cars", icon: appAssets.carFallback, badge: "Bookings", onPress: openRentalTools },
+    { label: "FChat", icon: appAssets.fchat, onPress: onOpenMessenger }
   ];
-  const deliveryTiles: ServiceTile[] = [
-    { label: "Food", emoji: "🥗" },
-    { label: "Grocery", emoji: "🛒" },
-    { label: "Convenience", emoji: "🧻" },
-    { label: "Alcohol", emoji: "🍾" },
-    { label: "Electronics", emoji: "🖱️" },
-    { label: "Health", emoji: "💊" },
-    { label: "Flowers", emoji: "💐" },
-    { label: "Retail", emoji: "🛍️" },
-    { label: "Beauty", emoji: "💄" },
-    { label: "Pet Supplies", emoji: "🦴" },
-    { label: "Packages", emoji: "📦" },
-    { label: "Baby", emoji: "🍼" }
+  const supportTiles: ServiceTile[] = [
+    { label: "Invoices", icon: appAssets.serviceInvoice, badge: "Files", onPress: () => openRentalPanel("documents") },
+    { label: "Rental Help", icon: appAssets.serviceSupport, onPress: () => openRentalPanel("support") },
+    { label: "Activity", icon: appAssets.navActivity, onPress: onOpenActivity },
+    { label: "Account", icon: appAssets.profile, onPress: onOpenProfile }
   ];
 
   return (
@@ -356,9 +364,9 @@ export function ServicesScreen({ user, onRequireLogin, onOpenHousing, onSelect }
             <View style={styles.header}>
               <Text style={styles.servicesTitle}>Services</Text>
             </View>
-            <ServiceSection title="Go anywhere" tiles={goAnywhereTiles} />
+            <ServiceSection title="FairFares" tiles={fairFaresTiles} />
             <View style={styles.sectionDivider} />
-            <ServiceSection title="Get anything delivered" tiles={deliveryTiles} compact />
+            <ServiceSection title="Support & files" tiles={supportTiles} compact />
           </>
         ) : (
           <>
@@ -849,16 +857,16 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.bg
   },
   content: {
-    padding: theme.spacing.md,
-    paddingBottom: 132,
-    gap: 18
+    padding: 14,
+    paddingBottom: 116,
+    gap: 16
   },
   header: {
     gap: 6
   },
   servicesTitle: {
     color: theme.colors.text,
-    fontSize: 46,
+    fontSize: 32,
     fontWeight: "900"
   },
   serviceSection: {
@@ -866,7 +874,7 @@ const styles = StyleSheet.create({
   },
   serviceSectionTitle: {
     color: theme.colors.text,
-    fontSize: 27,
+    fontSize: 22,
     fontWeight: "900"
   },
   serviceTileGrid: {
@@ -876,41 +884,41 @@ const styles = StyleSheet.create({
     rowGap: 14
   },
   serviceTile: {
-    width: "31%",
-    minHeight: 118,
+    width: "48%",
+    minHeight: 104,
     borderRadius: 13,
     backgroundColor: "#242424",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
-    paddingTop: 20,
+    paddingTop: 16,
     paddingBottom: 12,
     position: "relative"
   },
   compactServiceTile: {
-    minHeight: 108
+    minHeight: 96
   },
   serviceTileIcon: {
-    width: 46,
-    height: 46,
-    marginBottom: 14
+    width: 38,
+    height: 38,
+    marginBottom: 10
   },
   compactTileIcon: {
-    width: 42,
-    height: 42,
+    width: 36,
+    height: 36,
     marginBottom: 12
   },
   serviceTileEmoji: {
-    fontSize: 42,
+    fontSize: 30,
     marginBottom: 14
   },
   compactTileEmoji: {
-    fontSize: 38,
+    fontSize: 27,
     marginBottom: 12
   },
   serviceTileLabel: {
     color: theme.colors.soft,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "800",
     textAlign: "center"
   },
@@ -918,8 +926,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -10,
     alignSelf: "center",
-    minWidth: 50,
-    minHeight: 31,
+    minWidth: 44,
+    minHeight: 27,
     borderRadius: 5,
     backgroundColor: "#ff2d16",
     alignItems: "center",
@@ -932,7 +940,7 @@ const styles = StyleSheet.create({
   },
   tileBadgeText: {
     color: theme.colors.text,
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "900"
   },
   sectionDivider: {
@@ -964,7 +972,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: theme.colors.text,
-    fontSize: 48,
+    fontSize: 32,
     fontWeight: "900"
   },
   subtitle: {
@@ -989,7 +997,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase"
   },
   bookingSelect: {
-    minHeight: 66,
+    minHeight: 58,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.16)",
@@ -1005,7 +1013,7 @@ const styles = StyleSheet.create({
   },
   bookingTitle: {
     color: theme.colors.text,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "900"
   },
   bookingMeta: {
@@ -1059,13 +1067,13 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     width: "48%",
-    minHeight: 132,
-    borderRadius: 24,
+    minHeight: 116,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.16)",
     backgroundColor: "rgba(17,24,39,0.82)",
     paddingHorizontal: 12,
-    paddingVertical: 18,
+    paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
@@ -1081,12 +1089,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.52
   },
   actionIcon: {
-    width: 44,
-    height: 44
+    width: 36,
+    height: 36
   },
   actionLabel: {
     color: theme.colors.text,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "900",
     textAlign: "center"
   },
@@ -1114,13 +1122,13 @@ const styles = StyleSheet.create({
   detailsTitle: {
     color: theme.colors.text,
     flex: 1,
-    fontSize: 24,
+    fontSize: 21,
     fontWeight: "900"
   },
   closeButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center"

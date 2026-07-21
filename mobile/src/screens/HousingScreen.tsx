@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as Location from "expo-location";
 import { Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { SectionHeader } from "../components/SectionHeader";
@@ -30,6 +31,15 @@ type Props = {
   onTopAction: (action: string) => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
+  focusWelcomeKey?: number;
+};
+
+type CurrentRideLocation = {
+  label: string;
+  coords: {
+    latitude: number;
+    longitude: number;
+  };
 };
 
 const quickLinks: Array<{
@@ -77,6 +87,21 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Rent ↓", value: "rentDesc" }
 ];
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
+
+function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | undefined) {
+  if (!address) return "";
+  const streetParts = [address.name, address.street].filter(Boolean);
+  const street = streetParts.length
+    ? Array.from(new Set(streetParts.map((part) => String(part).trim()).filter(Boolean))).join(" ")
+    : "";
+  const city = address.city || address.subregion || "";
+  const region = address.region || "";
+  const postal = address.postalCode || "";
+  return [street, city, region, postal]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
 const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
 const renterAgeOptions = ["21-24", "25+"];
 const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
@@ -97,32 +122,35 @@ const rideServicePosters: Array<{
   register: string;
   works: string[];
   access: string;
+  available: boolean;
 }> = [
   {
     key: "scheduled",
     type: "SCHEDULED_REQUEST",
     title: "Scheduled rides",
-    subtitle: "Repeat commute, class, or airport runs",
+    subtitle: "Available soon",
     stat: "Example: Lone Tree to DU every weekday at 8:00 AM.",
-    insight: "Best for rides that happen again and again. Set the route once, then track each confirmed day in Activity.",
+    insight: "Scheduled rides will be available soon. For now, use Carpool to share a route with riders already going the same direction.",
     tint: "#8a5a00",
     glyph: "scheduled",
     register: "Enter pickup, destination, days, time, seats, and notes.",
     works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and FChat for each accepted ride."],
-    access: "Choose this when the same route repeats."
+    access: "Choose this when the same route repeats.",
+    available: false
   },
   {
     key: "general",
     type: "GENERAL_REQUEST",
     title: "General rides",
-    subtitle: "One pickup and one drop-off",
+    subtitle: "Available soon",
     stat: "Example: Denver to Union Station today at 6:00 PM",
-    insight: "Best for a simple local ride today or later. Enter pickup and destination, then request nearby driver offers.",
+    insight: "General rides will be available soon. For now, use Carpool for shared route matching and direct rider-driver agreement.",
     tint: "#243b73",
     glyph: "general",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
     works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat when a driver accepts."],
-    access: "Choose this for one ride inside or near the city."
+    access: "Choose this for one ride inside or near the city.",
+    available: false
   },
   {
     key: "carpool",
@@ -135,7 +163,8 @@ const rideServicePosters: Array<{
     glyph: "carpool",
     register: "Enter route, date/time, seats, luggage, pickup radius, and contribution.",
     works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
-    access: "Choose this for city-to-city, long-distance, or shared-cost rides."
+    access: "Choose this for city-to-city, long-distance, or shared-cost rides.",
+    available: true
   }
 ];
 const rideOfferSurfaces: Array<{
@@ -145,22 +174,25 @@ const rideOfferSurfaces: Array<{
   note: string;
   type: RideType;
   symbol: string;
+  available: boolean;
 }> = [
   {
     key: "scheduled",
     title: "Offer scheduled ride",
-    subtitle: "Daily or weekly commute seats",
+    subtitle: "Available soon",
     note: "Driver can offer recurring seats on this schedule. Include weekdays, pickup window, seat count, and detour limit.",
     type: "CARPOOL_OFFER",
-    symbol: "CAL"
+    symbol: "SOON",
+    available: false
   },
   {
     key: "general",
     title: "Offer general ride",
-    subtitle: "One-time local pickup",
+    subtitle: "Available soon",
     note: "Driver can offer a one-time ride. Include pickup area, drop-off area, available time, seats, and contribution.",
     type: "CARPOOL_OFFER",
-    symbol: "GO"
+    symbol: "SOON",
+    available: false
   },
   {
     key: "carpool",
@@ -168,7 +200,8 @@ const rideOfferSurfaces: Array<{
     subtitle: "Shared route and seats",
     note: "Driver can offer open seats on a shared route. Include route, seat count, luggage space, timing, and pickup radius.",
     type: "CARPOOL_OFFER",
-    symbol: "POOL"
+    symbol: "POOL",
+    available: true
   }
 ];
 const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
@@ -188,11 +221,6 @@ const rideOwnerSteps = [
 ];
 const rideOwnerRequestStates = ["Listed", "Request", "Accepted", "Arriving", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const rideChoiceOptions = [
-  { key: "electric", title: "FairFares Electric", meta: "Lower-emission ride", multiplier: 0.95, eta: "5 min", seats: 4 },
-  { key: "standard", title: "FairFares Ride", meta: "Everyday reliable pickup", multiplier: 1, eta: "2 min", seats: 4 },
-  { key: "xl", title: "FairFares XL", meta: "More seats and luggage room", multiplier: 1.58, eta: "4 min", seats: 6 },
-];
 const blankRideDriverProfile: RideDriverProfile = {
   exists: false,
   vehicleMakeModel: "",
@@ -202,7 +230,7 @@ const blankRideDriverProfile: RideDriverProfile = {
   licenseState: "",
   insuranceProvider: "",
   insurancePolicyLast4: "",
-  serviceTypes: ["GENERAL_REQUEST", "SCHEDULED_REQUEST", "CARPOOL_OFFER"],
+  serviceTypes: ["CARPOOL_OFFER"],
   availabilityDays: ["Mon", "Tue", "Wed", "Thu", "Fri"],
   availabilityStartTime: "7:00 AM",
   availabilityEndTime: "7:00 PM",
@@ -354,10 +382,14 @@ const initialRentalListingDraft: RentalCarListingInput = {
 };
 
 const initialRideForm: RideInput = {
-  rideType: "GENERAL_REQUEST",
+  rideType: "CARPOOL_REQUEST",
   city: "Denver, CO",
   origin: "",
+  originLat: null,
+  originLng: null,
   destination: "",
+  destinationLat: null,
+  destinationLng: null,
   pickupDate: isoDateFromNow(1),
   pickupTime: "8:00 AM",
   startDate: isoDateFromNow(1),
@@ -397,7 +429,8 @@ export function HousingScreen({
   onPostNeed,
   onTopAction,
   onBookCar,
-  onBottomTabsHiddenChange
+  onBottomTabsHiddenChange,
+  focusWelcomeKey = 0
 }: Props) {
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -419,6 +452,8 @@ export function HousingScreen({
   const [rentalListingDraft, setRentalListingDraft] = useState<RentalCarListingInput>(initialRentalListingDraft);
   const [rideForm, setRideForm] = useState<RideInput>(initialRideForm);
   const [rideRows, setRideRows] = useState<RidePost[]>([]);
+  const [rideActivityRows, setRideActivityRows] = useState<RidePost[]>([]);
+  const [rideActivityBusy, setRideActivityBusy] = useState(false);
   const [rideBusy, setRideBusy] = useState(false);
   const [ridePosted, setRidePosted] = useState(false);
   const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
@@ -426,23 +461,32 @@ export function HousingScreen({
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
   const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
-  const [selectedRideChoice, setSelectedRideChoice] = useState("standard");
-  const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("general");
+  const [rideHomeSuggestions, setRideHomeSuggestions] = useState<RidePlaceSuggestion[]>([]);
+  const [rideHomeSuggestionsBusy, setRideHomeSuggestionsBusy] = useState(false);
+  const [currentRideLocation, setCurrentRideLocation] = useState<CurrentRideLocation | null>(null);
+  const [currentRideLocationBusy, setCurrentRideLocationBusy] = useState(false);
+  const [currentRideLocationError, setCurrentRideLocationError] = useState("");
+  const [selectedRideChoice, setSelectedRideChoice] = useState("");
+  const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("carpool");
   const [rideRequestStatus, setRideRequestStatus] = useState("");
   const [rideOwnerOpen, setRideOwnerOpen] = useState(false);
-  const [selectedRideOfferSurface, setSelectedRideOfferSurface] = useState<"scheduled" | "general" | "carpool">("general");
+  const [selectedRideOfferSurface, setSelectedRideOfferSurface] = useState<"scheduled" | "general" | "carpool">("carpool");
   const [rideDriverProfile, setRideDriverProfile] = useState<RideDriverProfile | null>(null);
   const [rideDriverDraft, setRideDriverDraft] = useState<RideDriverProfile>(blankRideDriverProfile);
   const [rideDriverBusy, setRideDriverBusy] = useState(false);
   const { width: viewportWidth } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
+  const selectedRideSuggestionRef = useRef("");
+  const [welcomeY, setWelcomeY] = useState(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
     : data?.location.suggested || data?.location.city || "";
-  const rideDefaultPickup = selectedLocationText || data?.location.suggested || data?.location.city || "Current location";
+  const rideDefaultCity = data?.location.city || "Denver, CO";
+  const rideDefaultPickup = currentRideLocation?.label || selectedLocationText || data?.location.suggested || rideDefaultCity || "Your location";
   const activeSearchPhrases =
     mode === "ride"
       ? rideSearchPhrases
@@ -557,9 +601,27 @@ export function HousingScreen({
   }, [selectedNeed]);
 
   useEffect(() => {
+    if (mode !== "ride") return;
+    setRideHomeSuggestionsBusy(true);
+    getRidePlaceSuggestions(rideDefaultCity, "")
+      .then((suggestions) => setRideHomeSuggestions(suggestions.slice(0, 4)))
+      .catch(() => setRideHomeSuggestions([]))
+      .finally(() => setRideHomeSuggestionsBusy(false));
+  }, [mode, rideDefaultCity]);
+
+  useEffect(() => {
+    if (!focusWelcomeKey) return;
+    setMode("housing");
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(welcomeY - 92, 0), animated: true });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [focusWelcomeKey, welcomeY]);
+
+  useEffect(() => {
     if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
     const query = (rideFocusedField === "origin" ? rideForm.origin : rideForm.destination).trim();
-    if (!query) {
+    if (!query || query === selectedRideSuggestionRef.current) {
       setRideSuggestions([]);
       setRideSuggestionsBusy(false);
       return;
@@ -581,6 +643,63 @@ export function HousingScreen({
     lastScrollYRef.current = y;
   }
 
+  async function resolveCurrentRideLocation() {
+    if (currentRideLocation) return currentRideLocation;
+    if (currentRideLocationBusy) return null;
+    setCurrentRideLocationBusy(true);
+    setCurrentRideLocationError("");
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== Location.PermissionStatus.GRANTED) {
+        setCurrentRideLocationError("Location permission is off. Type a pickup address or enable location access.");
+        return null;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      };
+      let label = "";
+      try {
+        label = await reverseGeocodeRideLocation(coords.latitude, coords.longitude);
+      } catch {
+        label = "";
+      }
+      try {
+        if (!label) {
+          const [address] = await Location.reverseGeocodeAsync(coords);
+          label = formatDeviceAddress(address);
+        }
+      } catch {
+        label = "";
+      }
+      const fallbackLocationName = selectedLocationText || data?.location.suggested || rideDefaultCity || "your selected city";
+      const nextLocation = {
+        label: label || `Current location near ${fallbackLocationName}`,
+        coords
+      };
+      setCurrentRideLocation(nextLocation);
+      return nextLocation;
+    } catch {
+      setCurrentRideLocationError("Could not detect your current location. Type a pickup address instead.");
+      return null;
+    } finally {
+      setCurrentRideLocationBusy(false);
+    }
+  }
+
+  async function useCurrentRideLocationForOrigin() {
+    const location = await resolveCurrentRideLocation();
+    if (!location?.label) return;
+    selectedRideSuggestionRef.current = location.label;
+    setRideForm((current) => ({
+      ...current,
+      origin: location.label,
+      originLat: location.coords.latitude,
+      originLng: location.coords.longitude
+    }));
+  }
+
   function openRidePlanner() {
     setMode("ride");
     setRidePlannerStage("plan");
@@ -588,20 +707,42 @@ export function HousingScreen({
     setRideSuggestions([]);
     setRideSuggestionsBusy(false);
     setRideRequestStatus("");
+    setSelectedRideChoice("");
     setRideForm((current) => ({
       ...current,
-      city: data?.location.city || current.city || "Denver, CO",
+      city: rideDefaultCity || current.city || "Denver, CO",
       origin: rideDefaultPickup,
+      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
       destination: "",
-      rideType: current.rideType || "GENERAL_REQUEST"
+      destinationLat: null,
+      destinationLng: null,
+      rideType: "CARPOOL_REQUEST"
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
+    void useCurrentRideLocationForOrigin();
   }
 
   function closeRidePlanner() {
     setRidePlannerOpen(false);
     onBottomTabsHiddenChange?.(false);
+  }
+
+  async function refreshRideActivity() {
+    if (!data?.user) {
+      setRideActivityRows([]);
+      return;
+    }
+    setRideActivityBusy(true);
+    try {
+      const activity = await getRideActivity();
+      setRideActivityRows(activity);
+    } catch {
+      setRideActivityRows([]);
+    } finally {
+      setRideActivityBusy(false);
+    }
   }
 
   async function openRideOwnerTracker() {
@@ -612,13 +753,15 @@ export function HousingScreen({
     setRideDriverBusy(true);
     try {
       const profile = await getRideDriverProfile();
-      setRideDriverProfile(profile);
-      setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
+      const carpoolProfile = { ...profile, serviceTypes: ["CARPOOL_OFFER" as RideType] };
+      setRideDriverProfile(carpoolProfile);
+      setRideDriverDraft({ ...blankRideDriverProfile, ...carpoolProfile });
     } catch {
       setRideDriverProfile(null);
     } finally {
       setRideDriverBusy(false);
     }
+    void refreshRideActivity();
   }
 
   function openQuickLink(key: (typeof quickLinks)[number]["key"]) {
@@ -627,13 +770,8 @@ export function HousingScreen({
       return;
     }
     openRidePlanner();
-    if (key === "carpoolMove") {
-      setSelectedRideService("carpool");
-      setRideForm((current) => ({ ...current, rideType: "CARPOOL_REQUEST" }));
-      return;
-    }
-    setSelectedRideService("general");
-    setRideForm((current) => ({ ...current, rideType: "GENERAL_REQUEST" }));
+    setSelectedRideService("carpool");
+    setRideForm((current) => ({ ...current, rideType: "CARPOOL_REQUEST" }));
   }
 
   function closeRideOwnerTracker() {
@@ -658,11 +796,13 @@ export function HousingScreen({
   }
 
   function selectRideOfferSurface(surface: (typeof rideOfferSurfaces)[number]) {
+    if (!surface.available) {
+      Alert.alert("Available soon", `${surface.title} will be available soon. For now, list carpool seats and track rider requests here.`);
+      return;
+    }
     setSelectedRideOfferSurface(surface.key);
     setRideDriverDraft((current) => {
       const nextTypes = new Set(current.serviceTypes || []);
-      if (surface.key === "scheduled") nextTypes.add("SCHEDULED_REQUEST");
-      if (surface.key === "general") nextTypes.add("GENERAL_REQUEST");
       nextTypes.add("CARPOOL_OFFER");
       return {
         ...current,
@@ -678,9 +818,11 @@ export function HousingScreen({
     }
     setRideDriverBusy(true);
     try {
-      const profile = await saveRideDriverProfile(rideDriverDraft);
+      const carpoolDraft = { ...rideDriverDraft, serviceTypes: ["CARPOOL_OFFER" as RideType] };
+      const profile = await saveRideDriverProfile(carpoolDraft);
       setRideDriverProfile(profile);
       setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
+      void refreshRideActivity();
       Alert.alert("Driver profile saved", profile.readyForOffers ? "You can now list route and available seats." : `Add missing details: ${(profile.missing || []).join(", ")}`);
     } catch (error) {
       Alert.alert("Could not save driver profile", error instanceof Error ? error.message : "Try again.");
@@ -698,17 +840,22 @@ export function HousingScreen({
       Alert.alert("Driver profile needed", "Save vehicle, insurance, service type, and availability details before listing route/seats.");
       return;
     }
-    const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface) || rideOfferSurfaces[1];
+    const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface && item.available) || rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
     setRideOwnerOpen(false);
     setSelectedRideService(offerSurface.key);
     setRidePlannerStage("plan");
     setRideFocusedField("origin");
     setRideRequestStatus("");
+    setSelectedRideChoice("");
     setRideForm((current) => ({
       ...current,
-      city: data?.location.city || current.city || "Denver, CO",
+      city: rideDefaultCity || current.city || "Denver, CO",
       origin: rideDefaultPickup,
+      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
       destination: "",
+      destinationLat: null,
+      destinationLng: null,
       rideType: offerSurface.type,
       seats: current.seats === "1" ? String(rideDriverDraft.seatCount || 3) : current.seats,
       maxPickupDistanceMiles: current.maxPickupDistanceMiles || String(rideDriverDraft.maxPickupDistanceMiles || 5),
@@ -717,13 +864,47 @@ export function HousingScreen({
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
+    void useCurrentRideLocationForOrigin();
   }
 
   function selectRidePlace(place: RidePlaceSuggestion) {
-    updateRideForm(rideFocusedField, place.label);
+    selectedRideSuggestionRef.current = place.label;
+    setRideForm((current) => ({
+      ...current,
+      [rideFocusedField]: place.label,
+      ...(rideFocusedField === "origin"
+        ? { originLat: place.lat, originLng: place.lng }
+        : { destinationLat: place.lat, destinationLng: place.lng })
+    }));
     if (rideFocusedField === "origin") {
       setRideFocusedField("destination");
     }
+  }
+
+  function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
+    selectedRideSuggestionRef.current = place.label;
+    setMode("ride");
+    setSelectedRideService("carpool");
+    setRidePlannerStage("plan");
+    setRideFocusedField("destination");
+    setRideSuggestions([]);
+    setRideSuggestionsBusy(false);
+    setRideRequestStatus("");
+    setSelectedRideChoice("");
+    setRideForm((current) => ({
+      ...current,
+      city: rideDefaultCity,
+      origin: rideDefaultPickup,
+      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
+      destination: place.label,
+      destinationLat: place.lat,
+      destinationLng: place.lng,
+      rideType: "CARPOOL_REQUEST"
+    }));
+    setRidePlannerOpen(true);
+    onBottomTabsHiddenChange?.(true);
+    void useCurrentRideLocationForOrigin();
   }
 
   function ridePlanComplete() {
@@ -753,33 +934,30 @@ export function HousingScreen({
     return 8;
   }
 
-  function rideMilesEstimate() {
-    return estimateRideMiles();
-  }
-
   function shouldSuggestCarpool(origin: string, destination: string) {
     return estimateRideMiles(origin, destination, []) >= 50;
   }
 
   function selectRideService(service: (typeof rideServicePosters)[number]) {
+    if (!service.available) {
+      Alert.alert("Available soon", `${service.title} will be available soon. Carpool is open now for shared route matching.`);
+      return;
+    }
     setSelectedRideService(service.key);
     updateRideForm("rideType", service.type);
   }
 
   function updateRideType(type: RideType) {
-    updateRideForm("rideType", type);
-    if (type === "SCHEDULED_REQUEST") {
-      setSelectedRideService("scheduled");
-    } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_OFFER") {
+    if (type === "GENERAL_REQUEST" || type === "SCHEDULED_REQUEST") {
+      Alert.alert("Available soon", "General and scheduled rides will be available soon. For now, use carpool.");
+      updateRideForm("rideType", "CARPOOL_REQUEST");
       setSelectedRideService("carpool");
-    } else {
-      setSelectedRideService("general");
+      return;
     }
-  }
-
-  function rideChoicePrice(multiplier: number) {
-    const miles = rideMilesEstimate();
-    return `$${(6.5 + miles * 1.15 * multiplier).toFixed(2)}`;
+    updateRideForm("rideType", type);
+    if (type === "CARPOOL_REQUEST" || type === "CARPOOL_OFFER") {
+      setSelectedRideService("carpool");
+    }
   }
 
   async function planRideRoute() {
@@ -797,18 +975,26 @@ export function HousingScreen({
       if (destinationMatches[0]?.label) {
         effectiveDestination = destinationMatches[0].label;
       }
-      const nextRideType: RideType = shouldSuggestCarpool(effectiveOrigin, effectiveDestination) ? "CARPOOL_REQUEST" : rideForm.rideType;
-      if (nextRideType === "CARPOOL_REQUEST") {
-        setSelectedRideService("carpool");
-      }
+      const destinationPoint = destinationMatches[0];
+      const nextRideType: RideType = "CARPOOL_REQUEST";
+      setSelectedRideService("carpool");
       setRideForm((current) => ({
         ...current,
         origin: effectiveOrigin,
         destination: effectiveDestination,
+        destinationLat: destinationPoint?.lat ?? current.destinationLat ?? null,
+        destinationLng: destinationPoint?.lng ?? current.destinationLng ?? null,
         rideType: nextRideType
       }));
-      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, nextRideType);
+      const searchRideType: RideType = "CARPOOL_OFFER";
+      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, searchRideType, {
+        originLat: rideForm.originLat,
+        originLng: rideForm.originLng,
+        destinationLat: destinationPoint?.lat ?? rideForm.destinationLat,
+        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng
+      });
       setRideRows(rides);
+      setSelectedRideChoice("");
       setRidePlannerStage("choices");
     } catch (error) {
       Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");
@@ -826,8 +1012,7 @@ export function HousingScreen({
     const selectedOffer = selectedRideChoice.startsWith("offer:")
       ? rideRows.find((ride) => `offer:${ride.id}` === selectedRideChoice)
       : null;
-    const selected = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
-    const selectedLabel = selectedOffer?.title || selected.title;
+    const selectedLabel = selectedOffer?.title || "Ride request";
     setRideBusy(true);
     try {
       const result = await createMobileRide({
@@ -843,6 +1028,7 @@ export function HousingScreen({
       setRidePosted(true);
       const notifiedCount = Number(result.dispatch?.notifiedCount || 0);
       const radius = Number(result.dispatch?.nearestRadius || 0);
+      void refreshRideActivity();
       setRideRequestStatus(
         notifiedCount
           ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. When someone accepts, use FChat for pickup notes, ETA, and the pickup PIN.`
@@ -859,6 +1045,37 @@ export function HousingScreen({
     }
   }
 
+  async function updateRideDispatch(ride: RidePost, action: "ACCEPT" | "DECLINE" | "EN_ROUTE" | "ARRIVED" | "COMPLETED") {
+    const actionLabels: Record<typeof action, string> = {
+      ACCEPT: "accepted",
+      DECLINE: "declined",
+      EN_ROUTE: "marked en route",
+      ARRIVED: "marked arrived",
+      COMPLETED: "completed"
+    };
+    setRideActivityBusy(true);
+    try {
+      const updated = await respondToRideDispatch(ride.id, action);
+      await refreshRideActivity();
+      if (action === "ACCEPT") {
+        Alert.alert(
+          "Ride request accepted",
+          `Pickup PIN ${updated.pickupPin || "will appear after refresh"}. FChat is ready for pickup notes and ETA.`,
+          [
+            { text: "Stay here", style: "cancel" },
+            { text: "Open FChat", onPress: () => onRideMessage(updated) }
+          ]
+        );
+      } else {
+        Alert.alert("Ride updated", `This request was ${actionLabels[action]}.`);
+      }
+    } catch (error) {
+      Alert.alert("Ride update failed", error instanceof Error ? error.message : "Unable to update this ride request.");
+    } finally {
+      setRideActivityBusy(false);
+    }
+  }
+
   function openPostMap(post: HousingPost) {
     const query = post.lat && post.lng ? `${post.lat},${post.lng}` : `${post.title} ${post.location} ${post.area}`.trim();
     void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`);
@@ -872,7 +1089,9 @@ export function HousingScreen({
   }
 
   function renderRideOwnerTracker() {
-    const requestRows = rideRows.slice(0, 5);
+    const incomingRequestRows = rideActivityRows.filter((ride) => ride.activityRole === "DRIVER_NOTIFICATION").slice(0, 8);
+    const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER").slice(0, 4);
+    const requestRows = incomingRequestRows.length ? incomingRequestRows : listedRouteRows;
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
         <View style={styles.rideOwnerScreen}>
@@ -903,7 +1122,11 @@ export function HousingScreen({
                 return (
                   <TouchableOpacity
                     key={surface.key}
-                    style={[styles.rideOwnerOfferCard, selected && styles.rideOwnerOfferCardActive]}
+                    style={[
+                      styles.rideOwnerOfferCard,
+                      !surface.available && styles.rideOwnerOfferCardDisabled,
+                      selected && styles.rideOwnerOfferCardActive
+                    ]}
                     onPress={() => selectRideOfferSurface(surface)}
                   >
                     <View style={[styles.rideOwnerOfferIcon, selected && styles.rideOwnerOfferIconActive]}>
@@ -995,15 +1218,25 @@ export function HousingScreen({
               </View>
               <Text style={styles.rideOwnerFieldLabel}>Services you can provide</Text>
               <View style={styles.rideOwnerStatusWrap}>
-                {[
-                  ["GENERAL_REQUEST", "General rides"],
-                  ["SCHEDULED_REQUEST", "Scheduled rides"],
-                  ["CARPOOL_OFFER", "Carpool seats"]
-                ].map(([value, label]) => (
+                {([
+                  ["GENERAL_REQUEST", "General rides soon", false],
+                  ["SCHEDULED_REQUEST", "Scheduled rides soon", false],
+                  ["CARPOOL_OFFER", "Carpool seats", true]
+                ] as Array<[RideType, string, boolean]>).map(([value, label, enabled]) => (
                   <TouchableOpacity
                     key={value}
-                    style={[styles.rideOwnerStatusPill, rideDriverDraft.serviceTypes.includes(value as RideType) && styles.rideOwnerStatusPillActive]}
-                    onPress={() => toggleRideDriverListValue("serviceTypes", value)}
+                    style={[
+                      styles.rideOwnerStatusPill,
+                      !enabled && styles.rideOwnerStatusPillDisabled,
+                      rideDriverDraft.serviceTypes.includes(value as RideType) && styles.rideOwnerStatusPillActive
+                    ]}
+                    onPress={() => {
+                      if (!enabled) {
+                        Alert.alert("Available soon", `${label} will be available soon. Carpool seats are open now.`);
+                        return;
+                      }
+                      updateRideDriverDraft("serviceTypes", ["CARPOOL_OFFER"]);
+                    }}
                   >
                     <Text style={styles.rideOwnerStatusPillText}>{label}</Text>
                   </TouchableOpacity>
@@ -1082,33 +1315,71 @@ export function HousingScreen({
 
             <View style={styles.rideOwnerCard}>
               <Text style={styles.rideOwnerSectionTitle}>Request tracker</Text>
+              {rideActivityBusy ? <Text style={styles.rideOwnerEmptyText}>Refreshing ride activity...</Text> : null}
               <View style={styles.rideOwnerStatusWrap}>
                 {rideOwnerRequestStates.map((state) => (
                   <Text key={state} style={styles.rideOwnerStatusPill}>{state}</Text>
                 ))}
               </View>
               {requestRows.length ? (
-                requestRows.map((ride) => (
-                  <View key={ride.id} style={styles.rideOwnerRequestCard}>
-                    <View style={styles.rideOwnerRequestTop}>
-                      <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
-                      <Text style={styles.rideOwnerRequestBadge}>{ride.role === "DRIVER" ? "Listed" : ride.status || "New"}</Text>
+                requestRows.map((ride) => {
+                  const status = String(ride.dispatchStatus || (ride.activityRole === "DRIVER_NOTIFICATION" ? "PENDING" : "LISTED")).toUpperCase();
+                  const isIncoming = ride.activityRole === "DRIVER_NOTIFICATION";
+                  const canAccept = isIncoming && status === "PENDING";
+                  const canAdvance = isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
+                  const nextAction = status === "ACCEPTED" ? "EN_ROUTE" : status === "EN_ROUTE" ? "ARRIVED" : status === "ARRIVED" ? "COMPLETED" : null;
+                  const nextLabel = status === "ACCEPTED" ? "Mark en route" : status === "EN_ROUTE" ? "Mark arrived" : status === "ARRIVED" ? "Complete ride" : "";
+                  return (
+                    <View key={ride.id} style={styles.rideOwnerRequestCard}>
+                      <View style={styles.rideOwnerRequestTop}>
+                        <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
+                        <Text style={styles.rideOwnerRequestBadge}>
+                          {isIncoming ? status.replace("_", " ") : "Listed"}
+                        </Text>
+                      </View>
+                      <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
+                      <View style={styles.rideOwnerRequestFacts}>
+                        <Text style={styles.rideOwnerRequestFact}>{ride.distanceMiles ? `${Number(ride.distanceMiles).toFixed(1)} mi away` : "Distance pending"}</Text>
+                        <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
+                        <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
+                      </View>
+                      {ride.pickupPin ? (
+                        <View style={styles.rideOwnerPinBox}>
+                          <Text style={styles.rideOwnerPinLabel}>Pickup PIN</Text>
+                          <Text style={styles.rideOwnerPinValue}>{ride.pickupPin}</Text>
+                        </View>
+                      ) : null}
+                      <Text style={styles.rideOwnerRequestMeta}>
+                        {isIncoming
+                          ? status === "PENDING"
+                            ? `Matched within ${ride.dispatchNearestRadius || 10} miles. Accept to unlock pickup PIN and FChat coordination.`
+                            : "FChat is ready for ETA, pickup notes, route changes, and arrival updates."
+                          : "Your route is listed. Matching rider requests will appear here with route distance, status, and FChat."}
+                      </Text>
+                      <View style={styles.rideOwnerRequestActionRow}>
+                        {canAccept ? (
+                          <>
+                            <TouchableOpacity style={styles.rideOwnerAcceptButton} onPress={() => updateRideDispatch(ride, "ACCEPT")} disabled={rideActivityBusy}>
+                              <Text style={styles.rideOwnerActionText}>Accept</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.rideOwnerDeclineButton} onPress={() => updateRideDispatch(ride, "DECLINE")} disabled={rideActivityBusy}>
+                              <Text style={styles.rideOwnerActionText}>Decline</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : null}
+                        {canAdvance && nextAction ? (
+                          <TouchableOpacity style={styles.rideOwnerAcceptButton} onPress={() => updateRideDispatch(ride, nextAction)} disabled={rideActivityBusy}>
+                            <Text style={styles.rideOwnerActionText}>{nextLabel}</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
+                          <Image source={appAssets.fchat} style={styles.rideOwnerChatIcon} resizeMode="contain" />
+                          <Text style={styles.rideOwnerChatText}>FChat</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
-                    <View style={styles.rideOwnerRequestFacts}>
-                      <Text style={styles.rideOwnerRequestFact}>{ride.distanceMiles ? `${Number(ride.distanceMiles).toFixed(1)} mi` : "Distance pending"}</Text>
-                      <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
-                      <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
-                    </View>
-                    <Text style={styles.rideOwnerRequestMeta}>
-                      {ride.role === "DRIVER" ? "Your route is listed. Rider requests that fit this route will appear here." : "After acceptance, use FChat for ETA, pickup PIN, route notes, and rider questions."}
-                    </Text>
-                    <TouchableOpacity style={styles.rideOwnerChatButton} onPress={onOpenMessenger}>
-                      <Image source={appAssets.fchat} style={styles.rideOwnerChatIcon} resizeMode="contain" />
-                      <Text style={styles.rideOwnerChatText}>Open FChat</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
+                  );
+                })
               ) : (
                 <View style={styles.rideOwnerEmpty}>
                   <Text style={styles.rideOwnerEmptyTitle}>No ride activity yet.</Text>
@@ -1541,18 +1812,6 @@ export function HousingScreen({
             </View>
           </View>
         </ImageBackground>
-        <View style={styles.rentalOwnerCta}>
-          <View style={styles.rentalOwnerCtaIconWrap}>
-            <Image source={appAssets.carFallback} style={styles.rentalOwnerCtaIcon} resizeMode="contain" />
-          </View>
-          <View style={styles.rentalOwnerCtaCopy}>
-            <Text style={styles.rentalOwnerCtaTitle}>Own a car?</Text>
-            <Text style={styles.rentalOwnerCtaText}>List vehicle details, availability, pickup notes, and documents for review.</Text>
-          </View>
-          <TouchableOpacity style={styles.rentalOwnerCtaButton} onPress={openRentalOwnerForm}>
-            <Text style={styles.rentalOwnerCtaButtonText}>List</Text>
-          </TouchableOpacity>
-        </View>
         <View style={styles.carSearchPanel}>
           <Text style={styles.carSearchTitle}>Search rental cars</Text>
           <Text style={styles.carFieldLabel}>Pickup location</Text>
@@ -1705,7 +1964,18 @@ export function HousingScreen({
   }
 
   function updateRideForm<K extends keyof RideInput>(key: K, value: RideInput[K]) {
-    setRideForm((current) => ({ ...current, [key]: value }));
+    setRideForm((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "origin") {
+        next.originLat = null;
+        next.originLng = null;
+      }
+      if (key === "destination") {
+        next.destinationLat = null;
+        next.destinationLng = null;
+      }
+      return next;
+    });
   }
 
   function toggleRideDay(day: string) {
@@ -1720,7 +1990,12 @@ export function HousingScreen({
   async function searchRides() {
     setRideBusy(true);
     try {
-      const rides = await getRides(rideForm.city, rideForm.origin, rideForm.destination, rideForm.rideType);
+      const rides = await getRides(rideForm.city, rideForm.origin, rideForm.destination, "CARPOOL_OFFER", {
+        originLat: rideForm.originLat,
+        originLng: rideForm.originLng,
+        destinationLat: rideForm.destinationLat,
+        destinationLng: rideForm.destinationLng
+      });
       setRideRows(rides);
     } catch (error) {
       Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");
@@ -1736,12 +2011,15 @@ export function HousingScreen({
     }
     setRideBusy(true);
     try {
-      const result = await createMobileRide(rideForm);
+      const result = await createMobileRide({
+        ...rideForm,
+        rideType: rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST"
+      });
       const ride = result.ride;
       if (!ride) throw new Error("Ride was not saved.");
       setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
       setRidePosted(true);
-      Alert.alert("Ride posted", ride.type === "SCHEDULED_REQUEST" ? "Your recurring ride was created with daily ride instances." : "Your ride is live.");
+      Alert.alert("Ride posted", "Your carpool ride is live.");
     } catch (error) {
       Alert.alert("Ride post failed", error instanceof Error ? error.message : "Unable to post this ride.");
     } finally {
@@ -1751,8 +2029,8 @@ export function HousingScreen({
 
   function renderRidePlannerModal() {
     const activeInputValue = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
+    const selectedSuggestionSettled = activeInputValue.trim() === selectedRideSuggestionRef.current;
     const mapUri = ridePlanComplete() ? rideMapUrl(rideForm.city, rideForm.origin, rideForm.destination) : "";
-    const primaryChoice = rideChoiceOptions.find((option) => option.key === selectedRideChoice) || rideChoiceOptions[1];
     const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER").slice(0, 3);
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const routeButtonWebProps =
@@ -1793,6 +2071,7 @@ export function HousingScreen({
                     value={rideForm.origin}
                     onFocus={() => setRideFocusedField("origin")}
                     onChangeText={(text) => {
+                      selectedRideSuggestionRef.current = "";
                       setRideFocusedField("origin");
                       updateRideForm("origin", text);
                     }}
@@ -1804,6 +2083,7 @@ export function HousingScreen({
                     value={rideForm.destination}
                     onFocus={() => setRideFocusedField("destination")}
                     onChangeText={(text) => {
+                      selectedRideSuggestionRef.current = "";
                       setRideFocusedField("destination");
                       updateRideForm("destination", text);
                     }}
@@ -1818,20 +2098,24 @@ export function HousingScreen({
                 </TouchableOpacity>
               </View>
 
-              {rideForm.destination.trim() ? (
+              {ridePlanComplete() ? (
                 <View style={styles.rideTypePrompt}>
                   <Text style={styles.rideTypePromptTitle}>What kind of ride is this?</Text>
                   <Text style={styles.rideTypePromptCopy}>
-                    Pick General for one trip, Scheduled when it repeats, or Carpool for long-distance and shared-cost rides.
+                    Carpool is open now. General and scheduled rides will be available soon.
                   </Text>
                   <View style={styles.rideTypePromptGrid}>
                     {rideServicePosters.map((service) => {
                       const selected = service.key === selectedRideService;
-                      const shortHint = service.key === "scheduled" ? "Repeats" : service.key === "carpool" ? "Long/shared" : "One-time";
+                      const shortHint = service.available ? "Available now" : "Coming soon";
                       return (
                         <TouchableOpacity
                           key={service.key}
-                          style={[styles.rideTypePromptChip, selected && styles.rideTypePromptChipActive]}
+                          style={[
+                            styles.rideTypePromptChip,
+                            !service.available && styles.rideTypePromptChipDisabled,
+                            selected && styles.rideTypePromptChipActive
+                          ]}
                           onPress={() => selectRideService(service)}
                         >
                           <Text style={[styles.rideTypePromptChipTitle, selected && styles.rideTypePromptChipTitleActive]}>{service.title}</Text>
@@ -1844,11 +2128,20 @@ export function HousingScreen({
               ) : null}
 
               <View style={styles.rideSavedRow}>
-                <TouchableOpacity style={styles.rideSavedItem}>
-                  <Text style={styles.rideSavedIcon}>▣</Text>
+                <TouchableOpacity
+                  style={styles.rideSavedItem}
+                  onPress={() => {
+                    setRideFocusedField("origin");
+                    updateRideForm("origin", rideDefaultPickup);
+                    void useCurrentRideLocationForOrigin();
+                  }}
+                >
+                  <Text style={styles.rideSavedIcon}>⌖</Text>
                   <View>
-                    <Text style={styles.rideSavedTitle}>Work</Text>
-                    <Text style={styles.rideSavedMeta}>Starbucks</Text>
+                    <Text style={styles.rideSavedTitle}>Your location</Text>
+                    <Text style={styles.rideSavedMeta} numberOfLines={1}>
+                      {currentRideLocationBusy ? "Detecting current address..." : rideDefaultPickup}
+                    </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.rideSavedItem}>
@@ -1858,8 +2151,9 @@ export function HousingScreen({
               </View>
 
               <View style={styles.rideSuggestionList}>
+                {currentRideLocationError ? <Text style={styles.rideSuggestionHelp}>{currentRideLocationError}</Text> : null}
                 {rideSuggestionsBusy ? <Text style={styles.rideSuggestionHelp}>Loading nearby places...</Text> : null}
-                {!rideSuggestionsBusy && !rideSuggestions.length && activeInputValue.trim() ? (
+                {!rideSuggestionsBusy && !rideSuggestions.length && activeInputValue.trim() && !selectedSuggestionSettled ? (
                   <Text style={styles.rideSuggestionHelp}>No exact places yet. Try a landmark like Union Station or an address.</Text>
                 ) : null}
                 {rideSuggestions.map((place) => (
@@ -1933,22 +2227,12 @@ export function HousingScreen({
                     );
                   })
                 ) : (
-                  rideChoiceOptions.map((option) => {
-                    const selected = option.key === selectedRideChoice;
-                    return (
-                      <TouchableOpacity key={option.key} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(option.key)}>
-                        <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
-                        <View style={styles.rideChoiceCopy}>
-                          <Text style={styles.rideChoiceName}>{option.title} <Text style={styles.rideChoiceSeats}>♟ {option.seats}</Text></Text>
-                          <Text style={styles.rideChoiceMeta}>{option.eta} · {rideMilesEstimate()} mi route</Text>
-                        </View>
-                        <View style={styles.rideChoiceContribution}>
-                          <Text style={styles.rideChoicePrice}>{rideChoicePrice(option.multiplier)}</Text>
-                          <Text style={styles.rideChoicePriceMeta}>suggested</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })
+                  <View style={styles.rideNoOffersCard}>
+                    <Text style={styles.rideNoOffersTitle}>No driver offers yet</Text>
+                    <Text style={styles.rideNoOffersCopy}>
+                      Send your request and nearby registered drivers can accept it. Once a driver accepts, you will see ETA, route details, pickup PIN, and FChat.
+                    </Text>
+                  </View>
                 )}
                 <View style={styles.ridePaymentRow}>
                   <Text style={styles.ridePaymentIcon}>✓</Text>
@@ -1976,7 +2260,7 @@ export function HousingScreen({
                 ) : null}
                 <View style={styles.rideChoiceButtonRow}>
                   <TouchableOpacity style={styles.rideChoiceButton} onPress={requestPlannedRide} disabled={rideBusy}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : `Request ${selectedRideChoice.startsWith("offer:") ? "offer" : primaryChoice.title.replace("FairFares ", "")}`}</Text>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : selectedDriverOffer ? "Request offer" : "Send ride request"}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.rideLaterButton}>
                     <Text style={styles.rideLaterButtonText}>▣</Text>
@@ -1991,7 +2275,31 @@ export function HousingScreen({
   }
 
   function renderRideOnly() {
-    const activeService = rideServicePosters.find((item) => item.key === selectedRideService) || rideServicePosters[1];
+    const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
+    const rideHomePlaces: RidePlaceSuggestion[] = (
+      rideHomeSuggestions.length
+        ? rideHomeSuggestions
+        : [
+            {
+              label: `Denver International Airport (DEN), 8500 Pena Blvd, ${rideDefaultCity}`,
+              main: "Denver International Airport (DEN)",
+              secondary: `8500 Pena Blvd, ${rideDefaultCity}`,
+              distanceMiles: null,
+              lat: 0,
+              lng: 0,
+              source: "fallback"
+            },
+            {
+              label: `Union Station, 1701 Wynkoop St, ${rideDefaultCity}`,
+              main: "Union Station",
+              secondary: `1701 Wynkoop St, ${rideDefaultCity}`,
+              distanceMiles: null,
+              lat: 0,
+              lng: 0,
+              source: "fallback"
+            }
+          ]
+    ).slice(0, 2);
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (
@@ -2027,6 +2335,32 @@ export function HousingScreen({
     );
     return (
       <>
+        <View style={styles.rideHomeSuggestionCard}>
+          {rideHomeSuggestionsBusy && !rideHomePlaces.length ? <Text style={styles.rideHomeSuggestionHelp}>Loading nearby ride places...</Text> : null}
+          {rideHomePlaces.map((place) => {
+            const lower = place.main.toLowerCase();
+            const icon = lower.includes("airport") ? "✈" : lower.includes("station") ? "↪" : "⌖";
+            return (
+              <TouchableOpacity
+                key={`${place.label}-${place.source}`}
+                style={styles.rideHomeSuggestionRow}
+                activeOpacity={0.84}
+                onPress={() => openRidePlannerWithSuggestion(place)}
+              >
+                <View style={[styles.rideHomeSuggestionIconWrap, lower.includes("union") && styles.rideHomeSuggestionIconWrapGreen]}>
+                  <Text style={styles.rideHomeSuggestionIcon}>{icon}</Text>
+                </View>
+                <View style={styles.rideHomeSuggestionCopy}>
+                  <Text style={styles.rideHomeSuggestionTitle} numberOfLines={1}>{place.main}</Text>
+                  <Text style={styles.rideHomeSuggestionMeta} numberOfLines={1}>{place.secondary || rideDefaultCity}</Text>
+                  {lower.includes("union") ? <Text style={styles.rideHomeSuggestionGood}>Lower prices than usual</Text> : null}
+                </View>
+                <Text style={styles.rideHomeSuggestionChevron}>›</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <View style={styles.rideHero}>
           <View style={styles.rideBrandRow}>
             <Image source={appAssets.logo} style={styles.rideBrandLogo} resizeMode="contain" />
@@ -2047,21 +2381,50 @@ export function HousingScreen({
               <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
             ))}
           </View>
+          <Image source={appAssets.rideShareStrip} style={styles.rideShareStrip} resizeMode="contain" />
           <View style={styles.rideHeroActionRow}>
-            <TouchableOpacity style={styles.rideHeroOwnerButton} onPress={openRideOwnerTracker}>
-              {renderRideGlyph("general", true)}
+            <TouchableOpacity style={styles.rideHeroOwnerButton} onPress={startRideOfferListing}>
+              {renderRideGlyph("carpool", true)}
               <View style={styles.rideHeroOwnerCopy}>
-                <Text style={styles.rideHeroOwnerTitle}>List car</Text>
-                <Text style={styles.rideHeroOwnerMeta}>Track requests</Text>
+                <Text style={styles.rideHeroOwnerTitle}>List your ride</Text>
+                <Text style={styles.rideHeroOwnerMeta}>Add from, to, seats, and time</Text>
               </View>
             </TouchableOpacity>
+          </View>
+          <TouchableOpacity activeOpacity={0.9} style={styles.rideListBannerButton} onPress={startRideOfferListing}>
+            <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="cover" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.rideServiceDetail}>
+          <View style={styles.rideServiceDetailHeader}>
+            <View style={styles.rideServiceDetailIconWrap}>{renderRideGlyph(activeService.glyph, true)}</View>
+            <View style={styles.rideServiceDetailCopy}>
+              <Text style={styles.rideServiceDetailLabel}>{activeService.title}</Text>
+              <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {rideDefaultCity}</Text>
+              <Text style={styles.rideServiceDetailText}>{activeService.insight}</Text>
+            </View>
+          </View>
+          <View style={styles.rideExampleBox}>
+            <Text style={styles.rideExampleLabel}>Example</Text>
+            <Text style={styles.rideExampleText}>{activeService.stat}</Text>
+          </View>
+          <View style={styles.rideLifecycleCard}>
+            {activeService.works.map((step, index) => (
+              <View key={`${activeService.key}-${step}`} style={styles.rideServiceStep}>
+                <View style={styles.rideServiceStepDot}>
+                  <Text style={styles.rideServiceStepDotText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.rideServiceStepText}>{step}</Text>
+              </View>
+            ))}
           </View>
         </View>
 
         <View style={styles.ridePosterSection}>
           <View style={styles.ridePosterHeader}>
-            <Text style={styles.rideSectionEyebrow}>Ride services</Text>
-            <Text style={styles.ridePosterHint}>Tap a card to learn and start</Text>
+            <Text style={styles.rideSectionEyebrow}>Ride feed</Text>
+            <Text style={styles.ridePosterHint}>Swipe for more</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePosterCarousel}>
             {rideServicePosters.map((service) => {
@@ -2070,13 +2433,18 @@ export function HousingScreen({
                 <TouchableOpacity
                   key={service.key}
                   activeOpacity={0.88}
-                  style={[styles.ridePosterCard, { backgroundColor: service.tint }, selected && styles.ridePosterCardActive]}
+                  style={[
+                    styles.ridePosterCard,
+                    { backgroundColor: service.tint },
+                    !service.available && styles.ridePosterCardSoon,
+                    selected && styles.ridePosterCardActive
+                  ]}
                   onPress={() => selectRideService(service)}
                 >
                   <View style={styles.ridePosterCopy}>
                     <Text style={styles.ridePosterTitle}>{service.title}</Text>
                     <Text style={styles.ridePosterSubtitle}>{service.subtitle}</Text>
-                    <Text style={styles.ridePosterButton}>Learn more</Text>
+                    <Text style={styles.ridePosterButton}>{service.available ? "Start carpool" : "Coming soon"}</Text>
                   </View>
                   <View style={styles.ridePosterArt}>
                     {renderRideGlyph(service.glyph)}
@@ -2085,46 +2453,6 @@ export function HousingScreen({
               );
             })}
           </ScrollView>
-          <View style={styles.rideServiceDetail}>
-            <View style={styles.rideServiceDetailHeader}>
-              <View style={styles.rideServiceDetailIconWrap}>
-                {renderRideGlyph(activeService.glyph, true)}
-              </View>
-              <View style={styles.rideServiceDetailCopy}>
-                <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {data?.location.city || "your city"}</Text>
-                <Text style={styles.rideServiceDetailText}>{activeService.insight}</Text>
-              </View>
-            </View>
-            <View style={styles.rideExampleBox}>
-              <Text style={styles.rideServiceDetailLabel}>Example</Text>
-              <Text style={styles.rideServiceDetailText}>{activeService.stat}</Text>
-            </View>
-            <Text style={styles.rideServiceDetailLabel}>How it works</Text>
-            {activeService.works.map((step, index) => (
-              <View key={step} style={styles.rideServiceStep}>
-                <View style={styles.rideServiceStepDot}>
-                  <Text style={styles.rideServiceStepDotText}>{index + 1}</Text>
-                </View>
-                <Text style={styles.rideServiceStepText}>{step}</Text>
-              </View>
-            ))}
-            <View style={styles.rideExampleBox}>
-              <Text style={styles.rideServiceDetailLabel}>What you enter</Text>
-              <Text style={styles.rideServiceDetailText}>{activeService.register}</Text>
-            </View>
-            <View style={styles.rideServiceActionRow}>
-              <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRidePlanner}>
-                <Text style={styles.rideServicePlanButtonText}>Plan this ride</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.rideServicePlanButton} onPress={openRideOwnerTracker}>
-                <Text style={styles.rideServicePlanButtonText}>List seats</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.rideServiceChatButton} onPress={onOpenMessenger}>
-                <Image source={appAssets.fchat} style={styles.rideServiceChatIcon} resizeMode="contain" />
-                <Text style={styles.rideServiceChatText}>FChat</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         </View>
       </>
     );
@@ -2135,6 +2463,7 @@ export function HousingScreen({
     {renderRideOwnerTracker()}
     {renderRentalOwnerModal()}
     <ScrollView
+      ref={scrollRef}
       style={styles.screen}
       contentContainerStyle={styles.content}
       stickyHeaderIndices={[2]}
@@ -2143,7 +2472,21 @@ export function HousingScreen({
       onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
     >
         <View style={styles.brandHeader}>
-          <Image source={appAssets.logo} style={styles.logo} resizeMode="contain" />
+          <View style={styles.freeServicesHero}>
+            <View style={styles.freeServicesCopy}>
+              <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
+              <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
+              <Text style={styles.freeServicesTitle}>List, search, rent, and carpool free.</Text>
+              <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
+            </View>
+            <View style={styles.freeServicesIconRail}>
+              {[appAssets.bed, appAssets.search, appAssets.ride, appAssets.roommates].map((icon, index) => (
+                <View key={index} style={styles.freeServicesIconBubble}>
+                  <Image source={icon} style={styles.freeServicesIcon} resizeMode="contain" />
+                </View>
+              ))}
+            </View>
+          </View>
         </View>
 
         <View style={styles.topTabs}>
@@ -2229,7 +2572,7 @@ export function HousingScreen({
         ))}
       </View>
 
-      <View style={styles.welcome}>
+      <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
         <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
         <Text style={styles.welcomeMeta}>Check recent listings, messages, and dashboard activity here.</Text>
         <View style={styles.statRow}>
@@ -2394,31 +2737,77 @@ export function HousingScreen({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 122, gap: theme.spacing.lg },
-  brandHeader: { alignItems: "center" },
-  logo: { width: 150, height: 62 },
+  content: { padding: 14, paddingBottom: 112, gap: 20 },
+  brandHeader: { alignItems: "flex-start", gap: 12 },
+  freeServicesHero: {
+    width: "100%",
+    minHeight: 116,
+    borderRadius: 26,
+    padding: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(46,255,188,0.24)",
+    backgroundColor: "#08c477",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  freeServicesCopy: { flex: 1, minWidth: 0 },
+  freeServicesEyebrow: {
+    alignSelf: "flex-start",
+    color: "#07351f",
+    backgroundColor: "rgba(255,255,255,0.36)",
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    overflow: "hidden",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0
+  },
+  freeServicesTitle: { color: "#06130d", fontSize: 21, lineHeight: 25, fontWeight: "900", marginTop: 8 },
+  freeServicesMeta: { color: "rgba(6,19,13,0.72)", fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 4 },
+  freeServicesIconRail: {
+    width: 88,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 8
+  },
+  freeServicesIconBubble: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(3,8,18,0.20)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  freeServicesIcon: { width: 27, height: 27 },
+  freeServicesLogo: { width: 94, height: 30, marginBottom: 4, marginLeft: -2 },
   topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  topTab: { paddingVertical: 12, paddingRight: 22 },
+  topTab: { paddingVertical: 9, paddingRight: 16 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
-  topTabText: { color: theme.colors.muted, fontSize: 18, fontWeight: "900" },
+  topTabText: { color: theme.colors.muted, fontSize: 15, fontWeight: "900" },
   topTabTextActive: { color: theme.colors.text },
   stickySearch: { backgroundColor: theme.colors.bg, paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
-  searchIcon: { width: 30, height: 30 },
-  searchText: { color: theme.colors.soft, flex: 1, fontSize: 18, fontWeight: "800" },
-  later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 13, paddingVertical: 10, fontWeight: "900" },
+  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
+  searchIcon: { width: 23, height: 23 },
+  searchText: { color: theme.colors.soft, flex: 1, fontSize: 15, fontWeight: "800" },
+  later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 11, paddingVertical: 7, fontWeight: "900", fontSize: 13 },
   segment: { backgroundColor: "rgba(80,92,255,0.30)", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)" },
-  segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13, borderWidth: 1, borderColor: "transparent" },
+  segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 10, borderWidth: 1, borderColor: "transparent" },
   segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
-  segmentText: { color: theme.colors.soft, fontSize: 17, fontWeight: "900" },
+  segmentText: { color: theme.colors.soft, fontSize: 14, fontWeight: "900" },
   segmentTextActive: { color: theme.colors.text },
   quickHero: {
-    borderRadius: 26,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(3,8,18,0.96)",
     padding: theme.spacing.md,
-    gap: 12,
+    gap: 11,
     overflow: "hidden"
   },
   quickPill: {
@@ -2433,9 +2822,9 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     fontWeight: "900"
   },
-  quickHeaderTitle: { color: theme.colors.text, fontSize: 23, lineHeight: 29, fontWeight: "900", maxWidth: 310 },
+  quickHeaderTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "900", maxWidth: 300 },
   quickTitleAccent: { color: "#15e1ba" },
-  quickAnimatedWord: { color: "#ff3d6e", fontSize: 33, lineHeight: 38, fontWeight: "900", letterSpacing: 0 },
+  quickAnimatedWord: { color: "#ff3d6e", fontSize: 26, lineHeight: 31, fontWeight: "900", letterSpacing: 0 },
   quickCursor: { color: theme.colors.text, fontWeight: "400" },
   quickTextList: { gap: 8, paddingTop: 2 },
   quickTextLink: {
@@ -2447,16 +2836,16 @@ const styles = StyleSheet.create({
     gap: 9
   },
   quickTextDot: { width: 8, height: 8, borderRadius: 4 },
-  quickTextTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 23, fontWeight: "900" },
+  quickTextTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "900" },
   postActionGrid: { gap: 10 },
   postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
-  postActionIcon: { width: 42, height: 42 },
+  postActionIcon: { width: 36, height: 36 },
   postActionCopy: { flex: 1, minWidth: 0 },
-  postNeedTitle: { color: "#111", fontSize: 17, lineHeight: 21, fontWeight: "900" },
-  postNeedMeta: { color: "#5b5148", marginTop: 4, fontSize: 14 },
+  postNeedTitle: { color: "#111", fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  postNeedMeta: { color: "#5b5148", marginTop: 4, fontSize: 13 },
   welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#18241d", gap: 8 },
-  welcomeTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
-  welcomeMeta: { color: theme.colors.soft, fontSize: 15 },
+  welcomeTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  welcomeMeta: { color: theme.colors.soft, fontSize: 14 },
   statRow: { flexDirection: "row", gap: 10, marginTop: 4 },
   stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900" },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
@@ -2464,7 +2853,7 @@ const styles = StyleSheet.create({
   emptyText: { color: theme.colors.muted, marginTop: 8 },
   filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
   filterHeader: { gap: 4 },
-  filterHeaderTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  filterHeaderTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   filterHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800" },
   filterTitle: { color: theme.colors.muted, fontSize: 13, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   filterRow: { gap: 8, paddingRight: theme.spacing.md },
@@ -2476,16 +2865,16 @@ const styles = StyleSheet.create({
   carOverviewImage: { borderRadius: theme.radius.lg },
   carShade: { flex: 1, padding: theme.spacing.lg, justifyContent: "space-between", backgroundColor: "rgba(0,0,0,0.48)", gap: theme.spacing.md },
   carEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  carTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900", maxWidth: 260 },
+  carTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 33, fontWeight: "900", maxWidth: 250 },
   carMeta: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20, maxWidth: 280 },
-  carPhone: { color: theme.colors.green, fontWeight: "900", fontSize: 18 },
+  carPhone: { color: theme.colors.green, fontWeight: "900", fontSize: 16 },
   carFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   carFeature: { color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.55)", borderWidth: 1, borderColor: "rgba(255,255,255,0.22)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, overflow: "hidden", fontWeight: "900", fontSize: 12 },
   carBottomRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
   bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 20, paddingVertical: 13 },
   bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
   carRateBox: { minWidth: 108, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
-  carRate: { color: theme.colors.bg, fontSize: 25, fontWeight: "900" },
+  carRate: { color: theme.colors.bg, fontSize: 22, fontWeight: "900" },
   carRateMeta: { color: "#555", fontWeight: "900" },
   carSearchPanel: {
     backgroundColor: "rgba(24,24,27,0.72)",
@@ -2499,10 +2888,10 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 }
   },
-  carSearchTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  carSearchTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   carFieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  carSearchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15, fontWeight: "800" },
-  carSelectInput: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 56, paddingHorizontal: 13, paddingVertical: 9, justifyContent: "center" },
+  carSearchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 45, paddingHorizontal: 12, fontSize: 14, fontWeight: "800" },
+  carSelectInput: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 52, paddingHorizontal: 12, paddingVertical: 8, justifyContent: "center" },
   carSelectValue: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   carSelectMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", marginTop: 2 },
   carTwoCol: { flexDirection: "row", gap: 10 },
@@ -2514,13 +2903,13 @@ const styles = StyleSheet.create({
   carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
   carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   carSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
-  carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   carList: { gap: theme.spacing.md },
   carMiniCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   carMiniCardActive: { borderColor: theme.colors.blue },
-  carMiniImage: { width: "100%", height: 170 },
+  carMiniImage: { width: "100%", height: 150 },
   carMiniBody: { padding: theme.spacing.md, gap: 6 },
-  carMiniTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  carMiniTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
@@ -2532,7 +2921,7 @@ const styles = StyleSheet.create({
   checkoutCloseText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
   rentalReviewPanel: { backgroundColor: "rgba(17,24,39,0.88)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10 },
   reviewEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  reviewTitle: { color: theme.colors.text, fontSize: 28, fontWeight: "900" },
+  reviewTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
   reviewCarTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   reviewMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", lineHeight: 18 },
   reviewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -2553,7 +2942,7 @@ const styles = StyleSheet.create({
   pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
   pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
   pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  pickerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  pickerTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
   pickerClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
   pickerCloseText: { color: theme.colors.text, fontWeight: "900" },
   pickerList: { gap: 8 },
@@ -2568,12 +2957,12 @@ const styles = StyleSheet.create({
   calendarDateText: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "800" },
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },
-  roomCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  roomCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
-  roomIcon: { width: 58, height: 58 },
-  roomLabel: { color: theme.colors.soft, fontWeight: "900", fontSize: 16 },
+  roomIcon: { width: 50, height: 50 },
+  roomLabel: { color: theme.colors.soft, fontWeight: "900", fontSize: 14 },
   localityCard: { width: 270, borderRadius: theme.radius.lg, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, marginRight: theme.spacing.md, padding: theme.spacing.md, gap: 14 },
-  localityTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  localityTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   localityStats: { flexDirection: "row", gap: 10 },
   localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, overflow: "hidden", fontWeight: "800" },
   avgRent: { color: theme.colors.green, fontSize: 18, fontWeight: "900" },
@@ -2590,18 +2979,51 @@ const styles = StyleSheet.create({
   detailImageDots: { position: "absolute", bottom: 10, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.58)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5 },
   detailImageDot: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
-  detailTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 29, fontWeight: "900" },
-  detailMeta: { color: theme.colors.muted, fontSize: 16, fontWeight: "800" },
+  detailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
+  detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   detailMap: { backgroundColor: theme.colors.bg, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
   detailMapTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   detailMapText: { color: theme.colors.green, fontSize: 15, fontWeight: "900" },
   detailMapButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
   detailMapButtonText: { color: theme.colors.text, fontWeight: "900" },
-  detailDescription: { color: theme.colors.soft, fontSize: 16, lineHeight: 22 },
+  detailDescription: { color: theme.colors.soft, fontSize: 14, lineHeight: 20 },
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "800" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideHomeSuggestionCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.03)",
+    overflow: "hidden"
+  },
+  rideHomeSuggestionHelp: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", paddingHorizontal: 16, paddingTop: 12 },
+  rideHomeSuggestionRow: {
+    minHeight: 82,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)"
+  },
+  rideHomeSuggestionIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)"
+  },
+  rideHomeSuggestionIconWrapGreen: { backgroundColor: "rgba(34,197,94,0.16)" },
+  rideHomeSuggestionIcon: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  rideHomeSuggestionCopy: { flex: 1, minWidth: 0 },
+  rideHomeSuggestionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideHomeSuggestionMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 3 },
+  rideHomeSuggestionGood: { color: theme.colors.green, fontSize: 13, fontWeight: "900", marginTop: 5 },
+  rideHomeSuggestionChevron: { color: theme.colors.muted, fontSize: 24, fontWeight: "900" },
   rideHero: {
     borderRadius: theme.radius.lg,
     borderWidth: 1,
@@ -2615,24 +3037,48 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 }
   },
   rideBrandRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
-  rideBrandLogo: { width: 106, height: 38 },
+  rideBrandLogo: { width: 96, height: 34 },
   rideOptionPill: { backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7 },
   rideOptionPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
   rideHeroTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
   rideHeroCopy: { flex: 1, minWidth: 0 },
   rideEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, textTransform: "uppercase" },
-  rideTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 31, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
+  rideTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 28, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
   rideTitleAccent: { color: theme.colors.accent },
   rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
   rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
+  rideShareStrip: {
+    width: "100%",
+    height: 32,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+    backgroundColor: "rgba(15,23,42,0.72)"
+  },
   ridePosterSection: { gap: theme.spacing.md },
   ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
   ridePosterCarousel: { gap: 12, paddingRight: 18 },
+  ridePosterImageCard: {
+    width: 330,
+    height: 172,
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "#f8f0e2",
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  ridePosterImage: { flex: 1 },
+  ridePosterImageRadius: { borderRadius: 20 },
   ridePosterCard: {
-    width: 310,
-    minHeight: 150,
+    width: 286,
+    minHeight: 138,
     borderRadius: 20,
     overflow: "hidden",
     borderWidth: 1,
@@ -2644,11 +3090,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 }
   },
   ridePosterCardActive: { borderColor: theme.colors.text, shadowOpacity: 0.42 },
-  ridePosterCopy: { flex: 1, padding: 16, justifyContent: "space-between", gap: 12 },
-  ridePosterTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "900" },
-  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  ridePosterCardSoon: { opacity: 0.58 },
+  ridePosterCopy: { flex: 1, padding: 14, justifyContent: "space-between", gap: 10 },
+  ridePosterTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900" },
+  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 12, lineHeight: 17, fontWeight: "800" },
   ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 14, paddingVertical: 8, fontSize: 13, fontWeight: "900" },
-  ridePosterArt: { width: 116, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
+  ridePosterArt: { width: 102, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
   rideGlyphWrap: { width: 78, height: 78, alignItems: "center", justifyContent: "center" },
   rideGlyphWrapSmall: { width: 42, height: 42 },
   rideGlyphCalendar: { width: 48, height: 46, borderRadius: 8, borderWidth: 3, borderColor: theme.colors.text, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.04)" },
@@ -2678,8 +3125,8 @@ const styles = StyleSheet.create({
   rideInsightImageWrap: { height: 112, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
   rideInsightImage: { width: 116, height: 78 },
   rideInsightCopy: { padding: theme.spacing.md, gap: 5 },
-  rideInsightTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "900" },
-  rideInsightMeta: { color: theme.colors.soft, fontSize: 15, lineHeight: 21, fontWeight: "800" },
+  rideInsightTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900" },
+  rideInsightMeta: { color: theme.colors.soft, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   rideServiceDetail: {
     borderRadius: theme.radius.lg,
     borderWidth: 1,
@@ -2690,15 +3137,15 @@ const styles = StyleSheet.create({
   },
   rideServiceDetailHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   rideServiceDetailIconWrap: {
-    width: 58,
-    height: 58,
-    borderRadius: 18,
+    width: 50,
+    height: 50,
+    borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center"
   },
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
-  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
+  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 23, fontWeight: "900" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
@@ -2709,10 +3156,12 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 4
   },
+  rideExampleLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  rideExampleText: { color: theme.colors.text, fontSize: 14, lineHeight: 20, fontWeight: "900" },
   rideServiceStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
-  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideLifecycleCard: {
     borderRadius: 16,
     borderWidth: 1,
@@ -2780,7 +3229,7 @@ const styles = StyleSheet.create({
   rideModeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideModeCard: {
     width: "48%",
-    minHeight: 132,
+    minHeight: 118,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
@@ -2790,10 +3239,10 @@ const styles = StyleSheet.create({
     gap: 8
   },
   rideModeCardActive: { borderColor: theme.colors.accent, backgroundColor: "rgba(255,59,48,0.18)" },
-  rideModeIconWrap: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
-  rideModeIcon: { width: 34, height: 34 },
+  rideModeIconWrap: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  rideModeIcon: { width: 30, height: 30 },
   rideModeCopyBlock: { gap: 4 },
-  rideModeTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  rideModeTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "900" },
   rideModeTitleActive: { color: theme.colors.text },
   rideModeCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 7 },
   rideModeCopyActive: { color: theme.colors.soft },
@@ -2803,7 +3252,7 @@ const styles = StyleSheet.create({
   rideFlowDotText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rideFlowText: { color: theme.colors.soft, flex: 1, fontSize: 12, fontWeight: "800" },
   rideActiveSummary: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.05)", padding: theme.spacing.md },
-  rideSummaryTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  rideSummaryTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   rideSummaryCopy: { color: theme.colors.muted, maxWidth: 220, marginTop: 4, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideSummaryStatus: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideForm: {
@@ -2814,7 +3263,7 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     gap: 10
   },
-  rideFormTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
+  rideFormTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   rideInputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2896,24 +3345,32 @@ const styles = StyleSheet.create({
   rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
   rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  rideHeroActionRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  rideHeroActionRow: { flexDirection: "row", gap: 10 },
   rideHeroOwnerButton: {
-    width: 166,
-    minHeight: 62,
-    borderRadius: 22,
+    flex: 1,
+    minHeight: 74,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "rgba(59,130,246,0.28)",
-    backgroundColor: "rgba(59,130,246,0.10)",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderColor: "rgba(59,130,246,0.52)",
+    backgroundColor: "rgba(59,130,246,0.16)",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7
+    gap: 12
   },
   rideHeroOwnerCopy: { flex: 1, minWidth: 0 },
-  rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", marginTop: 2 },
-  rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 30, fontWeight: "600" },
+  rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "900" },
+  rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
+  rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
+  rideListBannerButton: {
+    borderRadius: 18,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#f7efe2"
+  },
+  rideListBanner: { width: "100%", height: 106 },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideOwnerOfferCard: {
     width: "48%",
@@ -2926,6 +3383,7 @@ const styles = StyleSheet.create({
     gap: 8
   },
   rideOwnerOfferCardActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(59,130,246,0.18)" },
+  rideOwnerOfferCardDisabled: { opacity: 0.55 },
   rideOwnerOfferIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
   rideOwnerOfferIconActive: { backgroundColor: theme.colors.blue },
   rideOwnerOfferIconText: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
@@ -2936,7 +3394,7 @@ const styles = StyleSheet.create({
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
   rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2 },
-  rideOwnerTitle: { color: theme.colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900" },
+  rideOwnerTitle: { color: theme.colors.text, fontSize: 28, lineHeight: 32, fontWeight: "900" },
   rideOwnerHero: {
     borderRadius: 24,
     borderWidth: 1,
@@ -2947,7 +3405,7 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: "center"
   },
-  rideOwnerHeroIcon: { width: 74, height: 58 },
+  rideOwnerHeroIcon: { width: 60, height: 48 },
   rideOwnerHeroCopy: { flex: 1, minWidth: 0 },
   rideOwnerHeroTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
   rideOwnerHeroText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800", marginTop: 6 },
@@ -2980,6 +3438,7 @@ const styles = StyleSheet.create({
   rideOwnerHalfInput: { flex: 1, minWidth: 0 },
   rideOwnerFieldLabel: { color: theme.colors.soft, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
   rideOwnerStatusPillActive: { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.20)" },
+  rideOwnerStatusPillDisabled: { opacity: 0.5 },
   rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "800" },
   rideOwnerSaveButton: { minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
@@ -3019,29 +3478,19 @@ const styles = StyleSheet.create({
   rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
   rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerPinBox: { alignSelf: "flex-start", borderRadius: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.38)", backgroundColor: "rgba(34,197,94,0.12)", paddingHorizontal: 12, paddingVertical: 8 },
+  rideOwnerPinLabel: { color: theme.colors.green, fontSize: 10, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  rideOwnerPinValue: { color: theme.colors.text, fontSize: 22, fontWeight: "900", letterSpacing: 3 },
+  rideOwnerRequestActionRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+  rideOwnerAcceptButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, justifyContent: "center", paddingHorizontal: 14 },
+  rideOwnerDeclineButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(239,68,68,0.88)", justifyContent: "center", paddingHorizontal: 14 },
+  rideOwnerActionText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   rideOwnerChatButton: { alignSelf: "flex-start", minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(59,130,246,0.18)", borderWidth: 1, borderColor: "rgba(59,130,246,0.42)", flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11 },
   rideOwnerChatIcon: { width: 22, height: 22 },
   rideOwnerChatText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rideOwnerEmpty: { borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 14, gap: 6 },
   rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
-  rentalOwnerCta: {
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "rgba(15,23,42,0.74)",
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12
-  },
-  rentalOwnerCtaIconWrap: { width: 58, height: 58, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
-  rentalOwnerCtaIcon: { width: 46, height: 36 },
-  rentalOwnerCtaCopy: { flex: 1, minWidth: 0 },
-  rentalOwnerCtaTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
-  rentalOwnerCtaText: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 3 },
-  rentalOwnerCtaButton: { minWidth: 74, minHeight: 44, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
-  rentalOwnerCtaButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   rentalOwnerScreen: { flex: 1, backgroundColor: "#101010" },
   rentalOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 72, gap: 16 },
   rentalOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -3056,7 +3505,7 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: "center"
   },
-  rentalOwnerHeroIcon: { width: 76, height: 56 },
+  rentalOwnerHeroIcon: { width: 62, height: 46 },
   rentalOwnerCard: {
     borderRadius: 22,
     borderWidth: 1,
@@ -3076,7 +3525,7 @@ const styles = StyleSheet.create({
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
   ridePlannerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
   ridePlannerBack: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
-  ridePlannerBackText: { color: theme.colors.text, fontSize: 40, lineHeight: 42, fontWeight: "500" },
+  ridePlannerBackText: { color: theme.colors.text, fontSize: 32, lineHeight: 34, fontWeight: "500" },
   ridePlannerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
   ridePlannerPillRow: { flexDirection: "row", gap: 10 },
   ridePlannerPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
@@ -3113,6 +3562,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9
   },
   rideTypePromptChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  rideTypePromptChipDisabled: { opacity: 0.52 },
   rideTypePromptChipTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
   rideTypePromptChipTitleActive: { color: theme.colors.bg },
   rideTypePromptChipMeta: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "900" },
@@ -3140,7 +3590,7 @@ const styles = StyleSheet.create({
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
   rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
   rideMapBackButton: { position: "absolute", top: 34, left: 22, width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
-  rideMapBackText: { color: theme.colors.text, fontSize: 42, lineHeight: 44 },
+  rideMapBackText: { color: theme.colors.text, fontSize: 34, lineHeight: 36 },
   rideMapRouteLine: { position: "absolute", left: "24%", right: "18%", top: "31%", height: 6, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.90)", transform: [{ rotate: "42deg" }] },
   rideMapCarDot: { position: "absolute", width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.text, borderWidth: 5, borderColor: theme.colors.green },
   rideMapPickupLabel: { position: "absolute", top: 78, left: 82, right: 80, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
@@ -3177,7 +3627,7 @@ const styles = StyleSheet.create({
   },
   rideChoiceRow: { minHeight: 76, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: "transparent" },
   rideChoiceRowActive: { borderColor: theme.colors.text, backgroundColor: "rgba(255,255,255,0.04)" },
-  rideChoiceIcon: { width: 54, height: 42 },
+  rideChoiceIcon: { width: 46, height: 36 },
   rideChoiceCopy: { flex: 1, minWidth: 0 },
   rideChoiceName: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   rideChoiceSeats: { color: theme.colors.soft, fontSize: 14 },
@@ -3185,6 +3635,17 @@ const styles = StyleSheet.create({
   rideChoiceContribution: { alignItems: "flex-end", gap: 1 },
   rideChoicePrice: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
   rideChoicePriceMeta: { color: theme.colors.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+  rideNoOffersCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    gap: 6
+  },
+  rideNoOffersTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  rideNoOffersCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, backgroundColor: theme.colors.panel2, paddingHorizontal: 12 },
   ridePaymentIcon: { color: theme.colors.text, fontSize: 22 },
   ridePaymentArrow: { color: theme.colors.soft, fontSize: 28 },
@@ -3212,6 +3673,6 @@ const styles = StyleSheet.create({
   rideChoiceButtonRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
   rideChoiceButtonText: { color: theme.colors.bg, fontSize: 18, fontWeight: "900" },
-  rideLaterButton: { width: 58, height: 58, borderRadius: 12, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  rideLaterButtonText: { color: theme.colors.text, fontSize: 24 }
+  rideLaterButton: { width: 50, height: 50, borderRadius: 11, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  rideLaterButtonText: { color: theme.colors.text, fontSize: 20 }
 });

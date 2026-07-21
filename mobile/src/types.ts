@@ -38,6 +38,7 @@ export type FairFaresUser = {
   role: string;
   isAdmin: boolean;
   isVerified: boolean;
+  profilePhotoUrl?: string;
 };
 
 export type ChatConversation = {
@@ -55,6 +56,7 @@ export type ChatConversation = {
   rideRoute?: string;
   otherName: string;
   otherUserId?: number;
+  otherPhotoUrl?: string;
   otherOnline?: boolean;
   otherLastSeenAt?: string;
   lastMessage: string;
@@ -68,6 +70,7 @@ export type ChatMessage = {
   id: number;
   senderId: number;
   senderName: string;
+  senderPhotoUrl?: string;
   mine: boolean;
   type: string;
   text: string;
@@ -138,6 +141,9 @@ export type RidePost = {
   dispatchNearestRadius?: number;
   dispatchNotifiedAt?: string;
   dispatchRespondedAt?: string;
+  acceptedDriverName?: string;
+  acceptedDriverRideId?: string;
+  pickupPin?: string;
 };
 
 export type RideDispatchSummary = {
@@ -177,7 +183,11 @@ export type RideInput = {
   rideType: RideType;
   city: string;
   origin: string;
+  originLat?: number | null;
+  originLng?: number | null;
   destination: string;
+  destinationLat?: number | null;
+  destinationLng?: number | null;
   pickupDate: string;
   pickupTime: string;
   startDate: string;

@@ -11823,6 +11823,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "role": row_value(user, "role") or "CUSTOMER",
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
+        "profilePhotoUrl": row_value(user, "profile_photo_url"),
     }
 
 
@@ -11931,6 +11932,38 @@ def ride_point(query: str, city: str = "") -> dict[str, object]:
     if not float(point.get("lat") or 0) and clean_query:
         point = accommodation_location_point(clean_query)
     return point
+
+
+def google_reverse_location_label(lat: float, lng: float) -> str:
+    maps_key = (
+        os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    )
+    if not maps_key or not lat or not lng:
+        return ""
+    params = urllib.parse.urlencode(
+        {
+            "latlng": f"{lat:.7f},{lng:.7f}",
+            "key": maps_key,
+            "result_type": "street_address|premise|subpremise|establishment|route",
+        }
+    )
+    try:
+        payload = google_api_get(f"https://maps.googleapis.com/maps/api/geocode/json?{params}")
+    except Exception as exc:
+        print(f"Ride reverse geocode fallback failed: {type(exc).__name__}: {exc}")
+        return ""
+    if str(payload.get("status") or "").upper() != "OK":
+        return ""
+    results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        formatted = normalize_accommodation_place_label(str(result.get("formatted_address") or ""))
+        if formatted:
+            return dedupe_repeated_location_label(formatted)
+    return ""
 
 
 def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: str = "") -> str:
@@ -12114,6 +12147,13 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
     }
 
 
+def ride_pickup_pin(request_public_id: str, driver_user_id: int) -> str:
+    secret = os.environ.get("FAIRFARES_APP_SECRET") or os.environ.get("SECRET_KEY") or "fairfares-ride-pin-v1"
+    raw = f"{request_public_id}:{driver_user_id}:{secret}".encode("utf-8")
+    value = int(hashlib.sha256(raw).hexdigest()[:8], 16) % 10000
+    return f"{value:04d}"
+
+
 def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, object]:
     if not row:
         return {
@@ -12175,11 +12215,25 @@ def get_ride_driver_profile(user_id: int) -> dict[str, object]:
     return mobile_ride_driver_profile_payload(row)
 
 
-def mobile_ride_posts(city: str = "", ride_type: str = "", origin: str = "", destination: str = "", limit: int = 30) -> list[dict[str, object]]:
+def mobile_ride_posts(
+    city: str = "",
+    ride_type: str = "",
+    origin: str = "",
+    destination: str = "",
+    limit: int = 30,
+    origin_lat: float = 0,
+    origin_lng: float = 0,
+    destination_lat: float = 0,
+    destination_lng: float = 0,
+) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
     origin_point = ride_point(origin, city) if origin else ride_point(city)
     destination_point = ride_point(destination, city) if destination else {}
+    if origin_lat and origin_lng:
+        origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
+    if destination_lat and destination_lng:
+        destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
     clauses = ["status = 'ACTIVE'"]
     values: list[object] = []
     if ride_type:
@@ -13286,6 +13340,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "rideRoute": ride_route,
         "otherName": community_name or row_value(row, "other_name") or "FairFares member",
         "otherUserId": int(row_value(row, "other_user_id") or 0),
+        "otherPhotoUrl": "" if community_public_id else row_value(row, "other_photo_url"),
         "otherOnline": other_online if not community_public_id else False,
         "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
         "lastMessage": row_value(row, "last_message"),
@@ -13316,6 +13371,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                participant.blocked_at,
                other_user.id AS other_user_id,
                other_user.name AS other_name,
+               other_user.profile_photo_url AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -13354,6 +13410,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                participant.blocked_at,
                other_user.id AS other_user_id,
                other_user.name AS other_name,
+               other_user.profile_photo_url AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -13446,10 +13503,27 @@ def get_or_create_ride_conversation(
     ).fetchone()
     if not ride:
         return None, "Ride post was not found."
-    if row_value(ride, "status") != "ACTIVE":
+    ride_status = row_value(ride, "status") or "ACTIVE"
+    if ride_status not in {"ACTIVE", "ACCEPTED", "EN_ROUTE", "ARRIVED"}:
         return None, "That ride is no longer active."
     sender_id = int(row_value(sender, "id") or 0)
     recipient_id = int(row_value(ride, "user_id") or 0)
+    accepted_driver_user_id = 0
+    if row_value(ride, "rider_role") == "RIDER":
+        accepted = con.execute(
+            """
+            SELECT driver_user_id
+            FROM ride_dispatch_notifications
+            WHERE request_ride_post_id = ?
+              AND status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED')
+            ORDER BY datetime(responded_at) DESC
+            LIMIT 1
+            """,
+            (int(row_value(ride, "id") or 0),),
+        ).fetchone()
+        accepted_driver_user_id = int(row_value(accepted, "driver_user_id") or 0) if accepted else 0
+        if accepted_driver_user_id:
+            recipient_id = int(row_value(ride, "user_id") or 0) if sender_id == accepted_driver_user_id else accepted_driver_user_id
     if not recipient_id or recipient_id == sender_id:
         return None, "This ride cannot receive chat messages from this account."
     recipient = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (recipient_id,)).fetchone()
@@ -13501,7 +13575,7 @@ def save_chat_message(
     if client_message_id:
         existing = con.execute(
             """
-            SELECT messages.*, users.name AS sender_name
+            SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
             FROM chat_messages messages
             JOIN users ON users.id = messages.sender_id
             WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ?
@@ -13537,7 +13611,7 @@ def save_chat_message(
     )
     return con.execute(
         """
-        SELECT messages.*, users.name AS sender_name
+        SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
         FROM chat_messages messages
         JOIN users ON users.id = messages.sender_id
         WHERE messages.id = ?
@@ -13565,6 +13639,7 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
         "id": message_id,
         "senderId": sender_id,
         "senderName": row_value(row, "sender_name"),
+        "senderPhotoUrl": row_value(row, "sender_photo_url"),
         "mine": mine,
         "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
@@ -13603,6 +13678,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    last_message.message_text AS last_message,
                    other_user.id AS other_user_id,
                    other_user.name AS other_name,
+                   other_user.profile_photo_url AS other_photo_url,
                    MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                    MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
             FROM chat_conversations conversations
@@ -15273,6 +15349,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/ride-places":
             self.api_mobile_ride_places(parsed)
             return
+        if parsed.path == "/api/mobile/reverse-geocode":
+            self.api_mobile_reverse_geocode(parsed)
+            return
         if parsed.path == "/api/mobile/ride-map":
             self.api_mobile_ride_map(parsed)
             return
@@ -15417,8 +15496,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/login": self.api_mobile_login,
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
+            "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/rides": self.api_mobile_create_ride,
+            "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
             "/api/mobile/rides/driver-profile": self.api_mobile_save_ride_driver_profile,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
@@ -16355,7 +16436,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             message_params.append(limit + 1)
             fetched_messages = con.execute(
                 """
-                SELECT messages.*, users.name AS sender_name
+                SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.conversation_id = ? AND messages.deleted_at IS NULL
@@ -16379,7 +16460,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
                 messages = con.execute(
                     """
-                    SELECT messages.*, users.name AS sender_name
+                    SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
                     FROM chat_messages messages
                     JOIN users ON users.id = messages.sender_id
                     WHERE messages.conversation_id = ?
@@ -16454,10 +16535,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to message this user."}, 401)
             return
-        form = self.read_form()
-        post_public_id = (form.get("post_id") or "").strip()
-        ride_public_id = (form.get("ride_id") or "").strip()
-        community_public_id = (form.get("community_id") or "").strip()
+        if "application/json" in (self.headers.get("Content-Type") or "").lower():
+            raw_payload = self.read_json_body()
+            form = {str(key): str(value).strip() for key, value in raw_payload.items() if value is not None}
+        else:
+            form = self.read_form()
+        post_public_id = (form.get("post_id") or form.get("postId") or "").strip()
+        ride_public_id = (form.get("ride_id") or form.get("rideId") or "").strip()
+        community_public_id = (form.get("community_id") or form.get("communityId") or "").strip()
         raw_message_text = (form.get("message") or "").strip()
         message_text = raw_message_text or (
             "Hi, I am interested in this accommodation post."
@@ -16466,7 +16551,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if ride_public_id
             else ""
         )
-        client_message_id = (form.get("client_message_id") or "").strip()
+        client_message_id = (form.get("client_message_id") or form.get("clientMessageId") or "").strip()
         if not post_public_id and not ride_public_id and not community_public_id:
             self.send_json({"ok": False, "message": "Choose a housing post, ride, or group first."}, 400)
             return
@@ -16590,7 +16675,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             message = con.execute(
                 """
-                SELECT messages.*, users.name AS sender_name
+                SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.id = ? AND messages.conversation_id = ?
@@ -16615,7 +16700,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             updated = con.execute(
                 """
-                SELECT messages.*, users.name AS sender_name
+                SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.id = ?
@@ -16640,7 +16725,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             message = con.execute(
                 """
-                SELECT messages.*, users.name AS sender_name
+                SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.id = ? AND messages.conversation_id = ?
@@ -23317,14 +23402,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
                     return
                 con.execute(
-                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
                     (name, email, phone, hash_password(password)),
                 )
                 user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
                 cleanup_expired_sessions(con)
-                session_token = secrets.token_urlsafe(32)
-                con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
         except sqlite3.IntegrityError:
             self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
             return
@@ -23334,10 +23417,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "activationRequired": False,
-                "token": session_token,
+                "activationRequired": True,
+                "token": "",
                 "user": mobile_user_payload(user),
-                "message": "Account created. You are signed in on this device.",
+                "message": "Account created. Please activate your account from the email link before logging in.",
                 "activationLink": link if not delivery_status.startswith("sent") else "",
                 "outboxFile": str(outbox_file),
             },
@@ -23351,6 +23434,99 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             with db() as con:
                 con.execute("DELETE FROM sessions WHERE token = ?", (token,))
         self.send_json({"ok": True})
+
+    def api_mobile_update_profile(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to update your profile."}, 401)
+            return
+        payload = self.read_json_body()
+        name = clean_text_value(payload.get("name") if "name" in payload else row_value(user, "name"), 120)
+        email = normalize_email(payload.get("email") if "email" in payload else row_value(user, "email"))
+        phone = clean_text_value(payload.get("phone") if "phone" in payload else row_value(user, "phone"), 40)
+        clean_phone = normalize_phone(phone)
+        current_password = str(payload.get("currentPassword") or "")
+        current_email = normalize_email(row_value(user, "email"))
+        current_phone = clean_text_value(row_value(user, "phone"), 40)
+        email_changed = email != current_email
+        phone_changed = normalize_phone(phone) != normalize_phone(current_phone)
+        if not name:
+            self.send_json({"ok": False, "error": "Name is required."}, 400)
+            return
+        if not valid_contact_email(email):
+            self.send_json({"ok": False, "error": "Use a valid email address."}, 400)
+            return
+        if len(clean_phone) < 7:
+            self.send_json({"ok": False, "error": "Use a valid phone number."}, 400)
+            return
+        if (email_changed or phone_changed) and not verify_password(current_password, row_value(user, "password_hash")):
+            self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
+            return
+        photo = None
+        if "profilePhoto" in payload or "profilePhotoUrl" in payload:
+            photo = str(payload.get("profilePhoto") or payload.get("profilePhotoUrl") or "").strip()
+            if photo.startswith("data:image/svg xml"):
+                photo = photo.replace("data:image/svg xml", "data:image/svg+xml", 1)
+            if photo:
+                if photo.startswith("data:image/"):
+                    if ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+                        self.send_json({"ok": False, "error": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
+                        return
+                    mime_type = photo.split(";", 1)[0].replace("data:", "", 1).lower()
+                    if mime_type not in ALLOWED_HOUSING_IMAGE_MIME_TYPES:
+                        self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, or GIF profile image."}, 400)
+                        return
+                    photo = save_data_url_payload_locally(
+                        folder_name="profiles",
+                        data_url=photo,
+                        fallback_name=f"profile-{row_value(user, 'id') or uuid.uuid4().hex}",
+                        allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                        max_bytes=MAX_HOUSING_IMAGE_BYTES,
+                    )
+                    if not photo:
+                        self.send_json({"ok": False, "error": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
+                        return
+                elif not (
+                    photo.startswith("local://uploads/")
+                    or photo.startswith("/uploads/")
+                    or photo.startswith("https://")
+                    or photo.startswith("http://")
+                ):
+                    self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, or GIF profile image."}, 400)
+                    return
+        with db() as con:
+            existing = find_user_by_email(con, email)
+            if existing and int(row_value(existing, "id") or 0) != int(row_value(user, "id") or 0):
+                self.send_json({"ok": False, "error": "That email is already used by another account."}, 409)
+                return
+            verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
+            if photo is None:
+                con.execute(
+                    "UPDATE users SET name = ?, email = ?, phone = ?, is_verified = ? WHERE id = ?",
+                    (name, email, phone, verified_value, user["id"]),
+                )
+            else:
+                con.execute(
+                    "UPDATE users SET name = ?, email = ?, phone = ?, is_verified = ?, profile_photo_url = ? WHERE id = ?",
+                    (name, email, phone, verified_value, photo, user["id"]),
+                )
+            if email_changed:
+                con.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+            updated = con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        activation_link = ""
+        if email_changed:
+            token = create_verification(int(row_value(user, "id") or 0), email)
+            activation_link = self.activation_url(token)
+            send_activation_email(email, name, activation_link)
+        self.send_json(
+            {
+                "ok": True,
+                "user": mobile_user_payload(updated),
+                "activationRequired": email_changed,
+                "activationLink": activation_link,
+                "message": "Profile updated. Please activate your new email before logging in again." if email_changed else "Profile updated.",
+            }
+        )
 
     def api_mobile_bootstrap(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
@@ -23407,6 +23583,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "query": query,
                 "suggestions": ride_place_suggestions(city, query, limit=limit),
                 "placesEnabled": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
+            }
+        )
+
+    def api_mobile_reverse_geocode(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            lat = float(params.get("lat", params.get("latitude", [""]))[0] or 0)
+            lng = float(params.get("lng", params.get("longitude", [""]))[0] or 0)
+        except (TypeError, ValueError):
+            self.send_json({"ok": False, "error": "Valid latitude and longitude are required."}, 400)
+            return
+        if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+            self.send_json({"ok": False, "error": "Latitude or longitude is out of range."}, 400)
+            return
+        label = google_reverse_location_label(lat, lng)
+        self.send_json(
+            {
+                "ok": True,
+                "label": label,
+                "lat": lat,
+                "lng": lng,
+                "mapsEnabled": bool(
+                    os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
+                    or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+                    or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+                ),
             }
         )
 
@@ -23503,13 +23705,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
         origin = clean_text_value((params.get("origin", [""])[0] or ""), 180)
         destination = clean_text_value((params.get("destination", [""])[0] or ""), 180)
+        origin_lat = float_from_value(params.get("originLat", params.get("origin_lat", ["0"]))[0])
+        origin_lng = float_from_value(params.get("originLng", params.get("origin_lng", ["0"]))[0])
+        destination_lat = float_from_value(params.get("destinationLat", params.get("destination_lat", ["0"]))[0])
+        destination_lng = float_from_value(params.get("destinationLng", params.get("destination_lng", ["0"]))[0])
         raw_ride_type = params.get("type", params.get("rideType", [""]))[0] if params.get("type") or params.get("rideType") else ""
         ride_type = normalize_ride_type(raw_ride_type) if raw_ride_type else ""
         try:
             limit = int(params.get("limit", ["30"])[0] or 30)
         except ValueError:
             limit = 30
-        rides = mobile_ride_posts(city=city, ride_type=ride_type, origin=origin, destination=destination, limit=limit)
+        rides = mobile_ride_posts(
+            city=city,
+            ride_type=ride_type,
+            origin=origin,
+            destination=destination,
+            limit=limit,
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+            destination_lat=destination_lat,
+            destination_lng=destination_lng,
+        )
         self.send_json(
             {
                 "ok": True,
@@ -23566,32 +23782,147 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (user_id,),
             ).fetchall()
 
-        rides: list[dict[str, object]] = []
-        seen: set[str] = set()
-        for row in own_rows:
-            payload = mobile_ride_payload(row)
-            payload["activityRole"] = "MINE"
-            payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
-            payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
-            public_id = str(payload.get("id") or "")
-            if public_id:
-                seen.add(public_id)
-            rides.append(payload)
-        for row in incoming_rows:
-            payload = mobile_ride_payload(row)
-            public_id = str(payload.get("id") or "")
-            if public_id in seen:
-                continue
-            payload["activityRole"] = "DRIVER_NOTIFICATION"
-            payload["dispatchStatus"] = row_value(row, "dispatch_status") or "PENDING"
-            payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
-            payload["pickupDistanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
-            payload["distanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
-            payload["dispatchNotifiedAt"] = row_value(row, "dispatch_notified_at")
-            payload["dispatchRespondedAt"] = row_value(row, "dispatch_responded_at")
-            rides.append(payload)
+            rides: list[dict[str, object]] = []
+            seen: set[str] = set()
+            for row in own_rows:
+                payload = mobile_ride_payload(row)
+                payload["activityRole"] = "MINE"
+                payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
+                payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
+                if row_value(row, "rider_role") == "RIDER":
+                    accepted = con.execute(
+                        """
+                        SELECT notifications.*, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id
+                        FROM ride_dispatch_notifications notifications
+                        JOIN users ON users.id = notifications.driver_user_id
+                        JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
+                        WHERE notifications.request_ride_post_id = ?
+                          AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
+                        ORDER BY datetime(notifications.responded_at) DESC
+                        LIMIT 1
+                        """,
+                        (int(row_value(row, "id") or 0),),
+                    ).fetchone()
+                    if accepted:
+                        driver_user_id = int(row_value(accepted, "driver_user_id") or 0)
+                        payload["dispatchStatus"] = row_value(accepted, "status") or "ACCEPTED"
+                        payload["dispatchRespondedAt"] = row_value(accepted, "responded_at")
+                        payload["acceptedDriverName"] = row_value(accepted, "driver_name") or "Driver"
+                        payload["acceptedDriverRideId"] = row_value(accepted, "driver_ride_public_id")
+                        payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
+                public_id = str(payload.get("id") or "")
+                if public_id:
+                    seen.add(public_id)
+                rides.append(payload)
+            for row in incoming_rows:
+                payload = mobile_ride_payload(row)
+                public_id = str(payload.get("id") or "")
+                if public_id in seen:
+                    continue
+                payload["activityRole"] = "DRIVER_NOTIFICATION"
+                payload["dispatchStatus"] = row_value(row, "dispatch_status") or "PENDING"
+                payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
+                payload["pickupDistanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
+                payload["distanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
+                payload["dispatchNotifiedAt"] = row_value(row, "dispatch_notified_at")
+                payload["dispatchRespondedAt"] = row_value(row, "dispatch_responded_at")
+                if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
+                    payload["pickupPin"] = ride_pickup_pin(public_id, user_id)
+                rides.append(payload)
         rides.sort(key=lambda item: str(item.get("createdAt") or item.get("dispatchNotifiedAt") or ""), reverse=True)
         self.send_json({"ok": True, "rides": rides[:100]})
+
+    def api_mobile_ride_dispatch_action(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to manage ride requests."}, 401)
+            return
+        payload = self.read_json_body()
+        ride_public_id = clean_text_value(payload.get("rideId") or payload.get("ride_id"), 40)
+        action = clean_text_value(payload.get("action"), 40).upper()
+        allowed_actions = {"ACCEPT", "DECLINE", "EN_ROUTE", "ARRIVED", "COMPLETED"}
+        if action not in allowed_actions:
+            self.send_json({"ok": False, "error": "Unsupported ride action."}, 400)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            request_row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1", (ride_public_id,)).fetchone()
+            if not request_row:
+                self.send_json({"ok": False, "error": "Ride request was not found."}, 404)
+                return
+            notification = con.execute(
+                """
+                SELECT *
+                FROM ride_dispatch_notifications
+                WHERE request_ride_post_id = ?
+                  AND driver_user_id = ?
+                LIMIT 1
+                """,
+                (int(row_value(request_row, "id") or 0), user_id),
+            ).fetchone()
+            if not notification:
+                self.send_json({"ok": False, "error": "This ride request is not assigned to your driver account."}, 403)
+                return
+            current_status = str(row_value(notification, "status") or "PENDING").upper()
+            next_status = "DECLINED" if action == "DECLINE" else "ACCEPTED" if action == "ACCEPT" else action
+            valid_transitions = {
+                "PENDING": {"ACCEPTED", "DECLINED"},
+                "ACCEPTED": {"EN_ROUTE", "COMPLETED"},
+                "EN_ROUTE": {"ARRIVED", "COMPLETED"},
+                "ARRIVED": {"COMPLETED"},
+                "COMPLETED": set(),
+                "DECLINED": set(),
+                "EXPIRED": set(),
+            }
+            if next_status not in valid_transitions.get(current_status, set()):
+                self.send_json({"ok": False, "error": f"Cannot change ride request from {current_status} to {next_status}."}, 409)
+                return
+            con.execute(
+                """
+                UPDATE ride_dispatch_notifications
+                SET status = ?, responded_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (next_status, int(row_value(notification, "id") or 0)),
+            )
+            if next_status == "ACCEPTED":
+                con.execute(
+                    """
+                    UPDATE ride_dispatch_notifications
+                    SET status = 'EXPIRED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+                    WHERE request_ride_post_id = ?
+                      AND id != ?
+                      AND status = 'PENDING'
+                    """,
+                    (int(row_value(request_row, "id") or 0), int(row_value(notification, "id") or 0)),
+                )
+                con.execute("UPDATE ride_posts SET status = 'ACCEPTED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
+            elif next_status == "COMPLETED":
+                con.execute("UPDATE ride_posts SET status = 'COMPLETED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
+            updated = con.execute(
+                """
+                SELECT requests.*,
+                       notifications.status AS dispatch_status,
+                       notifications.radius_miles AS dispatch_nearest_radius,
+                       notifications.distance_miles AS dispatch_distance_miles,
+                       notifications.notified_at AS dispatch_notified_at,
+                       notifications.responded_at AS dispatch_responded_at
+                FROM ride_dispatch_notifications notifications
+                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                WHERE notifications.id = ?
+                LIMIT 1
+                """,
+                (int(row_value(notification, "id") or 0),),
+            ).fetchone()
+        response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)
+        response["activityRole"] = "DRIVER_NOTIFICATION"
+        response["dispatchStatus"] = next_status
+        response["dispatchNearestRadius"] = int(row_value(updated, "dispatch_nearest_radius") or row_value(notification, "radius_miles") or 0) if updated else int(row_value(notification, "radius_miles") or 0)
+        response["pickupDistanceMiles"] = float(row_value(updated, "dispatch_distance_miles") or row_value(notification, "distance_miles") or 0) if updated else float(row_value(notification, "distance_miles") or 0)
+        response["distanceMiles"] = response["pickupDistanceMiles"]
+        if next_status in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
+            response["pickupPin"] = ride_pickup_pin(ride_public_id, user_id)
+        self.send_json({"ok": True, "ride": response})
 
     def api_mobile_ride_driver_profile(self) -> None:
         user = self.current_user()
@@ -24254,6 +24585,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         city = clean_text_value(payload.get("city") or "Denver, CO", 120) or "Denver, CO"
         origin = clean_text_value(payload.get("origin") or payload.get("pickup") or "", 180)
         destination = clean_text_value(payload.get("destination") or payload.get("dropoff") or "", 180)
+        origin_lat = float_from_value(payload.get("originLat") or payload.get("origin_lat") or "0")
+        origin_lng = float_from_value(payload.get("originLng") or payload.get("origin_lng") or "0")
+        destination_lat = float_from_value(payload.get("destinationLat") or payload.get("destination_lat") or "0")
+        destination_lng = float_from_value(payload.get("destinationLng") or payload.get("destination_lng") or "0")
         pickup_date = clean_text_value(payload.get("pickupDate") or payload.get("pickup_date") or "", 30)
         pickup_time = clean_text_value(payload.get("pickupTime") or payload.get("pickup_time") or "", 30)
         start_date = clean_text_value(payload.get("startDate") or payload.get("start_date") or pickup_date, 30)
@@ -24301,6 +24636,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
         origin_point = ride_point(origin, city)
         destination_point = ride_point(destination, city)
+        if origin_lat and origin_lng:
+            origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
+        if destination_lat and destination_lng:
+            destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
         origin_label = ride_display_label(origin, origin_point, city)
         destination_label = ride_display_label(destination, destination_point, city)
         public_id = ride_public_id()

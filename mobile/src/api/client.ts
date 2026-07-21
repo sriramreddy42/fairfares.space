@@ -141,7 +141,11 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
 
 export function absoluteAssetUrl(value: string) {
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^(https?:\/\/|data:image\/)/i.test(value)) return value;
+  if (value.startsWith("local://uploads/")) {
+    const uploadPath = value.replace("local://", "/");
+    return `${currentApiBase()}${uploadPath}`;
+  }
   return `${currentApiBase()}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
@@ -159,9 +163,26 @@ export async function getHousing(city: string, area: string, need: string, categ
   return payload.posts;
 }
 
-export async function getRides(city: string, origin = "", destination = "", rideType: RideType | "" = "") {
+type RideSearchCoordinates = {
+  originLat?: number | null;
+  originLng?: number | null;
+  destinationLat?: number | null;
+  destinationLng?: number | null;
+};
+
+function addFiniteParam(params: URLSearchParams, key: string, value: number | null | undefined) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    params.set(key, String(value));
+  }
+}
+
+export async function getRides(city: string, origin = "", destination = "", rideType: RideType | "" = "", coordinates: RideSearchCoordinates = {}) {
   const params = new URLSearchParams({ city, origin, destination, limit: "50" });
   if (rideType) params.set("type", rideType);
+  addFiniteParam(params, "originLat", coordinates.originLat);
+  addFiniteParam(params, "originLng", coordinates.originLng);
+  addFiniteParam(params, "destinationLat", coordinates.destinationLat);
+  addFiniteParam(params, "destinationLng", coordinates.destinationLng);
   const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?${params.toString()}`);
   return payload.rides || [];
 }
@@ -187,6 +208,12 @@ export async function getRidePlaceSuggestions(city: string, query = "") {
   return payload.suggestions || [];
 }
 
+export async function reverseGeocodeRideLocation(latitude: number, longitude: number) {
+  const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
+  const payload = await request<{ ok: boolean; label: string }>(`/api/mobile/reverse-geocode?${params.toString()}`);
+  return payload.label || "";
+}
+
 export function rideMapUrl(city: string, origin: string, destination: string) {
   const params = new URLSearchParams({ city, origin, destination, v: "google-static-20260719" });
   return `${currentApiBase()}/api/mobile/ride-map?${params.toString()}`;
@@ -199,6 +226,15 @@ export async function createMobileRide(input: RideInput) {
     body: JSON.stringify(input)
   });
   return { ride: payload.ride, dispatch: payload.dispatch };
+}
+
+export async function respondToRideDispatch(rideId: string, action: "ACCEPT" | "DECLINE" | "EN_ROUTE" | "ARRIVED" | "COMPLETED") {
+  const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides/dispatch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rideId, action })
+  });
+  return payload.ride;
 }
 
 export async function getRideDriverProfile() {
@@ -647,6 +683,32 @@ export type MobileHousingPostInput = {
 
 export async function createMobileHousingPost(input: MobileHousingPostInput) {
   return request<{ ok: boolean; post: HousingPost }>("/api/mobile/housing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function mobileLogout() {
+  try {
+    await request<{ ok: boolean }>("/api/mobile/logout", { method: "POST" });
+  } catch {
+    // Local logout should still clear the device session if the network is down.
+  } finally {
+    setAuthToken("");
+  }
+}
+
+export type MobileProfileInput = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  profilePhoto?: string;
+  currentPassword?: string;
+};
+
+export async function updateMobileProfile(input: MobileProfileInput) {
+  return request<{ ok: boolean; user: BootstrapPayload["user"]; message: string; activationRequired?: boolean; activationLink?: string }>("/api/mobile/profile", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)

@@ -1,8 +1,8 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileSignup, MobileHousingPostInput, startRentalCheckout } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -10,6 +10,7 @@ import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
+import { pickCompressedImages } from "./src/utils/imageUpload";
 
 const emptyListingForm: MobileHousingPostInput = {
   postMode: "HAVE_PLACE",
@@ -52,7 +53,8 @@ const emptyListingForm: MobileHousingPostInput = {
   contactName: "",
   contactEmail: "",
   contactPhone: "",
-  roommateIntent: false
+  roommateIntent: false,
+  images: []
 };
 
 const listingModes: Array<[MobileHousingPostInput["postMode"], string]> = [
@@ -154,6 +156,7 @@ export default function App() {
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<{ title: string; body: string; action: string } | null>(null);
+  const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
 
   async function load() {
     setLoading(true);
@@ -371,6 +374,8 @@ export default function App() {
     try {
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
       setVisiblePosts(posts);
+      setActiveTab("housing");
+      setHousingWelcomeFocusKey((value) => value + 1);
       setData((current) =>
         current
           ? {
@@ -440,6 +445,27 @@ export default function App() {
     } catch (error) {
       Alert.alert("Post failed", error instanceof Error ? error.message : "Unable to post this listing.");
     }
+  }
+
+  async function pickListingPhotos() {
+    const currentImages = listingForm.images || [];
+    const remaining = 4 - currentImages.length;
+    if (remaining <= 0) {
+      Alert.alert("Photo limit reached", "You can upload up to 4 photos for one post.");
+      return;
+    }
+    try {
+      const picked = await pickCompressedImages(remaining);
+      if (picked.length) {
+        setListingForm((current) => ({ ...current, images: [...(current.images || []), ...picked].slice(0, 4) }));
+      }
+    } catch (error) {
+      Alert.alert("Photos not added", error instanceof Error ? error.message : "Could not add photos.");
+    }
+  }
+
+  function removeListingPhoto(index: number) {
+    setListingForm((current) => ({ ...current, images: (current.images || []).filter((_image, imageIndex) => imageIndex !== index) }));
   }
 
   async function selectCategory(category: string) {
@@ -575,22 +601,41 @@ export default function App() {
     setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(signupName, identifier, signupPhone, password);
-      setAuthMessage(payload.message || "Account created. You are signed in on this device.");
-      setLoginOpen(false);
+      setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
       setSignupPhone("");
       setIdentifier("");
       setPassword("");
-      await load();
-      if (pendingListingAfterLogin) {
-        setPendingListingAfterLogin(false);
-        openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
+      if (!payload.activationRequired && payload.token) {
+        setLoginOpen(false);
+        await load();
+        if (pendingListingAfterLogin) {
+          setPendingListingAfterLogin(false);
+          openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
+        }
       }
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Signup failed. Please try again.");
     } finally {
       setAuthBusy(false);
     }
+  }
+
+  async function logoutProfile() {
+    try {
+      await mobileLogout();
+      setData((current) => (current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [] } } : current));
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("home");
+      await load();
+    } catch (error) {
+      Alert.alert("Logout failed", error instanceof Error ? error.message : "Could not log out.");
+    }
+  }
+
+  function updateLocalUser(user: BootstrapPayload["user"]) {
+    setData((current) => (current ? { ...current, user } : current));
   }
 
   const screen =
@@ -620,7 +665,7 @@ export default function App() {
         onRequireLogin={() => setLoginOpen(true)}
       />
     ) : activeTab === "profile" ? (
-      <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} />
+      <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} onLogout={logoutProfile} onProfileUpdated={updateLocalUser} />
     ) : activeTab === "services" ? (
       <ServicesScreen
         cars={cars}
@@ -629,6 +674,13 @@ export default function App() {
         selected={selectedService}
         onSelect={setSelectedService}
         onOpenHousing={() => setActiveTab("housing")}
+        onOpenRide={() => {
+          setSelectedNeed("ride_need");
+          setActiveTab("housing");
+        }}
+        onOpenMessenger={() => setActiveTab("messenger")}
+        onOpenActivity={() => setActiveTab("activity")}
+        onOpenProfile={() => setActiveTab("profile")}
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
       />
@@ -662,6 +714,7 @@ export default function App() {
         onTopAction={topAction}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
+        focusWelcomeKey={housingWelcomeFocusKey}
       />
     ) : (
       <HousingScreen
@@ -693,6 +746,7 @@ export default function App() {
         onTopAction={topAction}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
+        focusWelcomeKey={housingWelcomeFocusKey}
       />
     );
 
@@ -879,6 +933,35 @@ export default function App() {
               </>
             )}
             {renderFormSection(
+              "Photos",
+              <>
+                <Text style={styles.photoHelp}>
+                  {listingForm.postMode === "HAVE_PLACE"
+                    ? "Add up to 4 clear room/property photos. FairFares compresses them before upload."
+                    : listingForm.roommateIntent
+                      ? "Add up to 4 photos that help explain your roommate search or profile. FairFares compresses them before upload."
+                      : "Add up to 4 helpful photos for your accommodation post. FairFares compresses them before upload."}
+                </Text>
+                <View style={styles.photoGrid}>
+                  {(listingForm.images || []).map((image, index) => (
+                    <View key={`${index}-${image.slice(0, 20)}`} style={styles.photoPreviewWrap}>
+                      <Image source={{ uri: image }} style={styles.photoPreview} />
+                      <TouchableOpacity style={styles.photoRemove} onPress={() => removeListingPhoto(index)}>
+                        <Text style={styles.photoRemoveText}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {(listingForm.images || []).length < 4 ? (
+                    <TouchableOpacity style={styles.photoAdd} onPress={pickListingPhotos}>
+                      <Text style={styles.photoAddIcon}>＋</Text>
+                      <Text style={styles.photoAddText}>{(listingForm.images || []).length ? "Add more" : "Add photos"}</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <Text style={styles.photoCount}>{(listingForm.images || []).length}/4 photos selected</Text>
+              </>
+            )}
+            {renderFormSection(
               "Preferences and amenities",
               <>
                 <View style={styles.choiceRow}>
@@ -1013,32 +1096,42 @@ const styles = StyleSheet.create({
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
-  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, padding: theme.spacing.lg, gap: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
+  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
   searchModalCard: { height: "90%", maxHeight: "90%", paddingBottom: theme.spacing.md },
   searchModalScroll: { flex: 1 },
-  searchModalContent: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
+  searchModalContent: { gap: 14, paddingBottom: 20 },
   searchModalActions: { gap: theme.spacing.xs, paddingTop: theme.spacing.sm, borderTopWidth: 1, borderTopColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
-  modalTitle: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
-  modalCopy: { color: theme.colors.muted, fontSize: 16, lineHeight: 22 },
-  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 16, minHeight: 54, fontSize: 16 },
-  textArea: { minHeight: 104, paddingTop: 14, textAlignVertical: "top" },
+  modalTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  modalCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
+  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
+  textArea: { minHeight: 96, paddingTop: 13, textAlignVertical: "top" },
   textAreaSmall: { minHeight: 82, paddingTop: 14, textAlignVertical: "top" },
   formSection: { gap: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.bg },
-  formSectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  formSectionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  photoHelp: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  photoPreviewWrap: { width: "47%", aspectRatio: 1.25, borderRadius: theme.radius.md, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
+  photoPreview: { width: "100%", height: "100%" },
+  photoRemove: { position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: "rgba(0,0,0,0.72)", alignItems: "center", justifyContent: "center" },
+  photoRemoveText: { color: theme.colors.text, fontSize: 16, fontWeight: "900", marginTop: -2 },
+  photoAdd: { width: "47%", aspectRatio: 1.25, borderRadius: theme.radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.blue, alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.colors.panel2 },
+  photoAddIcon: { color: theme.colors.blue, fontSize: 23, fontWeight: "900" },
+  photoAddText: { color: theme.colors.text, fontWeight: "900" },
+  photoCount: { color: theme.colors.soft, fontWeight: "800", fontSize: 12 },
   miniGroup: { gap: 7 },
   miniLabel: { color: theme.colors.muted, fontWeight: "900" },
   twoCol: { flexDirection: "row", gap: theme.spacing.sm },
   twoColInput: { flex: 1 },
   choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  choicePill: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 13, paddingVertical: 10, alignItems: "center" },
+  choicePill: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9, alignItems: "center" },
   choicePillActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
   choiceText: { color: theme.colors.soft, fontWeight: "900" },
   choiceTextActive: { color: theme.colors.bg },
-  primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 14 },
+  primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   disabledButton: { opacity: 0.65 },
-  primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 16 },
+  primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },
   secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
