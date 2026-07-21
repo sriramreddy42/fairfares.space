@@ -474,6 +474,7 @@ export function HousingScreen({
   const [rideDriverProfile, setRideDriverProfile] = useState<RideDriverProfile | null>(null);
   const [rideDriverDraft, setRideDriverDraft] = useState<RideDriverProfile>(blankRideDriverProfile);
   const [rideDriverBusy, setRideDriverBusy] = useState(false);
+  const [rideOwnerPrompt, setRideOwnerPrompt] = useState("");
   const { width: viewportWidth } = useWindowDimensions();
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
@@ -748,6 +749,7 @@ export function HousingScreen({
   async function openRideOwnerTracker() {
     setMode("ride");
     setRideOwnerOpen(true);
+    setRideOwnerPrompt("");
     onBottomTabsHiddenChange?.(true);
     if (!data?.user) return;
     setRideDriverBusy(true);
@@ -756,8 +758,12 @@ export function HousingScreen({
       const carpoolProfile = { ...profile, serviceTypes: ["CARPOOL_OFFER" as RideType] };
       setRideDriverProfile(carpoolProfile);
       setRideDriverDraft({ ...blankRideDriverProfile, ...carpoolProfile });
+      if (!carpoolProfile.readyForOffers && carpoolProfile.missing?.length) {
+        setRideOwnerPrompt(`Complete and save these driver details first: ${carpoolProfile.missing.join(", ")}.`);
+      }
     } catch {
       setRideDriverProfile(null);
+      setRideOwnerPrompt("Save your driver profile first. Add vehicle, insurance, availability, seats, and pickup radius to list a ride.");
     } finally {
       setRideDriverBusy(false);
     }
@@ -776,6 +782,7 @@ export function HousingScreen({
 
   function closeRideOwnerTracker() {
     setRideOwnerOpen(false);
+    setRideOwnerPrompt("");
     onBottomTabsHiddenChange?.(false);
   }
 
@@ -822,6 +829,11 @@ export function HousingScreen({
       const profile = await saveRideDriverProfile(carpoolDraft);
       setRideDriverProfile(profile);
       setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
+      setRideOwnerPrompt(
+        profile.readyForOffers
+          ? "Driver profile saved. You can now list your route and available seats."
+          : `Almost there. Add missing details: ${(profile.missing || []).join(", ")}.`
+      );
       void refreshRideActivity();
       Alert.alert("Driver profile saved", profile.readyForOffers ? "You can now list route and available seats." : `Add missing details: ${(profile.missing || []).join(", ")}`);
     } catch (error) {
@@ -837,7 +849,8 @@ export function HousingScreen({
       return;
     }
     if (!rideDriverProfile?.readyForOffers) {
-      Alert.alert("Driver profile needed", "Save vehicle, insurance, service type, and availability details before listing route/seats.");
+      setRideOwnerOpen(true);
+      setRideOwnerPrompt("Complete and save your driver profile first. Required: vehicle, plate/state, insurance, availability, seats, and pickup radius.");
       return;
     }
     const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface && item.available) || rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
@@ -1158,6 +1171,7 @@ export function HousingScreen({
               <Text style={styles.rideOwnerEmptyText}>
                 Save your vehicle, insurance, services, and availability. FairFares reviews the profile before rider requests can be accepted.
               </Text>
+              {rideOwnerPrompt ? <Text style={styles.rideOwnerPrompt}>{rideOwnerPrompt}</Text> : null}
               <TextInput
                 style={styles.rideOwnerInput}
                 placeholder="Vehicle make/model, e.g. Toyota Camry"
@@ -3440,6 +3454,18 @@ const styles = StyleSheet.create({
   rideOwnerStatusPillActive: { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.20)" },
   rideOwnerStatusPillDisabled: { opacity: 0.5 },
   rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  rideOwnerPrompt: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.45)",
+    backgroundColor: "rgba(59,130,246,0.13)",
+    color: "#bfdbfe",
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
   rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "800" },
   rideOwnerSaveButton: { minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
   rideOwnerSaveText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
