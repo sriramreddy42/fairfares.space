@@ -763,7 +763,7 @@ export function HousingScreen({
       }
     } catch {
       setRideDriverProfile(null);
-      setRideOwnerPrompt("Save your driver profile first. Add vehicle, insurance, availability, seats, and pickup radius to list a ride.");
+      setRideOwnerPrompt("Save your driver profile first. Add vehicle, plate/state, insurance, and carpool service type to list a ride.");
     } finally {
       setRideDriverBusy(false);
     }
@@ -850,7 +850,7 @@ export function HousingScreen({
     }
     if (!rideDriverProfile?.readyForOffers) {
       setRideOwnerOpen(true);
-      setRideOwnerPrompt("Complete and save your driver profile first. Required: vehicle, plate/state, insurance, availability, seats, and pickup radius.");
+      setRideOwnerPrompt("Complete and save your driver profile first. Required: vehicle, plate/state, insurance, and carpool service type.");
       return;
     }
     const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface && item.available) || rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
@@ -870,8 +870,11 @@ export function HousingScreen({
       destinationLat: null,
       destinationLng: null,
       rideType: offerSurface.type,
-      seats: current.seats === "1" ? String(rideDriverDraft.seatCount || 3) : current.seats,
-      maxPickupDistanceMiles: current.maxPickupDistanceMiles || String(rideDriverDraft.maxPickupDistanceMiles || 5),
+      seats: current.seats === "1" ? "4" : current.seats,
+      luggage: current.luggage || "1 small bag",
+      maxDetourMinutes: current.maxDetourMinutes || "15",
+      maxPickupDistanceMiles: current.maxPickupDistanceMiles || "10",
+      contributionPerSeat: current.contributionPerSeat || "",
       preferences: current.preferences || offerSurface.title,
       notes: current.notes || offerSurface.note
     }));
@@ -989,8 +992,16 @@ export function HousingScreen({
         effectiveDestination = destinationMatches[0].label;
       }
       const destinationPoint = destinationMatches[0];
-      const nextRideType: RideType = "CARPOOL_REQUEST";
+      const nextRideType: RideType = rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
       setSelectedRideService("carpool");
+      const nextRideForm = {
+        ...rideForm,
+        origin: effectiveOrigin,
+        destination: effectiveDestination,
+        destinationLat: destinationPoint?.lat ?? rideForm.destinationLat ?? null,
+        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng ?? null,
+        rideType: nextRideType
+      };
       setRideForm((current) => ({
         ...current,
         origin: effectiveOrigin,
@@ -999,6 +1010,21 @@ export function HousingScreen({
         destinationLng: destinationPoint?.lng ?? current.destinationLng ?? null,
         rideType: nextRideType
       }));
+      if (nextRideType === "CARPOOL_OFFER") {
+        const result = await createMobileRide(nextRideForm);
+        const ride = result.ride;
+        if (!ride) throw new Error("Ride listing was not saved.");
+        setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+        setRideActivityRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+        setRidePosted(true);
+        setRideRequestStatus("Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in FChat.");
+        setRidePlannerOpen(false);
+        setRideOwnerOpen(true);
+        setRideOwnerPrompt("Ride listed. Requests on the same corridor will appear in your Request tracker with route details, status, pickup PIN, and FChat.");
+        void refreshRideActivity();
+        Alert.alert("Ride listed", "Rider requests that match this route will appear in your driver workspace.");
+        return;
+      }
       const searchRideType: RideType = "CARPOOL_OFFER";
       const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, searchRideType, {
         originLat: rideForm.originLat,
@@ -1169,7 +1195,7 @@ export function HousingScreen({
                 </Text>
               </View>
               <Text style={styles.rideOwnerEmptyText}>
-                Save your vehicle, insurance, services, and availability. FairFares reviews the profile before rider requests can be accepted.
+                Save your vehicle, insurance, and carpool service details. Route timing, seats, luggage, radius, and contribution are entered when you list a specific trip.
               </Text>
               {rideOwnerPrompt ? <Text style={styles.rideOwnerPrompt}>{rideOwnerPrompt}</Text> : null}
               <TextInput
@@ -1256,59 +1282,12 @@ export function HousingScreen({
                   </TouchableOpacity>
                 ))}
               </View>
-              <Text style={styles.rideOwnerFieldLabel}>Availability</Text>
-              <View style={styles.rideOwnerStatusWrap}>
-                {rideDays.map((day) => (
-                  <TouchableOpacity
-                    key={day}
-                    style={[styles.rideOwnerStatusPill, rideDriverDraft.availabilityDays.includes(day) && styles.rideOwnerStatusPillActive]}
-                    onPress={() => toggleRideDriverListValue("availabilityDays", day)}
-                  >
-                    <Text style={styles.rideOwnerStatusPillText}>{day}</Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.rideOwnerRouteNote}>
+                <Text style={styles.rideOwnerRouteNoteTitle}>Trip details happen when you travel</Text>
+                <Text style={styles.rideOwnerRouteNoteText}>
+                  After this profile is saved, tap List your ride and enter where you are going, when you leave, seats available, pickup radius, luggage, and contribution for that trip.
+                </Text>
               </View>
-              <View style={styles.rideOwnerInputRow}>
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="Start time"
-                  placeholderTextColor={theme.colors.muted}
-                  value={rideDriverDraft.availabilityStartTime || ""}
-                  onChangeText={(value) => updateRideDriverDraft("availabilityStartTime", value)}
-                />
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="End time"
-                  placeholderTextColor={theme.colors.muted}
-                  value={rideDriverDraft.availabilityEndTime || ""}
-                  onChangeText={(value) => updateRideDriverDraft("availabilityEndTime", value)}
-                />
-              </View>
-              <View style={styles.rideOwnerInputRow}>
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="Seats"
-                  placeholderTextColor={theme.colors.muted}
-                  keyboardType="number-pad"
-                  value={String(rideDriverDraft.seatCount || "")}
-                  onChangeText={(value) => updateRideDriverDraft("seatCount", Number(value) || 1)}
-                />
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="Pickup radius mi"
-                  placeholderTextColor={theme.colors.muted}
-                  keyboardType="number-pad"
-                  value={String(rideDriverDraft.maxPickupDistanceMiles || "")}
-                  onChangeText={(value) => updateRideDriverDraft("maxPickupDistanceMiles", Number(value) || 10)}
-                />
-              </View>
-              <TextInput
-                style={styles.rideOwnerInput}
-                placeholder="Luggage space, e.g. 2 carry-ons"
-                placeholderTextColor={theme.colors.muted}
-                value={rideDriverDraft.luggageSpace || ""}
-                onChangeText={(value) => updateRideDriverDraft("luggageSpace", value)}
-              />
               {rideDriverProfile?.missing?.length ? (
                 <Text style={styles.rideOwnerMissing}>Missing: {rideDriverProfile.missing.join(", ")}</Text>
               ) : null}
@@ -2051,6 +2030,8 @@ export function HousingScreen({
       Platform.OS === "web"
         ? ({ onClick: planRideRoute } as React.ComponentProps<typeof Pressable> & { onClick: () => void })
         : {};
+    const listingRide = rideForm.rideType === "CARPOOL_OFFER";
+    const plannerActionText = listingRide ? "List ride" : "Find rides";
     return (
       <Modal visible={ridePlannerOpen} animationType="slide" onRequestClose={closeRidePlanner}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.ridePlannerScreen}>
@@ -2141,6 +2122,86 @@ export function HousingScreen({
                 </View>
               ) : null}
 
+              {ridePlanComplete() ? (
+                <View style={styles.rideTripDetails}>
+                  <Text style={styles.rideTripDetailsTitle}>{listingRide ? "When are you traveling?" : "Trip details"}</Text>
+                  <Text style={styles.rideTripHint}>
+                    {listingRide
+                      ? "These details are for this route listing. Change them each time you offer seats."
+                      : "Use these details so FairFares can match you with better carpool offers."}
+                  </Text>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Date</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="YYYY-MM-DD"
+                        placeholderTextColor={theme.colors.muted}
+                        value={rideForm.pickupDate}
+                        onChangeText={(value) => updateRideForm("pickupDate", value)}
+                      />
+                    </View>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Time</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="8:00 AM"
+                        placeholderTextColor={theme.colors.muted}
+                        value={rideForm.pickupTime}
+                        onChangeText={(value) => updateRideForm("pickupTime", value)}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>{listingRide ? "Seats available" : "Passengers"}</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder={listingRide ? "4" : "1"}
+                        placeholderTextColor={theme.colors.muted}
+                        keyboardType="number-pad"
+                        value={rideForm.seats}
+                        onChangeText={(value) => updateRideForm("seats", value)}
+                      />
+                    </View>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Pickup radius</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="10"
+                        placeholderTextColor={theme.colors.muted}
+                        keyboardType="number-pad"
+                        value={rideForm.maxPickupDistanceMiles}
+                        onChangeText={(value) => updateRideForm("maxPickupDistanceMiles", value)}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Luggage</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="1 small bag"
+                        placeholderTextColor={theme.colors.muted}
+                        value={rideForm.luggage}
+                        onChangeText={(value) => updateRideForm("luggage", value)}
+                      />
+                    </View>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>{listingRide ? "Contribution" : "Max detour min"}</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder={listingRide ? "Optional $" : "15"}
+                        placeholderTextColor={theme.colors.muted}
+                        keyboardType="number-pad"
+                        value={listingRide ? rideForm.contributionPerSeat : rideForm.maxDetourMinutes}
+                        onChangeText={(value) => updateRideForm(listingRide ? "contributionPerSeat" : "maxDetourMinutes", value)}
+                      />
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+
               <View style={styles.rideSavedRow}>
                 <TouchableOpacity
                   style={styles.rideSavedItem}
@@ -2201,7 +2262,7 @@ export function HousingScreen({
               </View>
 
               <Pressable style={styles.ridePlannerSearchButton} onPress={planRideRoute} onPressIn={planRideRoute} disabled={rideBusy} {...routeButtonWebProps}>
-                <Text style={styles.ridePlannerSearchText}>{rideBusy ? "Finding rides..." : "Find rides"}</Text>
+                <Text style={styles.ridePlannerSearchText}>{rideBusy ? (listingRide ? "Listing ride..." : "Finding rides...") : plannerActionText}</Text>
               </Pressable>
             </ScrollView>
           ) : (
@@ -3466,6 +3527,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10
   },
+  rideOwnerRouteNote: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.30)",
+    backgroundColor: "rgba(34,197,94,0.10)",
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 4
+  },
+  rideOwnerRouteNoteTitle: { color: theme.colors.green, fontSize: 13, fontWeight: "900" },
+  rideOwnerRouteNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "800" },
   rideOwnerSaveButton: { minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
   rideOwnerSaveText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
@@ -3593,6 +3665,30 @@ const styles = StyleSheet.create({
   rideTypePromptChipTitleActive: { color: theme.colors.bg },
   rideTypePromptChipMeta: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "900" },
   rideTypePromptChipMetaActive: { color: theme.colors.bg },
+  rideTripDetails: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.32)",
+    backgroundColor: "rgba(59,130,246,0.09)",
+    padding: 12,
+    gap: 10
+  },
+  rideTripDetailsTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideTripHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideTripDetailsRow: { flexDirection: "row", gap: 10 },
+  rideTripField: { flex: 1, minWidth: 0, gap: 5 },
+  rideTripLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
+  rideTripInput: {
+    minHeight: 46,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    color: theme.colors.text,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontWeight: "900"
+  },
   rideSavedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
   rideSavedItem: { flex: 1, minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12 },
   rideSavedIcon: { color: theme.colors.soft, fontSize: 22 },

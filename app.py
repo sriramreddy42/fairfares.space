@@ -12167,7 +12167,6 @@ def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, obj
                 "License plate and state",
                 "Insurance provider",
                 "Service types",
-                "Availability",
             ],
         }
     service_types = [item.strip() for item in row_value(row, "service_types").split(",") if item.strip()]
@@ -12181,8 +12180,6 @@ def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, obj
         missing.append("Insurance provider")
     if not service_types:
         missing.append("Service types")
-    if not availability_days or not row_value(row, "availability_start_time") or not row_value(row, "availability_end_time"):
-        missing.append("Availability")
     review_status = row_value(row, "review_status") or "PENDING_REVIEW"
     return {
         "exists": True,
