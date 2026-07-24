@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, updateMobileProfile } from "../api/client";
+import { Alert, Image, Linking, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { absoluteAssetUrl, getRideActivity, getRideDriverProfile, updateMobileProfile } from "../api/client";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload } from "../types";
+import { BootstrapPayload, RideDriverProfile, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
 
 type Props = {
@@ -11,13 +11,38 @@ type Props = {
   onLogin: () => void;
   onLogout: () => void;
   onProfileUpdated: (user: BootstrapPayload["user"]) => void;
+  onOpenHousing?: () => void;
+  onOpenRide?: () => void;
+  onOpenServices?: () => void;
+  onOpenMessenger?: () => void;
+  onOpenActivity?: () => void;
 };
+
+const DRIVER_VERIFICATION_DAYS = 30;
 
 function firstInitial(name = "") {
   return name.trim().slice(0, 1).toUpperCase() || "F";
 }
 
-export function ProfileScreen({ data, onLogin, onLogout, onProfileUpdated }: Props) {
+function verificationDaysLeft(profile: RideDriverProfile | null) {
+  if (!profile?.readyForOffers) return null;
+  const updated = profile.updatedAt ? new Date(profile.updatedAt) : null;
+  if (!updated || Number.isNaN(updated.getTime())) return DRIVER_VERIFICATION_DAYS;
+  const expiresAt = updated.getTime() + DRIVER_VERIFICATION_DAYS * 24 * 60 * 60 * 1000;
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
+}
+
+export function ProfileScreen({
+  data,
+  onLogin,
+  onLogout,
+  onProfileUpdated,
+  onOpenHousing,
+  onOpenRide,
+  onOpenServices,
+  onOpenMessenger,
+  onOpenActivity
+}: Props) {
   const user = data?.user;
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
@@ -25,6 +50,9 @@ export function ProfileScreen({ data, onLogin, onLogout, onProfileUpdated }: Pro
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [rideProfile, setRideProfile] = useState<RideDriverProfile | null>(null);
+  const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
+  const [carpoolLoading, setCarpoolLoading] = useState(false);
 
   useEffect(() => {
     setName(user?.name || "");
@@ -34,9 +62,49 @@ export function ProfileScreen({ data, onLogin, onLogout, onProfileUpdated }: Pro
     setCurrentPassword("");
   }, [user?.name, user?.email, user?.phone, user?.profilePhotoUrl]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCarpoolProfile() {
+      if (!user) {
+        setRideProfile(null);
+        setRideActivity([]);
+        return;
+      }
+      setCarpoolLoading(true);
+      const [profileResult, activityResult] = await Promise.allSettled([getRideDriverProfile(), getRideActivity()]);
+      if (cancelled) return;
+      setRideProfile(profileResult.status === "fulfilled" ? profileResult.value : null);
+      setRideActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
+      setCarpoolLoading(false);
+    }
+    void loadCarpoolProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
   const photoUri = useMemo(() => profilePhoto ? absoluteAssetUrl(profilePhoto) : "", [profilePhoto]);
   const displayName = user?.name || "FairFares Guest";
   const sensitiveChanged = Boolean(user && (email.trim().toLowerCase() !== user.email.toLowerCase() || phone.trim() !== (user.phone || "")));
+  const listedRoutes = useMemo(
+    () => rideActivity.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER"),
+    [rideActivity]
+  );
+  const riderRequests = useMemo(
+    () => rideActivity.filter((ride) => ride.activityRole === "DRIVER_NOTIFICATION"),
+    [rideActivity]
+  );
+  const daysLeft = verificationDaysLeft(rideProfile);
+  const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
+  const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
+  const profileLinks: Array<{ title: string; copy: string; onPress?: () => void }> = [
+    { title: "Housing", copy: "Your place posts, roommate searches, photos, and expiry status.", onPress: onOpenHousing },
+    { title: "Carpool", copy: "Listed routes, rider requests, pickup PINs, and active matches.", onPress: onOpenRide },
+    { title: "Rental Cars", copy: "Bookings, invoices, policies, and support actions.", onPress: onOpenServices },
+    { title: "FChat", copy: "Personal chats, groups, communities, and listing conversations.", onPress: onOpenMessenger },
+    { title: "Privacy Policy", copy: "How FairFares collects, uses, shares, and protects your data.", onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
+    { title: "Delete account", copy: "Request deletion of your account and associated data.", onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
+  ];
 
   async function choosePhoto() {
     if (!user) {
@@ -146,18 +214,50 @@ export function ProfileScreen({ data, onLogin, onLogout, onProfileUpdated }: Pro
         </View>
       </View>
 
-      {[
-        ["Housing", "Your place posts, roommate searches, photos, and expiry status."],
-        ["Carpool", "Listed cars, rider requests, pickup PINs, and active matches."],
-        ["Rental Cars", "Bookings, invoices, policies, and support actions."],
-        ["FChat", "Personal chats, groups, communities, and listing conversations."]
-      ].map(([title, copy]) => (
-        <View key={title} style={styles.menuRow}>
+      {user ? (
+        <View style={styles.statusCard}>
+          <View style={styles.statusTop}>
+            <View style={styles.statusCopy}>
+              <Text style={styles.cardTitle}>Carpool lister</Text>
+              <Text style={styles.cardCopy}>
+                {carpoolLoading
+                  ? "Refreshing your driver profile and route activity."
+                  : carpoolReady
+                    ? `Verified to list carpool seats. Valid for ${daysLeft} day${daysLeft === 1 ? "" : "s"} from your latest profile update.`
+                    : `Not ready yet. Add ${missingProfileItems} before listing routes.`}
+              </Text>
+            </View>
+            <View style={[styles.statusBadge, carpoolReady && styles.statusBadgeReady]}>
+              <Text style={styles.statusBadgeText}>{carpoolReady ? "Verified" : "Pending"}</Text>
+            </View>
+          </View>
+          <View style={styles.metricRow}>
+            <View style={styles.metric}><Text style={styles.metricValue}>{listedRoutes.length}</Text><Text style={styles.metricLabel}>Listed routes</Text></View>
+            <View style={styles.metric}><Text style={styles.metricValue}>{riderRequests.length}</Text><Text style={styles.metricLabel}>Rider requests</Text></View>
+            <View style={styles.metric}><Text style={styles.metricValue}>{daysLeft ?? "—"}</Text><Text style={styles.metricLabel}>Days valid</Text></View>
+          </View>
+          <View style={styles.linkRow}>
+            <TouchableOpacity style={styles.miniButton} onPress={onOpenRide}>
+              <Text style={styles.miniButtonText}>{carpoolReady ? "List / manage ride" : "Finish profile"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.miniButton} onPress={onOpenActivity}>
+              <Text style={styles.miniButtonText}>Activity</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.miniButton} onPress={onOpenMessenger}>
+              <Text style={styles.miniButtonText}>FChat</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {profileLinks.map(({ title, copy, onPress }) => (
+        <TouchableOpacity key={title} style={styles.menuRow} onPress={onPress}>
           <View style={styles.menuTextBlock}>
             <Text style={styles.menuTitle}>{title}</Text>
             <Text style={styles.menuCopy}>{copy}</Text>
           </View>
-        </View>
+          <Text style={styles.menuChevron}>›</Text>
+        </TouchableOpacity>
       ))}
     </ScrollView>
   );
@@ -191,6 +291,15 @@ const styles = StyleSheet.create({
   logoutButton: { alignSelf: "center", paddingVertical: 8, paddingHorizontal: 14 },
   logoutText: { color: theme.colors.accent, fontWeight: "900" },
   activityCard: { backgroundColor: "#1f2a1f", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.55)", gap: 9 },
+  statusCard: { backgroundColor: theme.colors.panel, borderRadius: 22, padding: 14, borderWidth: 1, borderColor: theme.colors.line, gap: 10 },
+  statusTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
+  statusCopy: { flex: 1, minWidth: 0 },
+  statusBadge: { borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  statusBadgeReady: { backgroundColor: "rgba(34,197,94,0.22)", borderColor: "rgba(34,197,94,0.55)" },
+  statusBadgeText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  linkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  miniButton: { borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: theme.colors.panel2 },
+  miniButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   metricRow: { flexDirection: "row", gap: 10 },
   metric: { borderWidth: 1, borderColor: "rgba(34,197,94,0.55)", borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
   metricValue: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
@@ -199,4 +308,5 @@ const styles = StyleSheet.create({
   menuTextBlock: { flex: 1, minWidth: 0 },
   menuTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   menuCopy: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2 },
+  menuChevron: { color: theme.colors.soft, fontSize: 26, fontWeight: "900" },
 });

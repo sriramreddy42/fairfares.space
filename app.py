@@ -1257,8 +1257,14 @@ class FairFaresConnection(sqlite3.Connection):
 
 def db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection)
+    connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection, timeout=30)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout = 30000")
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+    except sqlite3.OperationalError:
+        pass
     return connection
 
 
@@ -3883,6 +3889,9 @@ def init_db() -> None:
                 radius_miles INTEGER NOT NULL DEFAULT 10,
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 distance_miles REAL NOT NULL DEFAULT 0,
+                dropoff_distance_miles REAL NOT NULL DEFAULT 0,
+                route_deviation_miles REAL NOT NULL DEFAULT 0,
+                route_deviation_minutes INTEGER NOT NULL DEFAULT 0,
                 notified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 responded_at TEXT,
                 UNIQUE(request_ride_post_id, driver_ride_post_id),
@@ -4832,6 +4841,9 @@ def init_db() -> None:
         ensure_column(con, "ride_posts", "preferences", "preferences TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "notes", "notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
+        ensure_column(con, "ride_dispatch_notifications", "dropoff_distance_miles", "dropoff_distance_miles REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_dispatch_notifications", "route_deviation_miles", "route_deviation_miles REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_dispatch_notifications", "route_deviation_minutes", "route_deviation_minutes INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "ride_driver_profiles", "vehicle_make_model", "vehicle_make_model TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_driver_profiles", "vehicle_year", "vehicle_year TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_driver_profiles", "vehicle_color", "vehicle_color TEXT NOT NULL DEFAULT ''")
@@ -11542,50 +11554,55 @@ def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> 
     lat = float(location.get("lat") or 0)
     lng = float(location.get("lng") or 0)
     metro_name = accommodation_metro_name_from_place(f"{city or query}, {state}" if state else city or query)
-    with db() as con:
-        metro_id = upsert_accommodation_metro(
-            con,
-            metro_name,
-            country=country,
-            state=state,
-            center_city=city or query,
-            lat=lat,
-            lng=lng,
-            source="GOOGLE_GEOCODE",
-            raw=geocode,
-        )
-        locality_label = f"{city}, {state}" if city and state else formatted
-        upsert_accommodation_local_area(
-            con,
-            metro_id,
-            locality_label,
-            city=city,
-            state=state,
-            zip_code=zip_code if re.fullmatch(r"\d{5}", query) else "",
-            place_type="ZIP" if re.fullmatch(r"\d{5}", query) else "LOCALITY",
-            lat=lat,
-            lng=lng,
-            source="GOOGLE_GEOCODE",
-            raw=geocode,
-        )
-        for place in google_accommodation_nearby_areas(city or query, lat, lng):
-            place_name = normalize_accommodation_place_label(str(place.get("name") or ""))
-            place_geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
-            place_location = place_geometry.get("location") if isinstance(place_geometry.get("location"), dict) else {}
-            place_lat = float(place_location.get("lat") or 0)
-            place_lng = float(place_location.get("lng") or 0)
+    try:
+        with db() as con:
+            metro_id = upsert_accommodation_metro(
+                con,
+                metro_name,
+                country=country,
+                state=state,
+                center_city=city or query,
+                lat=lat,
+                lng=lng,
+                source="GOOGLE_GEOCODE",
+                raw=geocode,
+            )
+            locality_label = f"{city}, {state}" if city and state else formatted
             upsert_accommodation_local_area(
                 con,
                 metro_id,
-                f"{place_name}, {state}" if state and "," not in place_name else place_name,
-                city=place_name,
+                locality_label,
+                city=city,
                 state=state,
-                place_type="LOCALITY",
-                lat=place_lat,
-                lng=place_lng,
-                source="GOOGLE_PLACES",
-                raw=place,
+                zip_code=zip_code if re.fullmatch(r"\d{5}", query) else "",
+                place_type="ZIP" if re.fullmatch(r"\d{5}", query) else "LOCALITY",
+                lat=lat,
+                lng=lng,
+                source="GOOGLE_GEOCODE",
+                raw=geocode,
             )
+            for place in google_accommodation_nearby_areas(city or query, lat, lng):
+                place_name = normalize_accommodation_place_label(str(place.get("name") or ""))
+                place_geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
+                place_location = place_geometry.get("location") if isinstance(place_geometry.get("location"), dict) else {}
+                place_lat = float(place_location.get("lat") or 0)
+                place_lng = float(place_location.get("lng") or 0)
+                upsert_accommodation_local_area(
+                    con,
+                    metro_id,
+                    f"{place_name}, {state}" if state and "," not in place_name else place_name,
+                    city=place_name,
+                    state=state,
+                    place_type="LOCALITY",
+                    lat=place_lat,
+                    lng=place_lng,
+                    source="GOOGLE_PLACES",
+                    raw=place,
+                )
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc).lower():
+            raise
+        return cached or metro_name
     return metro_name
 
 
@@ -11625,6 +11642,60 @@ def distance_miles_between(lat1: float, lng1: float, lat2: float, lng2: float) -
         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lng / 2) ** 2
     )
     return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def google_directions_key() -> str:
+    return (
+        os.environ.get("GOOGLE_DIRECTIONS_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_ROUTES_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    )
+
+
+def google_route_totals(points: list[dict[str, float]]) -> tuple[float, int] | None:
+    api_key = google_directions_key()
+    clean_points = [
+        {"lat": float(point.get("lat") or 0), "lng": float(point.get("lng") or 0)}
+        for point in points
+        if float(point.get("lat") or 0) and float(point.get("lng") or 0)
+    ]
+    if not api_key or len(clean_points) < 2:
+        return None
+    origin = clean_points[0]
+    destination = clean_points[-1]
+    params: dict[str, str] = {
+        "origin": f"{origin['lat']},{origin['lng']}",
+        "destination": f"{destination['lat']},{destination['lng']}",
+        "mode": "driving",
+        "key": api_key,
+    }
+    if len(clean_points) > 2:
+        params["waypoints"] = "|".join(f"{point['lat']},{point['lng']}" for point in clean_points[1:-1])
+    try:
+        payload = google_api_get(f"https://maps.googleapis.com/maps/api/directions/json?{urllib.parse.urlencode(params)}")
+    except Exception:
+        return None
+    if str(payload.get("status") or "").upper() != "OK":
+        return None
+    routes = payload.get("routes")
+    if not isinstance(routes, list) or not routes:
+        return None
+    legs = routes[0].get("legs") if isinstance(routes[0], dict) else None
+    if not isinstance(legs, list):
+        return None
+    meters = 0
+    seconds = 0
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        distance = leg.get("distance") if isinstance(leg.get("distance"), dict) else {}
+        duration = leg.get("duration") if isinstance(leg.get("duration"), dict) else {}
+        meters += int(distance.get("value") or 0)
+        seconds += int(duration.get("value") or 0)
+    if meters <= 0:
+        return None
+    return (meters / 1609.344, int(math.ceil(seconds / 60.0)) if seconds else 0)
 
 
 def accommodation_location_point(query: str, search_metro: str = "", allow_refresh: bool = True) -> dict[str, object]:
@@ -11922,16 +11993,34 @@ def ride_role_for_type(ride_type: str) -> str:
     return "DRIVER" if ride_type == "CARPOOL_OFFER" else "RIDER"
 
 
-def ride_point(query: str, city: str = "") -> dict[str, object]:
+def ride_point(query: str, city: str = "", *, allow_refresh: bool = True) -> dict[str, object]:
     clean_query = normalize_accommodation_place_label(query)
     clean_city = normalize_accommodation_place_label(city)
-    lookup_query = clean_query
-    if clean_city and clean_query and clean_city.lower() not in clean_query.lower():
-        lookup_query = f"{clean_query}, {clean_city}"
-    point = accommodation_location_point(lookup_query or clean_city)
-    if not float(point.get("lat") or 0) and clean_query:
-        point = accommodation_location_point(clean_query)
-    return point
+    if not clean_query:
+        return accommodation_location_point(clean_city, allow_refresh=allow_refresh)
+
+    qualified_pattern = r"\b(university|college|airport|international|amtrak|terminal)\b"
+    looks_qualified = bool(
+        "," in clean_query
+        or re.search(r"\b[A-Z]{2}\b", clean_query)
+        or re.search(r"\b\d{5}(?:-\d{4})?\b", clean_query)
+        or re.search(qualified_pattern, clean_query, flags=re.IGNORECASE)
+    )
+    scoped_query = f"{clean_query}, {clean_city}" if clean_city and clean_city.lower() not in clean_query.lower() else clean_query
+    candidates = [clean_query, scoped_query] if looks_qualified else [scoped_query, clean_query]
+    seen: set[str] = set()
+    fallback: dict[str, object] = {}
+    for candidate in candidates:
+        candidate = normalize_accommodation_place_label(candidate)
+        if not candidate or candidate.lower() in seen:
+            continue
+        seen.add(candidate.lower())
+        point = accommodation_location_point(candidate, allow_refresh=allow_refresh)
+        if not fallback:
+            fallback = point
+        if float(point.get("lat") or 0) and float(point.get("lng") or 0):
+            return point
+    return fallback
 
 
 def google_reverse_location_label(lat: float, lng: float) -> str:
@@ -11990,7 +12079,7 @@ def ride_place_icon_source(label: str) -> str:
 def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     query = normalize_accommodation_place_label(query)
-    city_point = ride_point(city)
+    city_point = ride_point(city, allow_refresh=False)
     labels: list[tuple[str, str]] = []
 
     def add_label(label: str, source: str) -> None:
@@ -12032,7 +12121,12 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[
 
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
-        point = ride_point(label, city)
+        try:
+            point = ride_point(label, city, allow_refresh=False)
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            point = {"label": label, "lat": 0, "lng": 0}
         lat = float(point.get("lat") or 0)
         lng = float(point.get("lng") or 0)
         city_lat = float(city_point.get("lat") or 0)
@@ -12056,6 +12150,78 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[
     return suggestions
 
 
+def ride_allowed_detour_miles(row: sqlite3.Row | dict[str, object]) -> float:
+    try:
+        max_detour_minutes = int(float(row_value(row, "max_detour_minutes") or row_value(row, "maxDetourMinutes") or 0))
+    except (TypeError, ValueError):
+        max_detour_minutes = 0
+    try:
+        max_pickup_distance = float(row_value(row, "max_pickup_distance_miles") or row_value(row, "maxPickupDistanceMiles") or 0)
+    except (TypeError, ValueError):
+        max_pickup_distance = 0
+    minute_based_miles = max_detour_minutes / 2.0 if max_detour_minutes else 0
+    configured_miles = max(minute_based_miles, max_pickup_distance or 0)
+    return round(min(50.0, max(8.0, configured_miles)), 1)
+
+
+def ride_detour_minutes_from_miles(miles: object) -> int | None:
+    try:
+        value = float(miles)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        value = 0
+    return int(math.ceil(value * 2.0))
+
+
+def ride_coordinate_value(row: sqlite3.Row | dict[str, object], *keys: str) -> float:
+    for key in keys:
+        value = row_value(row, key)
+        if value in {"", None}:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def ride_route_detour_details(row: sqlite3.Row | dict[str, object], origin_point: dict[str, object], destination_point: dict[str, object]) -> dict[str, object]:
+    driver_origin_lat = ride_coordinate_value(row, "origin_lat", "originLat")
+    driver_origin_lng = ride_coordinate_value(row, "origin_lng", "originLng")
+    driver_dest_lat = ride_coordinate_value(row, "destination_lat", "destinationLat")
+    driver_dest_lng = ride_coordinate_value(row, "destination_lng", "destinationLng")
+    query_origin_lat = float(origin_point.get("lat") or 0)
+    query_origin_lng = float(origin_point.get("lng") or 0)
+    query_dest_lat = float(destination_point.get("lat") or 0)
+    query_dest_lng = float(destination_point.get("lng") or 0)
+    if not all((driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng, query_origin_lat, query_origin_lng, query_dest_lat, query_dest_lng)):
+        return {"miles": None, "minutes": None, "source": "missing"}
+    driver_origin = {"lat": driver_origin_lat, "lng": driver_origin_lng}
+    driver_destination = {"lat": driver_dest_lat, "lng": driver_dest_lng}
+    query_origin = {"lat": query_origin_lat, "lng": query_origin_lng}
+    query_destination = {"lat": query_dest_lat, "lng": query_dest_lng}
+    direct_route = google_route_totals([driver_origin, driver_destination])
+    route_with_rider = google_route_totals([driver_origin, query_origin, query_destination, driver_destination])
+    if direct_route and route_with_rider:
+        extra_miles = round(max(0.0, route_with_rider[0] - direct_route[0]), 1)
+        extra_minutes = max(0, int(route_with_rider[1] - direct_route[1]))
+        return {"miles": extra_miles, "minutes": extra_minutes, "source": "GOOGLE_DIRECTIONS"}
+    direct_driver_route = distance_miles_between(driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng)
+    route_with_rider = (
+        distance_miles_between(driver_origin_lat, driver_origin_lng, query_origin_lat, query_origin_lng)
+        + distance_miles_between(query_origin_lat, query_origin_lng, query_dest_lat, query_dest_lng)
+        + distance_miles_between(query_dest_lat, query_dest_lng, driver_dest_lat, driver_dest_lng)
+    )
+    extra_miles = round(max(0.0, route_with_rider - direct_driver_route), 1)
+    return {"miles": extra_miles, "minutes": ride_detour_minutes_from_miles(extra_miles), "source": "ESTIMATE"}
+
+
+def ride_route_detour_miles(row: sqlite3.Row | dict[str, object], origin_point: dict[str, object], destination_point: dict[str, object]) -> float | None:
+    miles = ride_route_detour_details(row, origin_point, destination_point).get("miles")
+    return float(miles) if miles is not None else None
+
+
 def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object], pickup_date: str = "", pickup_time: str = "") -> int:
     score = 55
     origin_lat = float(row_value(row, "origin_lat") or 0)
@@ -12072,6 +12238,9 @@ def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_po
     if dest_lat and dest_lng and query_dest_lat and query_dest_lng:
         drop_distance = distance_miles_between(query_dest_lat, query_dest_lng, dest_lat, dest_lng)
         score += max(0, 15 - int(drop_distance * 2))
+    route_deviation = ride_route_detour_miles(row, origin_point, destination_point)
+    if route_deviation is not None:
+        score += max(0, 20 - int(route_deviation))
     if pickup_date and pickup_date == row_value(row, "pickup_date"):
         score += 5
     if pickup_time and pickup_time == row_value(row, "pickup_time"):
@@ -12100,19 +12269,50 @@ def ride_route_match_metrics(row: sqlite3.Row, origin_point: dict[str, object], 
         if dest_lat and dest_lng and query_dest_lat and query_dest_lng
         else None
     )
-    known_distances = [distance for distance in (pickup_distance, dropoff_distance) if distance is not None]
-    route_deviation = round(max(known_distances), 1) if known_distances else None
+    route_deviation_details = ride_route_detour_details(row, origin_point, destination_point)
+    route_deviation = route_deviation_details.get("miles")
+    route_deviation_minutes = route_deviation_details.get("minutes")
+    if route_deviation is None:
+        known_distances = [distance for distance in (pickup_distance, dropoff_distance) if distance is not None]
+        route_deviation = round(max(known_distances), 1) if known_distances else None
+        route_deviation_minutes = ride_detour_minutes_from_miles(route_deviation)
     return {
         "pickupDistanceMiles": pickup_distance,
         "dropoffDistanceMiles": dropoff_distance,
         "routeDeviationMiles": route_deviation,
+        "routeDeviationMinutes": route_deviation_minutes,
+        "routeDeviationSource": route_deviation_details.get("source"),
     }
+
+
+def ride_effective_trip_date(row: sqlite3.Row | dict[str, object]) -> date | None:
+    value = (row_value(row, "pickup_date") or row_value(row, "start_date") or "").strip()
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def ride_post_expired(row: sqlite3.Row | dict[str, object]) -> bool:
+    trip_date = ride_effective_trip_date(row)
+    return bool(trip_date and trip_date < datetime.now(FAIRFARES_TZ).date())
+
+
+def ride_effective_status(row: sqlite3.Row | dict[str, object]) -> str:
+    status = (row_value(row, "status") or "ACTIVE").strip().upper()
+    if ride_post_expired(row) and status in {"ACTIVE", "OPEN", "PENDING", "LISTED"}:
+        return "EXPIRED"
+    return status
 
 
 def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None = None, destination_point: dict[str, object] | None = None) -> dict[str, object]:
     origin_point = origin_point or {}
     destination_point = destination_point or {}
     route_metrics = ride_route_match_metrics(row, origin_point, destination_point)
+    expired = ride_post_expired(row)
+    status = ride_effective_status(row)
     return {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
@@ -12137,11 +12337,15 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
         "approvalRequired": bool(int(row_value(row, "approval_required") or 0)),
         "preferences": row_value(row, "preferences"),
         "notes": row_value(row, "notes"),
-        "status": row_value(row, "status"),
+        "status": status,
+        "statusLabel": status.replace("_", " ").title(),
+        "isExpired": expired,
         "distanceMiles": route_metrics.get("pickupDistanceMiles"),
         "pickupDistanceMiles": route_metrics.get("pickupDistanceMiles"),
         "dropoffDistanceMiles": route_metrics.get("dropoffDistanceMiles"),
         "routeDeviationMiles": route_metrics.get("routeDeviationMiles"),
+        "routeDeviationMinutes": route_metrics.get("routeDeviationMinutes"),
+        "routeDeviationSource": route_metrics.get("routeDeviationSource"),
         "matchScore": ride_score(row, origin_point, destination_point),
         "createdAt": row_value(row, "created_at"),
     }
@@ -12255,14 +12459,13 @@ def mobile_ride_posts(
         if origin and destination:
             route_filtered = []
             for item in payloads:
-                pickup_distance = item.get("pickupDistanceMiles")
-                dropoff_distance = item.get("dropoffDistanceMiles")
-                pickup_ok = pickup_distance is None or float(pickup_distance) <= 30
-                dropoff_ok = dropoff_distance is None or float(dropoff_distance) <= 30
-                if pickup_ok and dropoff_ok:
+                route_deviation = item.get("routeDeviationMiles")
+                max_detour = ride_allowed_detour_miles(item)
+                detour_ok = route_deviation is None or float(route_deviation) <= max_detour
+                if detour_ok:
                     route_filtered.append(item)
             payloads = route_filtered
-        payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("distanceMiles") or 9999)))
+        payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("routeDeviationMiles") or 9999), float(item.get("distanceMiles") or 9999)))
     return payloads
 
 
@@ -12302,6 +12505,9 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
     request_dest_lng = float(row_value(request_row, "destination_lng") or 0)
     if not request_lat or not request_lng:
         return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+    request_origin_point = {"lat": request_lat, "lng": request_lng, "label": row_value(request_row, "origin_label")}
+    request_destination_point = {"lat": request_dest_lat, "lng": request_dest_lng, "label": row_value(request_row, "destination_label")}
+    today_iso = datetime.now(FAIRFARES_TZ).date().isoformat()
     driver_rows = con.execute(
         """
         SELECT *
@@ -12311,45 +12517,40 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
           AND user_id != ?
           AND origin_lat != 0
           AND origin_lng != 0
+          AND substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) >= ?
         """,
-        (requester_user_id,),
+        (requester_user_id, today_iso),
     ).fetchall()
     buckets: list[dict[str, object]] = []
     notified_count = 0
     nearest_radius = 0
-    for radius in (10, 20, 30):
+    for radius in (10, 20, 30, 50):
         bucket_count = 0
         for driver in driver_rows:
-            distance = distance_miles_between(
-                request_lat,
-                request_lng,
-                float(row_value(driver, "origin_lat") or 0),
-                float(row_value(driver, "origin_lng") or 0),
-            )
-            if distance > radius:
+            metrics = ride_route_match_metrics(driver, request_origin_point, request_destination_point)
+            pickup_distance = float(metrics.get("pickupDistanceMiles") or 0)
+            route_deviation_raw = metrics.get("routeDeviationMiles")
+            route_deviation = float(route_deviation_raw) if route_deviation_raw is not None else 9999.0
+            allowed_route_deviation = ride_allowed_detour_miles(driver)
+            if route_deviation > min(float(radius), allowed_route_deviation):
                 continue
-            driver_dest_lat = float(row_value(driver, "destination_lat") or 0)
-            driver_dest_lng = float(row_value(driver, "destination_lng") or 0)
-            if request_dest_lat and request_dest_lng and driver_dest_lat and driver_dest_lng:
-                dropoff_distance = distance_miles_between(request_dest_lat, request_dest_lng, driver_dest_lat, driver_dest_lng)
-                allowed_dropoff_deviation = max(
-                    10.0,
-                    min(30.0, max(float(row_value(driver, "max_pickup_distance_miles") or 0), float(radius))),
-                )
-                if dropoff_distance > allowed_dropoff_deviation:
-                    continue
+            dropoff_distance = float(metrics.get("dropoffDistanceMiles") or 0)
+            route_deviation_minutes = int(metrics.get("routeDeviationMinutes") or 0)
             cursor = con.execute(
                 """
                 INSERT OR IGNORE INTO ride_dispatch_notifications
-                (request_ride_post_id, driver_ride_post_id, driver_user_id, radius_miles, distance_miles)
-                VALUES (?, ?, ?, ?, ?)
+                (request_ride_post_id, driver_ride_post_id, driver_user_id, radius_miles, distance_miles, dropoff_distance_miles, route_deviation_miles, route_deviation_minutes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(row_value(request_row, "id") or 0),
                     int(row_value(driver, "id") or 0),
                     int(row_value(driver, "user_id") or 0),
                     radius,
-                    round(distance, 2),
+                    round(pickup_distance, 2),
+                    round(dropoff_distance, 2),
+                    round(route_deviation, 2),
+                    route_deviation_minutes,
                 ),
             )
             if cursor.rowcount:
@@ -12361,6 +12562,97 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
         if bucket_count:
             break
     return {"notifiedCount": notified_count, "nearestRadius": nearest_radius, "radiusBuckets": buckets}
+
+
+def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -> tuple[int, dict[str, object]]:
+    ride_public_id = clean_text_value(ride_public_id, 40)
+    action = clean_text_value(action, 40).upper()
+    allowed_actions = {"ACCEPT", "DECLINE", "EN_ROUTE", "ARRIVED", "COMPLETED"}
+    if action not in allowed_actions:
+        return 400, {"ok": False, "error": "Unsupported ride action."}
+    with db() as con:
+        request_row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1", (ride_public_id,)).fetchone()
+        if not request_row:
+            return 404, {"ok": False, "error": "Ride request was not found."}
+        if ride_post_expired(request_row):
+            return 409, {"ok": False, "error": "This ride date has passed."}
+        notification = con.execute(
+            """
+            SELECT *
+            FROM ride_dispatch_notifications
+            WHERE request_ride_post_id = ?
+              AND driver_user_id = ?
+            LIMIT 1
+            """,
+            (int(row_value(request_row, "id") or 0), user_id),
+        ).fetchone()
+        if not notification:
+            return 403, {"ok": False, "error": "This ride request is not assigned to your driver account."}
+        current_status = str(row_value(notification, "status") or "PENDING").upper()
+        next_status = "DECLINED" if action == "DECLINE" else "ACCEPTED" if action == "ACCEPT" else action
+        valid_transitions = {
+            "PENDING": {"ACCEPTED", "DECLINED"},
+            "ACCEPTED": {"EN_ROUTE", "COMPLETED"},
+            "EN_ROUTE": {"ARRIVED", "COMPLETED"},
+            "ARRIVED": {"COMPLETED"},
+            "COMPLETED": set(),
+            "DECLINED": set(),
+            "EXPIRED": set(),
+        }
+        if next_status not in valid_transitions.get(current_status, set()):
+            return 409, {"ok": False, "error": f"Cannot change ride request from {current_status} to {next_status}."}
+        con.execute(
+            """
+            UPDATE ride_dispatch_notifications
+            SET status = ?, responded_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (next_status, int(row_value(notification, "id") or 0)),
+        )
+        if next_status == "ACCEPTED":
+            con.execute(
+                """
+                UPDATE ride_dispatch_notifications
+                SET status = 'EXPIRED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+                WHERE request_ride_post_id = ?
+                  AND id != ?
+                  AND status = 'PENDING'
+                """,
+                (int(row_value(request_row, "id") or 0), int(row_value(notification, "id") or 0)),
+            )
+            con.execute("UPDATE ride_posts SET status = 'ACCEPTED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
+        elif next_status == "COMPLETED":
+            con.execute("UPDATE ride_posts SET status = 'COMPLETED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
+        updated = con.execute(
+            """
+            SELECT requests.*,
+                   notifications.status AS dispatch_status,
+                   notifications.radius_miles AS dispatch_nearest_radius,
+                   notifications.distance_miles AS dispatch_distance_miles,
+                   notifications.dropoff_distance_miles AS dispatch_dropoff_distance_miles,
+                   notifications.route_deviation_miles AS dispatch_route_deviation_miles,
+                   notifications.route_deviation_minutes AS dispatch_route_deviation_minutes,
+                   notifications.notified_at AS dispatch_notified_at,
+                   notifications.responded_at AS dispatch_responded_at
+            FROM ride_dispatch_notifications notifications
+            JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+            WHERE notifications.id = ?
+            LIMIT 1
+            """,
+            (int(row_value(notification, "id") or 0),),
+        ).fetchone()
+    response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)
+    response["activityRole"] = "DRIVER_NOTIFICATION"
+    response["dispatchStatus"] = next_status
+    response["dispatchNearestRadius"] = int(row_value(updated, "dispatch_nearest_radius") or row_value(notification, "radius_miles") or 0) if updated else int(row_value(notification, "radius_miles") or 0)
+    response["pickupDistanceMiles"] = float(row_value(updated, "dispatch_distance_miles") or row_value(notification, "distance_miles") or 0) if updated else float(row_value(notification, "distance_miles") or 0)
+    response["distanceMiles"] = response["pickupDistanceMiles"]
+    response["dropoffDistanceMiles"] = float(row_value(updated, "dispatch_dropoff_distance_miles") or row_value(notification, "dropoff_distance_miles") or 0) if updated else float(row_value(notification, "dropoff_distance_miles") or 0)
+    response["routeDeviationMiles"] = float(row_value(updated, "dispatch_route_deviation_miles") or row_value(notification, "route_deviation_miles") or 0) if updated else float(row_value(notification, "route_deviation_miles") or 0)
+    response["routeDeviationMinutes"] = int(row_value(updated, "dispatch_route_deviation_minutes") or row_value(notification, "route_deviation_minutes") or 0) if updated else int(row_value(notification, "route_deviation_minutes") or 0)
+    if next_status in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
+        response["pickupPin"] = ride_pickup_pin(ride_public_id, user_id)
+    return 200, {"ok": True, "ride": response}
 
 
 def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
@@ -14734,7 +15026,7 @@ def render_internal_links() -> str:
       </div>
       <div class="internal-link-utility">
         <strong>© FairFares LLC. All Rights Reserved.</strong>
-        <span>Price Match Guarantee + 10% off eligible lower quotes.</span>
+        <span>Price Match Guarantee + 10% off eligible lower quotes. · <a href="/privacy">Privacy Policy</a></span>
       </div>
     </section>
     """.strip()
@@ -15405,6 +15697,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/blog": self.blog_index_page,
             "/about": self.about_page,
             "/contact": self.contact_page,
+            "/privacy": self.privacy_page,
             "/robots.txt": self.robots_txt,
             "/llms.txt": self.llms_txt,
             "/sitemap.xml": self.sitemap_xml,
@@ -15805,6 +16098,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/blog",
             "/about",
             "/contact",
+            "/privacy",
             "/deals",
             "/explorer",
         ]
@@ -16031,6 +16325,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.current_user()
         body = render_template(
             "contact.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        )
+        self.send_html(body)
+
+    def privacy_page(self) -> None:
+        user = self.current_user()
+        body = render_template(
+            "privacy.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
@@ -23768,6 +24070,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        notifications.status AS dispatch_status,
                        notifications.radius_miles AS dispatch_nearest_radius,
                        notifications.distance_miles AS dispatch_distance_miles,
+                       notifications.dropoff_distance_miles AS dispatch_dropoff_distance_miles,
+                       notifications.route_deviation_miles AS dispatch_route_deviation_miles,
+                       notifications.route_deviation_minutes AS dispatch_route_deviation_minutes,
                        notifications.notified_at AS dispatch_notified_at,
                        notifications.responded_at AS dispatch_responded_at
                 FROM ride_dispatch_notifications notifications
@@ -23821,6 +24126,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
                 payload["pickupDistanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
                 payload["distanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
+                payload["dropoffDistanceMiles"] = float(row_value(row, "dispatch_dropoff_distance_miles") or 0)
+                payload["routeDeviationMiles"] = float(row_value(row, "dispatch_route_deviation_miles") or 0)
+                payload["routeDeviationMinutes"] = int(row_value(row, "dispatch_route_deviation_minutes") or 0)
                 payload["dispatchNotifiedAt"] = row_value(row, "dispatch_notified_at")
                 payload["dispatchRespondedAt"] = row_value(row, "dispatch_responded_at")
                 if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
@@ -23837,89 +24145,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         ride_public_id = clean_text_value(payload.get("rideId") or payload.get("ride_id"), 40)
         action = clean_text_value(payload.get("action"), 40).upper()
-        allowed_actions = {"ACCEPT", "DECLINE", "EN_ROUTE", "ARRIVED", "COMPLETED"}
-        if action not in allowed_actions:
-            self.send_json({"ok": False, "error": "Unsupported ride action."}, 400)
-            return
         user_id = int(row_value(user, "id") or 0)
-        with db() as con:
-            request_row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1", (ride_public_id,)).fetchone()
-            if not request_row:
-                self.send_json({"ok": False, "error": "Ride request was not found."}, 404)
-                return
-            notification = con.execute(
-                """
-                SELECT *
-                FROM ride_dispatch_notifications
-                WHERE request_ride_post_id = ?
-                  AND driver_user_id = ?
-                LIMIT 1
-                """,
-                (int(row_value(request_row, "id") or 0), user_id),
-            ).fetchone()
-            if not notification:
-                self.send_json({"ok": False, "error": "This ride request is not assigned to your driver account."}, 403)
-                return
-            current_status = str(row_value(notification, "status") or "PENDING").upper()
-            next_status = "DECLINED" if action == "DECLINE" else "ACCEPTED" if action == "ACCEPT" else action
-            valid_transitions = {
-                "PENDING": {"ACCEPTED", "DECLINED"},
-                "ACCEPTED": {"EN_ROUTE", "COMPLETED"},
-                "EN_ROUTE": {"ARRIVED", "COMPLETED"},
-                "ARRIVED": {"COMPLETED"},
-                "COMPLETED": set(),
-                "DECLINED": set(),
-                "EXPIRED": set(),
-            }
-            if next_status not in valid_transitions.get(current_status, set()):
-                self.send_json({"ok": False, "error": f"Cannot change ride request from {current_status} to {next_status}."}, 409)
-                return
-            con.execute(
-                """
-                UPDATE ride_dispatch_notifications
-                SET status = ?, responded_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (next_status, int(row_value(notification, "id") or 0)),
-            )
-            if next_status == "ACCEPTED":
-                con.execute(
-                    """
-                    UPDATE ride_dispatch_notifications
-                    SET status = 'EXPIRED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
-                    WHERE request_ride_post_id = ?
-                      AND id != ?
-                      AND status = 'PENDING'
-                    """,
-                    (int(row_value(request_row, "id") or 0), int(row_value(notification, "id") or 0)),
-                )
-                con.execute("UPDATE ride_posts SET status = 'ACCEPTED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
-            elif next_status == "COMPLETED":
-                con.execute("UPDATE ride_posts SET status = 'COMPLETED' WHERE id = ?", (int(row_value(request_row, "id") or 0),))
-            updated = con.execute(
-                """
-                SELECT requests.*,
-                       notifications.status AS dispatch_status,
-                       notifications.radius_miles AS dispatch_nearest_radius,
-                       notifications.distance_miles AS dispatch_distance_miles,
-                       notifications.notified_at AS dispatch_notified_at,
-                       notifications.responded_at AS dispatch_responded_at
-                FROM ride_dispatch_notifications notifications
-                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
-                WHERE notifications.id = ?
-                LIMIT 1
-                """,
-                (int(row_value(notification, "id") or 0),),
-            ).fetchone()
-        response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)
-        response["activityRole"] = "DRIVER_NOTIFICATION"
-        response["dispatchStatus"] = next_status
-        response["dispatchNearestRadius"] = int(row_value(updated, "dispatch_nearest_radius") or row_value(notification, "radius_miles") or 0) if updated else int(row_value(notification, "radius_miles") or 0)
-        response["pickupDistanceMiles"] = float(row_value(updated, "dispatch_distance_miles") or row_value(notification, "distance_miles") or 0) if updated else float(row_value(notification, "distance_miles") or 0)
-        response["distanceMiles"] = response["pickupDistanceMiles"]
-        if next_status in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
-            response["pickupPin"] = ride_pickup_pin(ride_public_id, user_id)
-        self.send_json({"ok": True, "ride": response})
+        status_code, response = apply_ride_dispatch_action(user_id, ride_public_id, action)
+        self.send_json(response, status_code)
 
     def api_mobile_ride_driver_profile(self) -> None:
         user = self.current_user()
@@ -23954,8 +24182,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         license_state = clean_text_value(payload.get("licenseState") or payload.get("license_state"), 40).upper()
         insurance_provider = clean_text_value(payload.get("insuranceProvider") or payload.get("insurance_provider"), 120)
         seat_count = max(1, min(int(float_from_value(payload.get("seatCount") or payload.get("seat_count") or "4") or 4), 8))
-        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "15") or 15), 180))
-        max_pickup_distance = max(1, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "10") or 10, 100))
+        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "15") or 15), 100))
+        max_pickup_distance = max(1, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "10") or 10, 50))
         with db() as con:
             existing = con.execute("SELECT * FROM ride_driver_profiles WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
             review_status = row_value(existing, "review_status") or "PENDING_REVIEW" if existing else "PENDING_REVIEW"
@@ -24598,8 +24826,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         seats = max(1, min(int(float_from_value(payload.get("seats") or "1") or 1), 8))
         luggage = clean_text_value(payload.get("luggage"), 120)
         accessibility = clean_text_value(payload.get("accessibility"), 160)
-        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "0")), 180))
-        max_pickup_distance = max(0, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "0"), 100))
+        max_detour_minutes = max(0, min(int(float_from_value(payload.get("maxDetourMinutes") or payload.get("max_detour_minutes") or "0")), 100))
+        max_pickup_distance = max(0, min(float_from_value(payload.get("maxPickupDistanceMiles") or payload.get("max_pickup_distance_miles") or "0"), 50))
         flex_minutes = max(0, min(int(float_from_value(payload.get("departureFlexMinutes") or payload.get("departure_flex_minutes") or "0")), 240))
         contribution = max(0, min(float_from_value(payload.get("contributionPerSeat") or payload.get("contribution_per_seat") or "0"), 5000))
         approval_required = 0 if str(payload.get("approvalRequired") or payload.get("approval_required") or "").lower() in {"0", "false", "no"} else 1
