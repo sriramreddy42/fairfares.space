@@ -4,9 +4,11 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, startRentalCheckout } from "./src/api/client";
+import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getRidePlaceSuggestions, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -42,8 +44,8 @@ const emptyListingForm: MobileHousingPostInput = {
   rentMin: "",
   rentMax: "",
   rentPeriod: "MONTH",
-  accommodates: "1",
-  roommateCount: "0",
+  accommodates: "",
+  roommateCount: "",
   aboutYou: "",
   bathroomType: "shared",
   genderPreference: "open",
@@ -130,6 +132,14 @@ const amenityToggles: Array<[keyof MobileHousingPostInput, string]> = [
 ];
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <FairFaresApp />
+    </SafeAreaProvider>
+  );
+}
+
+function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("home");
@@ -171,6 +181,10 @@ export default function App() {
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
   const [listingOpen, setListingOpen] = useState(false);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
+  const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
+  const [listingAddressLoading, setListingAddressLoading] = useState(false);
+  const [listingAddressValidated, setListingAddressValidated] = useState(false);
+  const [listingValidatedLabel, setListingValidatedLabel] = useState("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
@@ -651,6 +665,9 @@ export default function App() {
       contactEmail: user?.email || "",
       contactPhone: user?.phone || ""
     });
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(false);
+    setListingValidatedLabel("");
     setListingOpen(true);
   }
 
@@ -666,9 +683,77 @@ export default function App() {
 
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
     setListingForm((current) => ({ ...current, [key]: value }));
+    if (key === "postMode" && value !== listingForm.postMode) {
+      setListingAddressSuggestions([]);
+      setListingAddressValidated(false);
+      setListingValidatedLabel("");
+    }
   }
 
+  function updateListingLocationField(key: "city" | "streetAddress" | "area", value: string) {
+    setListingForm((current) => ({ ...current, [key]: value }));
+    setListingAddressValidated(false);
+    setListingValidatedLabel("");
+  }
+
+  function selectListingAddress(suggestion: RidePlaceSuggestion) {
+    const parts = suggestion.label.split(",").map((part) => part.trim()).filter(Boolean);
+    const stateZip = parts.at(-1)?.match(/^([A-Z]{2}|[A-Za-z]+(?:\s+[A-Za-z]+)*)(?:\s+(\d{5}(?:-\d{4})?))?$/);
+    const stateLabel = stateZip?.[1].length === 2 ? stateZip[1].toUpperCase() : stateZip?.[1];
+    const suggestedCity = stateZip && parts.length >= 3 ? `${parts.at(-2)}, ${stateLabel}` : listingForm.city;
+    const streetParts = stateZip && parts.length >= 3 ? parts.slice(0, -2) : parts;
+    const streetAddress = streetParts.join(", ") || suggestion.main || suggestion.label;
+    const zipCode = stateZip?.[2] || suggestion.label.match(/\b\d{5}(?:-\d{4})?\b/)?.[0] || listingForm.zipCode;
+    setListingForm((current) => current.postMode === "HAVE_PLACE"
+      ? { ...current, streetAddress, city: suggestedCity, zipCode }
+      : { ...current, area: suggestion.label, city: suggestedCity, zipCode });
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(true);
+    setListingValidatedLabel(suggestion.label);
+  }
+
+  useEffect(() => {
+    if (!listingOpen || listingAddressValidated) {
+      setListingAddressSuggestions([]);
+      setListingAddressLoading(false);
+      return;
+    }
+    const query = (listingForm.postMode === "HAVE_PLACE" ? listingForm.streetAddress : listingForm.area).trim();
+    if (query.length < 3) {
+      setListingAddressSuggestions([]);
+      setListingAddressLoading(false);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      setListingAddressLoading(true);
+      void getRidePlaceSuggestions(listingForm.city, query)
+        .then((suggestions) => {
+          if (active) setListingAddressSuggestions(suggestions.filter((item) => item.label).slice(0, 6));
+        })
+        .catch(() => {
+          if (active) setListingAddressSuggestions([]);
+        })
+        .finally(() => {
+          if (active) setListingAddressLoading(false);
+        });
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [listingOpen, listingForm.area, listingForm.city, listingForm.postMode, listingForm.streetAddress, listingAddressValidated]);
+
   async function submitListing() {
+    if (!listingAddressValidated) {
+      Alert.alert(
+        listingForm.postMode === "HAVE_PLACE" ? "Validate the address" : "Validate the preferred location",
+        listingForm.postMode === "HAVE_PLACE"
+          ? "Enter the property address and select the correct suggested address before posting."
+          : "Enter your preferred area, campus, building, or landmark and select the correct suggestion before posting."
+      );
+      return;
+    }
     try {
       const payload = await createMobileHousingPost(listingForm);
       setListingOpen(false);
@@ -1065,8 +1150,8 @@ export default function App() {
     );
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar style="light" />
+    <SafeAreaView style={styles.safe} edges={["top", "right", "bottom", "left"]}>
+      <StatusBar style="light" backgroundColor={theme.colors.bg} translucent={false} />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
         {loading ? (
           <View style={styles.loader}>
@@ -1266,17 +1351,49 @@ export default function App() {
             {renderFormSection(
               "Location",
               <>
-                <TextInput value={listingForm.city} onChangeText={(text) => updateListingForm("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
                 {listingForm.postMode === "HAVE_PLACE" ? (
                   <>
-                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingForm("streetAddress", text)} placeholder="Street address / room location*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Start typing the property address*" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
+                    {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking address…</Text></View> : null}
+                    {listingAddressSuggestions.length ? (
+                      <View style={styles.addressSuggestionPanel}>
+                        <Text style={styles.addressSuggestionTitle}>Select the correct address</Text>
+                        {listingAddressSuggestions.map((suggestion) => (
+                          <TouchableOpacity key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`} style={styles.addressSuggestion} onPress={() => selectListingAddress(suggestion)}>
+                            <Text style={styles.addressSuggestionPin}>⌖</Text>
+                            <View style={styles.addressSuggestionCopy}>
+                              <Text style={styles.addressSuggestionMain}>{suggestion.main}</Text>
+                              <Text style={styles.addressSuggestionSecondary}>{suggestion.secondary}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ) : null}
+                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Validated: {listingValidatedLabel}</Text></View> : null}
                     <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingForm("primaryNeighborhood", text)} placeholder="Primary neighborhood" placeholderTextColor={theme.colors.muted} style={styles.input} />
                     <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} />
                   </>
                 ) : (
                   <>
-                    <TextInput value={listingForm.area} onChangeText={(text) => updateListingForm("area", text)} placeholder="Preferred area / building / neighborhood*" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    <TextInput value={listingForm.area} onChangeText={(text) => updateListingLocationField("area", text)} placeholder="Start typing an area, campus, building, or landmark*" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
+                    {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
+                    {listingAddressSuggestions.length ? (
+                      <View style={styles.addressSuggestionPanel}>
+                        <Text style={styles.addressSuggestionTitle}>Select the correct preferred location</Text>
+                        {listingAddressSuggestions.map((suggestion) => (
+                          <TouchableOpacity key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`} style={styles.addressSuggestion} onPress={() => selectListingAddress(suggestion)}>
+                            <Text style={styles.addressSuggestionPin}>⌖</Text>
+                            <View style={styles.addressSuggestionCopy}>
+                              <Text style={styles.addressSuggestionMain}>{suggestion.main}</Text>
+                              <Text style={styles.addressSuggestionSecondary}>{suggestion.secondary}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ) : null}
+                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Validated: {listingValidatedLabel}</Text></View> : null}
                     <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Work / school / commute target" placeholderTextColor={theme.colors.muted} style={styles.input} />
                   </>
                 )}
@@ -1287,7 +1404,7 @@ export default function App() {
               <>
                 <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder="Title*" placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder="Description*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
-                <TextInput value={listingForm.moveInDate} onChangeText={(text) => updateListingForm("moveInDate", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Available from* eg 08/01/2026" : "Move-in from* eg 08/01/2026"} placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <DateTimeField label={listingForm.postMode === "HAVE_PLACE" ? "Available from*" : "Move-in from*"} value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} />
                 <View style={styles.twoCol}>
                   <TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Rent*" : "Budget min*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
                   <TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingForm.postMode === "HAVE_PLACE" ? "Rent max" : "Budget max"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
@@ -1493,10 +1610,23 @@ const styles = StyleSheet.create({
   searchModalContent: { gap: 14, paddingBottom: 20 },
   searchModalActions: { gap: theme.spacing.xs, paddingTop: theme.spacing.sm, borderTopWidth: 1, borderTopColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
-  listingForm: { gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
+  listingForm: { width: "100%", maxWidth: "100%", alignSelf: "stretch", gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
   modalCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
+  validatedInput: { borderWidth: 1, borderColor: "#22c55e" },
+  addressStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
+  addressStatusText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
+  addressSuggestionPanel: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  addressSuggestionTitle: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
+  addressSuggestion: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  addressSuggestionPin: { color: theme.colors.blue, fontSize: 20 },
+  addressSuggestionCopy: { flex: 1, gap: 2 },
+  addressSuggestionMain: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
+  addressSuggestionSecondary: { color: theme.colors.muted, fontSize: 12, lineHeight: 16 },
+  addressValidated: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: theme.radius.md, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "rgba(34,197,94,0.12)", borderWidth: 1, borderColor: "rgba(34,197,94,0.5)" },
+  addressValidatedIcon: { color: "#4ade80", fontSize: 15, fontWeight: "900" },
+  addressValidatedText: { color: "#86efac", flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   textArea: { minHeight: 96, paddingTop: 13, textAlignVertical: "top" },
   textAreaSmall: { minHeight: 82, paddingTop: 14, textAlignVertical: "top" },
   formSection: { gap: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.bg },
@@ -1513,8 +1643,8 @@ const styles = StyleSheet.create({
   photoCount: { color: theme.colors.soft, fontWeight: "800", fontSize: 12 },
   miniGroup: { gap: 7 },
   miniLabel: { color: theme.colors.muted, fontWeight: "900" },
-  twoCol: { flexDirection: "row", gap: theme.spacing.sm },
-  twoColInput: { flex: 1 },
+  twoCol: { width: "100%", maxWidth: "100%", flexDirection: "row", gap: theme.spacing.sm },
+  twoColInput: { flex: 1, minWidth: 0 },
   choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   choicePill: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9, alignItems: "center" },
   choicePillActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },

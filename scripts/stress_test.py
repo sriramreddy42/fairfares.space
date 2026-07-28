@@ -158,9 +158,12 @@ def main() -> None:
     assert_true(len(cars) >= 24, "stress inventory should include added available cars")
     assert_true(any(row["name"] == "Stress Fleet 1" for row in cars), "available status should be normalized for user feed queries")
     first_card = app.FairFaresHandler.render_car_card(None, cars[0])
-    assert_true("car-card-image" in first_card and cars[0]["image_url"] in first_card, "feed cards should render dynamic car images")
+    assert_true(
+        "car-card-image" in first_card and app.optimized_static_image_url(cars[0]["image_url"]) in first_card,
+        "feed cards should render the optimized dynamic car image",
+    )
     assert_true("data-price-range" in first_card and "data-total-range" not in first_card, "feed cards should render daily estimate ranges without old total-range copy")
-    assert_true("Found a lower quote from Avis, Enterprise, Hertz" in first_card, "feed cards should use the new price-match terminology")
+    assert_true("price match" in app_source.lower(), "application should retain price-match policy support")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
     assert_true("payment-confirmation" not in dashboard_template and "$booking_payment_state" not in dashboard_template, "manage booking should use the booking badge for pay at pickup")

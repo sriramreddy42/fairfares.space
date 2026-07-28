@@ -8908,6 +8908,27 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_exports_imports_interest_summary() -> dict[str, int]:
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN user_id END) AS signed_in_users,
+                SUM(CASE WHEN user_id IS NULL THEN 1 ELSE 0 END) AS guest_submissions,
+                SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS last_7_days
+            FROM app_feedback
+            WHERE page = 'mobile-home-exports-imports'
+            """
+        ).fetchone()
+    return {
+        "total": int(row_value(row, "total", 0) or 0),
+        "signed_in_users": int(row_value(row, "signed_in_users", 0) or 0),
+        "guest_submissions": int(row_value(row, "guest_submissions", 0) or 0),
+        "last_7_days": int(row_value(row, "last_7_days", 0) or 0),
+    }
+
+
 def assistant_user_role(user: sqlite3.Row | None) -> str:
     if not user:
         return "guest"
@@ -16188,6 +16209,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def is_cors_path(self, path: str) -> bool:
         return path.startswith("/api/") or path in {
+            "/feedback",
             "/payment/stripe-session",
             "/identity/stripe-session",
         }
@@ -16241,6 +16263,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/health":
+            self.api_health()
+            return
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path)
             return
@@ -16377,6 +16402,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             self.not_found()
 
+    def api_health(self) -> None:
+        try:
+            with db() as con:
+                con.execute("SELECT 1").fetchone()
+            self.send_json({
+                "ok": True,
+                "status": "healthy",
+                "database": "available",
+                "service": "fairfares-api",
+                "time": datetime.now(UTC).isoformat(),
+            })
+        except Exception:
+            self.send_json({
+                "ok": False,
+                "status": "unhealthy",
+                "database": "unavailable",
+                "service": "fairfares-api",
+            }, 503)
+
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         routes = {
@@ -16505,7 +16549,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return True
         origin = (self.headers.get("Origin") or "").strip()
         if origin:
-            if path.startswith("/api/") or path in {"/payment/stripe-session", "/identity/stripe-session"}:
+            if path.startswith("/api/") or path in {"/feedback", "/payment/stripe-session", "/identity/stripe-session"}:
                 return bool(self.cors_allowed_origin())
             expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
             return urllib.parse.urlparse(origin).hostname == expected_host
@@ -21162,6 +21206,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         backup_rows = "\n".join(self.render_backup_row(path) for path in list_db_backups()[:5])
         feedback_rows = "\n".join(self.render_website_feedback_row(row) for row in get_website_feedback())
+        exports_interest = get_exports_imports_interest_summary()
         drive_status = google_drive_config_status()
         drive_folder_rows = "\n".join(
             f"""
@@ -21208,6 +21253,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             drive_record_rows=drive_record_rows or '<tr><td colspan="4">No Drive upload attempts recorded yet.</td></tr>',
             backup_rows=backup_rows or '<tr><td colspan="4">No backups yet.</td></tr>',
             feedback_rows=feedback_rows or '<tr><td colspan="5">No website feedback yet.</td></tr>',
+            exports_interest_total=str(exports_interest["total"]),
+            exports_interest_users=str(exports_interest["signed_in_users"]),
+            exports_interest_guests=str(exports_interest["guest_submissions"]),
+            exports_interest_week=str(exports_interest["last_7_days"]),
         )
         self.send_html(body)
 

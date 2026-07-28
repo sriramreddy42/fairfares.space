@@ -22,6 +22,7 @@ import {
   updateMobileStudentVerification
 } from "../api/client";
 import { appAssets } from "../assets";
+import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
@@ -116,6 +117,7 @@ export function ServicesScreen({
   const [studentId, setStudentId] = useState("");
   const [supportTopic, setSupportTopic] = useState("Rental support");
   const [supportMessage, setSupportMessage] = useState("");
+  const [exportsInfoOpen, setExportsInfoOpen] = useState(false);
 
   async function loadBookings() {
     if (!user) {
@@ -347,7 +349,8 @@ export function ServicesScreen({
     { label: "Housing", icon: appAssets.bed, badge: "Posts", badgeTone: "green", onPress: onOpenHousing },
     { label: "Ride", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
     { label: "Rental Cars", icon: appAssets.carFallback, badge: "Bookings", onPress: openRentalTools },
-    { label: "FChat", icon: appAssets.fchat, onPress: onOpenMessenger }
+    { label: "FChat", icon: appAssets.fchat, onPress: onOpenMessenger },
+    { label: "Exports & Imports", emoji: "📦", badge: "Coming soon", badgeTone: "green", onPress: () => setExportsInfoOpen(true) }
   ];
   const supportTiles: ServiceTile[] = [
     { label: "Invoices", icon: appAssets.serviceInvoice, badge: "Files", onPress: () => openRentalPanel("documents") },
@@ -453,12 +456,12 @@ export function ServicesScreen({
                   <View style={styles.detailSection}>
                     <Text style={styles.sectionTitle}>Change dates</Text>
                     <View style={styles.twoColumn}>
-                      <InputField label="Pickup date" value={pickupDate} onChangeText={setPickupDate} placeholder="YYYY-MM-DD" />
-                      <InputField label="Pickup time" value={pickupTime} onChangeText={setPickupTime} placeholder="10:00 AM" />
+                      <DateTimeField style={{ flex: 1 }} label="Pickup date" value={pickupDate} mode="date" minimumDate={todayLocalIso()} onChange={setPickupDate} />
+                      <DateTimeField style={{ flex: 1 }} label="Pickup time" value={pickupTime} mode="time" onChange={setPickupTime} />
                     </View>
                     <View style={styles.twoColumn}>
-                      <InputField label="Return date" value={returnDate} onChangeText={setReturnDate} placeholder="YYYY-MM-DD" />
-                      <InputField label="Return time" value={returnTime} onChangeText={setReturnTime} placeholder="10:00 AM" />
+                      <DateTimeField style={{ flex: 1 }} label="Return date" value={returnDate} mode="date" minimumDate={pickupDate || todayLocalIso()} onChange={setReturnDate} />
+                      <DateTimeField style={{ flex: 1 }} label="Return time" value={returnTime} mode="time" onChange={setReturnTime} />
                     </View>
                   </View>
                   <View style={styles.detailSection}>
@@ -705,6 +708,40 @@ export function ServicesScreen({
           </View>
         </View>
       </Modal>
+
+      <Modal visible={exportsInfoOpen} transparent animationType="fade" onRequestClose={() => setExportsInfoOpen(false)}>
+        <View style={styles.exportsBackdrop}>
+          <View style={styles.exportsModal}>
+            <ScrollView contentContainerStyle={styles.exportsContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.exportsHeader}>
+                <View style={styles.exportsHeaderCopy}>
+                  <Text style={styles.exportsEyebrow}>Coming soon</Text>
+                  <Text style={styles.exportsTitle}>Exports &amp; Imports</Text>
+                </View>
+                <TouchableOpacity accessibilityLabel="Close export and import information" style={styles.exportsClose} onPress={() => setExportsInfoOpen(false)}>
+                  <Text style={styles.exportsCloseText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.exportsImageFrame}>
+                <Image source={appAssets.exportsImportsPromo} style={styles.exportsImage} resizeMode="contain" />
+              </View>
+              <Text style={styles.exportsLead}>We are exploring secure air, sea, and land shipping between India and international destinations.</Text>
+              <View style={styles.exportsNotice}>
+                <Text style={styles.exportsNoticeTitle}>Customs-accepted items only</Text>
+                <Text style={styles.exportsBody}>Shipments would require item details and may need invoices, identity documents, permits, duties, or destination-specific paperwork. Final acceptance depends on customs, the carrier, and the destination country.</Text>
+              </View>
+              <Text style={styles.exportsSectionTitle}>Items commonly considered</Text>
+              <Text style={styles.exportsBody}>• Clothing, books, household goods and personal belongings{`\n`}• Documents, gifts and packaged non-perishable products{`\n`}• Business samples, spare parts and approved commercial goods</Text>
+              <Text style={styles.exportsSectionTitle}>Restricted or prohibited examples</Text>
+              <Text style={styles.exportsBody}>Weapons, explosives, illegal substances, undeclared cash, hazardous chemicals, counterfeit goods, certain batteries, medicines, foods, plants, seeds and animal products may be restricted or prohibited.</Text>
+              <Text style={styles.exportsFootnote}>This is an early service preview—not a quote or acceptance guarantee. Supported routes, item rules, pricing, insurance and customs requirements will be published before launch.</Text>
+              <TouchableOpacity style={styles.exportsDone} onPress={() => setExportsInfoOpen(false)}>
+                <Text style={styles.exportsDoneText}>Got it</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -938,6 +975,25 @@ const styles = StyleSheet.create({
   greenTileBadge: {
     backgroundColor: theme.colors.brand
   },
+  exportsBackdrop: { flex: 1, backgroundColor: "#020805", padding: 18, alignItems: "center", justifyContent: "center" },
+  exportsModal: { width: "100%", maxWidth: 560, height: "88%", borderRadius: 22, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "#071a12" },
+  exportsContent: { padding: 18, gap: 13 },
+  exportsHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  exportsHeaderCopy: { flex: 1, minWidth: 0 },
+  exportsEyebrow: { color: "#ffc329", fontSize: 11, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
+  exportsTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "700" },
+  exportsClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
+  exportsCloseText: { color: theme.colors.text, fontSize: 28, lineHeight: 30 },
+  exportsImageFrame: { width: "100%", aspectRatio: 1936 / 813, borderRadius: 12, overflow: "hidden", backgroundColor: "#06351f" },
+  exportsImage: { width: "100%", height: "100%" },
+  exportsLead: { color: theme.colors.text, fontSize: 15, lineHeight: 22 },
+  exportsNotice: { borderRadius: 14, padding: 13, gap: 5, backgroundColor: "rgba(255,190,0,0.10)", borderWidth: 1, borderColor: "rgba(255,190,0,0.38)" },
+  exportsNoticeTitle: { color: "#ffc329", fontSize: 15, lineHeight: 19, fontWeight: "700" },
+  exportsSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
+  exportsBody: { color: theme.colors.soft, fontSize: 13, lineHeight: 20 },
+  exportsFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
+  exportsDone: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  exportsDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
   tileBadgeText: {
     color: theme.colors.text,
     fontSize: 13,

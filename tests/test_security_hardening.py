@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -126,6 +127,63 @@ class SecurityHardeningTest(unittest.TestCase):
             with urllib.request.urlopen(request, timeout=3) as response:
                 self.assertEqual(response.status, 204)
                 self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://www.fairfare.space")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_health_endpoint_checks_database_availability(self):
+        server, thread = self.start_server()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/health",
+                timeout=3,
+            ) as response:
+                payload = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["status"], "healthy")
+                self.assertEqual(payload["database"], "available")
+                self.assertEqual(payload["service"], "fairfares-api")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_feedback_interest_allows_production_mobile_cors_preflight_and_post(self):
+        server, thread = self.start_server()
+        origin = "https://www.fairfare.space"
+        try:
+            preflight = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/feedback",
+                method="OPTIONS",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type",
+                },
+            )
+            with urllib.request.urlopen(preflight, timeout=3) as response:
+                self.assertEqual(response.status, 204)
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
+
+            payload = urllib.parse.urlencode({
+                "rating": "5",
+                "message": "Interested in FairFares Exports & Imports service.",
+                "page": "mobile-home-exports-imports",
+            }).encode()
+            post = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/feedback",
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": origin},
+            )
+            with urllib.request.urlopen(post, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
+                self.assertTrue(json.loads(response.read())["ok"])
+            with app.db() as con:
+                row = con.execute("SELECT page FROM app_feedback ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(row["page"], "mobile-home-exports-imports")
         finally:
             server.shutdown()
             server.server_close()

@@ -28,6 +28,7 @@ import {
   voteChatPoll
 } from "../api/client";
 import { appAssets } from "../assets";
+import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { BootstrapPayload, ChatConversation, ChatMessage, Community, HousingPost, RidePost } from "../types";
 import { pickChatImage, pickCompressedImages } from "../utils/imageUpload";
@@ -917,8 +918,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           <View style={styles.richComposerPanel}>
             <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>{richComposer === "POLL" ? "Create poll" : richComposer === "EVENT" ? "Create event" : "Share contact"}</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setRichComposer("")}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
             <TextInput style={styles.richInput} placeholder={richComposer === "POLL" ? "Ask a question" : richComposer === "EVENT" ? "Event title" : "Contact name"} placeholderTextColor="#777" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} />
-            <TextInput style={[styles.richInput, richComposer === "POLL" && styles.richMultiline]} multiline={richComposer === "POLL"} placeholder={richComposer === "POLL" ? "Options, one per line" : richComposer === "EVENT" ? "Date (for example Aug 15, 2026)" : "Phone number"} placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />
-            {richComposer !== "POLL" ? <TextInput style={styles.richInput} placeholder={richComposer === "EVENT" ? "Time" : "Email address"} placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : null}
+            {richComposer === "EVENT" ? <DateTimeField label="Event date" mode="date" minimumDate={todayLocalIso()} value={richDraft.secondary} onChange={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} /> : <TextInput style={[styles.richInput, richComposer === "POLL" && styles.richMultiline]} multiline={richComposer === "POLL"} placeholder={richComposer === "POLL" ? "Options, one per line" : "Phone number"} placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />}
+            {richComposer === "EVENT" ? <DateTimeField label="Event time" mode="time" value={richDraft.tertiary} onChange={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : richComposer !== "POLL" ? <TextInput style={styles.richInput} placeholder="Email address" placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : null}
             {richComposer === "EVENT" ? <TextInput style={styles.richInput} placeholder="Location" placeholderTextColor="#777" value={richDraft.fourth} onChangeText={(fourth) => setRichDraft((current) => ({ ...current, fourth }))} /> : null}
             <TouchableOpacity style={styles.richSubmit} onPress={() => void submitRichMessage()} disabled={threadLoading}><Text style={styles.richSubmitText}>{threadLoading ? "Sending…" : "Send"}</Text></TouchableOpacity>
           </View>

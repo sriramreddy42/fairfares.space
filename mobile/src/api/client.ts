@@ -52,13 +52,20 @@ export const API_URL =
   DEFAULT_API_URL;
 
 const API_CANDIDATES = uniqueUrls(
-  Platform.OS === "web"
-    ? [EXPLICIT_API_URL, WEB_LOCAL_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
-    : [EXPLICIT_API_URL, METRO_HOST_API_URL, "http://127.0.0.1:8010"]
+  EXPLICIT_API_URL
+    ? [EXPLICIT_API_URL]
+    : Platform.OS === "web"
+      ? [WEB_LOCAL_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
+      : [METRO_HOST_API_URL, "http://127.0.0.1:8010"]
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
 const API_REQUEST_TIMEOUT_MS = 10000;
+const REMOTE_API_REQUEST_TIMEOUT_MS = 30000;
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 function browserStorage() {
   return (globalThis as unknown as {
@@ -104,38 +111,50 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isAttachmentUpload = path === "/api/chat/attachments";
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
-    const controller = new AbortController();
-    const timeoutMs = isAttachmentUpload ? 45000 : API_REQUEST_TIMEOUT_MS;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
-      const text = await response.text();
-      let payload: T & { error?: string; message?: string };
+    const method = String(init.method || "GET").toUpperCase();
+    const attempts = method === "GET" ? 2 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutMs = isAttachmentUpload ? 45000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        payload = JSON.parse(text) as T & { error?: string; message?: string };
-      } catch {
-        throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
+        const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
+        const text = await response.text();
+        let payload: T & { error?: string; message?: string };
+        try {
+          payload = JSON.parse(text) as T & { error?: string; message?: string };
+        } catch {
+          throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
+        }
+        if (!response.ok) {
+          const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
+          (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
+          if ([502, 503, 504].includes(response.status) && attempt + 1 < attempts) {
+            lastError = httpError.message;
+            await wait(500 * (attempt + 1));
+            continue;
+          }
+          throw httpError;
+        }
+        activeApiBase = baseUrl;
+        return payload;
+      } catch (error) {
+        const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
+        if (status) throw error;
+        lastError = error instanceof Error ? error.message : String(error);
+        if (attempt + 1 < attempts) await wait(500 * (attempt + 1));
+      } finally {
+        clearTimeout(timeout);
       }
-      if (!response.ok) {
-        const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
-        (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
-        throw httpError;
-      }
-      activeApiBase = baseUrl;
-      return payload;
-    } catch (error) {
-      if ((error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus) {
-        throw error;
-      }
-      lastError = error instanceof Error ? error.message : String(error);
-    } finally {
-      clearTimeout(timeout);
     }
   }
   if (isAttachmentUpload) {
     throw new Error(`The attachment upload did not finish. Check your connection and try again. ${lastError}`.trim());
   }
-  throw new Error(`Could not connect to FairFares API. Tried: ${candidateUrls.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
+  if (EXPLICIT_API_URL) {
+    throw new Error("FairFares is temporarily unavailable. Check your internet connection and try again shortly.");
+  }
+  throw new Error(`Could not connect to the local FairFares API. Last error: ${lastError}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
 function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
@@ -205,7 +224,8 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
 export async function getBootstrap(city = "Denver, CO") {
   try {
     return await request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
-  } catch {
+  } catch (error) {
+    if (EXPLICIT_API_URL) throw error;
     return fallbackBootstrap(city);
   }
 }
@@ -549,6 +569,18 @@ export async function createRentalSupportTicket(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bookingId, topic, message, urgent, preferredContact: "FairFares app" })
+  });
+}
+
+export async function submitAppFeedback(rating: number, message: string, page = "mobile") {
+  const body = new URLSearchParams();
+  body.set("rating", String(rating));
+  body.set("message", message);
+  body.set("page", page);
+  return request<{ ok: boolean; message: string }>("/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: body.toString()
   });
 }
 

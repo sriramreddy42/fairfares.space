@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -115,6 +116,10 @@ def set_booking_state(booking_id: int, car_id: int, booking_status: str, car_sta
 def main() -> None:
     started = time.perf_counter()
     app.init_db()
+    pickup_date = (date.today() + timedelta(days=30)).isoformat()
+    return_date = (date.today() + timedelta(days=39)).isoformat()
+    later_return_date = (date.today() + timedelta(days=44)).isoformat()
+    short_return_date = (date.today() + timedelta(days=42)).isoformat()
     car_ids = insert_cars(1000)
     assert_true(len(car_ids) == 1000, "should insert 1000 stress cars")
 
@@ -127,8 +132,8 @@ def main() -> None:
             car_id,
             "",
             10,
-            "2026-06-01",
-            "2026-06-10",
+            pickup_date,
+            return_date,
             pickup_time,
             "4:00 PM",
             "Denver International Airport (DEN)",
@@ -194,7 +199,8 @@ def main() -> None:
 
     same_day_row = booked_rows[0]
     same_day_card = app.FairFaresHandler.render_car_card(None, same_day_row)
-    assert_true('data-booked-until-date="Jun 10, 2026"' in same_day_card, "same-day booked car should render return date")
+    formatted_return_date = date.fromisoformat(return_date).strftime("%b %-d, %Y")
+    assert_true(f'data-booked-until-date="{formatted_return_date}"' in same_day_card, "same-day booked car should render return date")
     assert_true('data-booked-until-time="4:00 PM"' in same_day_card, "same-day booked car should render return time")
     adjusted_user = create_user(2000)
     adjusted_booking = app.create_booking_for_user(
@@ -202,8 +208,8 @@ def main() -> None:
         int(same_day_row["id"]),
         "",
         5,
-        "2026-06-10",
-        "2026-06-15",
+        return_date,
+        later_return_date,
         "12:00 PM",
         "10:00 AM",
     )
@@ -222,8 +228,8 @@ def main() -> None:
         int(return_car["id"]),
         "",
         3,
-        "2026-06-10",
-        "2026-06-13",
+        return_date,
+        short_return_date,
         "12:00 PM",
         "10:00 AM",
     )

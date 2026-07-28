@@ -64,6 +64,7 @@ export function ProfileScreen({
   const [rideProfile, setRideProfile] = useState<RideDriverProfile | null>(null);
   const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
   const [carpoolLoading, setCarpoolLoading] = useState(false);
+  const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -145,6 +146,7 @@ export function ProfileScreen({
     { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.ride, onPress: onOpenRide },
     { title: "Rental Cars", copy: "Bookings, invoices and support", icon: appAssets.serviceInvoice, onPress: onOpenServices },
     { title: "FChat", copy: "Messages and communities", icon: appAssets.fchat, onPress: onOpenMessenger },
+    { title: "Help & Support", copy: "Questions, account help, safety concerns, or technical problems", icon: appAssets.serviceSupport, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
     { title: "Delete account", copy: "Request account and data deletion", icon: appAssets.serviceCancel, requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
   ];
@@ -224,31 +226,41 @@ export function ProfileScreen({
         </View>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Profile details</Text>
-          <Text style={styles.label}>Full name</Text>
-          <TextInput value={name} onChangeText={(value) => { setName(value); setProfileDirty(true); }} style={styles.input} placeholder="Your name" placeholderTextColor={theme.colors.muted} />
-          <Text style={styles.label}>Email</Text>
-          <TextInput value={email} onChangeText={(value) => { setEmail(value); setProfileDirty(true); }} style={styles.input} placeholder="Email" placeholderTextColor={theme.colors.muted} autoCapitalize="none" keyboardType="email-address" />
-          <Text style={styles.label}>Phone</Text>
-          <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" />
-          {sensitiveChanged ? (
+          <TouchableOpacity
+            style={styles.profileDetailsHeader}
+            onPress={() => setProfileDetailsOpen((current) => !current)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: profileDetailsOpen }}
+          >
+            <View style={styles.profileDetailsHeaderCopy}>
+              <Text style={styles.cardTitle}>Profile details</Text>
+              <Text style={styles.profileDetailsSummary}>{profileDetailsOpen ? "Hide personal information" : "Name, email, phone and profile photo"}</Text>
+            </View>
+            <Text style={styles.profileDetailsChevron}>{profileDetailsOpen ? "⌃" : "⌄"}</Text>
+          </TouchableOpacity>
+          {profileDetailsOpen ? <>
+            <Text style={styles.label}>Full name</Text>
+            <TextInput value={name} onChangeText={(value) => { setName(value); setProfileDirty(true); }} style={styles.input} placeholder="Your name" placeholderTextColor={theme.colors.muted} />
+            <Text style={styles.label}>Email</Text>
+            <TextInput value={email} onChangeText={(value) => { setEmail(value); setProfileDirty(true); }} style={styles.input} placeholder="Email" placeholderTextColor={theme.colors.muted} autoCapitalize="none" keyboardType="email-address" />
+            <Text style={styles.label}>Phone</Text>
+            <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" />
+            {sensitiveChanged ? (
             <>
               <Text style={styles.securityNote}>Current password is required to change email or phone. Email changes require activation before the next login.</Text>
               <Text style={styles.label}>Current password</Text>
               <TextInput value={currentPassword} onChangeText={(value) => { setCurrentPassword(value); setProfileDirty(true); }} style={styles.input} placeholder="Current password" placeholderTextColor={theme.colors.muted} secureTextEntry />
             </>
-          ) : null}
-          <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto}>
-              <Text style={styles.secondaryButtonText}>Upload photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
-              <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
+            ) : null}
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto}>
+                <Text style={styles.secondaryButtonText}>Upload photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
+                <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
+              </TouchableOpacity>
+            </View>
+          </> : null}
         </View>
       )}
 
@@ -326,6 +338,11 @@ export function ProfileScreen({
           <Text style={styles.menuChevron}>›</Text>
         </TouchableOpacity>
       ))}
+      {user ? (
+        <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+          <Text style={styles.logoutText}>Log out of FairFares</Text>
+        </TouchableOpacity>
+      ) : null}
     </ScrollView>
   );
 }
@@ -345,6 +362,10 @@ const styles = StyleSheet.create({
   selectorText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
   card: { backgroundColor: theme.colors.panel, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: theme.colors.line, gap: 8 },
   cardTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" },
+  profileDetailsHeader: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  profileDetailsHeaderCopy: { flex: 1, minWidth: 0 },
+  profileDetailsSummary: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  profileDetailsChevron: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 },
   cardCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "600" },
   label: { color: theme.colors.muted, fontWeight: "700", textTransform: "uppercase", fontSize: 10, letterSpacing: 0.5 },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15 },
@@ -355,8 +376,8 @@ const styles = StyleSheet.create({
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   secondaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   disabled: { opacity: 0.7 },
-  logoutButton: { alignSelf: "center", paddingVertical: 8, paddingHorizontal: 14 },
-  logoutText: { color: theme.colors.accent, fontWeight: "700" },
+  logoutButton: { minHeight: 50, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(248,113,113,0.5)", backgroundColor: "rgba(127,29,29,0.14)", alignItems: "center", justifyContent: "center", paddingHorizontal: 14, marginTop: 4 },
+  logoutText: { color: "#f87171", fontWeight: "700", fontSize: 14 },
   activityCard: { backgroundColor: "#152219", borderRadius: 18, padding: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.4)", gap: 8 },
   notificationCard: { backgroundColor: theme.colors.panel, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: theme.colors.line, flexDirection: "row", alignItems: "center", gap: 12 },
   notificationCopy: { flex: 1, minWidth: 0, gap: 3 },

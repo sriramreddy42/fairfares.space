@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
+import { DateTimeField } from "../components/DateTimeField";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
@@ -456,6 +457,10 @@ export function HousingScreen({
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
+  const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
+  const [exportsInterestSent, setExportsInterestSent] = useState(false);
+  const [exportsInterestError, setExportsInterestError] = useState("");
+  const [exportsInfoOpen, setExportsInfoOpen] = useState(false);
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
@@ -507,6 +512,24 @@ export function HousingScreen({
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
     : data?.location.suggested || data?.location.city || "";
+
+  async function showExportsInterest() {
+    setExportsInfoOpen(true);
+    if (exportsInterestSent) {
+      return;
+    }
+    if (exportsInterestBusy) return;
+    setExportsInterestError("");
+    setExportsInterestBusy(true);
+    try {
+      await submitAppFeedback(5, "Interested in FairFares Exports & Imports service.", "mobile-home-exports-imports");
+      setExportsInterestSent(true);
+    } catch (error) {
+      setExportsInterestError(error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setExportsInterestBusy(false);
+    }
+  }
   const rideDefaultCity = data?.location.city || "Denver, CO";
   const rideDefaultPickup = currentRideLocation?.label || selectedLocationText || data?.location.suggested || rideDefaultCity || "Your location";
   const activeSearchPhrases =
@@ -1683,19 +1706,21 @@ export function HousingScreen({
                 onChangeText={(value) => updateRentalListingDraft("location", value)}
               />
               <View style={styles.rideOwnerInputRow}>
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="Available from YYYY-MM-DD"
-                  placeholderTextColor={theme.colors.muted}
+                <DateTimeField
+                  style={styles.rideOwnerHalfInput}
+                  label="Available from"
+                  mode="date"
+                  minimumDate={todayIsoDate()}
                   value={rentalListingDraft.availableFrom || ""}
-                  onChangeText={(value) => updateRentalListingDraft("availableFrom", value)}
+                  onChange={(value) => updateRentalListingDraft("availableFrom", value)}
                 />
-                <TextInput
-                  style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
-                  placeholder="Available to"
-                  placeholderTextColor={theme.colors.muted}
+                <DateTimeField
+                  style={styles.rideOwnerHalfInput}
+                  label="Available to"
+                  mode="date"
+                  minimumDate={rentalListingDraft.availableFrom || todayIsoDate()}
                   value={rentalListingDraft.availableTo || ""}
-                  onChangeText={(value) => updateRentalListingDraft("availableTo", value)}
+                  onChange={(value) => updateRentalListingDraft("availableTo", value)}
                 />
               </View>
               <View style={styles.rideOwnerInputRow}>
@@ -1872,34 +1897,12 @@ export function HousingScreen({
             <Text style={styles.carSelectValue} numberOfLines={2}>{rentalSearch.returnLocation || "Select return location"}</Text>
           </TouchableOpacity>
           <View style={styles.carTwoCol}>
-            <View style={styles.carTwoColField}>
-              <Text style={styles.carFieldLabel}>Pickup date</Text>
-              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("pickupDate")}>
-                <Text style={styles.carSelectValue}>{formatDateLabel(rentalSearch.pickupDate)}</Text>
-                <Text style={styles.carSelectMeta}>{rentalSearch.pickupDate}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.carTwoColField}>
-              <Text style={styles.carFieldLabel}>Return date</Text>
-              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("returnDate")}>
-                <Text style={styles.carSelectValue}>{formatDateLabel(rentalSearch.returnDate)}</Text>
-                <Text style={styles.carSelectMeta}>{rentalSearch.returnDate}</Text>
-              </TouchableOpacity>
-            </View>
+            <DateTimeField style={styles.carTwoColField} label="Pickup date" value={rentalSearch.pickupDate} mode="date" minimumDate={todayIsoDate()} onChange={(value) => updateRentalSearch("pickupDate", value)} />
+            <DateTimeField style={styles.carTwoColField} label="Return date" value={rentalSearch.returnDate} mode="date" minimumDate={addDays(rentalSearch.pickupDate, 1)} onChange={(value) => updateRentalSearch("returnDate", value)} />
           </View>
           <View style={styles.carTwoCol}>
-            <View style={styles.carTwoColField}>
-              <Text style={styles.carFieldLabel}>Pickup time</Text>
-              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("pickupTime")}>
-                <Text style={styles.carSelectValue}>{rentalSearch.pickupTime}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.carTwoColField}>
-              <Text style={styles.carFieldLabel}>Return time</Text>
-              <TouchableOpacity style={styles.carSelectInput} onPress={() => setRentalPicker("returnTime")}>
-                <Text style={styles.carSelectValue}>{rentalSearch.returnTime}</Text>
-              </TouchableOpacity>
-            </View>
+            <DateTimeField style={styles.carTwoColField} label="Pickup time" value={rentalSearch.pickupTime} mode="time" onChange={(value) => updateRentalSearch("pickupTime", value)} />
+            <DateTimeField style={styles.carTwoColField} label="Return time" value={rentalSearch.returnTime} mode="time" onChange={(value) => updateRentalSearch("returnTime", value)} />
           </View>
           <View style={styles.carTwoCol}>
             <View style={styles.carTwoColField}>
@@ -2172,23 +2175,20 @@ export function HousingScreen({
                   <Text style={styles.rideTripHint}>These details are for this route listing. Change them each time you offer seats.</Text>
                   <View style={styles.rideTripDetailsRow}>
                     <View style={styles.rideTripField}>
-                      <Text style={styles.rideTripLabel}>Date</Text>
-                      <TextInput
-                        style={styles.rideTripInput}
-                        placeholder="YYYY-MM-DD"
-                        placeholderTextColor={theme.colors.muted}
+                      <DateTimeField
+                        label="Date"
+                        mode="date"
+                        minimumDate={todayIsoDate()}
                         value={rideForm.pickupDate}
-                        onChangeText={(value) => updateRideForm("pickupDate", value)}
+                        onChange={(value) => updateRideForm("pickupDate", value)}
                       />
                     </View>
                     <View style={styles.rideTripField}>
-                      <Text style={styles.rideTripLabel}>Time</Text>
-                      <TextInput
-                        style={styles.rideTripInput}
-                        placeholder="8:00 AM"
-                        placeholderTextColor={theme.colors.muted}
+                      <DateTimeField
+                        label="Time"
+                        mode="time"
                         value={rideForm.pickupTime}
-                        onChangeText={(value) => updateRideForm("pickupTime", value)}
+                        onChange={(value) => updateRideForm("pickupTime", value)}
                       />
                     </View>
                   </View>
@@ -2669,6 +2669,53 @@ export function HousingScreen({
     <>
     {renderRideOwnerTracker()}
     {renderRentalOwnerModal()}
+    <Modal visible={exportsInfoOpen} transparent animationType="fade" onRequestClose={() => setExportsInfoOpen(false)}>
+      <View style={styles.exportsInfoBackdrop}>
+        <View style={styles.exportsInfoModal}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.exportsInfoContent}>
+            <View style={styles.exportsInfoHeader}>
+              <View style={[styles.exportsInfoIcon, exportsInterestError && styles.exportsInfoIconError]}><Text style={styles.exportsInfoIconText}>{exportsInterestError ? "!" : exportsInterestSent ? "✓" : "↻"}</Text></View>
+              <View style={styles.exportsInfoHeadingCopy}>
+                <Text style={[styles.exportsInfoEyebrow, exportsInterestError && styles.exportsInfoEyebrowError]}>{exportsInterestError ? "Interest not recorded" : exportsInterestSent ? "Interest recorded" : "Recording your interest"}</Text>
+                <Text style={styles.exportsInfoTitle}>Exports &amp; Imports</Text>
+              </View>
+              <TouchableOpacity accessibilityLabel="Close export and import information" style={styles.exportsInfoClose} onPress={() => setExportsInfoOpen(false)}>
+                <Text style={styles.exportsInfoCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.exportsInfoLead}>Thank you for your interest. We are exploring secure air, sea, and land shipping between India and international destinations.</Text>
+
+            {exportsInterestError ? (
+              <View style={styles.exportsInfoErrorNotice}>
+                <Text style={styles.exportsInfoErrorTitle}>We could not save your interest yet</Text>
+                <Text style={styles.exportsInfoErrorCopy}>{exportsInterestError}</Text>
+                <TouchableOpacity style={styles.exportsInfoRetryButton} onPress={showExportsInterest}>
+                  <Text style={styles.exportsInfoRetryText}>Try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : exportsInterestBusy ? <Text style={styles.exportsInfoSaving}>Saving your interest…</Text> : null}
+
+            <View style={styles.exportsInfoNotice}>
+              <Text style={styles.exportsInfoNoticeTitle}>Customs-accepted items only</Text>
+              <Text style={styles.exportsInfoNoticeCopy}>Every shipment would require item details and may need invoices, identity documents, permits, duties, or destination-specific paperwork. Final acceptance depends on customs, the carrier, and the destination country.</Text>
+            </View>
+
+            <Text style={styles.exportsInfoSectionTitle}>Items commonly considered</Text>
+            <Text style={styles.exportsInfoBody}>• Clothing, books, household goods and personal belongings{`\n`}• Documents, gifts and packaged non-perishable products{`\n`}• Business samples, spare parts and approved commercial goods</Text>
+
+            <Text style={styles.exportsInfoSectionTitle}>Restricted or prohibited examples</Text>
+            <Text style={styles.exportsInfoBody}>Weapons, explosives, illegal substances, undeclared cash, hazardous chemicals, counterfeit goods, certain batteries, medicines, foods, plants, seeds and animal products may be restricted or prohibited. Some items require special permits or specialist carriers.</Text>
+
+            <Text style={styles.exportsInfoFootnote}>This is an early service preview—not a shipping quote or acceptance guarantee. FairFares will publish supported routes, item rules, pricing, insurance and customs requirements before launch.</Text>
+
+            <TouchableOpacity style={styles.exportsInfoDoneButton} onPress={() => setExportsInfoOpen(false)}>
+              <Text style={styles.exportsInfoDoneText}>Got it</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
     <ScrollView
       ref={scrollRef}
       style={styles.screen}
@@ -2746,7 +2793,7 @@ export function HousingScreen({
           }}
         >
           {renderSegmentIcon("ride", mode === "ride")}
-          <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Ride</Text>
+          <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Carpool</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.segmentButton, mode === "cheapCars" && styles.segmentActive]}
@@ -2889,6 +2936,29 @@ export function HousingScreen({
       >
         <Image source={appAssets.housingRentalPromo} style={styles.housingRentalPromoImage} resizeMode="contain" />
       </TouchableOpacity>
+      <SectionHeader title="Exports & Imports" />
+      <View style={styles.exportsImportsCard}>
+        <View style={styles.exportsImportsImageFrame}>
+          <Image source={appAssets.exportsImportsPromo} style={styles.exportsImportsImage} resizeMode="contain" />
+        </View>
+        <View style={styles.exportsImportsCopy}>
+          <View style={styles.exportsImportsBadge}>
+            <Text style={styles.exportsImportsBadgeText}>Coming soon</Text>
+          </View>
+          <Text style={styles.exportsImportsTitle}>Move goods between India and the world</Text>
+          <Text style={styles.exportsImportsMeta}>Interested in safe import and export support? Show your interest and help us bring this service sooner.</Text>
+          <TouchableOpacity
+            activeOpacity={0.84}
+            style={[styles.exportsImportsButton, exportsInterestSent && styles.exportsImportsButtonSent]}
+            onPress={showExportsInterest}
+            disabled={exportsInterestBusy}
+          >
+            <Text style={[styles.exportsImportsButtonText, exportsInterestSent && styles.exportsImportsButtonTextSent]}>
+              {exportsInterestSent ? "✓ Interest recorded · View details" : exportsInterestBusy ? "Recording..." : "I'm interested"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
       {renderQuickLinks()}
         </>
       )}
@@ -3146,6 +3216,77 @@ const styles = StyleSheet.create({
   },
   quickTextDot: { width: 8, height: 8, borderRadius: 4 },
   quickTextTitle: { color: theme.colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  exportsImportsCard: {
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#071a12"
+  },
+  exportsImportsImageFrame: { width: "100%", aspectRatio: 1936 / 813, backgroundColor: "#06351f" },
+  exportsImportsImage: { width: "100%", height: "100%" },
+  exportsImportsCopy: { padding: 15, gap: 8 },
+  exportsImportsBadge: {
+    alignSelf: "flex-start",
+    borderRadius: theme.radius.pill,
+    backgroundColor: "rgba(255,190,0,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(255,190,0,0.46)",
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  exportsImportsBadgeText: { color: "#ffc329", fontSize: 11, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5 },
+  exportsImportsTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
+  exportsImportsMeta: { color: theme.colors.soft, fontSize: 14, lineHeight: 20 },
+  exportsImportsButton: {
+    minHeight: 46,
+    marginTop: 3,
+    borderRadius: theme.radius.pill,
+    backgroundColor: "#f3b900",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18
+  },
+  exportsImportsButtonSent: { backgroundColor: "#168455" },
+  exportsImportsButtonText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
+  exportsImportsButtonTextSent: { color: "#ffffff" },
+  exportsInfoBackdrop: { flex: 1, backgroundColor: "#020805", padding: 18, alignItems: "center", justifyContent: "center" },
+  exportsInfoModal: {
+    width: "100%",
+    maxWidth: 560,
+    height: "88%",
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "#071a12"
+  },
+  exportsInfoContent: { padding: 18, gap: 13 },
+  exportsInfoHeader: { flexDirection: "row", alignItems: "center", gap: 11 },
+  exportsInfoIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#168455", alignItems: "center", justifyContent: "center" },
+  exportsInfoIconError: { backgroundColor: "#b94343" },
+  exportsInfoIconText: { color: "#ffffff", fontSize: 22, fontWeight: "800" },
+  exportsInfoHeadingCopy: { flex: 1, minWidth: 0 },
+  exportsInfoEyebrow: { color: "#54d58b", fontSize: 11, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
+  exportsInfoEyebrowError: { color: "#ff8d8d" },
+  exportsInfoTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "700" },
+  exportsInfoClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
+  exportsInfoCloseText: { color: theme.colors.text, fontSize: 28, lineHeight: 30, fontWeight: "400" },
+  exportsInfoLead: { color: theme.colors.text, fontSize: 15, lineHeight: 22 },
+  exportsInfoSaving: { color: "#ffc329", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  exportsInfoErrorNotice: { borderRadius: 14, padding: 13, gap: 6, backgroundColor: "rgba(185,67,67,0.13)", borderWidth: 1, borderColor: "rgba(255,105,105,0.42)" },
+  exportsInfoErrorTitle: { color: "#ff9c9c", fontSize: 14, lineHeight: 18, fontWeight: "700" },
+  exportsInfoErrorCopy: { color: theme.colors.soft, fontSize: 12, lineHeight: 17 },
+  exportsInfoRetryButton: { alignSelf: "flex-start", borderRadius: theme.radius.pill, backgroundColor: "#ffffff", paddingHorizontal: 14, paddingVertical: 8, marginTop: 2 },
+  exportsInfoRetryText: { color: "#161616", fontSize: 13, lineHeight: 16, fontWeight: "800" },
+  exportsInfoNotice: { borderRadius: 14, padding: 13, gap: 5, backgroundColor: "rgba(255,190,0,0.10)", borderWidth: 1, borderColor: "rgba(255,190,0,0.38)" },
+  exportsInfoNoticeTitle: { color: "#ffc329", fontSize: 15, lineHeight: 19, fontWeight: "700" },
+  exportsInfoNoticeCopy: { color: theme.colors.soft, fontSize: 13, lineHeight: 19 },
+  exportsInfoSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
+  exportsInfoBody: { color: theme.colors.soft, fontSize: 13, lineHeight: 20 },
+  exportsInfoFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
+  exportsInfoDoneButton: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 2 },
+  exportsInfoDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
   postActionGrid: { gap: 9 },
   postActionCard: {
     minHeight: 96,
