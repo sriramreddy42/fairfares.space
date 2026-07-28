@@ -43,52 +43,37 @@ class AuthBootstrapTest(unittest.TestCase):
         with app.db() as con:
             return con.execute("SELECT * FROM users WHERE email = ?", (app.DEFAULT_ADMIN_EMAIL,)).fetchone()
 
-    def test_startup_creates_verified_default_admin(self):
+    def test_startup_does_not_create_published_default_admin(self):
         app.init_db()
 
-        admin = self.admin_user()
-        self.assertIsNotNone(admin)
-        self.assertEqual(admin["is_admin"], 1)
-        self.assertEqual(admin["role"], "ADMIN")
-        self.assertEqual(admin["is_verified"], 1)
-        self.assertTrue(app.verify_password(app.DEFAULT_ADMIN_PASSWORD, admin["password_hash"]))
+        self.assertIsNone(self.admin_user())
 
-    def test_startup_repairs_existing_admin_password_and_verification(self):
+    def test_incomplete_admin_configuration_creates_no_admin(self):
+        os.environ["FAIRFARES_ADMIN_EMAIL"] = "ops@fairfares.com"
+        app.init_db()
+        with app.db() as con:
+            self.assertIsNone(con.execute("SELECT * FROM users WHERE email = 'ops@fairfares.com'").fetchone())
+
+    def test_startup_invalidates_legacy_known_admin_password(self):
+        legacy_password = "ChangeMe" + "123!"
         app.init_db()
         with app.db() as con:
             con.execute(
-                """
-                UPDATE users
-                SET password_hash = ?,
-                    is_admin = 0,
-                    role = 'CUSTOMER',
-                    is_verified = 0,
-                    guest_account = 1
-                WHERE email = ?
-                """,
-                (app.hash_password("WrongPassword123!"), app.DEFAULT_ADMIN_EMAIL),
+                "INSERT INTO users (name, email, password_hash, is_admin, role, is_verified) VALUES (?, ?, ?, 1, 'ADMIN', 1)",
+                ("Legacy Admin", app.DEFAULT_ADMIN_EMAIL, app.hash_password(legacy_password)),
             )
-
         app.init_db()
-
         admin = self.admin_user()
-        self.assertEqual(admin["is_admin"], 1)
-        self.assertEqual(admin["role"], "ADMIN")
-        self.assertEqual(admin["is_verified"], 1)
-        self.assertEqual(admin["guest_account"], 0)
-        self.assertTrue(app.verify_password(app.DEFAULT_ADMIN_PASSWORD, admin["password_hash"]))
+        self.assertIsNotNone(admin)
+        self.assertFalse(app.verify_password(legacy_password, admin["password_hash"]))
 
-    def test_configured_admin_does_not_replace_builtin_admin_login(self):
+    def test_configured_admin_is_created_without_builtin_backdoor(self):
         os.environ["FAIRFARES_ADMIN_EMAIL"] = "ops@fairfares.com"
         os.environ["FAIRFARES_ADMIN_PASSWORD"] = "OpsPassword123!"
 
         app.init_db()
 
-        default_admin = self.admin_user()
-        self.assertIsNotNone(default_admin)
-        self.assertEqual(default_admin["is_admin"], 1)
-        self.assertEqual(default_admin["is_verified"], 1)
-        self.assertTrue(app.verify_password(app.DEFAULT_ADMIN_PASSWORD, default_admin["password_hash"]))
+        self.assertIsNone(self.admin_user())
 
         with app.db() as con:
             configured_admin = con.execute("SELECT * FROM users WHERE email = ?", ("ops@fairfares.com",)).fetchone()
@@ -176,6 +161,10 @@ class AuthBootstrapTest(unittest.TestCase):
         app.init_db()
 
         with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_admin, role, is_verified) VALUES (?, ?, ?, 1, 'ADMIN', 1)",
+                ("Requesting Admin", app.DEFAULT_ADMIN_EMAIL, app.hash_password("Password123!")),
+            )
             con.execute(
                 """
                 INSERT INTO users (name, email, password_hash, is_admin, role, is_verified)

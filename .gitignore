@@ -7,8 +7,15 @@ __pycache__/
 .local-data/
 data/*.sqlite3
 data/*.sqlite3-journal
+data/*.sqlite3-shm
+data/*.sqlite3-wal
 data/outbox/
 data/backups/
+data/uploads/
+data/.fairfares-app-secret
+dev-pdf-extracted.txt
+mobile/dist/
+mobile/dist-visual/
 node_modules/
 test-results/
 playwright-report/

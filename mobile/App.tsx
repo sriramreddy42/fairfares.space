@@ -1,8 +1,12 @@
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import Constants from "expo-constants";
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, startRentalCheckout } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -11,6 +15,15 @@ import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 import { pickCompressedImages } from "./src/utils/imageUpload";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true
+  })
+});
 
 const emptyListingForm: MobileHousingPostInput = {
   postMode: "HAVE_PLACE",
@@ -117,6 +130,8 @@ const amenityToggles: Array<[keyof MobileHousingPostInput, string]> = [
 ];
 
 export default function App() {
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,6 +146,9 @@ export default function App() {
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
+  const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
+  const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
+  const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -139,6 +157,7 @@ export default function App() {
   const [selectedSort, setSelectedSort] = useState<"distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc">("distanceAsc");
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
+  const [housingSearchCoordinates, setHousingSearchCoordinates] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
@@ -157,6 +176,106 @@ export default function App() {
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<{ title: string; body: string; action: string } | null>(null);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
+  const [launchVisible, setLaunchVisible] = useState(true);
+  const launchStartedAt = useRef(Date.now());
+  const launchOpacity = useRef(new Animated.Value(1)).current;
+  const launchScale = useRef(new Animated.Value(0.94)).current;
+  const launchCarOpacity = useRef(new Animated.Value(0)).current;
+  const launchCarScale = useRef(new Animated.Value(0.56)).current;
+  const launchCarOffset = useRef(new Animated.Value(24)).current;
+  const launchPromiseOpacity = useRef(new Animated.Value(0)).current;
+  const launchPromiseOffset = useRef(new Animated.Value(10)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const pushTokenRef = useRef("");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState("Available on the installed mobile app");
+
+  function notificationPreferenceKey() {
+    return `fairfares.mobile.notifications.${data?.user?.id || "guest"}`;
+  }
+
+  async function enableMobileNotifications(requestPermission = true) {
+    if (Platform.OS === "web" || !Device.isDevice) {
+      setNotificationsEnabled(false);
+      setNotificationStatus("Install FairFares on a physical phone to receive notifications.");
+      return false;
+    }
+    try {
+      if (Platform.OS === "android") {
+        await Promise.all([
+          Notifications.setNotificationChannelAsync("fchat", {
+            name: "FChat messages",
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 250, 150, 250],
+            lightColor: "#4f7cff"
+          }),
+          Notifications.setNotificationChannelAsync("carpool", {
+            name: "Carpool activity",
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 250, 150, 250],
+            lightColor: "#22c55e"
+          }),
+          Notifications.setNotificationChannelAsync("rentals", {
+            name: "Rental bookings",
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 250, 150, 250],
+            lightColor: "#f59e0b"
+          })
+        ]);
+      }
+      let permission = await Notifications.getPermissionsAsync();
+      if (permission.status !== "granted" && requestPermission) permission = await Notifications.requestPermissionsAsync();
+      if (permission.status !== "granted") {
+        setNotificationsEnabled(false);
+        setNotificationStatus("Notification permission is off. Enable it in your phone settings.");
+        return false;
+      }
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+      if (!projectId) throw new Error("Expo project ID is unavailable.");
+      const token = await Notifications.getExpoPushTokenAsync({ projectId });
+      if (!token.data) throw new Error("A push token could not be created.");
+      await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true);
+      pushTokenRef.current = token.data;
+      await AsyncStorage.setItem(notificationPreferenceKey(), "true");
+      setNotificationsEnabled(true);
+      setNotificationStatus("FChat, carpool, and rental alerts are enabled on this device.");
+      return true;
+    } catch (error) {
+      setNotificationsEnabled(false);
+      setNotificationStatus(error instanceof Error ? error.message : "Notifications could not be enabled.");
+      return false;
+    }
+  }
+
+  async function disableMobileNotifications() {
+    try {
+      if (pushTokenRef.current && data?.user) {
+        await registerMobilePushToken(pushTokenRef.current, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", false);
+      }
+      await AsyncStorage.setItem(notificationPreferenceKey(), "false");
+      pushTokenRef.current = "";
+      setNotificationsEnabled(false);
+      setNotificationStatus("FairFares alerts are off on this device.");
+    } catch (error) {
+      Alert.alert("Notifications", error instanceof Error ? error.message : "Could not turn off notifications.");
+    }
+  }
+
+  async function toggleMobileNotifications() {
+    if (notificationsEnabled) await disableMobileNotifications();
+    else await enableMobileNotifications(true);
+  }
+
+  async function unregisterNotificationsForLogout() {
+    if (!pushTokenRef.current || !data?.user) return;
+    try {
+      await registerMobilePushToken(pushTokenRef.current, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", false);
+    } catch {
+      // Logout must still succeed if the device is temporarily offline.
+    }
+    pushTokenRef.current = "";
+    setNotificationsEnabled(false);
+  }
 
   async function load() {
     setLoading(true);
@@ -177,6 +296,123 @@ export default function App() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!data?.user) {
+      setNotificationsEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    void AsyncStorage.getItem(notificationPreferenceKey()).then((preference) => {
+      if (cancelled) return;
+      if (preference === "false") {
+        setNotificationsEnabled(false);
+        setNotificationStatus("FairFares alerts are off on this device.");
+      } else {
+        void enableMobileNotifications(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [data?.user?.id]);
+
+  useEffect(() => {
+    const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
+      const type = String(response?.notification.request.content.data?.type || "");
+      if (type === "FCHAT_MESSAGE") {
+        setPendingPost(null);
+        setPendingRide(null);
+        setActiveTab("messenger");
+      } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS") {
+        setPendingPost(null);
+        setPendingRide(null);
+        setRideOwnerOpenToken(0);
+        setRideOwnerReturnTab(null);
+        setActiveTab("activity");
+      } else if (type === "RENTAL_BOOKING") {
+        setPendingPost(null);
+        setPendingRide(null);
+        setSelectedService("cars");
+        setActiveTab("services");
+      }
+    };
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener(navigateFromNotification);
+    void Notifications.getLastNotificationResponseAsync()
+      .then(async (response) => {
+        navigateFromNotification(response);
+        if (response) await Notifications.clearLastNotificationResponseAsync();
+      })
+      .catch(() => undefined);
+    return () => responseSubscription.remove();
+  }, []);
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(launchCarOpacity, {
+        toValue: 1,
+        duration: 300,
+        delay: 120,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true
+      }),
+      Animated.spring(launchCarScale, {
+        toValue: 1,
+        delay: 120,
+        friction: 7,
+        tension: 52,
+        useNativeDriver: true
+      }),
+      Animated.timing(launchCarOffset, {
+        toValue: 0,
+        duration: 760,
+        delay: 120,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true
+      }),
+      Animated.timing(launchPromiseOpacity, {
+        toValue: 1,
+        duration: 520,
+        delay: 720,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true
+      }),
+      Animated.timing(launchPromiseOffset, {
+        toValue: 0,
+        duration: 520,
+        delay: 720,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true
+      })
+    ]).start();
+  }, [launchCarOffset, launchCarOpacity, launchCarScale, launchPromiseOffset, launchPromiseOpacity]);
+
+  useEffect(() => {
+    if (loading || !launchVisible) return;
+    const minimumLaunchTime = 1650;
+    const delay = Math.max(0, minimumLaunchTime - (Date.now() - launchStartedAt.current));
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(contentOpacity, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        }),
+        Animated.timing(launchOpacity, {
+          toValue: 0,
+          duration: 460,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true
+        }),
+        Animated.timing(launchScale, {
+          toValue: 1.04,
+          duration: 460,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        })
+      ]).start(() => setLaunchVisible(false));
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [contentOpacity, launchOpacity, launchScale, launchVisible, loading]);
 
   useEffect(() => {
     setBottomTabsHidden(false);
@@ -318,7 +554,7 @@ export default function App() {
     setSelectedNeed(need);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius));
+      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates));
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
@@ -327,14 +563,16 @@ export default function App() {
   }
 
   async function selectArea(nextArea: string) {
-    const lookup = await lookupAccommodationLocation(nextArea ? `${nextArea}, ${city}` : city);
+    const lookup = await lookupAccommodationLocation(nextArea || city);
     const resolvedArea = nextArea ? lookup?.selectedLocation || nextArea : "";
     const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
+    const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setArea(resolvedArea);
     setCity(resolvedCity);
+    setHousingSearchCoordinates(nextCoordinates);
     setLoading(true);
     try {
-      const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
+      const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, nextCoordinates);
       setVisiblePosts(posts);
       setData((current) =>
         current
@@ -362,17 +600,21 @@ export default function App() {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-    const lookup = await lookupAccommodationLocation(cleanArea ? `${cleanArea}, ${cleanCity}` : cleanCity);
-    const resolvedArea = cleanArea ? lookup?.selectedLocation || cleanArea : "";
+    const lookup = await lookupAccommodationLocation(cleanArea || cleanCity);
+    // Keep the place the user typed or selected. A broad geocoder fallback (for
+    // example, Dayton) must not replace a specific query such as Wilmington Pike.
+    const resolvedArea = cleanArea;
     const resolvedCity = cleanArea ? cleanCity : normalizeCityInput(lookup?.selectedLocation || cleanCity);
+    const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setCity(resolvedCity);
     setArea(resolvedArea);
     setSearchRadius(cleanRadius);
     setSelectedNeed(nextNeed);
+    setHousingSearchCoordinates(nextCoordinates);
     setSearchOpen(false);
     setLoading(true);
     try {
-      const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius);
+      const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
       setVisiblePosts(posts);
       setActiveTab("housing");
       setHousingWelcomeFocusKey((value) => value + 1);
@@ -430,7 +672,7 @@ export default function App() {
     try {
       const payload = await createMobileHousingPost(listingForm);
       setListingOpen(false);
-      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius);
+      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
       setVisiblePosts(posts.some((post) => post.id === payload.post.id) ? posts : [payload.post, ...posts]);
       setData((current) =>
         current
@@ -472,7 +714,7 @@ export default function App() {
     setSelectedCategory(category);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates));
     } catch (error) {
       Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
     } finally {
@@ -484,7 +726,7 @@ export default function App() {
     setSelectedGender(gender);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius, housingSearchCoordinates));
     } catch (error) {
       Alert.alert("Gender preference", error instanceof Error ? error.message : "Unable to filter by preference.");
     } finally {
@@ -496,7 +738,7 @@ export default function App() {
     setSelectedBudget(budget);
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius));
+      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius, housingSearchCoordinates));
     } catch (error) {
       Alert.alert("Budget", error instanceof Error ? error.message : "Unable to filter by budget.");
     } finally {
@@ -623,6 +865,7 @@ export default function App() {
 
   async function logoutProfile() {
     try {
+      await unregisterNotificationsForLogout();
       await mobileLogout();
       setData((current) => (current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [] } } : current));
       setPendingPost(null);
@@ -636,6 +879,14 @@ export default function App() {
 
   function updateLocalUser(user: BootstrapPayload["user"]) {
     setData((current) => (current ? { ...current, user } : current));
+  }
+
+  function changeTab(tab: TabKey) {
+    if (tab === "home" || tab === "housing") {
+      setRideOwnerOpenToken(0);
+      setRideOwnerReturnTab(null);
+    }
+    setActiveTab(tab);
   }
 
   const screen =
@@ -657,15 +908,56 @@ export default function App() {
           setSelectedNeed("ride_need");
         }}
         onRideMessage={openRideMessage}
-        onOpenHousing={() => setActiveTab("housing")}
+        onOpenHousing={() => {
+          setRideOwnerOpenToken(0);
+          setRideOwnerReturnTab(null);
+          setSelectedNeed("need_place");
+          setActiveTab("housing");
+          setHousingWelcomeFocusKey((value) => value + 1);
+        }}
         onOpenServices={() => {
           setSelectedService("cars");
           setActiveTab("services");
         }}
+        onOpenRideOwner={(target = "workspace") => {
+          setRideOwnerOpenTarget(target);
+          setRideOwnerReturnTab("activity");
+          setSelectedNeed("ride_offer");
+          setActiveTab("housing");
+          setRideOwnerOpenToken((value) => value + 1);
+        }}
         onRequireLogin={() => setLoginOpen(true)}
       />
     ) : activeTab === "profile" ? (
-      <ProfileScreen data={data} onLogin={() => setLoginOpen(true)} onLogout={logoutProfile} onProfileUpdated={updateLocalUser} />
+      <ProfileScreen
+        data={data}
+        onLogin={() => setLoginOpen(true)}
+        onLogout={logoutProfile}
+        onProfileUpdated={updateLocalUser}
+        onOpenHousing={() => {
+          setRideOwnerOpenToken(0);
+          setRideOwnerReturnTab(null);
+          setSelectedNeed("need_place");
+          setActiveTab("housing");
+          setHousingWelcomeFocusKey((value) => value + 1);
+        }}
+        onOpenRide={() => {
+          setRideOwnerOpenTarget("workspace");
+          setRideOwnerReturnTab("profile");
+          setSelectedNeed("ride_offer");
+          setActiveTab("housing");
+          setRideOwnerOpenToken((value) => value + 1);
+        }}
+        onOpenServices={() => {
+          setSelectedService("cars");
+          setActiveTab("services");
+        }}
+        onOpenMessenger={() => setActiveTab("messenger")}
+        onOpenActivity={() => setActiveTab("activity")}
+        notificationsEnabled={notificationsEnabled}
+        notificationStatus={notificationStatus}
+        onToggleNotifications={() => void toggleMobileNotifications()}
+      />
     ) : activeTab === "services" ? (
       <ServicesScreen
         cars={cars}
@@ -673,7 +965,13 @@ export default function App() {
         user={data?.user || null}
         selected={selectedService}
         onSelect={setSelectedService}
-        onOpenHousing={() => setActiveTab("housing")}
+        onOpenHousing={() => {
+          setRideOwnerOpenToken(0);
+          setRideOwnerReturnTab(null);
+          setSelectedNeed("need_place");
+          setActiveTab("housing");
+          setHousingWelcomeFocusKey((value) => value + 1);
+        }}
         onOpenRide={() => {
           setSelectedNeed("ride_need");
           setActiveTab("housing");
@@ -712,9 +1010,17 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        rideOwnerOpenToken={rideOwnerOpenToken}
+        rideOwnerOpenTarget={rideOwnerOpenTarget}
+        onRideOwnerClosed={() => {
+          if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
+          setRideOwnerOpenToken(0);
+          setRideOwnerReturnTab(null);
+        }}
       />
     ) : (
       <HousingScreen
@@ -744,24 +1050,86 @@ export default function App() {
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
         onTopAction={topAction}
+        onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        rideOwnerOpenToken={rideOwnerOpenToken}
+        rideOwnerOpenTarget={rideOwnerOpenTarget}
+        onRideOwnerClosed={() => {
+          if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
+          setRideOwnerOpenToken(0);
+          setRideOwnerReturnTab(null);
+        }}
       />
     );
 
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style="light" />
-      {loading ? (
-        <View style={styles.loader}>
-          <ActivityIndicator color={theme.colors.text} />
-          <Text style={styles.loaderText}>Loading FairFares</Text>
-        </View>
-      ) : (
-        screen
-      )}
-      <BottomTabs active={activeTab} unreadCount={data?.chat.unreadCount || 0} onChange={setActiveTab} hidden={bottomTabsHidden} />
+      <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
+        {loading ? (
+          <View style={styles.loader}>
+            <ActivityIndicator color={theme.colors.text} />
+            <Text style={styles.loaderText}>Loading FairFares</Text>
+          </View>
+        ) : (
+          screen
+        )}
+        <BottomTabs
+          active={activeTab}
+          unreadCount={data?.chat.unreadCount || 0}
+          onChange={changeTab}
+          hidden={bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
+        />
+      </Animated.View>
+      {launchVisible ? (
+        <Animated.View pointerEvents="none" style={[styles.launchOverlay, { opacity: launchOpacity }]}>
+          <Image
+            source={require("./assets/launch-cityscape-v2.png")}
+            style={styles.launchBackdrop}
+            resizeMode="cover"
+          />
+          <View style={styles.launchBackdropShade} />
+          <Animated.View
+            style={[
+              styles.launchBrand,
+              wideLaunchLayout ? styles.launchBrandWide : styles.launchBrandPortrait,
+              { transform: [{ scale: launchScale }] }
+            ]}
+          >
+            <View style={styles.launchLogoFrame}>
+              <Image source={require("./assets/fairfares-logo.png")} style={styles.launchLogo} resizeMode="contain" />
+            </View>
+            <View style={styles.launchTaglineGroup}>
+              <Animated.Text
+                style={[
+                  styles.launchPromise,
+                  { opacity: launchPromiseOpacity, transform: [{ translateY: launchPromiseOffset }] }
+                ]}
+              >
+                Your Personal Mobility Partner
+              </Animated.Text>
+              <Text style={styles.launchTagline}>Stay · Ride · Rent · Explore</Text>
+            </View>
+          </Animated.View>
+          <View style={[styles.launchCarStage, wideLaunchLayout ? styles.launchCarStageWide : styles.launchCarStagePortrait]}>
+            <View style={styles.launchCarGlow} />
+            <Animated.Image
+              source={require("./assets/launch-car-v2.png")}
+              resizeMode="contain"
+              style={[
+                styles.launchCar,
+                {
+                  opacity: launchCarOpacity,
+                  transform: [{ translateY: launchCarOffset }, { scale: launchCarScale }]
+                }
+              ]}
+            />
+          </View>
+          <ActivityIndicator style={styles.launchSpinner} color={theme.colors.blue} size="small" />
+        </Animated.View>
+      ) : null}
       <Modal visible={loginOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setLoginOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
@@ -825,6 +1193,11 @@ export default function App() {
             >
               <Text style={styles.secondaryButtonText}>{authMode === "login" ? "Need an account? Sign up" : "Already have an account? Login"}</Text>
             </TouchableOpacity>
+            {authMode === "login" ? (
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => void Linking.openURL("https://www.fairfare.space/forgot-password")}>
+                <Text style={styles.secondaryButtonText}>Forgot password? Recover account</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setLoginOpen(false)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
@@ -1093,6 +1466,24 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
+  appContent: { flex: 1 },
+  launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.bg, overflow: "hidden" },
+  launchBackdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.82 },
+  launchBackdropShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(1,8,23,0.18)" },
+  launchBrand: { position: "absolute", width: "100%", maxWidth: 360, paddingHorizontal: 12, alignItems: "center", gap: 12, zIndex: 1 },
+  launchBrandPortrait: { top: "25%" },
+  launchBrandWide: { top: "6%" },
+  launchLogoFrame: { width: "100%", height: 116, alignItems: "center", justifyContent: "center" },
+  launchLogo: { width: "88%", height: "100%" },
+  launchCarStage: { position: "absolute", width: "86%", maxWidth: 410, height: 190, alignItems: "center", justifyContent: "center", zIndex: 2 },
+  launchCarStagePortrait: { top: "47%" },
+  launchCarStageWide: { top: "70%" },
+  launchCarGlow: { position: "absolute", width: "64%", height: 58, bottom: 14, borderRadius: 999, backgroundColor: "rgba(0,128,255,0.16)", shadowColor: "#008cff", shadowOpacity: 0.72, shadowRadius: 28, shadowOffset: { width: 0, height: 0 } },
+  launchCar: { width: "100%", height: "100%" },
+  launchSpinner: { position: "absolute", bottom: "4%", zIndex: 3 },
+  launchTaglineGroup: { alignItems: "center", gap: 7 },
+  launchTagline: { color: theme.colors.soft, fontSize: 15, fontWeight: "900", letterSpacing: 0.7 },
+  launchPromise: { color: theme.colors.text, fontSize: 16, fontWeight: "900", letterSpacing: 0.35 },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },

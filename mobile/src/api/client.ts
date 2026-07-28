@@ -1,5 +1,6 @@
 import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
 import { NativeModules, Platform } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 
 declare const process: {
   env: {
@@ -41,15 +42,17 @@ function normalizeExplicitApiUrl(value: string | undefined) {
 }
 
 const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL);
-const DEFAULT_API_URL = EXPLICIT_API_URL || metroHostApiUrl() || "http://127.0.0.1:8010";
+const WEB_LOCAL_API_URL = Platform.OS === "web" ? browserLocalApiUrl() : "";
+const METRO_HOST_API_URL = metroHostApiUrl();
+const DEFAULT_API_URL = WEB_LOCAL_API_URL || EXPLICIT_API_URL || METRO_HOST_API_URL || "http://127.0.0.1:8010";
 
 export const API_URL =
   DEFAULT_API_URL;
 
 const API_CANDIDATES = uniqueUrls(
   Platform.OS === "web"
-    ? [EXPLICIT_API_URL, browserLocalApiUrl(), "http://127.0.0.1:8010", metroHostApiUrl()]
-    : [EXPLICIT_API_URL, metroHostApiUrl(), "http://127.0.0.1:8010"]
+    ? [WEB_LOCAL_API_URL, EXPLICIT_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
+    : [EXPLICIT_API_URL, METRO_HOST_API_URL, "http://127.0.0.1:8010"]
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
@@ -96,20 +99,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.Authorization = `Bearer ${authToken}`;
   }
   let lastError = "";
-  for (const baseUrl of API_CANDIDATES) {
+  const isAttachmentUpload = path === "/api/chat/attachments";
+  const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
+  for (const baseUrl of candidateUrls) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+    const timeoutMs = isAttachmentUpload ? 45000 : API_REQUEST_TIMEOUT_MS;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
       const text = await response.text();
-      let payload: T & { error?: string };
+      let payload: T & { error?: string; message?: string };
       try {
-        payload = JSON.parse(text) as T & { error?: string };
+        payload = JSON.parse(text) as T & { error?: string; message?: string };
       } catch {
         throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
       }
       if (!response.ok) {
-        const httpError = new Error(payload.error || `FairFares request failed: ${response.status}`);
+        const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
         (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
         throw httpError;
       }
@@ -124,7 +130,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       clearTimeout(timeout);
     }
   }
-  throw new Error(`Could not connect to FairFares API. Tried: ${API_CANDIDATES.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
+  if (isAttachmentUpload) {
+    throw new Error(`The attachment upload did not finish. Check your connection and try again. ${lastError}`.trim());
+  }
+  throw new Error(`Could not connect to FairFares API. Tried: ${candidateUrls.join(", ")}. Last error: ${lastError}. Start backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
 function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
@@ -149,6 +158,48 @@ export function absoluteAssetUrl(value: string) {
   return `${currentApiBase()}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
+export function authenticatedAssetSource(value: string) {
+  const uri = absoluteAssetUrl(value);
+  return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
+}
+
+export async function getAuthenticatedAssetDataUrl(value: string) {
+  const directUrl = absoluteAssetUrl(value);
+  if (!directUrl || directUrl.startsWith("data:image/")) return directUrl;
+  const headers: Record<string, string> = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const response = await fetch(directUrl, { headers });
+  if (!response.ok) throw new Error(`Could not load attachment: ${response.status}`);
+  const blob = await response.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Could not decode attachment."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function getAuthenticatedImagePreviewUri(value: string) {
+  if (Platform.OS === "web") return getAuthenticatedAssetDataUrl(value);
+  const directUrl = absoluteAssetUrl(value);
+  if (!directUrl) throw new Error("Photo URL is missing.");
+  if (directUrl.startsWith("data:image/") || directUrl.startsWith("file://")) return directUrl;
+  const cacheRoot = FileSystem.cacheDirectory;
+  if (!cacheRoot) throw new Error("Photo preview storage is unavailable.");
+  const safeKey = value.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(-80) || String(Date.now());
+  const destination = `${cacheRoot}fchat-preview-${safeKey}.img`;
+  const existing = await FileSystem.getInfoAsync(destination);
+  if (existing.exists && Number(existing.size || 0) > 0) return destination;
+  const headers: Record<string, string> = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const result = await FileSystem.downloadAsync(directUrl, destination, { headers });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    throw new Error(`Could not load photo preview (${result.status}).`);
+  }
+  return result.uri;
+}
+
 export async function getBootstrap(city = "Denver, CO") {
   try {
     return await request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
@@ -157,8 +208,19 @@ export async function getBootstrap(city = "Denver, CO") {
   }
 }
 
-export async function getHousing(city: string, area: string, need: string, category = "", gender = "", budget = "", radius = "") {
+export async function getHousing(
+  city: string,
+  area: string,
+  need: string,
+  category = "",
+  gender = "",
+  budget = "",
+  radius = "",
+  coordinates: { lat?: number | null; lng?: number | null } = {}
+) {
   const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "50" });
+  addFiniteParam(query, "lat", coordinates.lat);
+  addFiniteParam(query, "lng", coordinates.lng);
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
   return payload.posts;
 }
@@ -214,8 +276,15 @@ export async function reverseGeocodeRideLocation(latitude: number, longitude: nu
   return payload.label || "";
 }
 
-export function rideMapUrl(city: string, origin: string, destination: string) {
-  const params = new URLSearchParams({ city, origin, destination, v: "google-static-20260719" });
+export function rideMapUrl(
+  city: string,
+  origin: string,
+  destination: string,
+  overlay?: { riderOrigin?: string; riderDestination?: string }
+) {
+  const params = new URLSearchParams({ city, origin, destination, v: "google-static-20260723-detour" });
+  if (overlay?.riderOrigin) params.set("riderOrigin", overlay.riderOrigin);
+  if (overlay?.riderDestination) params.set("riderDestination", overlay.riderDestination);
   return `${currentApiBase()}/api/mobile/ride-map?${params.toString()}`;
 }
 
@@ -501,6 +570,14 @@ export async function getChatConversations() {
   return payload.conversations || [];
 }
 
+export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true) {
+  return request<{ ok: boolean; enabled: boolean }>("/api/mobile/push-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, platform, deviceLabel, enabled })
+  });
+}
+
 export async function getChatCommunities() {
   const payload = await request<{ ok: boolean; communities: Community[] }>("/api/chat/communities");
   return payload.communities || [];
@@ -512,6 +589,20 @@ export async function getChatMessages(conversationId: string) {
   );
 }
 
+export async function pollChatEvents(conversationId: string, afterMessageId: number) {
+  const query = new URLSearchParams({
+    conversation_id: conversationId,
+    after: String(Math.max(0, Math.floor(afterMessageId || 0))),
+    wait: "7"
+  });
+  return request<{
+    ok: boolean;
+    messages: ChatMessage[];
+    receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
+    cursor: number;
+  }>(`/api/chat/events?${query}`);
+}
+
 export async function startChatForPost(postId: string, message: string) {
   return request<{ ok: boolean; conversation: ChatConversation; message: ChatMessage | null }>("/api/chat/conversations", {
     method: "POST",
@@ -520,11 +611,27 @@ export async function startChatForPost(postId: string, message: string) {
   });
 }
 
+export async function openChatForPost(postId: string) {
+  return request<{ ok: boolean; conversation: ChatConversation; message: null }>("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ post_id: postId, open_only: "1" })
+  });
+}
+
 export async function startChatForRide(rideId: string, message: string) {
   return request<{ ok: boolean; conversation: ChatConversation; message: ChatMessage | null }>("/api/chat/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ ride_id: rideId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function openChatForRide(rideId: string) {
+  return request<{ ok: boolean; conversation: ChatConversation; message: null }>("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ ride_id: rideId, open_only: "1" })
   });
 }
 
@@ -541,6 +648,70 @@ export async function sendChatMessage(conversationId: string, message: string) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ conversation_id: conversationId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function sendChatImage(conversationId: string, dataUrl: string, caption = "", file?: { name: string; mimeType: string }) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      conversationId,
+      dataUrl,
+      caption,
+      fileName: file?.name || "",
+      mimeType: file?.mimeType || "",
+      clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    })
+  });
+}
+
+export async function sendChatAttachment(
+  conversationId: string,
+  attachment: { uri: string; blob?: Blob; name: string; mimeType: string },
+  caption = ""
+) {
+  const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (Platform.OS !== "web") {
+    const base64 = await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
+    if (!base64) throw new Error("The selected attachment could not be read. Choose it again and retry.");
+    return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId,
+        caption,
+        clientMessageId,
+        fileName: attachment.name,
+        mimeType: attachment.mimeType,
+        dataUrl: `data:${attachment.mimeType};base64,${base64}`
+      })
+    });
+  }
+  const body = new FormData();
+  body.append("conversationId", conversationId);
+  body.append("caption", caption);
+  body.append("clientMessageId", clientMessageId);
+  body.append("fileName", attachment.name);
+  body.append("mimeType", attachment.mimeType);
+  const blob = attachment.blob || await (await fetch(attachment.uri)).blob();
+  body.append("attachment", blob, attachment.name);
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", { method: "POST", body });
+}
+
+export async function sendChatRichMessage(conversationId: string, type: "POLL" | "EVENT" | "CONTACT", metadata: Record<string, unknown>) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/rich-messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, type, metadata, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function voteChatPoll(messageId: number, optionIndex: number) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/polls/vote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messageId, optionIndex })
   });
 }
 

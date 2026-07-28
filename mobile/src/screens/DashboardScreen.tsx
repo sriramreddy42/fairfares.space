@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { getRentalBookings, getRideActivity, rideMapUrl } from "../api/client";
+import { getRentalBookings, getRideActivity, respondToRideDispatch } from "../api/client";
+import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { BootstrapPayload, HousingPost, RentalServiceBooking, RidePost } from "../types";
 
@@ -10,11 +11,13 @@ type Props = {
   onRideMessage?: (ride: RidePost) => void;
   onOpenHousing?: () => void;
   onOpenServices?: () => void;
+  onOpenRideOwner?: (target?: "workspace" | "requests" | "listings") => void;
   onRequireLogin?: () => void;
 };
 
 const ACTIVE_RIDE_STATUSES = new Set(["ACTIVE", "REQUESTED", "MATCHING", "ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS", "OPEN", "PENDING"]);
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
+const CONFIRMED_TRIP_STATUSES = new Set(["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"]);
 
 function titleCase(value: string) {
   return value
@@ -36,6 +39,11 @@ function isUpcomingRide(ride: RidePost) {
   if (ACTIVE_RIDE_STATUSES.has(status)) return true;
   const date = parseRideDate(ride);
   return date ? date.getTime() >= Date.now() - 24 * 60 * 60 * 1000 : true;
+}
+
+function isConfirmedUpcomingTrip(ride: RidePost) {
+  const status = (ride.dispatchStatus || ride.status || "").toUpperCase();
+  return CONFIRMED_TRIP_STATUSES.has(status) && isUpcomingRide(ride);
 }
 
 function isUpcomingBooking(booking: RentalServiceBooking) {
@@ -71,7 +79,18 @@ function distanceCopy(ride: RidePost) {
   return `${Number(distance).toFixed(Number(distance) % 1 ? 1 : 0)} mi from pickup`;
 }
 
+function pickupDropCopy(ride: RidePost) {
+  const pickup = ride.pickupDistanceMiles === null || ride.pickupDistanceMiles === undefined
+    ? ""
+    : `${Number(ride.pickupDistanceMiles).toFixed(Number(ride.pickupDistanceMiles) % 1 ? 1 : 0)} mi pickup`;
+  const dropoff = ride.dropoffDistanceMiles === null || ride.dropoffDistanceMiles === undefined
+    ? ""
+    : `${Number(ride.dropoffDistanceMiles).toFixed(Number(ride.dropoffDistanceMiles) % 1 ? 1 : 0)} mi drop-off`;
+  return [pickup, dropoff].filter(Boolean).join(" · ") || "Pickup/drop-off calculating";
+}
+
 function statusCopy(ride: RidePost) {
+  if (ride.isExpired) return "Expired";
   const dispatch = (ride.dispatchStatus || "").toUpperCase();
   const status = (dispatch || ride.status || "ACTIVE").toUpperCase();
   if (status === "ACCEPTED") return "Accepted";
@@ -83,15 +102,107 @@ function statusCopy(ride: RidePost) {
   return titleCase(status);
 }
 
+function riderRequestStatusCopy(ride: RidePost) {
+  if (ride.isExpired) return "Expired";
+  const dispatch = (ride.dispatchStatus || "").toUpperCase();
+  const status = (dispatch || ride.status || "ACTIVE").toUpperCase();
+  if (["MATCHING", "REQUESTED", "ACTIVE", "OPEN", "PENDING"].includes(status)) {
+    return ride.dispatchNearestRadius ? `Drivers within ${ride.dispatchNearestRadius} mi` : "Finding drivers";
+  }
+  return statusCopy(ride);
+}
+
+function isDriverListedRide(ride: RidePost) {
+  return ride.activityRole === "MINE" && ride.role === "DRIVER";
+}
+
+function isIncomingRiderRequest(ride: RidePost) {
+  return ride.activityRole === "DRIVER_NOTIFICATION";
+}
+
+function detourCopy(ride: RidePost) {
+  const miles = ride.routeDeviationMiles;
+  const minutes = ride.routeDeviationMinutes;
+  if (miles === null || miles === undefined) return "Total detour calculating";
+  const mileLabel = `${Number(miles).toFixed(Number(miles) % 1 ? 1 : 0)} mi`;
+  return minutes === null || minutes === undefined ? `Total detour ${mileLabel}` : `Total detour ${mileLabel} · ${Math.round(Number(minutes))} min`;
+}
+
 function firstName(data: BootstrapPayload | null) {
   return data?.user?.name?.split(" ")[0] || "there";
 }
 
-export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onOpenServices, onRequireLogin }: Props) {
+function isCoordinateOnly(value: string) {
+  return /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(value.trim());
+}
+
+function cleanRoutePoint(value?: string) {
+  const raw = (value || "").replace(/\s+/g, " ").trim();
+  if (!raw || isCoordinateOnly(raw)) return "";
+  if (/^current location$/i.test(raw)) return "Current location";
+  return raw;
+}
+
+function isMeaningfulRoutePoint(value?: string) {
+  const label = cleanRoutePoint(value);
+  if (!label) return false;
+  if (/^(fdss?|dff|asdf|qwer|test|testing)$/i.test(label)) return false;
+  return label.length >= 4;
+}
+
+function isDisplayableRide(ride: RidePost) {
+  const origin = cleanRoutePoint(ride.origin);
+  const destination = cleanRoutePoint(ride.destination);
+  return isMeaningfulRoutePoint(origin) && isMeaningfulRoutePoint(destination) && origin.toLowerCase() !== destination.toLowerCase();
+}
+
+function isExpiredRide(ride: RidePost) {
+  const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
+  return Boolean(ride.isExpired || status === "EXPIRED");
+}
+
+function routeLabel(ride: RidePost) {
+  return `${cleanRoutePoint(ride.origin) || "Pickup"} → ${cleanRoutePoint(ride.destination) || "Destination"}`;
+}
+
+function matchedListingLabel(ride: RidePost) {
+  const origin = cleanRoutePoint(ride.matchedRouteOrigin);
+  const destination = cleanRoutePoint(ride.matchedRouteDestination);
+  if (!origin || !destination) return "";
+  return `Matched to your listing: ${origin} → ${destination}`;
+}
+
+function rideActionLabel(ride: RidePost) {
+  if (isDriverListedRide(ride)) return ride.isExpired ? "Expired route" : "Listed route";
+  if (isIncomingRiderRequest(ride)) return "Rider request";
+  return ride.role === "DRIVER" ? "Driver offer" : "Ride request";
+}
+
+function CarOutlineIcon() {
+  return (
+    <View style={styles.carIconCanvas}>
+      <View style={styles.carIconRoof} />
+      <View style={styles.carIconBody} />
+      <View style={[styles.carIconWheel, styles.carIconWheelLeft]} />
+      <View style={[styles.carIconWheel, styles.carIconWheelRight]} />
+    </View>
+  );
+}
+
+function ActivityIcon({ kind, color }: { kind: "route" | "items" | "riders" | "listings" | "calendar" | "person"; color: string }) {
+  if (kind === "route") {
+    return <View style={styles.routeGlyph}><View style={[styles.routeDot, styles.routeDotStart, { borderColor: color }]} /><View style={[styles.routeLine, styles.routeLineOne, { backgroundColor: color }]} /><View style={[styles.routeDot, styles.routeDotMiddle, { borderColor: color }]} /><View style={[styles.routeLine, styles.routeLineTwo, { backgroundColor: color }]} /><View style={[styles.routeDot, styles.routeDotEnd, { borderColor: color }]} /></View>;
+  }
+  const symbols = { route: "", items: "⬡", riders: "♙", listings: "☷", calendar: "□", person: "♙" };
+  return <Text style={[styles.activityGlyph, { color }]}>{symbols[kind]}</Text>;
+}
+
+export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
   const [rides, setRides] = useState<RidePost[]>([]);
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [rideActionBusyId, setRideActionBusyId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -126,8 +237,13 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     };
   }, [data?.user?.id]);
 
-  const upcomingRides = useMemo(() => rides.filter(isUpcomingRide), [rides]);
-  const pastRides = useMemo(() => rides.filter((ride) => !isUpcomingRide(ride)), [rides]);
+  const cleanRides = useMemo(() => rides.filter((ride) => isDisplayableRide(ride) && !isExpiredRide(ride)), [rides]);
+  const driverListedRides = useMemo(() => cleanRides.filter(isDriverListedRide), [cleanRides]);
+  const incomingRiderRequests = useMemo(() => cleanRides.filter(isIncomingRiderRequest), [cleanRides]);
+  const travelerRides = useMemo(() => cleanRides.filter((ride) => !isDriverListedRide(ride) && !isIncomingRiderRequest(ride)), [cleanRides]);
+  const upcomingRides = useMemo(() => travelerRides.filter(isConfirmedUpcomingTrip), [travelerRides]);
+  const pastRides = useMemo(() => travelerRides.filter((ride) => !isUpcomingRide(ride)), [travelerRides]);
+  const carpoolActivityCount = driverListedRides.length + incomingRiderRequests.length;
   const upcomingBookings = useMemo(() => bookings.filter(isUpcomingBooking), [bookings]);
   const pastBookings = useMemo(() => bookings.filter((booking) => !isUpcomingBooking(booking)), [bookings]);
   const recentHousing = (data?.housing || []).slice(0, 3);
@@ -140,12 +256,41 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     onReserveRide?.();
   }
 
+  function handleListRide() {
+    if (!data?.user) {
+      onRequireLogin?.();
+      return;
+    }
+    onOpenRideOwner?.();
+  }
+
   function handleRideChat(ride: RidePost) {
     if (!data?.user) {
       onRequireLogin?.();
       return;
     }
     onRideMessage?.(ride);
+  }
+
+  async function handleRequestDecision(ride: RidePost, action: "ACCEPT" | "DECLINE") {
+    if (ride.isExpired) {
+      Alert.alert("Request expired", "This ride date has passed, so the request can no longer be accepted.");
+      return;
+    }
+    setRideActionBusyId(ride.id);
+    try {
+      const updated = await respondToRideDispatch(ride.id, action);
+      setRides((current) => current.map((item) => item.id === ride.id ? { ...item, ...updated } : item));
+      if (action === "ACCEPT") {
+        Alert.alert("Request accepted", `The seat is confirmed.${updated.pickupPin ? ` Pickup PIN: ${updated.pickupPin}.` : ""} You can continue in FChat.`);
+      } else {
+        Alert.alert("Request declined", "The rider request has been declined.");
+      }
+    } catch (error) {
+      Alert.alert("Ride update failed", error instanceof Error ? error.message : "Unable to update this rider request.");
+    } finally {
+      setRideActionBusyId("");
+    }
   }
 
   return (
@@ -168,30 +313,25 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       </View>
 
       {upcomingRides.length ? (
-        upcomingRides.slice(0, 4).map((ride) => (
+        upcomingRides.slice(0, 3).map((ride) => (
           <View key={`ride-${ride.id}`} style={styles.rideCard}>
-            <View style={styles.mapShell}>
-              <Image source={{ uri: rideMapUrl(ride.city || data?.location.city || "Denver, CO", ride.origin, ride.destination) }} style={styles.mapImage} />
-              <View style={styles.mapOverlay}>
-                <Text style={styles.mapBadge}>{statusCopy(ride)}</Text>
-                <Text style={styles.mapRoute} numberOfLines={1}>{ride.origin} → {ride.destination}</Text>
-              </View>
+            <View style={styles.roleRow}>
+              <Text style={styles.roleBadge}>{statusCopy(ride)}</Text>
+              <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
             </View>
-            <View style={styles.rideBody}>
-              <Text style={styles.cardTitle}>{ride.title}</Text>
-              <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)} · {ride.typeLabel}</Text>
-              <View style={styles.metricRow}>
-                <Text style={styles.metricPill}>{distanceCopy(ride)}</Text>
-                <Text style={styles.metricPill}>{etaFromDistance(ride.pickupDistanceMiles)}</Text>
-              </View>
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.secondaryPill} onPress={() => handleRideChat(ride)}>
-                  <Text style={styles.secondaryPillText}>FChat</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.secondaryPill} onPress={() => Alert.alert("Ride details", `${ride.origin} to ${ride.destination}\n${statusCopy(ride)}`)}>
-                  <Text style={styles.secondaryPillText}>View route</Text>
-                </TouchableOpacity>
-              </View>
+            <Text style={styles.cardTitle}>{rideActionLabel(ride)}</Text>
+            <Text style={styles.routeText} numberOfLines={2}>{routeLabel(ride)}</Text>
+            <View style={styles.metricRow}>
+              <Text style={styles.metricPill}>{distanceCopy(ride)}</Text>
+              <Text style={styles.metricPill}>{ride.typeLabel}</Text>
+            </View>
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.secondaryPill} onPress={() => handleRideChat(ride)}>
+                <Text style={styles.secondaryPillText}>FChat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryPill} onPress={() => Alert.alert("Ride details", `${routeLabel(ride)}\n${statusCopy(ride)}`)}>
+                <Text style={styles.secondaryPillText}>View route</Text>
+              </TouchableOpacity>
             </View>
           </View>
         ))
@@ -215,6 +355,100 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </TouchableOpacity>
       ))}
 
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Carpool</Text>
+        <Text style={styles.sectionMeta}>{driverListedRides.length} listings · {incomingRiderRequests.length} requests</Text>
+      </View>
+      <View style={styles.carpoolHub}>
+        <View style={styles.carpoolSummaryRow}>
+          <View style={styles.carpoolSummaryPill}>
+            <View style={[styles.summaryIconCircle, styles.summaryIconRoute]}><ActivityIcon kind="route" color="#ffffff" /></View>
+            <View style={styles.summaryCopy}>
+              <Text style={styles.carpoolSummaryNumber}>{driverListedRides.length}</Text>
+              <Text style={styles.carpoolSummaryLabel}>Listed routes</Text>
+            </View>
+            <Text style={styles.summaryChevron}>›</Text>
+          </View>
+          <View style={styles.carpoolSummaryPill}>
+            <View style={[styles.summaryIconCircle, styles.summaryIconItems]}><ActivityIcon kind="items" color="#ffffff" /></View>
+            <View style={styles.summaryCopy}>
+              <Text style={styles.carpoolSummaryNumber}>{carpoolActivityCount}</Text>
+              <Text style={styles.carpoolSummaryLabel}>Total items</Text>
+            </View>
+            <Text style={styles.summaryChevron}>›</Text>
+          </View>
+        </View>
+
+        <View style={styles.activityGroupHeader}>
+          <View style={styles.activityGroupTitleRow}><ActivityIcon kind="riders" color="#22e58a" /><Text style={styles.carpoolGroupLabel}>Rider requests</Text></View>
+          <TouchableOpacity onPress={() => onOpenRideOwner?.("requests")}><Text style={styles.viewRequestsText}>View all requests →</Text></TouchableOpacity>
+        </View>
+        {incomingRiderRequests.length ? (
+          incomingRiderRequests.slice(0, 4).map((ride) => (
+            <View key={`request-${ride.id}`} style={styles.carpoolRequestRow}>
+              <View style={styles.requestCarCircle}><CarOutlineIcon /></View>
+              <View style={styles.requestMain}>
+                <Text style={styles.requestBadge}>{riderRequestStatusCopy(ride)}</Text>
+                <Text style={styles.requestRouteTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
+                {matchedListingLabel(ride) ? <Text style={styles.matchedListingText} numberOfLines={2}>{matchedListingLabel(ride)}</Text> : null}
+                <Text style={styles.carpoolMiniMeta}>{detourCopy(ride)} · {pickupDropCopy(ride)}</Text>
+                <View style={styles.metricRow}>
+                  {ride.pickupPin ? <Text style={styles.metricPill}>PIN {ride.pickupPin}</Text> : null}
+                  <View style={styles.iconMetricPill}><ActivityIcon kind="person" color="#d5dbea" /><Text style={styles.iconMetricText}>{ride.seats || 1} passenger{ride.seats === 1 ? "" : "s"}</Text></View>
+                </View>
+              </View>
+              <View style={styles.requestSide}>
+                <View style={styles.requestDateRow}><ActivityIcon kind="calendar" color="#c2cada" /><Text style={styles.requestDateText}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text><Text style={styles.moreGlyph}>⋮</Text></View>
+                <View style={styles.actionRow}>
+                  {!ride.isExpired && (ride.dispatchStatus || "PENDING").toUpperCase() === "PENDING" ? (
+                    <><TouchableOpacity style={styles.acceptPill} onPress={() => handleRequestDecision(ride, "ACCEPT")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>{rideActionBusyId === ride.id ? "Updating..." : "Accept"}</Text></TouchableOpacity><TouchableOpacity style={styles.declinePill} onPress={() => handleRequestDecision(ride, "DECLINE")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>Decline</Text></TouchableOpacity></>
+                  ) : null}
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.fchat} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>FChat</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.detailsOutlinePill} onPress={() => Alert.alert("Request details", `${routeLabel(ride)}\n${detourCopy(ride)}\n${pickupDropCopy(ride)}\n${statusCopy(ride)}`)}><Text style={styles.secondaryPillText}>Details</Text></TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ))
+        ) : (
+          <View style={styles.carpoolEmpty}>
+            <Text style={styles.emptyTitle}>No rider requests yet</Text>
+            <Text style={styles.emptyCopy}>When someone requests a seat on your route, the count and FChat action will show here.</Text>
+          </View>
+        )}
+
+        <View style={styles.activityGroupHeader}>
+          <View style={styles.activityGroupTitleRow}><ActivityIcon kind="listings" color="#8957ff" /><Text style={styles.carpoolGroupLabel}>Your listings</Text></View>
+          <TouchableOpacity onPress={() => onOpenRideOwner?.("listings")}><Text style={styles.viewListingsText}>View all listings →</Text></TouchableOpacity>
+        </View>
+        {driverListedRides.length ? (
+          driverListedRides.slice(0, 4).map((ride) => (
+            <View key={`listed-${ride.id}`} style={styles.carpoolListingRow}>
+              <View style={styles.listingRouteCircle}><ActivityIcon kind="route" color="#ffffff" /></View>
+              <View style={styles.requestMain}>
+                <Text style={[styles.listingBadge, ride.isExpired && styles.expiredBadge]}>{ride.isExpired ? "Expired" : statusCopy(ride)}</Text>
+                <Text style={styles.requestRouteTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
+                <View style={styles.metricRow}>
+                  <View style={styles.iconMetricPill}><ActivityIcon kind="person" color="#d5dbea" /><Text style={styles.iconMetricText}>{ride.seats || 1} seat{ride.seats === 1 ? "" : "s"}</Text></View>
+                  <Text style={styles.metricPill}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
+                </View>
+              </View>
+              <View style={styles.requestSide}>
+                <View style={styles.requestDateRow}><ActivityIcon kind="calendar" color="#c2cada" /><Text style={styles.requestDateText}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text><Text style={styles.moreGlyph}>⋮</Text></View>
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.fchat} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>FChat</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.detailsOutlinePill} onPress={handleListRide}><Text style={styles.secondaryPillText}>List another</Text></TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ))
+        ) : (
+          <TouchableOpacity style={styles.carpoolEmpty} onPress={handleListRide}>
+            <Text style={styles.emptyTitle}>No listed carpool routes</Text>
+            <Text style={styles.emptyCopy}>List your ride to start receiving rider requests.</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {refreshError ? (
         <TouchableOpacity style={styles.warningCard} onPress={onOpenServices}>
           <Text style={styles.warningTitle}>Some activity could not refresh</Text>
@@ -229,12 +463,10 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </TouchableOpacity>
       </View>
 
-      {pastRides.slice(0, 1).map((ride) => (
+      {pastRides.slice(0, 2).map((ride) => (
         <View key={`past-ride-${ride.id}`} style={styles.pastFeature}>
-          <View style={styles.mapShellSmall}>
-            <Image source={{ uri: rideMapUrl(ride.city || data?.location.city || "Denver, CO", ride.origin, ride.destination) }} style={styles.mapImage} />
-          </View>
-          <Text style={styles.cardTitle}>{ride.destination || ride.title}</Text>
+          <Text style={styles.roleBadge}>{statusCopy(ride)}</Text>
+          <Text style={styles.cardTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
           <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
           <Text style={styles.cardMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
           <View style={styles.actionRow}>
@@ -248,11 +480,11 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </View>
       ))}
 
-      {pastRides.slice(1, 5).map((ride) => (
+      {pastRides.slice(2, 5).map((ride) => (
         <TouchableOpacity key={`past-row-${ride.id}`} style={styles.historyRow} onPress={handleReserveRide}>
           <View style={styles.rowIcon}><Text style={styles.rowIconText}>🚘</Text></View>
           <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>{ride.destination || ride.title}</Text>
+            <Text style={styles.rowTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
             <Text style={styles.rowMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
             <Text style={styles.rowMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
           </View>
@@ -295,11 +527,11 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: theme.spacing.md, paddingBottom: 112, gap: theme.spacing.md },
-  title: { color: theme.colors.text, fontSize: 34, fontWeight: "900", letterSpacing: 0 },
+  content: { padding: theme.spacing.md, paddingBottom: 104, gap: 12 },
+  title: { color: theme.colors.text, fontSize: 30, fontWeight: "800", letterSpacing: -0.4 },
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: theme.spacing.sm },
-  sectionTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
-  sectionMeta: { color: theme.colors.muted, fontWeight: "800" },
+  sectionTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800" },
+  sectionMeta: { color: theme.colors.muted, fontWeight: "600", fontSize: 13 },
   noticeCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.lg, borderWidth: 1, borderColor: theme.colors.line, gap: theme.spacing.sm },
   noticeTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
   noticeCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21, fontWeight: "700" },
@@ -307,27 +539,87 @@ const styles = StyleSheet.create({
   primaryPillText: { color: "#fff", fontWeight: "900", fontSize: 14 },
   emptyTripCard: { minHeight: 112, backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.md },
   emptyTripText: { flex: 1, minWidth: 0 },
-  emptyTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
-  emptyCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "800", marginTop: 4 },
+  emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
+  emptyCopy: { color: theme.colors.muted, fontSize: 13, fontWeight: "600", marginTop: 3 },
   emptyIconBox: { width: 44, height: 44, borderRadius: 15, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   emptyIcon: { fontSize: 24 },
-  rideCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
-  mapShell: { height: 168, backgroundColor: "#202124" },
-  mapShellSmall: { height: 160, backgroundColor: "#202124", borderRadius: theme.radius.md, overflow: "hidden", marginBottom: theme.spacing.md },
-  mapImage: { width: "100%", height: "100%" },
-  mapOverlay: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: theme.radius.sm, padding: theme.spacing.sm },
-  mapBadge: { color: theme.colors.green, fontSize: 14, fontWeight: "900" },
-  mapRoute: { color: theme.colors.text, fontSize: 15, fontWeight: "900", marginTop: 2 },
-  rideBody: { padding: theme.spacing.md, gap: theme.spacing.sm },
-  cardTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  rideCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: theme.spacing.sm },
+  cardTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
+  routeText: { color: theme.colors.soft, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   cardMeta: { color: theme.colors.muted, fontSize: 15, fontWeight: "800", lineHeight: 20 },
   metricRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm },
-  metricPill: { color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, fontWeight: "900", overflow: "hidden" },
+  metricPill: { color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, fontWeight: "700", fontSize: 13, overflow: "hidden" },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm, marginTop: 2 },
   secondaryPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },
-  secondaryPillText: { color: theme.colors.text, fontWeight: "900" },
+  secondaryPillText: { color: theme.colors.text, fontWeight: "500", fontSize: 12 },
   bookingCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
   moneyText: { color: theme.colors.green, fontSize: 18, fontWeight: "900" },
+  driverCard: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(59,130,246,0.55)", padding: theme.spacing.md, gap: theme.spacing.sm },
+  requestCard: { backgroundColor: "#132018", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(34,197,94,0.45)", padding: theme.spacing.md, gap: theme.spacing.sm },
+  carpoolHub: { backgroundColor: "#030b1d", borderRadius: 17, borderWidth: 1, borderColor: "rgba(36,61,104,0.55)", padding: 9, gap: 10 },
+  carpoolHubHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.md },
+  carpoolHubIntro: { flex: 1, minWidth: 0 },
+  carpoolHubTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
+  carpoolHubCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", marginTop: 4 },
+  carpoolCountBubble: { minWidth: 78, borderRadius: theme.radius.lg, backgroundColor: "rgba(34,197,94,0.16)", borderWidth: 1, borderColor: "rgba(34,197,94,0.38)", paddingHorizontal: 12, paddingVertical: 10, alignItems: "center" },
+  carpoolCountText: { color: theme.colors.green, fontSize: 25, fontWeight: "900" },
+  carpoolCountLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
+  carpoolSummaryRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm },
+  carpoolSummaryPill: { flex: 1, minWidth: 190, minHeight: 60, flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#0b152a", borderRadius: 14, borderWidth: 1, borderColor: "rgba(65,84,122,0.34)", paddingHorizontal: 10, paddingVertical: 7 },
+  summaryIconCircle: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  summaryIconRoute: { backgroundColor: "#31228d" },
+  summaryIconItems: { backgroundColor: "#123ea1" },
+  summaryCopy: { flex: 1 },
+  summaryChevron: { color: "#cbd5e1", fontSize: 21, fontWeight: "400" },
+  carpoolSummaryNumber: { color: theme.colors.text, fontSize: 17, fontWeight: "500" },
+  carpoolSummaryLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: "400" },
+  activityGroupHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 5 },
+  activityGroupTitleRow: { flexDirection: "row", alignItems: "center", gap: 9 },
+  carpoolGroupLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.8 },
+  viewRequestsText: { color: "#22e58a", fontWeight: "500", fontSize: 11 },
+  viewListingsText: { color: "#9468ff", fontWeight: "500", fontSize: 11 },
+  activityGlyph: { fontSize: 22, lineHeight: 24, fontWeight: "900" },
+  routeGlyph: { width: 33, height: 25, position: "relative" },
+  routeDot: { position: "absolute", width: 7, height: 7, borderRadius: 4, borderWidth: 2 },
+  routeDotStart: { left: 1, bottom: 2 },
+  routeDotMiddle: { left: 14, top: 3 },
+  routeDotEnd: { right: 0, bottom: 5 },
+  routeLine: { position: "absolute", width: 14, height: 2, borderRadius: 1 },
+  routeLineOne: { left: 5, top: 15, transform: [{ rotate: "-38deg" }] },
+  routeLineTwo: { left: 18, top: 11, transform: [{ rotate: "29deg" }] },
+  carpoolRequestRow: { backgroundColor: "#09162c", borderRadius: 15, borderWidth: 1, borderLeftWidth: 3, borderColor: "rgba(48,77,123,0.58)", borderLeftColor: "#19b775", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
+  requestCarCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(11,112,72,0.45)", alignItems: "center", justifyContent: "center", marginTop: 18 },
+  carIconCanvas: { width: 28, height: 23, position: "relative" },
+  carIconRoof: { position: "absolute", left: 7, top: 2, width: 17, height: 10, borderWidth: 2, borderColor: "#2ff29a", borderBottomWidth: 0, borderTopLeftRadius: 6, borderTopRightRadius: 6 },
+  carIconBody: { position: "absolute", left: 2, top: 9, width: 26, height: 10, borderWidth: 2, borderColor: "#2ff29a", borderRadius: 4 },
+  carIconWheel: { position: "absolute", top: 17, width: 6, height: 6, borderRadius: 3, backgroundColor: "#2ff29a" },
+  carIconWheelLeft: { left: 7 },
+  carIconWheelRight: { right: 2 },
+  requestMain: { flex: 1, minWidth: 220, gap: 4 },
+  requestRouteTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "500", lineHeight: 18 },
+  matchedListingText: { color: "#6ee7b7", fontSize: 11, lineHeight: 15, fontWeight: "400" },
+  requestSide: { flexBasis: "100%", minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 1 },
+  requestDateRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  requestDateText: { color: "#c7cfdf", fontWeight: "400", fontSize: 11 },
+  moreGlyph: { color: "#b7c0d1", fontSize: 19, marginLeft: 3 },
+  iconMetricPill: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(30,41,59,0.9)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 5 },
+  iconMetricText: { color: theme.colors.text, fontWeight: "500", fontSize: 11 },
+  carpoolListingRow: { backgroundColor: "#09162c", borderRadius: 15, borderWidth: 1, borderLeftWidth: 3, borderColor: "rgba(48,77,123,0.58)", borderLeftColor: "#7653f6", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
+  listingRouteCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#30218c", alignItems: "center", justifyContent: "center", marginTop: 18 },
+  listingBadge: { alignSelf: "flex-start", color: "#ddd6fe", backgroundColor: "rgba(109,70,230,0.5)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 3, overflow: "hidden", fontWeight: "500", fontSize: 10 },
+  carpoolMiniMeta: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, fontWeight: "400" },
+  carpoolEmpty: { backgroundColor: "rgba(15,23,42,0.9)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 12 },
+  primarySmallPill: { minHeight: 34, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 5 },
+  primarySmallPillText: { color: "#fff", fontWeight: "500", fontSize: 12 },
+  fchatButtonIcon: { width: 17, height: 17, tintColor: "#fff" },
+  detailsOutlinePill: { minHeight: 34, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(108,125,158,0.52)", paddingHorizontal: 14, justifyContent: "center" },
+  acceptPill: { backgroundColor: "#16a34a", borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },
+  declinePill: { backgroundColor: "#dc2626", borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },
+  requestActionText: { color: "#fff", fontWeight: "700" },
+  roleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.sm },
+  roleBadge: { color: theme.colors.text, backgroundColor: "rgba(59,130,246,0.25)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontWeight: "900", fontSize: 12 },
+  requestBadge: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(34,197,94,0.25)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 3, overflow: "hidden", fontWeight: "500", fontSize: 10 },
+  expiredBadge: { backgroundColor: "rgba(148,163,184,0.18)", color: theme.colors.muted },
   warningCard: { backgroundColor: "#221914", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "#6b3b20", padding: theme.spacing.md },
   warningTitle: { color: theme.colors.warning, fontWeight: "900", fontSize: 16 },
   warningCopy: { color: theme.colors.soft, marginTop: 6, fontWeight: "700", lineHeight: 20 },

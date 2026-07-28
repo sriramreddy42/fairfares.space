@@ -1,0 +1,261 @@
+import json
+import base64
+import os
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+
+import app
+
+
+class QuietHandler(app.FairFaresHandler):
+    def log_message(self, _format, *_args):
+        return
+
+
+class ChatRealtimeTest(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")
+        self.old_seed = os.environ.get("FAIRFARES_SEED_DEFAULTS")
+        os.environ["FAIRFARES_DB_PATH"] = str(Path(self.temp_dir.name) / "fairfares.sqlite3")
+        os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
+        app.refresh_storage_paths()
+        app.init_db()
+        with app.db() as con:
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Sender', 'sender@realtime.test', 'x', 1)")
+            self.sender_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Recipient', 'recipient@realtime.test', 'x', 1)")
+            self.recipient_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('sender-token', ?)", (self.sender_id,))
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('recipient-token', ?)", (self.recipient_id,))
+            con.execute("INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('CHAT-REALTIME', 'DIRECT', 'Realtime test')")
+            self.conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (self.conversation_id, self.sender_id))
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (self.conversation_id, self.recipient_id))
+
+    def tearDown(self):
+        if self.old_db_path is None:
+            os.environ.pop("FAIRFARES_DB_PATH", None)
+        else:
+            os.environ["FAIRFARES_DB_PATH"] = self.old_db_path
+        if self.old_seed is None:
+            os.environ.pop("FAIRFARES_SEED_DEFAULTS", None)
+        else:
+            os.environ["FAIRFARES_SEED_DEFAULTS"] = self.old_seed
+        app.refresh_storage_paths()
+        self.temp_dir.cleanup()
+
+    def start_server(self):
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
+
+    def event_request(self, server, token, after=0):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/chat/events?conversation_id=CHAT-REALTIME&after={after}&wait=0",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+
+    def test_event_stream_authorizes_delivers_receipts_and_reconnects(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "hello live", "live-1")
+            message_id = int(message["id"])
+
+        server, thread = self.start_server()
+        try:
+            unauthorized = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/events?conversation_id=CHAT-REALTIME&wait=0"
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(unauthorized, timeout=3)
+            self.assertEqual(error.exception.code, 401)
+
+            status, delivered = self.event_request(server, "recipient-token")
+            self.assertEqual(status, 200)
+            self.assertEqual([row["text"] for row in delivered["messages"]], ["hello live"])
+            self.assertEqual(delivered["cursor"], message_id)
+
+            _, reconnect = self.event_request(server, "recipient-token", message_id)
+            self.assertEqual(reconnect["messages"], [])
+            self.assertEqual(reconnect["cursor"], message_id)
+
+            _, sender_view = self.event_request(server, "sender-token", message_id)
+            receipt = next(row for row in sender_view["receipts"] if row["id"] == message_id)
+            self.assertEqual(receipt["status"], "seen")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_concurrent_sends_preserve_order_and_deduplicate_client_ids(self):
+        def send(index):
+            with app.db() as con:
+                sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+                key = "same-retry" if index >= 200 else f"unique-{index}"
+                return int(app.save_chat_message(con, self.conversation_id, sender, f"message {index}", key)["id"])
+
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            ids = list(executor.map(send, range(300)))
+
+        with app.db() as con:
+            rows = con.execute(
+                "SELECT id, client_message_id FROM chat_messages WHERE conversation_id = ? ORDER BY id",
+                (self.conversation_id,),
+            ).fetchall()
+        self.assertEqual(len(rows), 201)
+        self.assertEqual(len([row for row in rows if row["client_message_id"] == "same-retry"]), 1)
+        self.assertEqual(len(set(ids[200:])), 1)
+        self.assertEqual([row["id"] for row in rows], sorted(row["id"] for row in rows))
+
+    def test_image_attachment_requires_conversation_membership(self):
+        server, thread = self.start_server()
+        try:
+            fake_jpeg = b"\xff\xd8\xff\xe0" + b"fairfares-image-test"
+            body = json.dumps(
+                {
+                    "conversationId": "CHAT-REALTIME",
+                    "dataUrl": f"data:image/jpeg;base64,{base64.b64encode(fake_jpeg).decode('ascii')}",
+                    "caption": "route photo",
+                    "clientMessageId": "image-1",
+                }
+            ).encode("utf-8")
+            upload_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/attachments",
+                data=body,
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(upload_request, timeout=3) as response:
+                uploaded = json.loads(response.read().decode("utf-8"))
+            attachment_path = uploaded["message"]["attachmentUrl"]
+            self.assertTrue(attachment_path.startswith("/api/chat/attachments/"))
+
+            authorized = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{attachment_path}",
+                headers={"Authorization": "Bearer recipient-token"},
+            )
+            with urllib.request.urlopen(authorized, timeout=3) as response:
+                self.assertEqual(response.read(), fake_jpeg)
+                self.assertEqual(response.headers.get("Cache-Control"), "private, no-store")
+
+            unauthenticated = urllib.request.Request(f"http://127.0.0.1:{server.server_port}{attachment_path}")
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(unauthenticated, timeout=3)
+            self.assertEqual(error.exception.code, 401)
+
+            with app.db() as con:
+                stored = con.execute("SELECT attachment_url FROM chat_messages WHERE client_message_id = 'image-1'").fetchone()["attachment_url"]
+            public_path = stored.replace("local://", "/")
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}{public_path}", timeout=3)
+            self.assertEqual(error.exception.code, 404)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_file_poll_event_and_contact_messages(self):
+        server, thread = self.start_server()
+        try:
+            def post(path, payload, token="sender-token"):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}{path}",
+                    data=json.dumps(payload).encode("utf-8"),
+                    method="POST",
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+
+            pdf = b"%PDF-1.4\nFairFares test document\n%%EOF\n"
+            status, file_payload = post("/api/chat/attachments", {
+                "conversationId": "CHAT-REALTIME",
+                "dataUrl": f"data:application/pdf;base64,{base64.b64encode(pdf).decode('ascii')}",
+                "fileName": "ride-plan.pdf",
+                "mimeType": "application/pdf",
+                "clientMessageId": "file-1",
+            })
+            self.assertEqual(status, 201)
+            self.assertEqual(file_payload["message"]["type"], "FILE")
+            self.assertEqual(file_payload["message"]["metadata"]["fileName"], "ride-plan.pdf")
+            download = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{file_payload['message']['attachmentUrl']}",
+                headers={"Authorization": "Bearer recipient-token"},
+            )
+            with urllib.request.urlopen(download, timeout=3) as response:
+                self.assertEqual(response.read(), pdf)
+
+            _, poll = post("/api/chat/rich-messages", {"conversationId": "CHAT-REALTIME", "type": "POLL", "metadata": {"question": "Pickup time?", "options": ["8 AM", "9 AM"]}, "clientMessageId": "poll-1"})
+            self.assertEqual(poll["message"]["metadata"]["voteCounts"], [0, 0])
+            _, vote = post("/api/chat/polls/vote", {"messageId": poll["message"]["id"], "optionIndex": 1}, "recipient-token")
+            self.assertEqual(vote["message"]["metadata"]["selectedOption"], 1)
+            self.assertEqual(vote["message"]["metadata"]["voteCounts"], [0, 1])
+
+            _, event = post("/api/chat/rich-messages", {"conversationId": "CHAT-REALTIME", "type": "EVENT", "metadata": {"title": "Ride meetup", "date": "Aug 15, 2026", "time": "8:00 AM", "location": "Union Station"}})
+            self.assertEqual(event["message"]["metadata"]["location"], "Union Station")
+            _, contact = post("/api/chat/rich-messages", {"conversationId": "CHAT-REALTIME", "type": "CONTACT", "metadata": {"name": "Maya Driver", "phone": "+1 303 555 0148", "email": "maya@example.com"}})
+            self.assertEqual(contact["message"]["metadata"]["email"], "maya@example.com")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_mobile_multipart_photo_and_file_uploads(self):
+        server, thread = self.start_server()
+
+        def multipart_upload(filename, mime_type, payload, client_id):
+            boundary = f"FairFaresBoundary{client_id}"
+            chunks = []
+            for name, value in {
+                "conversationId": "CHAT-REALTIME",
+                "caption": "mobile upload",
+                "clientMessageId": client_id,
+                "fileName": filename,
+                "mimeType": mime_type,
+            }.items():
+                chunks.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode())
+            chunks.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"attachment\"; filename=\"{filename}\"\r\nContent-Type: {mime_type}\r\n\r\n".encode()
+                + payload
+                + f"\r\n--{boundary}--\r\n".encode()
+            )
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/attachments",
+                data=b"".join(chunks),
+                method="POST",
+                headers={
+                    "Authorization": "Bearer sender-token",
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=8) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+
+        try:
+            jpeg = b"\xff\xd8\xff\xe0" + (b"photo-data" * 350_000)
+            with patch.object(app, "send_accommodation_message_email", return_value=(Path("outbox"), "sent")):
+                image_status, image = multipart_upload("phone-photo.jpg", "image/jpeg", jpeg, "multipart-image")
+                pdf_status, document = multipart_upload("trip.pdf", "application/pdf", b"%PDF-1.4\n" + (b"document-data" * 580_000) + b"\n%%EOF\n", "multipart-file")
+            self.assertEqual(image_status, 201)
+            self.assertEqual(image["message"]["type"], "IMAGE")
+            self.assertEqual(pdf_status, 201)
+            self.assertEqual(document["message"]["type"], "FILE")
+            self.assertEqual(document["message"]["metadata"]["fileName"], "trip.pdf")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+
+if __name__ == "__main__":
+    unittest.main()

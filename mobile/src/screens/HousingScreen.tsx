@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
-import { Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -29,9 +29,13 @@ type Props = {
   onSortSelect: (sort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc") => void;
   onPostNeed: (intent?: string) => void;
   onTopAction: (action: string) => void;
+  onRequireLogin?: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   focusWelcomeKey?: number;
+  rideOwnerOpenToken?: number;
+  rideOwnerOpenTarget?: "workspace" | "requests" | "listings";
+  onRideOwnerClosed?: () => void;
 };
 
 type CurrentRideLocation = {
@@ -65,10 +69,10 @@ const quickLinks: Array<{
 ];
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 
-const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string }> = [
-  { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place" },
-  { label: "I need roommates", sub: "Post your roommate search, preferred area, and fit.", icon: appAssets.roommates, intent: "need_roommates" },
-  { label: "I have a property", sub: "List a room or rental and find tenants.", icon: appAssets.bed, intent: "have_place" }
+const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string; bg: string; tint: string }> = [
+  { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place", bg: "#f5e5ff", tint: "#8f3fe7" },
+  { label: "I need roommates", sub: "Find the perfect roommates to share and save.", icon: appAssets.roommates, intent: "need_roommates", bg: "#effcf1", tint: "#18b984" },
+  { label: "I have a place", sub: "List your property or room and find the right people.", icon: appAssets.bed, intent: "have_place", bg: "#fff2d9", tint: "#f19a22" }
 ];
 
 const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropType }> = [
@@ -108,7 +112,7 @@ const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "GENERAL_REQUEST", title: "Request a ride", copy: "Point-to-point ride for today or later." },
   { type: "SCHEDULED_REQUEST", title: "Scheduled", copy: "Recurring commute with daily ride instances." },
   { type: "CARPOOL_REQUEST", title: "Find carpool", copy: "Match with drivers going your direction." },
-  { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List seats, detour, luggage, and contribution." }
+  { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List route, seats, luggage, and contribution." }
 ];
 const rideServicePosters: Array<{
   key: "scheduled" | "general" | "carpool";
@@ -148,7 +152,7 @@ const rideServicePosters: Array<{
     tint: "#243b73",
     glyph: "general",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
-    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat when a driver accepts."],
+    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat before requesting or accepting to confirm details."],
     access: "Choose this for one ride inside or near the city.",
     available: false
   },
@@ -161,7 +165,7 @@ const rideServicePosters: Array<{
     insight: "Best when riders and drivers are already going the same direction. Useful for longer trips, airport runs, or shared commutes.",
     tint: "#0f5f4b",
     glyph: "carpool",
-    register: "Enter route, date/time, seats, luggage, pickup radius, and contribution.",
+    register: "Enter route, date/time, seats, luggage, and contribution.",
     works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
     access: "Choose this for city-to-city, long-distance, or shared-cost rides.",
     available: true
@@ -180,7 +184,7 @@ const rideOfferSurfaces: Array<{
     key: "scheduled",
     title: "Offer scheduled ride",
     subtitle: "Available soon",
-    note: "Driver can offer recurring seats on this schedule. Include weekdays, pickup window, seat count, and detour limit.",
+    note: "Driver can offer recurring seats on this schedule. Include weekdays, pickup window, seat count, and contribution.",
     type: "CARPOOL_OFFER",
     symbol: "SOON",
     available: false
@@ -198,13 +202,12 @@ const rideOfferSurfaces: Array<{
     key: "carpool",
     title: "Offer carpool",
     subtitle: "Shared route and seats",
-    note: "Driver can offer open seats on a shared route. Include route, seat count, luggage space, timing, and pickup radius.",
+    note: "Driver can offer open seats on a shared route. Include route, seat count, luggage space, timing, and contribution.",
     type: "CARPOOL_OFFER",
     symbol: "POOL",
     available: true
   }
 ];
-const rideFeatureBadges = ["Safe", "Affordable", "Reliable", "Route based"];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
 const rideLifecycleStates = ["Requested", "Matching", "Accepted", "En route", "Arrived", "In progress", "Completed"];
 const rideSafetyActions = [
@@ -215,9 +218,9 @@ const rideSafetyActions = [
   { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
 const rideOwnerSteps = [
-  "List the route, seats, timing, luggage space, and detour limit.",
+  "List the route, seats, timing, luggage space, and contribution.",
   "Review matching rider requests with pickup, destination, and distance.",
-  "Accept a request to unlock ETA, pickup PIN, route notes, and FChat."
+  "Use FChat before accepting; acceptance unlocks the pickup PIN and ride-status updates."
 ];
 const rideOwnerRequestStates = ["Listed", "Request", "Accepted", "Arriving", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -399,13 +402,24 @@ const initialRideForm: RideInput = {
   luggage: "1 small bag",
   accessibility: "",
   maxDetourMinutes: "15",
-  maxPickupDistanceMiles: "5",
+  maxPickupDistanceMiles: "50",
   departureFlexMinutes: "30",
   contributionPerSeat: "",
   approvalRequired: true,
   preferences: "No smoking",
   notes: ""
 };
+
+function CarpoolOutlineIcon({ compact = false }: { compact?: boolean }) {
+  return (
+    <View style={[styles.carpoolIconCanvas, compact && styles.carpoolIconCanvasCompact]}>
+      <View style={[styles.carpoolIconRoof, compact && styles.carpoolIconRoofCompact]} />
+      <View style={[styles.carpoolIconBody, compact && styles.carpoolIconBodyCompact]} />
+      <View style={[styles.carpoolIconWheel, styles.carpoolIconWheelLeft, compact && styles.carpoolIconWheelCompact]} />
+      <View style={[styles.carpoolIconWheel, styles.carpoolIconWheelRight, compact && styles.carpoolIconWheelCompact]} />
+    </View>
+  );
+}
 
 export function HousingScreen({
   data,
@@ -428,9 +442,13 @@ export function HousingScreen({
   onSortSelect,
   onPostNeed,
   onTopAction,
+  onRequireLogin,
   onBookCar,
   onBottomTabsHiddenChange,
-  focusWelcomeKey = 0
+  focusWelcomeKey = 0,
+  rideOwnerOpenToken = 0,
+  rideOwnerOpenTarget = "workspace",
+  onRideOwnerClosed
 }: Props) {
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -480,6 +498,9 @@ export function HousingScreen({
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
+  const lastRideOwnerOpenTokenRef = useRef(0);
+  const rideOwnerScrollRef = useRef<ScrollView | null>(null);
+  const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
@@ -498,13 +519,6 @@ export function HousingScreen({
   const searchBarText = activeSearchPhrase;
   const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
   const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
-  const cheapestCar = useMemo(
-    () =>
-      [...(rentalCars.length ? rentalCars : cars)]
-        .filter((car) => Number(car.daily_price) > 0)
-        .sort((a, b) => Number(a.daily_price) - Number(b.daily_price))[0],
-    [cars, rentalCars]
-  );
   const sortedPosts = useMemo(() => {
     const distanceValue = (post: HousingPost) => (post.distanceMiles === null ? Number.MAX_SAFE_INTEGER : post.distanceMiles);
     return [...posts].sort((a, b) => {
@@ -535,8 +549,6 @@ export function HousingScreen({
       rent: value.count ? `$${Math.round(value.total / value.count)}` : "Open"
     }));
   }, [data?.location.city, posts]);
-  const cheapestCarImage = absoluteAssetUrl(cheapestCar?.image_url || "");
-  const carHeroSource = cheapestCarImage ? { uri: cheapestCarImage } : appAssets.carFallback;
   const rentalRows = rentalSearched ? rentalCars : [];
   const rentalLocationOptions = useMemo(() => {
     const locations = new Set<string>();
@@ -596,7 +608,7 @@ export function HousingScreen({
       setMode("ride");
       setRideForm((current) => ({
         ...current,
-        rideType: selectedNeed === "ride_offer" ? "CARPOOL_OFFER" : current.rideType
+        rideType: selectedNeed === "ride_offer" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST"
       }));
     }
   }, [selectedNeed]);
@@ -618,6 +630,18 @@ export function HousingScreen({
     }, 120);
     return () => clearTimeout(timer);
   }, [focusWelcomeKey, welcomeY]);
+
+  useEffect(() => {
+    if (!rideOwnerOpenToken || rideOwnerOpenToken === lastRideOwnerOpenTokenRef.current) return;
+    lastRideOwnerOpenTokenRef.current = rideOwnerOpenToken;
+    void openRideOwnerTracker();
+  }, [rideOwnerOpenTarget, rideOwnerOpenToken]);
+
+  useEffect(() => {
+    if (!rideOwnerOpen || rideOwnerOpenTarget === "workspace" || !rideOwnerTrackerY) return;
+    const timer = setTimeout(() => rideOwnerScrollRef.current?.scrollTo({ y: Math.max(rideOwnerTrackerY - 16, 0), animated: true }), 220);
+    return () => clearTimeout(timer);
+  }, [rideActivityBusy, rideOwnerOpen, rideOwnerOpenTarget, rideOwnerTrackerY]);
 
   useEffect(() => {
     if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
@@ -784,6 +808,7 @@ export function HousingScreen({
     setRideOwnerOpen(false);
     setRideOwnerPrompt("");
     onBottomTabsHiddenChange?.(false);
+    onRideOwnerClosed?.();
   }
 
   function updateRideDriverDraft<K extends keyof RideDriverProfile>(key: K, value: RideDriverProfile[K]) {
@@ -818,7 +843,7 @@ export function HousingScreen({
     });
   }
 
-  async function saveRideOwnerProfile() {
+  async function saveRideOwnerProfile(openListingAfterSave = false) {
     if (!data?.user) {
       Alert.alert("Login required", "Please login before saving driver details.");
       return;
@@ -831,11 +856,15 @@ export function HousingScreen({
       setRideDriverDraft({ ...blankRideDriverProfile, ...profile });
       setRideOwnerPrompt(
         profile.readyForOffers
-          ? "Driver profile saved. You can now list your route and available seats."
+          ? "Driver profile saved. Opening the route listing form."
           : `Almost there. Add missing details: ${(profile.missing || []).join(", ")}.`
       );
       void refreshRideActivity();
-      Alert.alert("Driver profile saved", profile.readyForOffers ? "You can now list route and available seats." : `Add missing details: ${(profile.missing || []).join(", ")}`);
+      if (profile.readyForOffers && openListingAfterSave) {
+        openRideOfferPlanner(profile);
+      } else {
+        Alert.alert("Driver profile saved", profile.readyForOffers ? "You can now list route and available seats." : `Add missing details: ${(profile.missing || []).join(", ")}`);
+      }
     } catch (error) {
       Alert.alert("Could not save driver profile", error instanceof Error ? error.message : "Try again.");
     } finally {
@@ -843,22 +872,16 @@ export function HousingScreen({
     }
   }
 
-  function startRideOfferListing() {
-    if (!data?.user) {
-      Alert.alert("Login required", "Please login before listing your car.");
-      return;
-    }
-    if (!rideDriverProfile?.readyForOffers) {
-      setRideOwnerOpen(true);
-      setRideOwnerPrompt("Complete and save your driver profile first. Required: vehicle, plate/state, insurance, and carpool service type.");
-      return;
-    }
-    const offerSurface = rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface && item.available) || rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
+  function openRideOfferPlanner(profile?: RideDriverProfile | null) {
+    const offerSurface = rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
+    setMode("ride");
     setRideOwnerOpen(false);
     setSelectedRideService(offerSurface.key);
     setRidePlannerStage("plan");
-    setRideFocusedField("origin");
-    setRideRequestStatus("");
+    setRideFocusedField("destination");
+    setRideSuggestions([]);
+    setRideSuggestionsBusy(false);
+    setRideRequestStatus(profile?.readyForOffers ? "" : "You can plan the route now. Driver profile is checked when you save the listing.");
     setSelectedRideChoice("");
     setRideForm((current) => ({
       ...current,
@@ -869,11 +892,11 @@ export function HousingScreen({
       destination: "",
       destinationLat: null,
       destinationLng: null,
-      rideType: offerSurface.type,
+      rideType: "CARPOOL_OFFER",
       seats: current.seats === "1" ? "4" : current.seats,
       luggage: current.luggage || "1 small bag",
       maxDetourMinutes: current.maxDetourMinutes || "15",
-      maxPickupDistanceMiles: current.maxPickupDistanceMiles || "10",
+      maxPickupDistanceMiles: "50",
       contributionPerSeat: current.contributionPerSeat || "",
       preferences: current.preferences || offerSurface.title,
       notes: current.notes || offerSurface.note
@@ -881,6 +904,37 @@ export function HousingScreen({
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     void useCurrentRideLocationForOrigin();
+  }
+
+  async function startRideOfferListing() {
+    if (!data?.user) {
+      onRequireLogin?.();
+      return;
+    }
+    let currentProfile = rideDriverProfile;
+    if (!currentProfile) {
+      setRideDriverBusy(true);
+      try {
+        const profile = await getRideDriverProfile();
+        currentProfile = { ...profile, serviceTypes: ["CARPOOL_OFFER" as RideType] };
+        setRideDriverProfile(currentProfile);
+        setRideDriverDraft({ ...blankRideDriverProfile, ...currentProfile });
+      } catch {
+        currentProfile = null;
+      } finally {
+        setRideDriverBusy(false);
+      }
+    }
+    if (!currentProfile?.readyForOffers) {
+      setMode("ride");
+      setRideOwnerOpen(true);
+      setRidePlannerOpen(false);
+      onBottomTabsHiddenChange?.(true);
+      setRideDriverDraft({ ...blankRideDriverProfile, ...(currentProfile || {}), serviceTypes: ["CARPOOL_OFFER"] });
+      setRideOwnerPrompt("Save your driver profile first. After it is ready, this poster opens the list-your-ride form.");
+      return;
+    }
+    openRideOfferPlanner(currentProfile);
   }
 
   function selectRidePlace(place: RidePlaceSuggestion) {
@@ -950,6 +1004,29 @@ export function HousingScreen({
     return 8;
   }
 
+  function formatRideMiles(value: number | string | null | undefined) {
+    if (value === null || value === undefined) return "";
+    const miles = Number(value);
+    if (!Number.isFinite(miles)) return "";
+    return `${miles.toFixed(miles % 1 ? 1 : 0)} mi`;
+  }
+
+  function formatRideTotalDetour(ride: RidePost) {
+    const miles = formatRideMiles(ride.routeDeviationMiles);
+    if (!miles) return "Total detour calculating";
+    const minutes = ride.routeDeviationMinutes === null || ride.routeDeviationMinutes === undefined ? null : Number(ride.routeDeviationMinutes);
+    return Number.isFinite(minutes) ? `Total detour ${miles} / ${Math.max(0, Math.round(minutes || 0))} min` : `Total detour ${miles}`;
+  }
+
+  function formatRidePickupDropDetail(ride: RidePost) {
+    const pickup = formatRideMiles(ride.pickupDistanceMiles ?? ride.distanceMiles);
+    const dropoff = formatRideMiles(ride.dropoffDistanceMiles);
+    return [
+      pickup ? `${pickup} from pickup` : "",
+      dropoff ? `${dropoff} from drop-off` : ""
+    ].filter(Boolean).join(" · ");
+  }
+
   function shouldSuggestCarpool(origin: string, destination: string) {
     return estimateRideMiles(origin, destination, []) >= 50;
   }
@@ -985,6 +1062,13 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = true;
     const effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
     let effectiveDestination = rideForm.destination.trim();
+    const listingRide = rideForm.rideType === "CARPOOL_OFFER";
+    const destinationAlreadyPicked = Boolean(
+      rideForm.destination.trim() &&
+        (rideForm.destinationLat !== null ||
+          rideForm.destinationLng !== null ||
+          rideForm.destination.trim() === selectedRideSuggestionRef.current)
+    );
     setRideBusy(true);
     try {
       const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
@@ -992,7 +1076,8 @@ export function HousingScreen({
         effectiveDestination = destinationMatches[0].label;
       }
       const destinationPoint = destinationMatches[0];
-      const nextRideType: RideType = rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
+      selectedRideSuggestionRef.current = effectiveDestination;
+      const nextRideType: RideType = listingRide ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
       setSelectedRideService("carpool");
       const nextRideForm = {
         ...rideForm,
@@ -1010,6 +1095,9 @@ export function HousingScreen({
         destinationLng: destinationPoint?.lng ?? current.destinationLng ?? null,
         rideType: nextRideType
       }));
+      if (listingRide && !destinationAlreadyPicked) {
+        return;
+      }
       if (nextRideType === "CARPOOL_OFFER") {
         const result = await createMobileRide(nextRideForm);
         const ride = result.ride;
@@ -1036,7 +1124,16 @@ export function HousingScreen({
       setSelectedRideChoice("");
       setRidePlannerStage("choices");
     } catch (error) {
-      Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");
+      const message = error instanceof Error ? error.message : "Unable to search rides.";
+      if (listingRide && message.toLowerCase().includes("driver profile")) {
+        setRidePlannerOpen(false);
+        setRideOwnerOpen(true);
+        onBottomTabsHiddenChange?.(true);
+        setRideOwnerPrompt(`${message} Save your driver profile, then tap List your ride again.`);
+        Alert.alert("Driver profile needed", message);
+      } else {
+        Alert.alert(listingRide ? "Ride listing failed" : "Ride search failed", message);
+      }
     } finally {
       setRideBusy(false);
       ridePlanSubmittingRef.current = false;
@@ -1051,6 +1148,10 @@ export function HousingScreen({
     const selectedOffer = selectedRideChoice.startsWith("offer:")
       ? rideRows.find((ride) => `offer:${ride.id}` === selectedRideChoice)
       : null;
+    if (selectedOffer?.isExpired) {
+      Alert.alert("Ride expired", "This ride date has passed. It remains visible for history, but cannot be requested.");
+      return;
+    }
     const selectedLabel = selectedOffer?.title || "Ride request";
     setRideBusy(true);
     try {
@@ -1070,12 +1171,14 @@ export function HousingScreen({
       void refreshRideActivity();
       setRideRequestStatus(
         notifiedCount
-          ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. When someone accepts, use FChat for pickup notes, ETA, and the pickup PIN.`
-          : "Request saved. FairFares will keep checking nearby driver offers, and FChat will be available once a driver accepts."
+          ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. You can FChat with a selected listing owner before acceptance; the pickup PIN appears after acceptance.`
+          : "Request saved. FairFares will keep checking nearby driver offers. Select a specific driver offer to FChat before acceptance."
       );
-      Alert.alert("Ride request sent", "When a driver accepts, you can coordinate the pickup, ETA, and PIN in FChat.", [
+      Alert.alert("Ride request sent", selectedOffer
+        ? "You can FChat with this driver now. Acceptance confirms the seat and unlocks the pickup PIN."
+        : "When a driver accepts your general request, you can coordinate the pickup, ETA, and PIN in FChat.", [
         { text: "Stay here", style: "cancel" },
-        { text: "Open FChat", onPress: onOpenMessenger }
+        { text: "Open FChat", onPress: () => selectedOffer ? onRideMessage(selectedOffer) : onOpenMessenger() }
       ]);
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
@@ -1130,11 +1233,16 @@ export function HousingScreen({
   function renderRideOwnerTracker() {
     const incomingRequestRows = rideActivityRows.filter((ride) => ride.activityRole === "DRIVER_NOTIFICATION").slice(0, 8);
     const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER").slice(0, 4);
-    const requestRows = incomingRequestRows.length ? incomingRequestRows : listedRouteRows;
+    const requestRows = rideOwnerOpenTarget === "listings"
+      ? listedRouteRows
+      : rideOwnerOpenTarget === "requests"
+        ? incomingRequestRows
+        : incomingRequestRows.length ? incomingRequestRows : listedRouteRows;
+    const trackerTitle = rideOwnerOpenTarget === "listings" ? "Your listings" : rideOwnerOpenTarget === "requests" ? "Rider requests" : "Request tracker";
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
         <View style={styles.rideOwnerScreen}>
-          <ScrollView contentContainerStyle={styles.rideOwnerContent} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={rideOwnerScrollRef} contentContainerStyle={styles.rideOwnerContent} showsVerticalScrollIndicator={false}>
             <View style={styles.rideOwnerHeader}>
               <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRideOwnerTracker}>
                 <Text style={styles.ridePlannerBackText}>‹</Text>
@@ -1146,50 +1254,18 @@ export function HousingScreen({
             </View>
 
             <View style={styles.rideOwnerHero}>
-              <Image source={appAssets.ride} style={styles.rideOwnerHeroIcon} resizeMode="contain" />
+              <View style={styles.rideOwnerHeroIcon}><CarpoolOutlineIcon /></View>
               <View style={styles.rideOwnerHeroCopy}>
                 <Text style={styles.rideOwnerHeroTitle}>List your route and available seats.</Text>
                 <Text style={styles.rideOwnerHeroText}>
-                  Add your pickup route, destination, seats, timing, and detour limit. Matching rider requests show here with status and FChat access.
+                  Add the route, timing, seats and contribution. Matching requests appear below with route fit and FChat.
                 </Text>
               </View>
             </View>
 
-            <View style={styles.rideOwnerOfferGrid}>
-              {rideOfferSurfaces.map((surface) => {
-                const selected = surface.key === selectedRideOfferSurface;
-                return (
-                  <TouchableOpacity
-                    key={surface.key}
-                    style={[
-                      styles.rideOwnerOfferCard,
-                      !surface.available && styles.rideOwnerOfferCardDisabled,
-                      selected && styles.rideOwnerOfferCardActive
-                    ]}
-                    onPress={() => selectRideOfferSurface(surface)}
-                  >
-                    <View style={[styles.rideOwnerOfferIcon, selected && styles.rideOwnerOfferIconActive]}>
-                      <Text style={styles.rideOwnerOfferIconText}>{surface.symbol}</Text>
-                    </View>
-                    <Text style={styles.rideOwnerOfferTitle}>{surface.title}</Text>
-                    <Text style={styles.rideOwnerOfferSubtitle}>{surface.subtitle}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.rideOwnerActionRow}>
-              <TouchableOpacity style={styles.rideOwnerPrimaryButton} onPress={startRideOfferListing}>
-                <Text style={styles.rideOwnerPrimaryText}>{rideOfferSurfaces.find((item) => item.key === selectedRideOfferSurface)?.title || "List route / seats"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.rideOwnerSecondaryButton} onPress={openRideGoogleMaps}>
-                <Text style={styles.rideOwnerSecondaryText}>Open map</Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={styles.rideOwnerCard}>
               <View style={styles.rideOwnerRequestTop}>
-                <Text style={styles.rideOwnerSectionTitle}>Driver profile</Text>
+                <View style={styles.rideOwnerSectionHeading}><Image source={appAssets.profile} style={styles.rideOwnerSectionIcon} resizeMode="contain" /><Text style={styles.rideOwnerSectionTitle}>Driver profile</Text></View>
                 <Text style={styles.rideOwnerRequestBadge}>
                   {rideDriverProfile?.readyForOffers ? "Ready" : rideDriverProfile?.reviewStatus?.replace(/_/g, " ") || "Not started"}
                 </Text>
@@ -1262,7 +1338,7 @@ export function HousingScreen({
                   ["GENERAL_REQUEST", "General rides soon", false],
                   ["SCHEDULED_REQUEST", "Scheduled rides soon", false],
                   ["CARPOOL_OFFER", "Carpool seats", true]
-                ] as Array<[RideType, string, boolean]>).map(([value, label, enabled]) => (
+                ] as Array<[RideType, string, boolean]>).filter(([, , enabled]) => enabled).map(([value, label, enabled]) => (
                   <TouchableOpacity
                     key={value}
                     style={[
@@ -1285,19 +1361,17 @@ export function HousingScreen({
               <View style={styles.rideOwnerRouteNote}>
                 <Text style={styles.rideOwnerRouteNoteTitle}>Trip details happen when you travel</Text>
                 <Text style={styles.rideOwnerRouteNoteText}>
-                  After this profile is saved, tap List your ride and enter where you are going, when you leave, seats available, pickup radius, luggage, and contribution for that trip.
+                  After this profile is saved, tap List your ride and enter where you are going, when you leave, seats available, luggage, and contribution for that trip.
                 </Text>
               </View>
-              {rideDriverProfile?.missing?.length ? (
-                <Text style={styles.rideOwnerMissing}>Missing: {rideDriverProfile.missing.join(", ")}</Text>
-              ) : null}
-              <TouchableOpacity style={styles.rideOwnerSaveButton} onPress={saveRideOwnerProfile} disabled={rideDriverBusy}>
-                <Text style={styles.rideOwnerSaveText}>{rideDriverBusy ? "Saving..." : "Save driver profile"}</Text>
+              <TouchableOpacity style={styles.rideOwnerSaveButton} onPress={() => void saveRideOwnerProfile(true)} disabled={rideDriverBusy}>
+                <CarpoolOutlineIcon compact />
+                <Text style={styles.rideOwnerSaveText}>{rideDriverBusy ? "Saving..." : "Save and list your ride"}</Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.rideOwnerCard}>
-              <Text style={styles.rideOwnerSectionTitle}>How it works</Text>
+              <View style={styles.rideOwnerSectionHeading}><Image source={appAssets.serviceModify} style={styles.rideOwnerSectionIcon} resizeMode="contain" /><Text style={styles.rideOwnerSectionTitle}>How it works</Text></View>
               {rideOwnerSteps.map((step, index) => (
                 <View key={step} style={styles.rideOwnerStep}>
                   <Text style={styles.rideOwnerStepNumber}>{index + 1}</Text>
@@ -1306,8 +1380,8 @@ export function HousingScreen({
               ))}
             </View>
 
-            <View style={styles.rideOwnerCard}>
-              <Text style={styles.rideOwnerSectionTitle}>Request tracker</Text>
+            <View style={styles.rideOwnerCard} onLayout={(event) => setRideOwnerTrackerY(event.nativeEvent.layout.y)}>
+              <View style={styles.rideOwnerSectionHeading}><Image source={appAssets.navActivity} style={styles.rideOwnerSectionIcon} resizeMode="contain" /><Text style={styles.rideOwnerSectionTitle}>{trackerTitle}</Text></View>
               {rideActivityBusy ? <Text style={styles.rideOwnerEmptyText}>Refreshing ride activity...</Text> : null}
               <View style={styles.rideOwnerStatusWrap}>
                 {rideOwnerRequestStates.map((state) => (
@@ -1316,7 +1390,7 @@ export function HousingScreen({
               </View>
               {requestRows.length ? (
                 requestRows.map((ride) => {
-                  const status = String(ride.dispatchStatus || (ride.activityRole === "DRIVER_NOTIFICATION" ? "PENDING" : "LISTED")).toUpperCase();
+                  const status = String(ride.isExpired ? "EXPIRED" : ride.dispatchStatus || (ride.activityRole === "DRIVER_NOTIFICATION" ? "PENDING" : "LISTED")).toUpperCase();
                   const isIncoming = ride.activityRole === "DRIVER_NOTIFICATION";
                   const canAccept = isIncoming && status === "PENDING";
                   const canAdvance = isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
@@ -1326,13 +1400,14 @@ export function HousingScreen({
                     <View key={ride.id} style={styles.rideOwnerRequestCard}>
                       <View style={styles.rideOwnerRequestTop}>
                         <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
-                        <Text style={styles.rideOwnerRequestBadge}>
-                          {isIncoming ? status.replace("_", " ") : "Listed"}
+                        <Text style={[styles.rideOwnerRequestBadge, ride.isExpired && styles.rideOwnerRequestBadgeExpired]}>
+                          {ride.isExpired ? "Expired" : isIncoming ? status.replace("_", " ") : "Listed"}
                         </Text>
                       </View>
                       <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
                       <View style={styles.rideOwnerRequestFacts}>
-                        <Text style={styles.rideOwnerRequestFact}>{ride.distanceMiles ? `${Number(ride.distanceMiles).toFixed(1)} mi away` : "Distance pending"}</Text>
+                        <Text style={styles.rideOwnerRequestFact}>{formatRidePickupDropDetail(ride) || "Pickup/drop-off calculating"}</Text>
+                        <Text style={styles.rideOwnerRequestFact}>{formatRideTotalDetour(ride)}</Text>
                         <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
                         <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
                       </View>
@@ -1345,18 +1420,20 @@ export function HousingScreen({
                       <Text style={styles.rideOwnerRequestMeta}>
                         {isIncoming
                           ? status === "PENDING"
-                            ? `Matched within ${ride.dispatchNearestRadius || 10} miles. Accept to unlock pickup PIN and FChat coordination.`
+                            ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. FChat is available now; accept to confirm the seat and unlock the pickup PIN.`
                             : "FChat is ready for ETA, pickup notes, route changes, and arrival updates."
-                          : "Your route is listed. Matching rider requests will appear here with route distance, status, and FChat."}
+                          : ride.isExpired
+                            ? "This ride date has passed. It remains visible here as expired."
+                            : "Your route is listed. Matching rider requests will appear here with route distance, status, and FChat."}
                       </Text>
                       <View style={styles.rideOwnerRequestActionRow}>
                         {canAccept ? (
                           <>
                             <TouchableOpacity style={styles.rideOwnerAcceptButton} onPress={() => updateRideDispatch(ride, "ACCEPT")} disabled={rideActivityBusy}>
-                              <Text style={styles.rideOwnerActionText}>Accept</Text>
+                              <Text style={styles.rideOwnerActionText}>✓ Accept</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.rideOwnerDeclineButton} onPress={() => updateRideDispatch(ride, "DECLINE")} disabled={rideActivityBusy}>
-                              <Text style={styles.rideOwnerActionText}>Decline</Text>
+                              <Text style={styles.rideOwnerActionText}>× Decline</Text>
                             </TouchableOpacity>
                           </>
                         ) : null}
@@ -1375,9 +1452,13 @@ export function HousingScreen({
                 })
               ) : (
                 <View style={styles.rideOwnerEmpty}>
-                  <Text style={styles.rideOwnerEmptyTitle}>No ride activity yet.</Text>
+                  <Text style={styles.rideOwnerEmptyTitle}>{rideOwnerOpenTarget === "listings" ? "No listed routes yet." : rideOwnerOpenTarget === "requests" ? "No rider requests yet." : "No ride activity yet."}</Text>
                   <Text style={styles.rideOwnerEmptyText}>
-                    List a route first. When riders match or request your seats, this tracker shows route details, status, and FChat.
+                    {rideOwnerOpenTarget === "listings"
+                      ? "Use List your ride above to publish a route and available seats."
+                      : rideOwnerOpenTarget === "requests"
+                        ? "New matching rider requests will appear here with route fit, status, and FChat."
+                        : "List a route first. When riders match or request your seats, this tracker shows route details, status, and FChat."}
                   </Text>
                 </View>
               )}
@@ -1777,34 +1858,9 @@ export function HousingScreen({
   function renderRentalCarsOnly() {
     return (
       <>
-        <ImageBackground source={carHeroSource} style={styles.carOverview} imageStyle={styles.carOverviewImage}>
-          <View style={styles.carShade}>
-            <Text style={styles.carEyebrow}>Rental cars</Text>
-            <Text style={styles.carTitle}>Today's cheapest rate</Text>
-            <Text style={styles.carMeta}>
-              {cheapestCar ? `${cheapestCar.name} · ${cheapestCar.location || "Denver pickup"}` : "Toyota Corolla · Denver International Airport"}
-            </Text>
-            <Text style={styles.carPhone}>Call / text: +1 9372518688</Text>
-            <View style={styles.carFeatureRow}>
-              <Text style={styles.carFeature}>Airport pickup</Text>
-              <Text style={styles.carFeature}>No hidden fees</Text>
-              <Text style={styles.carFeature}>24/7 support</Text>
-            </View>
-            <View style={styles.carBottomRow}>
-              <TouchableOpacity style={styles.bookNow} onPress={() => cheapestCar && reviewRentalCar(cheapestCar)}>
-                <Text style={styles.bookNowText}>Review trip</Text>
-              </TouchableOpacity>
-              <View style={styles.carRateBox}>
-                <Text style={styles.carRate}>
-                  {cheapestCar
-                    ? `$${dailyPriceRange(cheapestCar.daily_price, rentalDayCount).low}-${dailyPriceRange(cheapestCar.daily_price, rentalDayCount).high}`
-                    : "$29-39"}
-                </Text>
-                <Text style={styles.carRateMeta}>per day</Text>
-              </View>
-            </View>
-          </View>
-        </ImageBackground>
+        <TouchableOpacity style={styles.rentalPromoPoster} activeOpacity={0.9} onPress={searchRentalCars}>
+          <Image source={appAssets.housingRentalPromo} style={styles.rentalPromoImage} resizeMode="contain" />
+        </TouchableOpacity>
         <View style={styles.carSearchPanel}>
           <Text style={styles.carSearchTitle}>Search rental cars</Text>
           <Text style={styles.carFieldLabel}>Pickup location</Text>
@@ -2023,15 +2079,28 @@ export function HousingScreen({
   function renderRidePlannerModal() {
     const activeInputValue = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
     const selectedSuggestionSettled = activeInputValue.trim() === selectedRideSuggestionRef.current;
-    const mapUri = ridePlanComplete() ? rideMapUrl(rideForm.city, rideForm.origin, rideForm.destination) : "";
-    const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER").slice(0, 3);
+    const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER");
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
-    const routeButtonWebProps =
-      Platform.OS === "web"
-        ? ({ onClick: planRideRoute } as React.ComponentProps<typeof Pressable> & { onClick: () => void })
-        : {};
+    const mapRouteOrigin = selectedDriverOffer?.origin || rideForm.origin;
+    const mapRouteDestination = selectedDriverOffer?.destination || rideForm.destination;
+    const mapUri = ridePlanComplete()
+      ? rideMapUrl(
+          rideForm.city,
+          mapRouteOrigin,
+          mapRouteDestination,
+          selectedDriverOffer
+            ? { riderOrigin: rideForm.origin, riderDestination: rideForm.destination }
+            : undefined
+        )
+      : "";
     const listingRide = rideForm.rideType === "CARPOOL_OFFER";
-    const plannerActionText = listingRide ? "List ride" : "Find rides";
+    const rideDestinationPicked = Boolean(
+      rideForm.destination.trim() &&
+        (rideForm.destinationLat !== null ||
+          rideForm.destinationLng !== null ||
+          rideForm.destination.trim() === selectedRideSuggestionRef.current)
+    );
+    const plannerActionText = listingRide ? (rideDestinationPicked ? "List ride" : "Continue") : "Find rides";
     return (
       <Modal visible={ridePlannerOpen} animationType="slide" onRequestClose={closeRidePlanner}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.ridePlannerScreen}>
@@ -2042,18 +2111,22 @@ export function HousingScreen({
                 <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRidePlanner}>
                   <Text style={styles.ridePlannerBackText}>‹</Text>
                 </TouchableOpacity>
-                <Text style={styles.ridePlannerTitle}>Plan your ride</Text>
+                <Text style={styles.ridePlannerTitle}>{listingRide ? "List your ride" : "Plan your ride"}</Text>
                 <View style={styles.ridePlannerBack} />
               </View>
 
-              <View style={styles.ridePlannerPillRow}>
-                <TouchableOpacity style={styles.ridePlannerPill}>
-                  <Text style={styles.ridePlannerPillText}>◷ Pickup now</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.ridePlannerPill}>
-                  <Text style={styles.ridePlannerPillText}>♙ For me</Text>
-                </TouchableOpacity>
-              </View>
+              {!listingRide ? (
+                <View style={styles.ridePlannerPillRow}>
+                  <TouchableOpacity style={styles.ridePlannerPill}>
+                    <Text style={styles.ridePlannerPillText}>◷ Pickup now</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.ridePlannerPill}>
+                    <Text style={styles.ridePlannerPillText}>♙ For me</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={styles.ridePlannerOwnerHint}>Enter where you are going first. Trip time, seats, luggage, and contribution come next.</Text>
+              )}
 
               <View style={styles.rideRouteInputCard}>
                 <View style={styles.rideRouteRail}>
@@ -2070,7 +2143,7 @@ export function HousingScreen({
                       setRideFocusedField("origin");
                       updateRideForm("origin", text);
                     }}
-                    placeholder="Pickup location"
+                    placeholder={listingRide ? "Starting point" : "Pickup location"}
                     placeholderTextColor={theme.colors.muted}
                     style={[styles.rideRouteInput, rideFocusedField === "origin" && styles.rideRouteInputActive]}
                   />
@@ -2083,7 +2156,7 @@ export function HousingScreen({
                       updateRideForm("destination", text);
                     }}
                     onSubmitEditing={planRideRoute}
-                    placeholder="Where to?"
+                    placeholder={listingRide ? "Where are you going?" : "Where to?"}
                     placeholderTextColor={theme.colors.muted}
                     style={[styles.rideRouteInput, rideFocusedField === "destination" && styles.rideRouteInputActive]}
                   />
@@ -2093,43 +2166,10 @@ export function HousingScreen({
                 </TouchableOpacity>
               </View>
 
-              {ridePlanComplete() ? (
-                <View style={styles.rideTypePrompt}>
-                  <Text style={styles.rideTypePromptTitle}>What kind of ride is this?</Text>
-                  <Text style={styles.rideTypePromptCopy}>
-                    Carpool is open now. General and scheduled rides will be available soon.
-                  </Text>
-                  <View style={styles.rideTypePromptGrid}>
-                    {rideServicePosters.map((service) => {
-                      const selected = service.key === selectedRideService;
-                      const shortHint = service.available ? "Available now" : "Coming soon";
-                      return (
-                        <TouchableOpacity
-                          key={service.key}
-                          style={[
-                            styles.rideTypePromptChip,
-                            !service.available && styles.rideTypePromptChipDisabled,
-                            selected && styles.rideTypePromptChipActive
-                          ]}
-                          onPress={() => selectRideService(service)}
-                        >
-                          <Text style={[styles.rideTypePromptChipTitle, selected && styles.rideTypePromptChipTitleActive]}>{service.title}</Text>
-                          <Text style={[styles.rideTypePromptChipMeta, selected && styles.rideTypePromptChipMetaActive]}>{shortHint}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              ) : null}
-
-              {ridePlanComplete() ? (
+              {listingRide && rideDestinationPicked ? (
                 <View style={styles.rideTripDetails}>
-                  <Text style={styles.rideTripDetailsTitle}>{listingRide ? "When are you traveling?" : "Trip details"}</Text>
-                  <Text style={styles.rideTripHint}>
-                    {listingRide
-                      ? "These details are for this route listing. Change them each time you offer seats."
-                      : "Use these details so FairFares can match you with better carpool offers."}
-                  </Text>
+                  <Text style={styles.rideTripDetailsTitle}>When are you traveling?</Text>
+                  <Text style={styles.rideTripHint}>These details are for this route listing. Change them each time you offer seats.</Text>
                   <View style={styles.rideTripDetailsRow}>
                     <View style={styles.rideTripField}>
                       <Text style={styles.rideTripLabel}>Date</Text>
@@ -2154,10 +2194,10 @@ export function HousingScreen({
                   </View>
                   <View style={styles.rideTripDetailsRow}>
                     <View style={styles.rideTripField}>
-                      <Text style={styles.rideTripLabel}>{listingRide ? "Seats available" : "Passengers"}</Text>
+                      <Text style={styles.rideTripLabel}>Seats available</Text>
                       <TextInput
                         style={styles.rideTripInput}
-                        placeholder={listingRide ? "4" : "1"}
+                        placeholder="4"
                         placeholderTextColor={theme.colors.muted}
                         keyboardType="number-pad"
                         value={rideForm.seats}
@@ -2165,19 +2205,19 @@ export function HousingScreen({
                       />
                     </View>
                     <View style={styles.rideTripField}>
-                      <Text style={styles.rideTripLabel}>Pickup radius</Text>
+                      <Text style={styles.rideTripLabel}>Contribution</Text>
                       <TextInput
                         style={styles.rideTripInput}
-                        placeholder="10"
+                        placeholder="Optional $"
                         placeholderTextColor={theme.colors.muted}
                         keyboardType="number-pad"
-                        value={rideForm.maxPickupDistanceMiles}
-                        onChangeText={(value) => updateRideForm("maxPickupDistanceMiles", value)}
+                        value={rideForm.contributionPerSeat}
+                        onChangeText={(value) => updateRideForm("contributionPerSeat", value)}
                       />
                     </View>
                   </View>
                   <View style={styles.rideTripDetailsRow}>
-                    <View style={styles.rideTripField}>
+                    <View style={styles.rideTripFieldFull}>
                       <Text style={styles.rideTripLabel}>Luggage</Text>
                       <TextInput
                         style={styles.rideTripInput}
@@ -2187,22 +2227,11 @@ export function HousingScreen({
                         onChangeText={(value) => updateRideForm("luggage", value)}
                       />
                     </View>
-                    <View style={styles.rideTripField}>
-                      <Text style={styles.rideTripLabel}>{listingRide ? "Contribution" : "Max detour min"}</Text>
-                      <TextInput
-                        style={styles.rideTripInput}
-                        placeholder={listingRide ? "Optional $" : "15"}
-                        placeholderTextColor={theme.colors.muted}
-                        keyboardType="number-pad"
-                        value={listingRide ? rideForm.contributionPerSeat : rideForm.maxDetourMinutes}
-                        onChangeText={(value) => updateRideForm(listingRide ? "contributionPerSeat" : "maxDetourMinutes", value)}
-                      />
-                    </View>
                   </View>
                 </View>
               ) : null}
 
-              <View style={styles.rideSavedRow}>
+              <View style={listingRide ? styles.rideSavedRowCompact : styles.rideSavedRow}>
                 <TouchableOpacity
                   style={styles.rideSavedItem}
                   onPress={() => {
@@ -2219,10 +2248,12 @@ export function HousingScreen({
                     </Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.rideSavedItem}>
-                  <Text style={styles.rideSavedIcon}>☆</Text>
-                  <Text style={styles.rideSavedTitle}>Saved places</Text>
-                </TouchableOpacity>
+                {!listingRide ? (
+                  <TouchableOpacity style={styles.rideSavedItem}>
+                    <Text style={styles.rideSavedIcon}>☆</Text>
+                    <Text style={styles.rideSavedTitle}>Saved places</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
 
               <View style={styles.rideSuggestionList}>
@@ -2245,23 +2276,27 @@ export function HousingScreen({
                     </View>
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity
-                  style={styles.rideUtilityRow}
-                  onPress={() => {
-                    updateRideForm("city", "");
-                    setRideFocusedField("origin");
-                  }}
-                >
-                  <Text style={styles.rideUtilityIcon}>◎</Text>
-                  <Text style={styles.rideUtilityText}>Search in a different city</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.rideUtilityRow} onPress={openRideGoogleMaps}>
-                  <Text style={styles.rideUtilityIcon}>⌖</Text>
-                  <Text style={styles.rideUtilityText}>Set location on map</Text>
-                </TouchableOpacity>
+                {!listingRide ? (
+                  <>
+                    <TouchableOpacity
+                      style={styles.rideUtilityRow}
+                      onPress={() => {
+                        updateRideForm("city", "");
+                        setRideFocusedField("origin");
+                      }}
+                    >
+                      <Text style={styles.rideUtilityIcon}>◎</Text>
+                      <Text style={styles.rideUtilityText}>Search in a different city</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.rideUtilityRow} onPress={openRideGoogleMaps}>
+                      <Text style={styles.rideUtilityIcon}>⌖</Text>
+                      <Text style={styles.rideUtilityText}>Set location on map</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
               </View>
 
-              <Pressable style={styles.ridePlannerSearchButton} onPress={planRideRoute} onPressIn={planRideRoute} disabled={rideBusy} {...routeButtonWebProps}>
+              <Pressable style={styles.ridePlannerSearchButton} onPress={planRideRoute} disabled={rideBusy}>
                 <Text style={styles.ridePlannerSearchText}>{rideBusy ? (listingRide ? "Listing ride..." : "Finding rides...") : plannerActionText}</Text>
               </Pressable>
             </ScrollView>
@@ -2281,22 +2316,74 @@ export function HousingScreen({
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
                   {driverOffers.length
-                    ? "These driver offers match your route. Pick one to request the seat, then coordinate ETA, pickup PIN, and pickup notes in FChat."
+                    ? "These driver offers match your route. You can FChat before requesting or accepting; acceptance confirms the seat and unlocks the pickup PIN."
                     : "No live driver offer is selected yet. Send the request and FairFares will notify nearby drivers first, then expand the radius if needed."}
                 </Text>
                 {driverOffers.length ? (
                   driverOffers.map((offer) => {
                     const selected = selectedRideChoice === `offer:${offer.id}`;
+                    const expired = Boolean(offer.isExpired);
+                    const riderTrip = [rideForm.origin, rideForm.destination].filter(Boolean).join(" → ");
+                    const matchFacts = [
+                      formatRidePickupDropDetail(offer),
+                      offer.pickupDate || "",
+                      offer.pickupTime || ""
+                    ].filter(Boolean);
                     return (
-                      <TouchableOpacity key={offer.id} style={[styles.rideChoiceRow, selected && styles.rideChoiceRowActive]} onPress={() => setSelectedRideChoice(`offer:${offer.id}`)}>
-                        <Image source={appAssets.ride} style={styles.rideChoiceIcon} resizeMode="contain" />
+                      <TouchableOpacity
+                        key={offer.id}
+                        style={[styles.rideChoiceRow, expired && styles.rideChoiceRowExpired, selected && styles.rideChoiceRowActive]}
+                        onPress={() => {
+                          if (expired) {
+                            Alert.alert("Ride expired", "This ride date has passed. It remains visible for history, but cannot be requested.");
+                            return;
+                          }
+                          setSelectedRideChoice(`offer:${offer.id}`);
+                        }}
+                      >
+                        <View style={styles.rideChoiceRouteBadge}>
+                          <Text style={styles.rideChoiceRouteBadgeText}>A→B</Text>
+                        </View>
                         <View style={styles.rideChoiceCopy}>
-                          <Text style={styles.rideChoiceName} numberOfLines={1}>{offer.title || offer.typeLabel} <Text style={styles.rideChoiceSeats}>♟ {offer.seats}</Text></Text>
-                          <Text style={styles.rideChoiceMeta} numberOfLines={1}>{offer.distanceMiles ? `${Number(offer.distanceMiles).toFixed(1)} mi route` : "Route distance pending"} · {offer.pickupTime || "time open"}</Text>
+                          <Text style={styles.rideChoiceName} numberOfLines={2}>{offer.origin} → {offer.destination}</Text>
+                          <Text style={styles.rideChoiceLister} numberOfLines={1}>Listed by {offer.ownerName?.trim() || "FairFares member"}</Text>
+                          {riderTrip ? <Text style={styles.rideChoiceUserTrip} numberOfLines={2}>Your trip: {riderTrip}</Text> : null}
+                          <View style={styles.rideChoiceChipRow}>
+                            <Text style={[styles.rideChoiceChip, expired && styles.rideChoiceChipExpired]}>{expired ? "Expired" : "Driver offer"}</Text>
+                            <Text style={styles.rideChoiceChip}>{offer.seats} seat{offer.seats === 1 ? "" : "s"}</Text>
+                            <Text style={styles.rideChoiceChip}>{formatRideTotalDetour(offer)}</Text>
+                          </View>
+                          <Text style={styles.rideChoiceMeta} numberOfLines={2}>{matchFacts.join(" · ") || "Route fit will show after matching."}</Text>
+                          <View style={styles.rideChoiceActionRow}>
+                            <TouchableOpacity
+                              style={[styles.rideChoiceSmallButton, selected && styles.rideChoiceSmallButtonActive]}
+                              onPress={() => {
+                                if (expired) {
+                                  Alert.alert("Ride expired", "This ride date has passed. It remains visible for history, but cannot be requested.");
+                                  return;
+                                }
+                                setSelectedRideChoice(`offer:${offer.id}`);
+                              }}
+                            >
+                              <Text style={[styles.rideChoiceSmallButtonText, selected && styles.rideChoiceSmallButtonTextActive]}>{selected ? "Selected" : "Request seat"}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.rideChoiceSmallButton} onPress={openRideGoogleMaps}>
+                              <Text style={styles.rideChoiceSmallButtonText}>View route</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.rideChoiceSmallButton, styles.rideChoiceChatButton]} onPress={() => onRideMessage(offer)}>
+                              <Image source={appAssets.fchat} style={styles.rideChoiceChatIcon} resizeMode="contain" />
+                              <Text style={styles.rideChoiceSmallButtonText}>FChat</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                         <View style={styles.rideChoiceContribution}>
-                          <Text style={styles.rideChoicePrice}>{offer.contributionPerSeat ? `$${Number(offer.contributionPerSeat).toFixed(2)}` : "Open"}</Text>
-                          <Text style={styles.rideChoicePriceMeta}>driver offer</Text>
+                          <View style={styles.rideChoiceAvailability}>
+                            <View style={[styles.rideChoiceAvailabilityDot, expired && styles.rideChoiceAvailabilityDotExpired]} />
+                            <Text style={[styles.rideChoicePrice, expired && styles.rideChoicePriceExpired]}>
+                              {offer.contributionPerSeat ? `$${Number(offer.contributionPerSeat).toFixed(2)}` : "Open"}
+                            </Text>
+                          </View>
+                          <Text style={[styles.rideChoicePriceMeta, expired && styles.rideChoiceExpiredMeta]}>{offer.contributionPerSeat ? "expected" : "agree in chat"}</Text>
                         </View>
                       </TouchableOpacity>
                     );
@@ -2305,7 +2392,7 @@ export function HousingScreen({
                   <View style={styles.rideNoOffersCard}>
                     <Text style={styles.rideNoOffersTitle}>No driver offers yet</Text>
                     <Text style={styles.rideNoOffersCopy}>
-                      Send your request and nearby registered drivers can accept it. Once a driver accepts, you will see ETA, route details, pickup PIN, and FChat.
+                      Send your request and nearby registered drivers can accept it. FChat needs a specific driver recipient; once a driver accepts, you will also see ETA and the pickup PIN.
                     </Text>
                   </View>
                 )}
@@ -2334,8 +2421,8 @@ export function HousingScreen({
                   </View>
                 ) : null}
                 <View style={styles.rideChoiceButtonRow}>
-                  <TouchableOpacity style={styles.rideChoiceButton} onPress={requestPlannedRide} disabled={rideBusy}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : selectedDriverOffer ? "Request offer" : "Send ride request"}</Text>
+                  <TouchableOpacity style={[styles.rideChoiceButton, selectedDriverOffer?.isExpired && styles.rideChoiceButtonDisabled]} onPress={requestPlannedRide} disabled={rideBusy || Boolean(selectedDriverOffer?.isExpired)}>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : selectedDriverOffer?.isExpired ? "Expired offer" : selectedDriverOffer ? "Request offer" : "Send ride request"}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.rideLaterButton}>
                     <Text style={styles.rideLaterButtonText}>▣</Text>
@@ -2437,37 +2524,17 @@ export function HousingScreen({
         </View>
 
         <View style={styles.rideHero}>
-          <View style={styles.rideBrandRow}>
-            <Image source={appAssets.logo} style={styles.rideBrandLogo} resizeMode="contain" />
-            <View style={styles.rideOptionPill}>
-              <Text style={styles.rideOptionPillText}>3 ride options</Text>
-            </View>
-          </View>
-          <View style={styles.rideHeroTop}>
-            <View style={styles.rideHeroCopy}>
-              <Text style={styles.rideEyebrow}>FairFares rides</Text>
-              <Text style={styles.rideTitle}>Ride together. <Text style={styles.rideTitleAccent}>Save together.</Text></Text>
-              <Text style={styles.rideMeta}>Scheduled. Flexible. Together.</Text>
-            </View>
-            {renderRideGlyph(activeService.glyph)}
-          </View>
-          <View style={styles.rideFeatureRow}>
-            {rideFeatureBadges.map((badge) => (
-              <Text key={badge} style={styles.rideFeatureBadge}>{badge}</Text>
-            ))}
-          </View>
           <Image source={appAssets.rideShareStrip} style={styles.rideShareStrip} resizeMode="contain" />
-          <View style={styles.rideHeroActionRow}>
-            <TouchableOpacity style={styles.rideHeroOwnerButton} onPress={startRideOfferListing}>
-              {renderRideGlyph("carpool", true)}
-              <View style={styles.rideHeroOwnerCopy}>
-                <Text style={styles.rideHeroOwnerTitle}>List your ride</Text>
-                <Text style={styles.rideHeroOwnerMeta}>Add from, to, seats, and time</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity activeOpacity={0.9} style={styles.rideListBannerButton} onPress={startRideOfferListing}>
-            <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="cover" />
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="List your ride for carpool"
+            style={styles.rideListBannerButton}
+            onPress={startRideOfferListing}
+            activeOpacity={0.86}
+          >
+            <View pointerEvents="none">
+              <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -2477,7 +2544,6 @@ export function HousingScreen({
             <View style={styles.rideServiceDetailCopy}>
               <Text style={styles.rideServiceDetailLabel}>{activeService.title}</Text>
               <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {rideDefaultCity}</Text>
-              <Text style={styles.rideServiceDetailText}>{activeService.insight}</Text>
             </View>
           </View>
           <View style={styles.rideExampleBox}>
@@ -2533,88 +2599,8 @@ export function HousingScreen({
     );
   }
 
-  return (
-    <>
-    {renderRideOwnerTracker()}
-    {renderRentalOwnerModal()}
-    <ScrollView
-      ref={scrollRef}
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      stickyHeaderIndices={[2]}
-      showsVerticalScrollIndicator={false}
-      scrollEventThrottle={16}
-      onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
-    >
-        <View style={styles.brandHeader}>
-          <View style={styles.freeServicesHero}>
-            <View style={styles.freeServicesCopy}>
-              <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
-              <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
-              <Text style={styles.freeServicesTitle}>List, search, rent, and carpool free.</Text>
-              <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
-            </View>
-            <View style={styles.freeServicesIconRail}>
-              {[appAssets.bed, appAssets.search, appAssets.ride, appAssets.roommates].map((icon, index) => (
-                <View key={index} style={styles.freeServicesIconBubble}>
-                  <Image source={icon} style={styles.freeServicesIcon} resizeMode="contain" />
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.topTabs}>
-          {["Ride", "Housing", "Explorer", "Deals"].map((item) => (
-            <TouchableOpacity
-              key={item}
-              onPress={() => (item === "Ride" ? setMode("ride") : item === "Housing" ? setMode("housing") : onTopAction(item))}
-              style={[styles.topTab, ((item === "Ride" && mode === "ride") || (item === "Housing" && mode !== "ride" && mode !== "cheapCars")) && styles.topTabActive]}
-            >
-              <Text style={[styles.topTabText, ((item === "Ride" && mode === "ride") || (item === "Housing" && mode !== "ride" && mode !== "cheapCars")) && styles.topTabTextActive]}>{item}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.stickySearch}>
-          <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
-            <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
-            <Text style={styles.searchText} numberOfLines={1}>{searchBarText}</Text>
-            <Text style={styles.later}>{mode === "ride" ? "Later" : "Search"}</Text>
-          </TouchableOpacity>
-        </View>
-
-      <View style={styles.segment}>
-        <TouchableOpacity
-          style={[styles.segmentButton, mode === "housing" && styles.segmentActive]}
-          onPress={() => {
-            setMode("housing");
-            onNeedSelect("need_place");
-          }}
-        >
-          <Text style={[styles.segmentText, mode === "housing" && styles.segmentTextActive]}>Housing</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.segmentButton, mode === "ride" && styles.segmentActive]}
-          onPress={() => {
-            setMode("ride");
-          }}
-        >
-          <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Ride</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.segmentButton, mode === "cheapCars" && styles.segmentActive]}
-          onPress={() => {
-            setMode("cheapCars");
-          }}
-        >
-          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Rental Cars</Text>
-        </TouchableOpacity>
-      </View>
-
-      {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
-        <>
-
+  function renderQuickLinks() {
+    return (
       <View style={styles.quickHero}>
         <Text style={styles.quickPill}>Quick links</Text>
         <Text style={styles.quickHeaderTitle}>
@@ -2633,15 +2619,171 @@ export function HousingScreen({
           ))}
         </View>
       </View>
+    );
+  }
+
+  function renderSegmentIcon(kind: "housing" | "ride" | "rental", active: boolean) {
+    const color = active ? theme.colors.text : kind === "rental" ? "#f4aa2f" : theme.colors.soft;
+    if (kind === "housing") {
+      return (
+        <View style={styles.segmentHouseIcon}>
+          <View style={[styles.segmentHouseRoof, { borderColor: color }]} />
+          <View style={[styles.segmentHouseBody, { borderColor: color }]}>
+            <View style={[styles.segmentHouseDoor, { backgroundColor: color }]} />
+          </View>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.segmentCarIcon}>
+        <View style={[styles.segmentCarCabin, { borderColor: color }]} />
+        <View style={[styles.segmentCarBody, { borderColor: color }]} />
+        <View style={styles.segmentCarWheels}>
+          <View style={[styles.segmentCarWheel, { backgroundColor: color }]} />
+          <View style={[styles.segmentCarWheel, { backgroundColor: color }]} />
+        </View>
+      </View>
+    );
+  }
+
+  function renderTopNavIcon(item: string, active: boolean) {
+    const color = active ? theme.colors.text : "rgba(255,255,255,0.64)";
+    if (item === "Housing") {
+      return renderSegmentIcon("housing", active);
+    }
+    if (item === "Explorer") {
+      return (
+        <View style={[styles.topCompassIcon, { borderColor: color }]}>
+          <View style={[styles.topCompassNeedle, { borderBottomColor: color }]} />
+        </View>
+      );
+    }
+    return (
+      <View style={[styles.topTagIcon, { borderColor: color }]}>
+        <View style={[styles.topTagHole, { backgroundColor: color }]} />
+      </View>
+    );
+  }
+
+  return (
+    <>
+    {renderRideOwnerTracker()}
+    {renderRentalOwnerModal()}
+    <ScrollView
+      ref={scrollRef}
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      stickyHeaderIndices={[1]}
+      showsVerticalScrollIndicator={false}
+      scrollEventThrottle={16}
+      onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
+    >
+        <View style={styles.brandHeader}>
+          <View style={styles.freeServicesHero}>
+            <View style={styles.freeServicesCopy}>
+              <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
+              <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
+              <Text style={styles.freeServicesTitle}>
+                List, search, rent, and carpool <Text style={styles.freeServicesTitleAccent}>FREE.</Text>
+              </Text>
+              <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
+            </View>
+            <View style={styles.freeServicesIconRail}>
+              {[appAssets.bed, appAssets.search, appAssets.ride, appAssets.roommates].map((icon, index) => (
+                <View key={index} style={styles.freeServicesIconBubble}>
+                  <Image source={icon} style={styles.freeServicesIcon} resizeMode="contain" />
+                </View>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.topTabs}>
+            {["Housing", "Explorer", "Deals"].map((item) => {
+              const active = item === "Housing";
+              return (
+                <TouchableOpacity
+                  key={item}
+                  onPress={() => {
+                    if (item === "Housing") {
+                      setMode("housing");
+                      return;
+                    }
+                    onTopAction(item);
+                  }}
+                  style={[styles.topTab, active && styles.topTabActive]}
+                >
+                  {renderTopNavIcon(item, active)}
+                  <Text style={[styles.topTabText, active && styles.topTabTextActive]}>{item}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.stickySearch}>
+          <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
+            <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
+            <Text style={styles.searchText} numberOfLines={1}>{searchBarText}</Text>
+            <Text style={styles.later}>{mode === "ride" ? "Later" : "Search"}</Text>
+          </TouchableOpacity>
+        </View>
+
+      <View style={styles.segment}>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "housing" && styles.segmentActive]}
+          onPress={() => {
+            setMode("housing");
+            onNeedSelect("need_place");
+          }}
+        >
+          {renderSegmentIcon("housing", mode === "housing")}
+          <Text style={[styles.segmentText, mode === "housing" && styles.segmentTextActive]}>Housing</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "ride" && styles.segmentActive]}
+          onPress={() => {
+            setMode("ride");
+          }}
+        >
+          {renderSegmentIcon("ride", mode === "ride")}
+          <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Ride</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentButton, mode === "cheapCars" && styles.segmentActive]}
+          onPress={() => {
+            setMode("cheapCars");
+          }}
+        >
+          {renderSegmentIcon("rental", mode === "cheapCars")}
+          <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Rental Cars</Text>
+        </TouchableOpacity>
+      </View>
+
+      {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
+        <>
 
       <SectionHeader title="Create a post" />
       <View style={styles.postActionGrid}>
         {postActions.map((action) => (
-          <TouchableOpacity key={action.intent} style={styles.postActionCard} onPress={() => onPostNeed(action.intent)}>
-            <Image source={action.icon} style={styles.postActionIcon} resizeMode="contain" />
+          <TouchableOpacity
+            key={action.intent}
+            activeOpacity={0.86}
+            style={[styles.postActionCard, { backgroundColor: action.bg }]}
+            onPress={() => onPostNeed(action.intent)}
+          >
+            <View style={styles.postActionIconTile}>
+              <Image source={action.icon} style={styles.postActionIcon} resizeMode="contain" />
+            </View>
             <View style={styles.postActionCopy}>
               <Text style={styles.postNeedTitle}>{action.label}</Text>
               <Text style={styles.postNeedMeta}>{action.sub}</Text>
+            </View>
+            <View style={styles.postActionScene} pointerEvents="none">
+              <View style={[styles.postActionSceneCircle, { backgroundColor: action.tint }]} />
+              <Image source={action.icon} style={styles.postActionSceneIcon} resizeMode="contain" />
+            </View>
+            <View style={[styles.postActionArrow, { backgroundColor: action.tint }]}>
+              <Text style={styles.postActionArrowText}>›</Text>
             </View>
           </TouchableOpacity>
         ))}
@@ -2740,6 +2882,14 @@ export function HousingScreen({
           </ScrollView>
         </>
       ) : null}
+      <TouchableOpacity
+        style={styles.housingRentalPromo}
+        activeOpacity={0.88}
+        onPress={() => setMode("cheapCars")}
+      >
+        <Image source={appAssets.housingRentalPromo} style={styles.housingRentalPromoImage} resizeMode="contain" />
+      </TouchableOpacity>
+      {renderQuickLinks()}
         </>
       )}
       <Modal visible={Boolean(detailPost)} transparent animationType="fade" onRequestClose={() => setDetailPost(null)}>
@@ -2813,16 +2963,19 @@ export function HousingScreen({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: 14, paddingBottom: 112, gap: 20 },
-  brandHeader: { alignItems: "flex-start", gap: 12 },
-  freeServicesHero: {
+  brandHeader: {
     width: "100%",
-    minHeight: 116,
     borderRadius: 26,
-    padding: 16,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(46,255,188,0.24)",
-    backgroundColor: "#08c477",
+    backgroundColor: "#09bf78"
+  },
+  freeServicesHero: {
+    width: "100%",
+    minHeight: 116,
+    padding: 16,
+    overflow: "hidden",
     flexDirection: "row",
     alignItems: "center",
     gap: 12
@@ -2842,8 +2995,9 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0
   },
-  freeServicesTitle: { color: "#06130d", fontSize: 21, lineHeight: 25, fontWeight: "900", marginTop: 8 },
-  freeServicesMeta: { color: "rgba(6,19,13,0.72)", fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 4 },
+  freeServicesTitle: { color: "#06130d", fontSize: 21, lineHeight: 25, fontWeight: "800", marginTop: 8 },
+  freeServicesTitleAccent: { color: theme.colors.blue, fontWeight: "900" },
+  freeServicesMeta: { color: "rgba(6,19,13,0.72)", fontSize: 12, lineHeight: 16, fontWeight: "600", marginTop: 4 },
   freeServicesIconRail: {
     width: 88,
     flexDirection: "row",
@@ -2855,34 +3009,114 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "rgba(3,8,18,0.20)",
+    backgroundColor: "rgba(255,255,255,0.16)",
     alignItems: "center",
     justifyContent: "center"
   },
   freeServicesIcon: { width: 27, height: 27 },
   freeServicesLogo: { width: 94, height: 30, marginBottom: 4, marginLeft: -2 },
-  topTabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  topTab: { paddingVertical: 9, paddingRight: 16 },
-  topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.soft },
-  topTabText: { color: theme.colors.muted, fontSize: 15, fontWeight: "900" },
-  topTabTextActive: { color: theme.colors.text },
+  topTabs: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  topTab: { flex: 1, paddingVertical: 11, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.text },
+  topTabText: { color: "rgba(255,255,255,0.64)", fontSize: 14, fontWeight: "700" },
+  topTabTextActive: { color: theme.colors.text, fontWeight: "800" },
+  topCompassIcon: {
+    width: 17,
+    height: 17,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    transform: [{ rotate: "45deg" }]
+  },
+  topCompassNeedle: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 4,
+    borderRightWidth: 4,
+    borderBottomWidth: 8,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent"
+  },
+  topTagIcon: {
+    width: 16,
+    height: 16,
+    borderWidth: 2,
+    borderRadius: 3,
+    transform: [{ rotate: "45deg" }],
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    padding: 2
+  },
+  topTagHole: { width: 4, height: 4, borderRadius: 2 },
   stickySearch: { backgroundColor: theme.colors.bg, paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
   searchIcon: { width: 23, height: 23 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 15, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 11, paddingVertical: 7, fontWeight: "900", fontSize: 13 },
-  segment: { backgroundColor: "rgba(80,92,255,0.30)", borderRadius: theme.radius.pill, flexDirection: "row", padding: 5, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)" },
-  segmentButton: { flex: 1, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 10, borderWidth: 1, borderColor: "transparent" },
+  segment: {
+    backgroundColor: "rgba(80,92,255,0.30)",
+    borderRadius: theme.radius.pill,
+    flexDirection: "row",
+    padding: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)"
+  },
+  segmentButton: {
+    flex: 1,
+    borderRadius: theme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: "transparent",
+    flexDirection: "row",
+    gap: 6
+  },
   segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
   segmentText: { color: theme.colors.soft, fontSize: 14, fontWeight: "900" },
   segmentTextActive: { color: theme.colors.text },
+  segmentHouseIcon: { width: 20, height: 20, alignItems: "center", justifyContent: "flex-end" },
+  segmentHouseRoof: {
+    position: "absolute",
+    top: 2,
+    width: 13,
+    height: 13,
+    borderLeftWidth: 2,
+    borderTopWidth: 2,
+    transform: [{ rotate: "45deg" }]
+  },
+  segmentHouseBody: {
+    width: 15,
+    height: 12,
+    borderWidth: 2,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+    alignItems: "center",
+    justifyContent: "flex-end"
+  },
+  segmentHouseDoor: { width: 4, height: 6, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  segmentCarIcon: { width: 22, height: 18, alignItems: "center", justifyContent: "flex-end" },
+  segmentCarCabin: {
+    width: 12,
+    height: 7,
+    borderWidth: 2,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4
+  },
+  segmentCarBody: { width: 19, height: 8, borderWidth: 2, borderRadius: 4, marginTop: -1 },
+  segmentCarWheels: { width: 15, flexDirection: "row", justifyContent: "space-between", marginTop: -2 },
+  segmentCarWheel: { width: 4, height: 4, borderRadius: 2 },
   quickHero: {
     borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(3,8,18,0.96)",
-    padding: theme.spacing.md,
-    gap: 11,
+    padding: 14,
+    gap: 9,
     overflow: "hidden"
   },
   quickPill: {
@@ -2893,53 +3127,128 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     overflow: "hidden",
-    fontSize: 12,
+    fontSize: 11,
     textTransform: "uppercase",
-    fontWeight: "900"
+    fontWeight: "800"
   },
-  quickHeaderTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "900", maxWidth: 300 },
+  quickHeaderTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 21, fontWeight: "600", maxWidth: 300 },
   quickTitleAccent: { color: "#15e1ba" },
-  quickAnimatedWord: { color: "#ff3d6e", fontSize: 26, lineHeight: 31, fontWeight: "900", letterSpacing: 0 },
+  quickAnimatedWord: { color: "#ff3d6e", fontSize: 20, lineHeight: 25, fontWeight: "700", letterSpacing: 0 },
   quickCursor: { color: theme.colors.text, fontWeight: "400" },
-  quickTextList: { gap: 8, paddingTop: 2 },
+  quickTextList: { gap: 4, paddingTop: 0 },
   quickTextLink: {
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.32)",
-    paddingVertical: 8,
+    borderBottomColor: "rgba(255,255,255,0.22)",
+    paddingVertical: 7,
     flexDirection: "row",
     alignItems: "center",
     gap: 9
   },
   quickTextDot: { width: 8, height: 8, borderRadius: 4 },
-  quickTextTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "900" },
-  postActionGrid: { gap: 10 },
-  postActionCard: { backgroundColor: "#fff7df", borderRadius: theme.radius.lg, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", gap: 12 },
-  postActionIcon: { width: 36, height: 36 },
-  postActionCopy: { flex: 1, minWidth: 0 },
-  postNeedTitle: { color: "#111", fontSize: 16, lineHeight: 20, fontWeight: "900" },
-  postNeedMeta: { color: "#5b5148", marginTop: 4, fontSize: 13 },
+  quickTextTitle: { color: theme.colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  postActionGrid: { gap: 9 },
+  postActionCard: {
+    minHeight: 96,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.72)"
+  },
+  postActionIconTile: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 }
+  },
+  postActionIcon: { width: 34, height: 34 },
+  postActionCopy: { flex: 1, minWidth: 0, zIndex: 2 },
+  postNeedTitle: { color: "#111827", fontSize: 16, lineHeight: 20, fontWeight: "700" },
+  postNeedMeta: { color: "#263143", marginTop: 3, fontSize: 13, lineHeight: 17, fontWeight: "500" },
+  postActionScene: {
+    position: "absolute",
+    right: 42,
+    top: 0,
+    bottom: 0,
+    width: 118,
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: 0.42
+  },
+  postActionSceneCircle: {
+    position: "absolute",
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    opacity: 0.16
+  },
+  postActionSceneIcon: { width: 78, height: 78 },
+  postActionArrow: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2
+  },
+  postActionArrowText: { color: theme.colors.text, fontSize: 32, lineHeight: 34, fontWeight: "600", marginTop: -2 },
   welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#18241d", gap: 8 },
-  welcomeTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  welcomeTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   welcomeMeta: { color: theme.colors.soft, fontSize: 14 },
   statRow: { flexDirection: "row", gap: 10, marginTop: 4 },
-  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900" },
+  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "700" },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
-  emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
-  filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 10 },
-  filterHeader: { gap: 4 },
-  filterHeaderTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
-  filterHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800" },
-  filterTitle: { color: theme.colors.muted, fontSize: 13, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  filterRow: { gap: 8, paddingRight: theme.spacing.md },
-  filterChip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 13, paddingVertical: 9, backgroundColor: theme.colors.bg },
+  filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: 10, gap: 7 },
+  filterHeader: { gap: 2 },
+  filterHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "600" },
+  filterHeaderMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "500" },
+  filterTitle: { color: theme.colors.muted, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.8 },
+  filterRow: { gap: 6, paddingRight: theme.spacing.md },
+  filterChip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: theme.colors.bg },
   filterChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
-  filterChipText: { color: theme.colors.soft, fontWeight: "900" },
+  filterChipText: { color: theme.colors.soft, fontSize: 12, fontWeight: "600" },
   filterChipTextActive: { color: theme.colors.bg },
+  housingRentalPromo: {
+    width: "100%",
+    aspectRatio: 1522 / 440,
+    borderRadius: 8,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "#fff7ee"
+  },
+  housingRentalPromoImage: {
+    width: "100%",
+    height: "100%"
+  },
+  rentalPromoPoster: {
+    width: "100%",
+    aspectRatio: 1522 / 440,
+    borderRadius: 8,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "#fff7ee"
+  },
+  rentalPromoImage: {
+    width: "100%",
+    height: "100%"
+  },
   carOverview: { minHeight: 360, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line },
   carOverviewImage: { borderRadius: theme.radius.lg },
   carShade: { flex: 1, padding: theme.spacing.lg, justifyContent: "space-between", backgroundColor: "rgba(0,0,0,0.48)", gap: theme.spacing.md },
-  carEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   carTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 33, fontWeight: "900", maxWidth: 250 },
   carMeta: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20, maxWidth: 280 },
   carPhone: { color: theme.colors.green, fontWeight: "900", fontSize: 16 },
@@ -2948,9 +3257,6 @@ const styles = StyleSheet.create({
   carBottomRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: theme.spacing.md },
   bookNow: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 20, paddingVertical: 13 },
   bookNowText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
-  carRateBox: { minWidth: 108, borderRadius: theme.radius.md, backgroundColor: theme.colors.text, padding: theme.spacing.sm, alignItems: "center" },
-  carRate: { color: theme.colors.bg, fontSize: 22, fontWeight: "900" },
-  carRateMeta: { color: "#555", fontWeight: "900" },
   carSearchPanel: {
     backgroundColor: "rgba(24,24,27,0.72)",
     borderRadius: theme.radius.lg,
@@ -3035,12 +3341,12 @@ const styles = StyleSheet.create({
   roomCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
   roomIcon: { width: 50, height: 50 },
-  roomLabel: { color: theme.colors.soft, fontWeight: "900", fontSize: 14 },
+  roomLabel: { color: theme.colors.soft, fontWeight: "700", fontSize: 14 },
   localityCard: { width: 270, borderRadius: theme.radius.lg, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, marginRight: theme.spacing.md, padding: theme.spacing.md, gap: 14 },
-  localityTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  localityTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   localityStats: { flexDirection: "row", gap: 10 },
-  localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, overflow: "hidden", fontWeight: "800" },
-  avgRent: { color: theme.colors.green, fontSize: 18, fontWeight: "900" },
+  localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, overflow: "hidden", fontWeight: "600" },
+  avgRent: { color: theme.colors.green, fontSize: 17, fontWeight: "700" },
   detailBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.74)", padding: theme.spacing.md, justifyContent: "center" },
   detailCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
@@ -3054,18 +3360,18 @@ const styles = StyleSheet.create({
   detailImageDots: { position: "absolute", bottom: 10, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.58)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5 },
   detailImageDot: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
-  detailTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
-  detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
+  detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
+  detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },
   detailMap: { backgroundColor: theme.colors.bg, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
-  detailMapTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
-  detailMapText: { color: theme.colors.green, fontSize: 15, fontWeight: "900" },
+  detailMapTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "700" },
+  detailMapText: { color: theme.colors.green, fontSize: 15, fontWeight: "700" },
   detailMapButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
   detailMapButtonText: { color: theme.colors.text, fontWeight: "900" },
   detailDescription: { color: theme.colors.soft, fontSize: 14, lineHeight: 20 },
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "800" },
+  detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "600" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
-  detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   rideHomeSuggestionCard: {
     borderRadius: 24,
     borderWidth: 1,
@@ -3118,7 +3424,7 @@ const styles = StyleSheet.create({
   rideHeroTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
   rideHeroCopy: { flex: 1, minWidth: 0 },
   rideEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, textTransform: "uppercase" },
-  rideTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 28, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
+  rideTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 28, fontWeight: "800", marginTop: 2, textTransform: "uppercase" },
   rideTitleAccent: { color: theme.colors.accent },
   rideMeta: { color: theme.colors.muted, fontSize: 13, lineHeight: 17, fontWeight: "800", marginTop: 3 },
   rideFeatureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -3220,7 +3526,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
-  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 23, fontWeight: "900" },
+  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 23, fontWeight: "800" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
@@ -3232,11 +3538,11 @@ const styles = StyleSheet.create({
     gap: 4
   },
   rideExampleLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  rideExampleText: { color: theme.colors.text, fontSize: 14, lineHeight: 20, fontWeight: "900" },
+  rideExampleText: { color: theme.colors.text, fontSize: 14, lineHeight: 20, fontWeight: "700" },
   rideServiceStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
-  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   rideLifecycleCard: {
     borderRadius: 16,
     borderWidth: 1,
@@ -3445,76 +3751,88 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "#f7efe2"
   },
-  rideListBanner: { width: "100%", height: 106 },
+  rideListBanner: { width: "100%", height: 168 },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideOwnerOfferCard: {
-    width: "48%",
-    minHeight: 132,
-    borderRadius: 20,
+    width: "100%",
+    minHeight: 76,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(255,255,255,0.06)",
-    padding: 12,
-    gap: 8
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 11,
+    flexDirection: "row",
+    alignItems: "center"
   },
   rideOwnerOfferCardActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(59,130,246,0.18)" },
   rideOwnerOfferCardDisabled: { opacity: 0.55 },
-  rideOwnerOfferIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  rideOwnerOfferIcon: { width: 46, height: 46, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
   rideOwnerOfferIconActive: { backgroundColor: theme.colors.blue },
-  rideOwnerOfferIconText: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
-  rideOwnerOfferTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "900" },
-  rideOwnerOfferSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerOfferImage: { width: 31, height: 31 },
+  rideOwnerOfferCopy: { flex: 1, minWidth: 0 },
+  rideOwnerOfferIconText: { color: theme.colors.text, fontSize: 13, fontWeight: "700" },
+  rideOwnerOfferTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "700" },
+  rideOwnerOfferSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "500", marginTop: 2 },
   rideOwnerScreen: { flex: 1, backgroundColor: "#101010" },
-  rideOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 44, gap: 16 },
+  rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingTop: 18, paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
-  rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2 },
-  rideOwnerTitle: { color: theme.colors.text, fontSize: 28, lineHeight: 32, fontWeight: "900" },
+  rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 1 },
+  rideOwnerTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "600" },
   rideOwnerHero: {
-    borderRadius: 24,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(15,23,42,0.78)",
-    padding: 16,
+    padding: 12,
     flexDirection: "row",
-    gap: 14,
+    gap: 11,
     alignItems: "center"
   },
-  rideOwnerHeroIcon: { width: 60, height: 48 },
+  rideOwnerHeroIcon: { width: 50, height: 44, borderRadius: 14, backgroundColor: "rgba(59,130,246,0.16)", alignItems: "center", justifyContent: "center" },
+  carpoolIconCanvas: { width: 32, height: 26, position: "relative" },
+  carpoolIconCanvasCompact: { width: 23, height: 19 },
+  carpoolIconRoof: { position: "absolute", left: 7, top: 1, width: 20, height: 12, borderWidth: 2, borderColor: "#60a5fa", borderBottomWidth: 0, borderTopLeftRadius: 6, borderTopRightRadius: 6 },
+  carpoolIconRoofCompact: { left: 5, width: 15, height: 9, borderWidth: 1.5 },
+  carpoolIconBody: { position: "absolute", left: 1, top: 10, width: 31, height: 12, borderWidth: 2, borderColor: "#60a5fa", borderRadius: 5 },
+  carpoolIconBodyCompact: { top: 7, width: 23, height: 9, borderWidth: 1.5, borderRadius: 4 },
+  carpoolIconWheel: { position: "absolute", top: 20, width: 6, height: 6, borderRadius: 3, backgroundColor: "#60a5fa" },
+  carpoolIconWheelCompact: { top: 14, width: 5, height: 5, borderRadius: 3 },
+  carpoolIconWheelLeft: { left: 6 },
+  carpoolIconWheelRight: { right: 1 },
   rideOwnerHeroCopy: { flex: 1, minWidth: 0 },
-  rideOwnerHeroTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 26, fontWeight: "900" },
-  rideOwnerHeroText: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800", marginTop: 6 },
-  rideOwnerActionRow: { flexDirection: "row", gap: 10 },
-  rideOwnerPrimaryButton: { flex: 1, minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
-  rideOwnerPrimaryText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  rideOwnerSecondaryButton: { minWidth: 104, minHeight: 52, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
-  rideOwnerSecondaryText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rideOwnerHeroTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "600" },
+  rideOwnerHeroText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500", marginTop: 3 },
   rideOwnerCard: {
-    borderRadius: 22,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(255,255,255,0.05)",
-    padding: 14,
-    gap: 12
+    padding: 12,
+    gap: 9
   },
-  rideOwnerSectionTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
-  rideOwnerInputRow: { flexDirection: "row", gap: 9 },
+  rideOwnerSectionHeading: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
+  rideOwnerSectionIcon: { width: 22, height: 22, tintColor: theme.colors.soft },
+  rideOwnerSectionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "600" },
+  rideOwnerInputRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideOwnerInput: {
-    minHeight: 48,
-    borderRadius: 14,
+    minHeight: 44,
+    borderRadius: 12,
     backgroundColor: "rgba(255,255,255,0.09)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     color: theme.colors.text,
     paddingHorizontal: 12,
-    fontSize: 14,
-    fontWeight: "800"
+    fontSize: 13,
+    fontWeight: "500"
   },
-  rideOwnerHalfInput: { flex: 1, minWidth: 0 },
-  rideOwnerFieldLabel: { color: theme.colors.soft, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
+  rideOwnerHalfInput: { flex: 1, minWidth: 145 },
+  rideOwnerFieldLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.4 },
   rideOwnerStatusPillActive: { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.20)" },
   rideOwnerStatusPillDisabled: { opacity: 0.5 },
-  rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 11, fontWeight: "600" },
   rideOwnerPrompt: {
     borderRadius: 16,
     borderWidth: 1,
@@ -3523,7 +3841,7 @@ const styles = StyleSheet.create({
     color: "#bfdbfe",
     fontSize: 12,
     lineHeight: 17,
-    fontWeight: "900",
+    fontWeight: "600",
     paddingHorizontal: 12,
     paddingVertical: 10
   },
@@ -3536,12 +3854,22 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     gap: 4
   },
-  rideOwnerRouteNoteTitle: { color: theme.colors.green, fontSize: 13, fontWeight: "900" },
-  rideOwnerRouteNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "800" },
-  rideOwnerSaveButton: { minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
-  rideOwnerSaveText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
-  rideOwnerStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  rideOwnerRouteNoteTitle: { color: theme.colors.green, fontSize: 12, fontWeight: "600" },
+  rideOwnerRouteNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerListTripButton: {
+    minHeight: 52,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.82)"
+  },
+  rideOwnerListTripText: { color: theme.colors.text, fontSize: 14, fontWeight: "600" },
+  rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  rideOwnerSaveButton: { minHeight: 44, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center" },
+  rideOwnerSaveText: { color: theme.colors.text, fontSize: 13, fontWeight: "600" },
+  rideOwnerStep: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   rideOwnerStepNumber: {
     width: 24,
     height: 24,
@@ -3552,10 +3880,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.accent,
     color: theme.colors.text,
     fontSize: 11,
-    fontWeight: "900"
+    fontWeight: "700"
   },
-  rideOwnerStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
-  rideOwnerStatusWrap: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  rideOwnerStepText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerStatusWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   rideOwnerStatusPill: {
     color: theme.colors.soft,
     borderRadius: theme.radius.pill,
@@ -3566,29 +3894,30 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     overflow: "hidden",
     fontSize: 12,
-    fontWeight: "900"
+    fontWeight: "600"
   },
-  rideOwnerRequestCard: { borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 12, gap: 8 },
+  rideOwnerRequestCard: { borderRadius: 14, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 11, gap: 7 },
   rideOwnerRequestTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
-  rideOwnerRequestTitle: { flex: 1, color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" },
-  rideOwnerRequestBadge: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.13)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
-  rideOwnerRequestRoute: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideOwnerRequestTitle: { flex: 1, color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "600" },
+  rideOwnerRequestBadge: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.13)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "700" },
+  rideOwnerRequestBadgeExpired: { color: "#fecaca", backgroundColor: "rgba(239,68,68,0.18)" },
+  rideOwnerRequestRoute: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 11, fontWeight: "900" },
-  rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "600" },
+  rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, fontWeight: "500" },
   rideOwnerPinBox: { alignSelf: "flex-start", borderRadius: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.38)", backgroundColor: "rgba(34,197,94,0.12)", paddingHorizontal: 12, paddingVertical: 8 },
-  rideOwnerPinLabel: { color: theme.colors.green, fontSize: 10, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  rideOwnerPinValue: { color: theme.colors.text, fontSize: 22, fontWeight: "900", letterSpacing: 3 },
+  rideOwnerPinLabel: { color: theme.colors.green, fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
+  rideOwnerPinValue: { color: theme.colors.text, fontSize: 22, fontWeight: "700", letterSpacing: 3 },
   rideOwnerRequestActionRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   rideOwnerAcceptButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, justifyContent: "center", paddingHorizontal: 14 },
   rideOwnerDeclineButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(239,68,68,0.88)", justifyContent: "center", paddingHorizontal: 14 },
-  rideOwnerActionText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  rideOwnerActionText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   rideOwnerChatButton: { alignSelf: "flex-start", minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(59,130,246,0.18)", borderWidth: 1, borderColor: "rgba(59,130,246,0.42)", flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11 },
   rideOwnerChatIcon: { width: 22, height: 22 },
-  rideOwnerChatText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
-  rideOwnerEmpty: { borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 14, gap: 6 },
-  rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
-  rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideOwnerChatText: { color: theme.colors.text, fontSize: 12, fontWeight: "600" },
+  rideOwnerEmpty: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 12, gap: 4 },
+  rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "600" },
+  rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rentalOwnerScreen: { flex: 1, backgroundColor: "#101010" },
   rentalOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 72, gap: 16 },
   rentalOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -3628,6 +3957,7 @@ const styles = StyleSheet.create({
   ridePlannerPillRow: { flexDirection: "row", gap: 10 },
   ridePlannerPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
   ridePlannerPillText: { color: theme.colors.soft, fontWeight: "900", fontSize: 15 },
+  ridePlannerOwnerHint: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideRouteInputCard: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: theme.colors.soft, borderRadius: 14, padding: 10, gap: 10 },
   rideRouteRail: { width: 18, alignItems: "center" },
   rideRouteDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.text },
@@ -3677,6 +4007,7 @@ const styles = StyleSheet.create({
   rideTripHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   rideTripDetailsRow: { flexDirection: "row", gap: 10 },
   rideTripField: { flex: 1, minWidth: 0, gap: 5 },
+  rideTripFieldFull: { width: "100%", gap: 5 },
   rideTripLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
   rideTripInput: {
     minHeight: 46,
@@ -3690,6 +4021,7 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   rideSavedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  rideSavedRowCompact: { flexDirection: "row" },
   rideSavedItem: { flex: 1, minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12 },
   rideSavedIcon: { color: theme.colors.soft, fontSize: 22 },
   rideSavedTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
@@ -3747,16 +4079,82 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900"
   },
-  rideChoiceRow: { minHeight: 76, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: "transparent" },
-  rideChoiceRowActive: { borderColor: theme.colors.text, backgroundColor: "rgba(255,255,255,0.04)" },
+  rideChoiceRow: {
+    minHeight: 132,
+    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "rgba(58,139,255,0.30)",
+    backgroundColor: "rgba(8,24,52,0.92)",
+    shadowColor: theme.colors.blue,
+    shadowOpacity: 0.15,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 }
+  },
+  rideChoiceRowActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(12,38,82,0.96)", shadowOpacity: 0.32 },
+  rideChoiceRowExpired: { borderColor: "rgba(244,83,128,0.46)", backgroundColor: "rgba(50,14,31,0.66)", shadowColor: "#f45380", shadowOpacity: 0.12 },
   rideChoiceIcon: { width: 46, height: 36 },
+  rideChoiceRouteBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(62,145,255,0.58)",
+    backgroundColor: "rgba(39,112,245,0.20)"
+  },
+  rideChoiceRouteBadgeText: { color: theme.colors.text, fontSize: 11, fontWeight: "800" },
   rideChoiceCopy: { flex: 1, minWidth: 0 },
-  rideChoiceName: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
+  rideChoiceName: { color: theme.colors.text, fontSize: 16, fontWeight: "800", lineHeight: 20 },
+  rideChoiceUserTrip: { color: theme.colors.soft, fontSize: 12, marginTop: 4, lineHeight: 16 },
+  rideChoiceLister: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 4, lineHeight: 16 },
   rideChoiceSeats: { color: theme.colors.soft, fontSize: 14 },
-  rideChoiceMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 3 },
+  rideChoiceMeta: { color: theme.colors.muted, fontSize: 12, marginTop: 5, lineHeight: 16 },
+  rideChoiceChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
+  rideChoiceChip: {
+    color: theme.colors.soft,
+    fontSize: 10,
+    fontWeight: "800",
+    overflow: "hidden",
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.13)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 7,
+    paddingVertical: 4
+  },
+  rideChoiceChipExpired: { color: "#fecaca", borderColor: "rgba(248,113,113,0.35)", backgroundColor: "rgba(239,68,68,0.12)" },
+  rideChoiceActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 9 },
+  rideChoiceSmallButton: {
+    minHeight: 30,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 9,
+    flexDirection: "row",
+    gap: 5
+  },
+  rideChoiceSmallButtonActive: { backgroundColor: theme.colors.blue, borderColor: theme.colors.blue },
+  rideChoiceSmallButtonText: { color: theme.colors.text, fontSize: 10, fontWeight: "800" },
+  rideChoiceSmallButtonTextActive: { color: theme.colors.text },
+  rideChoiceChatButton: { borderColor: "rgba(66,143,255,0.38)", backgroundColor: "rgba(26,78,169,0.18)" },
+  rideChoiceChatIcon: { width: 18, height: 15 },
   rideChoiceContribution: { alignItems: "flex-end", gap: 1 },
-  rideChoicePrice: { color: theme.colors.text, fontSize: 19, fontWeight: "900" },
-  rideChoicePriceMeta: { color: theme.colors.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+  rideChoiceAvailability: { flexDirection: "row", alignItems: "center", gap: 6 },
+  rideChoiceAvailabilityDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.green },
+  rideChoiceAvailabilityDotExpired: { backgroundColor: "#f45380" },
+  rideChoicePrice: { color: theme.colors.green, fontSize: 17, fontWeight: "900" },
+  rideChoicePriceExpired: { color: "#f77ca1" },
+  rideChoicePriceMeta: { color: theme.colors.muted, fontSize: 9, fontWeight: "800", textTransform: "uppercase" },
+  rideChoiceExpiredMeta: { color: "#fecaca" },
   rideNoOffersCard: {
     borderRadius: 18,
     borderWidth: 1,
@@ -3794,6 +4192,7 @@ const styles = StyleSheet.create({
   rideRequestStatusText: { color: theme.colors.green, fontSize: 13, lineHeight: 18, fontWeight: "900" },
   rideChoiceButtonRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
+  rideChoiceButtonDisabled: { opacity: 0.5 },
   rideChoiceButtonText: { color: theme.colors.bg, fontSize: 18, fontWeight: "900" },
   rideLaterButton: { width: 50, height: 50, borderRadius: 11, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   rideLaterButtonText: { color: theme.colors.text, fontSize: 20 }

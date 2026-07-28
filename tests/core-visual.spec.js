@@ -91,9 +91,12 @@ async function smokePage(page, route, screenshotName) {
 }
 
 async function loginAsAdmin(page) {
+  const adminEmail = process.env.FAIRFARES_ADMIN_EMAIL;
+  const adminPassword = process.env.FAIRFARES_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) throw new Error("Set FAIRFARES_ADMIN_EMAIL and FAIRFARES_ADMIN_PASSWORD for admin visual tests.");
   await page.goto("/login");
-  await page.fill("input[name='email']", "admin@fairfares.com");
-  await page.fill("input[name='password']", "ChangeMe123!");
+  await page.fill("input[name='email']", adminEmail);
+  await page.fill("input[name='password']", adminPassword);
   await page.click("button[type='submit']");
   await page.waitForLoadState("networkidle");
   await expect(page).toHaveURL(/\/admin/);

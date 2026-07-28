@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import app
 
@@ -13,10 +14,15 @@ class InventoryReceiptTest(unittest.TestCase):
         self.old_seed = os.environ.get("FAIRFARES_SEED_DEFAULTS")
         self.old_drive_json = os.environ.get(app.DRIVE_SERVICE_ACCOUNT_ENV)
         self.old_drive_root = os.environ.get(app.DRIVE_ROOT_ENV)
+        self.old_drive_folders = {name: os.environ.get(name) for name in set(app.DRIVE_FOLDER_ENVS.values())}
         os.environ["FAIRFARES_DB_PATH"] = str(Path(self.temp_dir.name) / "fairfares.sqlite3")
         os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
         os.environ.pop(app.DRIVE_SERVICE_ACCOUNT_ENV, None)
         os.environ.pop(app.DRIVE_ROOT_ENV, None)
+        for name in self.old_drive_folders:
+            os.environ.pop(name, None)
+        self.load_env_patch = patch.object(app, "load_env_file", return_value=None)
+        self.load_env_patch.start()
         app.refresh_storage_paths()
         app.init_db()
         with app.db() as con:
@@ -30,6 +36,7 @@ class InventoryReceiptTest(unittest.TestCase):
             self.admin = con.execute("SELECT * FROM users WHERE email = 'owner@example.com'").fetchone()
 
     def tearDown(self):
+        self.load_env_patch.stop()
         if self.old_db_path is None:
             os.environ.pop("FAIRFARES_DB_PATH", None)
         else:
@@ -46,6 +53,11 @@ class InventoryReceiptTest(unittest.TestCase):
             os.environ.pop(app.DRIVE_ROOT_ENV, None)
         else:
             os.environ[app.DRIVE_ROOT_ENV] = self.old_drive_root
+        for name, value in self.old_drive_folders.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
 

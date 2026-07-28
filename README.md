@@ -95,8 +95,12 @@ Subscribe it to `checkout.session.completed`, then copy the webhook signing secr
 
 ## Admin
 
-- Email: `admin@fairfares.com`
-- Password: `ChangeMe123!`
+No administrator is created with a repository-known password. Set both
+`FAIRFARES_ADMIN_EMAIL` and a unique `FAIRFARES_ADMIN_PASSWORD` (preferably from
+your deployment secret manager) before first startup. Remove the bootstrap
+password variable after the account is established so startup cannot rotate it.
+Older installations using the former repository default have that password
+invalidated automatically; use the verified password-reset flow to regain access.
 
 Use the dashboard to update homepage copy and the poster image path. Drop supplied poster files into `static/posters/` and set `poster_image` to a path like `/static/posters/my-poster.jpg`.
 

@@ -10,11 +10,15 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import threading
+import time
 import base64
 import mimetypes
 import urllib.error
 import urllib.parse
 import urllib.request
+import io
+import zipfile
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -54,10 +58,24 @@ MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 MAX_HOUSING_IMAGE_BYTES = 3_000_000
 MAX_REQUEST_BODY_BYTES = 24_000_000
 ALLOWED_HOUSING_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_CHAT_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_CHAT_IMAGE_BYTES = 4_000_000
+ALLOWED_CHAT_FILE_MIME_TYPES = {
+    "application/pdf", "text/plain", "text/csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+MAX_CHAT_FILE_BYTES = 8_000_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
-DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
-DEFAULT_PROMOTED_ADMIN_EMAILS = "sriramreddy42@gmail.com"
-DEFAULT_REVOKED_ADMIN_EMAILS = "loki@gmail.com"
+DEFAULT_ADMIN_PASSWORD = ""
+DEFAULT_PROMOTED_ADMIN_EMAILS = ""
+DEFAULT_REVOKED_ADMIN_EMAILS = ""
+PASSWORD_HASH_ITERATIONS = 600_000
+LOGIN_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_LOGIN_ATTEMPTS", 5)
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_LOGIN_WINDOW_SECONDS", 15 * 60)
+LOGIN_RATE_LIMIT_LOCK_SECONDS = positive_int_env("FAIRFARES_LOGIN_LOCK_SECONDS", 15 * 60)
+_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+_LOGIN_LOCK = threading.Lock()
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -515,6 +533,8 @@ ACCOMMODATION_STATIC_POINTS = {
     "beavercreek, oh": (39.7092, -84.0633),
     "centerville, oh": (39.6284, -84.1594),
     "miamisburg, oh": (39.6428, -84.2866),
+    "miami, fl": (25.7617, -80.1918),
+    "miami, florida": (25.7617, -80.1918),
     "fairborn, oh": (39.8209, -84.0194),
     "huber heights, oh": (39.8439, -84.1247),
     "oakwood, oh": (39.7253, -84.1741),
@@ -972,7 +992,7 @@ def save_file_payload_locally(
     upload_dir = DB_PATH.parent / "uploads" / folder_name
     upload_dir.mkdir(parents=True, exist_ok=True)
     target = (upload_dir / safe_name).resolve()
-    if not str(target).startswith(str(upload_dir.resolve())):
+    if not target.is_relative_to(upload_dir.resolve()):
         return ""
     target.write_bytes(payload)
     return f"local://uploads/{folder_name}/{safe_name}"
@@ -1010,7 +1030,7 @@ def local_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     relative = value.replace("local://uploads/", "", 1)
     upload_root = (DB_PATH.parent / "uploads").resolve()
     target = (upload_root / relative).resolve()
-    if not str(target).startswith(str(upload_root)) or not target.is_file():
+    if not target.is_relative_to(upload_root) or not target.is_file():
         return None
     payload = target.read_bytes()
     if not payload or len(payload) > MAX_DRIVE_UPLOAD_BYTES:
@@ -1305,18 +1325,92 @@ def auto_backup_on_startup() -> None:
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
     salt = salt or secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 120_000)
-    return f"{salt.hex()}:{digest.hex()}"
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PASSWORD_HASH_ITERATIONS)
+    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(password: str, stored: str) -> bool:
     try:
-        salt_hex, digest_hex = stored.split(":", 1)
+        if stored.startswith("pbkdf2_sha256$"):
+            _, iterations_raw, salt_hex, digest_hex = stored.split("$", 3)
+            iterations = int(iterations_raw)
+            if iterations < 100_000 or iterations > 2_000_000:
+                return False
+        else:
+            salt_hex, digest_hex = stored.split(":", 1)
+            iterations = 120_000
         salt = bytes.fromhex(salt_hex)
-    except ValueError:
+        expected = bytes.fromhex(digest_hex)
+    except (TypeError, ValueError):
         return False
-    candidate = hash_password(password, salt).split(":", 1)[1]
-    return hmac.compare_digest(candidate, digest_hex)
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return hmac.compare_digest(candidate, expected)
+
+
+def password_hash_needs_upgrade(stored: str) -> bool:
+    if not str(stored or "").startswith("pbkdf2_sha256$"):
+        return True
+    try:
+        return int(stored.split("$", 3)[1]) < PASSWORD_HASH_ITERATIONS
+    except (IndexError, ValueError):
+        return True
+
+
+def login_rate_limit_key(client_ip: str, identifier: object) -> str:
+    return f"{client_ip.strip()}:{normalize_email(identifier) or normalize_phone(identifier)}"
+
+
+def login_retry_after(key: str, now: float | None = None) -> int:
+    current = now if now is not None else time.monotonic()
+    cutoff = current - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    with _LOGIN_LOCK:
+        recent = [value for value in _LOGIN_ATTEMPTS.get(key, []) if value >= cutoff]
+        if recent:
+            _LOGIN_ATTEMPTS[key] = recent
+        else:
+            _LOGIN_ATTEMPTS.pop(key, None)
+        if len(recent) < LOGIN_RATE_LIMIT_ATTEMPTS:
+            return 0
+        return max(1, int(LOGIN_RATE_LIMIT_LOCK_SECONDS - (current - recent[-1])))
+
+
+def record_login_failure(key: str, now: float | None = None) -> None:
+    current = now if now is not None else time.monotonic()
+    cutoff = current - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    with _LOGIN_LOCK:
+        recent = [value for value in _LOGIN_ATTEMPTS.get(key, []) if value >= cutoff]
+        recent.append(current)
+        _LOGIN_ATTEMPTS[key] = recent[-LOGIN_RATE_LIMIT_ATTEMPTS:]
+
+
+def clear_login_failures(key: str) -> None:
+    with _LOGIN_LOCK:
+        _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def application_secret() -> str:
+    configured = (os.environ.get("FAIRFARES_APP_SECRET") or os.environ.get("SECRET_KEY") or "").strip()
+    if len(configured) >= 32:
+        return configured
+    secret_path = DB_PATH.parent / ".fairfares-app-secret"
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if len(existing) >= 32:
+            return existing
+    except FileNotFoundError:
+        pass
+    generated = secrets.token_urlsafe(48)
+    try:
+        with secret_path.open("x", encoding="utf-8") as handle:
+            handle.write(generated)
+        secret_path.chmod(0o600)
+        return generated
+    except FileExistsError:
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if len(existing) >= 32:
+            return existing
+    raise RuntimeError("FairFares application secret could not be initialized securely.")
 
 
 def normalize_email(value: object) -> str:
@@ -1379,8 +1473,8 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
 
 
 def configured_admin_credentials() -> tuple[str, str]:
-    email = normalize_email(os.environ.get("FAIRFARES_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL))
-    password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+    email = normalize_email(os.environ.get("FAIRFARES_ADMIN_EMAIL", ""))
+    password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", "")
     return email, password
 
 
@@ -1476,9 +1570,17 @@ def repair_normalized_auth_emails(con: sqlite3.Connection) -> None:
 
 
 def ensure_default_admin(con: sqlite3.Connection) -> None:
-    ensure_admin_account(con, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD)
+    legacy_admin = find_user_by_email(con, DEFAULT_ADMIN_EMAIL)
+    legacy_password = "ChangeMe" + "123!"
+    if legacy_admin and verify_password(legacy_password, row_value(legacy_admin, "password_hash")):
+        # Invalidate repository-known credentials from older deployments while
+        # preserving the account for the verified password-reset flow.
+        con.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(secrets.token_urlsafe(48)), int(legacy_admin["id"])),
+        )
     configured_email, configured_password = configured_admin_credentials()
-    if configured_email != DEFAULT_ADMIN_EMAIL or configured_password != DEFAULT_ADMIN_PASSWORD:
+    if configured_email and configured_password:
         ensure_admin_account(con, configured_email, configured_password)
 
 
@@ -2206,6 +2308,42 @@ def verify_stripe_signature(payload: bytes, signature_header: str) -> bool:
     signed_payload = timestamp.encode("utf-8") + b"." + payload
     expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
     return any(hmac.compare_digest(expected, signature) for signature in signatures)
+
+
+def valid_chat_document_payload(mime_type: str, filename: str, payload: bytes) -> bool:
+    """Validate document structure, not only the caller-controlled MIME header."""
+    suffix = Path(filename).suffix.lower()
+    if mime_type == "application/pdf":
+        return suffix == ".pdf" and payload.startswith(b"%PDF-") and b"%%EOF" in payload[-2048:]
+    if mime_type in {"text/plain", "text/csv"}:
+        expected = {"text/plain": {".txt"}, "text/csv": {".csv"}}[mime_type]
+        if suffix not in expected or b"\x00" in payload:
+            return False
+        try:
+            payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return True
+    ooxml_roots = {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (".docx", "word/"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (".xlsx", "xl/"),
+    }
+    expected = ooxml_roots.get(mime_type)
+    if not expected or suffix != expected[0] or not payload.startswith(b"PK"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            entries = archive.infolist()
+            names = {entry.filename for entry in entries}
+            if len(entries) > 2_000 or "[Content_Types].xml" not in names:
+                return False
+            if not any(name.startswith(expected[1]) for name in names):
+                return False
+            if any(name.lower().endswith(("vbaproject.bin", ".exe", ".dll", ".js")) for name in names):
+                return False
+            return sum(entry.file_size for entry in entries) <= 32_000_000
+    except (OSError, zipfile.BadZipFile, RuntimeError):
+        return False
 
 
 def slack_link(origin: str, path: str, label: str) -> str:
@@ -3431,7 +3569,7 @@ def automated_booking_email(
     cta_label: str = "Manage Booking",
     cta_path: str = "/manage-booking",
 ) -> dict[str, object]:
-    return reserve_and_send_automation(
+    result = reserve_and_send_automation(
         event_key,
         int(row_value(booking, "id") or 0),
         int(row_value(booking, "user_id") or 0),
@@ -3444,6 +3582,17 @@ def automated_booking_email(
         cta_path,
         origin,
     )
+    reminder_copy = {
+        "pickup_24h": ("Rental pickup tomorrow", f"Your {row_value(booking, 'car_name') or 'FairFares car'} is scheduled for pickup tomorrow."),
+        "pickup_2h": ("Rental pickup starts soon", f"Your pickup at {row_value(booking, 'pickup_location') or 'the selected location'} starts within two hours."),
+        "return_24h": ("Rental return due tomorrow", f"Your {row_value(booking, 'car_name') or 'FairFares car'} is scheduled for return tomorrow."),
+        "return_2h": ("Rental return due soon", f"Your return at {row_value(booking, 'dropoff_location') or row_value(booking, 'return_location') or 'the selected location'} is due within two hours."),
+        "trip_completed": ("Rental trip completed", "Your receipt and rental documents remain available in FairFares."),
+    }
+    if event_key in reminder_copy and result.get("status") != "already sent":
+        push_title, push_body = reminder_copy[event_key]
+        send_rental_booking_push(booking, push_title, push_body, event_key.upper())
+    return result
 
 
 def active_customer_bookings() -> list[sqlite3.Row]:
@@ -3550,6 +3699,32 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
                         "Your pickup starts soon.",
                         f"Your {ctx['car_name']} pickup window is at {ctx['pickup_location']} today. Open Manage Booking for status, documents, or support.",
                         "Open Live Status",
+                    )
+                )
+        if return_at and booking_status == "PICKED_UP":
+            until_return = return_at - now
+            if timedelta(hours=2) < until_return <= timedelta(hours=24):
+                results.append(
+                    automated_booking_email(
+                        "return_24h",
+                        booking,
+                        origin,
+                        f"Your FairFares return is tomorrow: {ctx['booking_id']}",
+                        "Vehicle return is almost here.",
+                        f"Your {ctx['car_name']} is scheduled for return at {ctx['dropoff']}. Open Manage Booking for the return location and documents.",
+                        "View Return Details",
+                    )
+                )
+            if timedelta(0) < until_return <= timedelta(hours=2):
+                results.append(
+                    automated_booking_email(
+                        "return_2h",
+                        booking,
+                        origin,
+                        f"Final FairFares return reminder: {ctx['booking_id']}",
+                        "Your return is due soon.",
+                        f"Return your {ctx['car_name']} at the selected return location within the next two hours.",
+                        "Open Return Status",
                     )
                 )
         if booking_status == "RETURNED":
@@ -3965,6 +4140,13 @@ def init_db() -> None:
                 message_type TEXT NOT NULL DEFAULT 'TEXT',
                 message_text TEXT NOT NULL DEFAULT '',
                 attachment_url TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '',
+                context_type TEXT NOT NULL DEFAULT '',
+                context_public_id TEXT NOT NULL DEFAULT '',
+                context_title TEXT NOT NULL DEFAULT '',
+                context_subtitle TEXT NOT NULL DEFAULT '',
+                context_owner_user_id INTEGER,
+                context_owner_name TEXT NOT NULL DEFAULT '',
                 client_message_id TEXT NOT NULL DEFAULT '',
                 reply_to_message_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4024,6 +4206,19 @@ def init_db() -> None:
                 UNIQUE(blocker_user_id, blocked_user_id),
                 FOREIGN KEY(blocker_user_id) REFERENCES users(id),
                 FOREIGN KEY(blocked_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS mobile_push_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                platform TEXT NOT NULL DEFAULT '',
+                device_label TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS accommodation_metros (
@@ -4875,6 +5070,13 @@ def init_db() -> None:
         ensure_column(con, "chat_participants", "reported_at", "reported_at TEXT")
         ensure_column(con, "chat_messages", "message_type", "message_type TEXT NOT NULL DEFAULT 'TEXT'")
         ensure_column(con, "chat_messages", "attachment_url", "attachment_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "metadata_json", "metadata_json TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "context_type", "context_type TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "context_public_id", "context_public_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "context_title", "context_title TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "context_subtitle", "context_subtitle TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_messages", "context_owner_user_id", "context_owner_user_id INTEGER")
+        ensure_column(con, "chat_messages", "context_owner_name", "context_owner_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_messages", "client_message_id", "client_message_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_messages", "reply_to_message_id", "reply_to_message_id INTEGER")
         ensure_column(con, "chat_messages", "delivered_at", "delivered_at TEXT")
@@ -4894,6 +5096,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
         con.execute(
             """
             UPDATE chat_conversations
@@ -6087,6 +6290,13 @@ def confirm_booking_hold_payment(
         f"{'Full payment' if payment_option == 'full' else '10% hold'} paid by Stripe: {format_money(paid_amount)}",
     )
     send_confirmed_booking_email_once(booking_id, origin)
+    confirmed_booking = get_booking_by_id(booking_id)
+    send_rental_booking_push(
+        confirmed_booking or booking,
+        "Rental booking confirmed",
+        f"Payment received. Your booking {row_value(booking, 'booking_id') or booking_id} is confirmed.",
+        "PAYMENT_CONFIRMED",
+    )
     return True, invoice_number
 
 
@@ -6198,6 +6408,13 @@ def record_security_deposit_authorization(data_object: dict[str, object]) -> tup
             """,
             (round(amount, 2), payment_reference, booking_id),
         )
+    authorized_booking = get_booking_by_id(booking_id)
+    send_rental_booking_push(
+        authorized_booking,
+        "Security deposit authorized",
+        f"Your refundable {format_money(amount)} security deposit authorization is recorded.",
+        "SECURITY_DEPOSIT_AUTHORIZED",
+    )
     return True, payment_reference
 
 
@@ -11704,6 +11921,11 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
         query = normalize_accommodation_place_label(search_metro)
     if not query:
         return {}
+    # Prefer an exact built-in place before broad cache matching. For example,
+    # a cache row for "Miamisburg, OH" must never satisfy "Miami, Florida".
+    static_lat, static_lng = static_accommodation_point(query)
+    if static_lat and static_lng:
+        return {"label": query, "metro": search_metro, "lat": static_lat, "lng": static_lng, "source": "static"}
     try:
         with db() as con:
             row = con.execute(
@@ -11717,7 +11939,10 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                 """,
                 (query, query),
             ).fetchone()
-            if not row:
+            # Broad city-name matching is only safe for an unqualified search.
+            # A state/address-qualified query must remain exact or be geocoded;
+            # otherwise names such as Miami and Miamisburg can collide.
+            if not row and "," not in query and not re.search(r"\b\d{5}(?:-\d{4})?\b", query):
                 city = query.split(",")[0].strip()
                 row = con.execute(
                     """
@@ -11944,7 +12169,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "lng": float(row_value(row, "lng") or 0),
         "imageUrl": preview_image,
         "images": images,
-        "posterName": row_value(row, "contact_name") or "FairFares member",
+        "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -12313,11 +12538,22 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
     route_metrics = ride_route_match_metrics(row, origin_point, destination_point)
     expired = ride_post_expired(row)
     status = ride_effective_status(row)
+    owner_user_id = int(row_value(row, "user_id") or 0)
+    owner_name = row_value(row, "owner_name")
+    if not owner_name and owner_user_id:
+        try:
+            with db() as con:
+                owner = con.execute("SELECT name FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone()
+            owner_name = row_value(owner, "name") if owner else ""
+        except sqlite3.Error:
+            owner_name = ""
     return {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
         "typeLabel": RIDE_TYPE_LABELS.get(row_value(row, "ride_type"), "Ride"),
         "role": row_value(row, "rider_role"),
+        "ownerUserId": owner_user_id,
+        "ownerName": owner_name,
         "title": row_value(row, "title"),
         "origin": row_value(row, "origin_label"),
         "destination": row_value(row, "destination_label"),
@@ -12352,7 +12588,7 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
 
 
 def ride_pickup_pin(request_public_id: str, driver_user_id: int) -> str:
-    secret = os.environ.get("FAIRFARES_APP_SECRET") or os.environ.get("SECRET_KEY") or "fairfares-ride-pin-v1"
+    secret = application_secret()
     raw = f"{request_public_id}:{driver_user_id}:{secret}".encode("utf-8")
     value = int(hashlib.sha256(raw).hexdigest()[:8], 16) % 10000
     return f"{value:04d}"
@@ -12432,23 +12668,47 @@ def mobile_ride_posts(
     origin_point = ride_point(origin, city) if origin else ride_point(city)
     destination_point = ride_point(destination, city) if destination else {}
     if origin_lat and origin_lng:
-        origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
+        supplied_origin = {"lat": float(origin_lat), "lng": float(origin_lng)}
+        resolved_origin_lat = float(origin_point.get("lat") or 0)
+        resolved_origin_lng = float(origin_point.get("lng") or 0)
+        discrepancy = (
+            distance_miles_between(resolved_origin_lat, resolved_origin_lng, supplied_origin["lat"], supplied_origin["lng"])
+            if resolved_origin_lat and resolved_origin_lng
+            else 0
+        )
+        if not resolved_origin_lat or not resolved_origin_lng or discrepancy <= 75:
+            origin_point = {**origin_point, **supplied_origin}
     if destination_lat and destination_lng:
-        destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
-    clauses = ["status = 'ACTIVE'"]
+        supplied_destination = {"lat": float(destination_lat), "lng": float(destination_lng)}
+        resolved_destination_lat = float(destination_point.get("lat") or 0)
+        resolved_destination_lng = float(destination_point.get("lng") or 0)
+        discrepancy = (
+            distance_miles_between(
+                resolved_destination_lat,
+                resolved_destination_lng,
+                supplied_destination["lat"],
+                supplied_destination["lng"],
+            )
+            if resolved_destination_lat and resolved_destination_lng
+            else 0
+        )
+        if not resolved_destination_lat or not resolved_destination_lng or discrepancy <= 75:
+            destination_point = {**destination_point, **supplied_destination}
+    clauses = ["ride_posts.status = 'ACTIVE'"]
     values: list[object] = []
     if ride_type:
-        clauses.append("ride_type = ?")
+        clauses.append("ride_posts.ride_type = ?")
         values.append(ride_type)
     if city:
         city_root = city.split(",", 1)[0].strip()
-        clauses.append("(lower(city_label) LIKE lower(?) OR lower(origin_label) LIKE lower(?) OR lower(destination_label) LIKE lower(?))")
+        clauses.append("(lower(ride_posts.city_label) LIKE lower(?) OR lower(ride_posts.origin_label) LIKE lower(?) OR lower(ride_posts.destination_label) LIKE lower(?))")
         values.extend([f"%{city_root}%", f"%{city_root}%", f"%{city_root}%"])
     sql = f"""
-        SELECT *
+        SELECT ride_posts.*, users.name AS owner_name
         FROM ride_posts
+        LEFT JOIN users ON users.id = ride_posts.user_id
         WHERE {' AND '.join(clauses)}
-        ORDER BY datetime(created_at) DESC
+        ORDER BY datetime(ride_posts.created_at) DESC
         LIMIT ?
     """
     values.append(max(1, min(int(limit or 30), 80)))
@@ -12461,7 +12721,9 @@ def mobile_ride_posts(
             for item in payloads:
                 route_deviation = item.get("routeDeviationMiles")
                 max_detour = ride_allowed_detour_miles(item)
-                detour_ok = route_deviation is None or float(route_deviation) <= max_detour
+                # A two-ended search is only a match when its route can actually
+                # be evaluated. Missing metrics must not become an automatic hit.
+                detour_ok = route_deviation is not None and float(route_deviation) <= max_detour
                 if detour_ok:
                     route_filtered.append(item)
             payloads = route_filtered
@@ -12524,6 +12786,7 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
     buckets: list[dict[str, object]] = []
     notified_count = 0
     nearest_radius = 0
+    notified_driver_user_ids: list[int] = []
     for radius in (10, 20, 30, 50):
         bucket_count = 0
         for driver in driver_rows:
@@ -12555,13 +12818,19 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
             )
             if cursor.rowcount:
                 bucket_count += 1
+                notified_driver_user_ids.append(int(row_value(driver, "user_id") or 0))
         if bucket_count and not nearest_radius:
             nearest_radius = radius
         notified_count += bucket_count
         buckets.append({"radiusMiles": radius, "notifiedCount": bucket_count})
         if bucket_count:
             break
-    return {"notifiedCount": notified_count, "nearestRadius": nearest_radius, "radiusBuckets": buckets}
+    return {
+        "notifiedCount": notified_count,
+        "nearestRadius": nearest_radius,
+        "radiusBuckets": buckets,
+        "driverUserIds": [user_id for user_id in dict.fromkeys(notified_driver_user_ids) if user_id],
+    }
 
 
 def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -> tuple[int, dict[str, object]]:
@@ -12641,6 +12910,26 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
             """,
             (int(row_value(notification, "id") or 0),),
         ).fetchone()
+        requester_user_id = int(row_value(request_row, "user_id") or 0)
+        route_label = " → ".join(
+            value for value in (
+                clean_text_value(row_value(request_row, "origin_label") or row_value(request_row, "origin"), 90),
+                clean_text_value(row_value(request_row, "destination_label") or row_value(request_row, "destination"), 90),
+            ) if value
+        )
+    status_titles = {
+        "ACCEPTED": "Carpool request accepted",
+        "DECLINED": "Carpool request declined",
+        "EN_ROUTE": "Your carpool driver is en route",
+        "ARRIVED": "Your carpool driver has arrived",
+        "COMPLETED": "Carpool ride completed",
+    }
+    send_mobile_push_for_users(
+        [requester_user_id],
+        status_titles.get(next_status, "Carpool request updated"),
+        route_label or "Open FairFares to review your carpool activity.",
+        {"type": "CARPOOL_STATUS", "rideId": ride_public_id, "status": next_status, "target": "activity"},
+    )
     response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)
     response["activityRole"] = "DRIVER_NOTIFICATION"
     response["dispatchStatus"] = next_status
@@ -12893,6 +13182,8 @@ def mobile_housing_posts(
     budget: str = "",
     radius: float = 0,
     limit: int = 30,
+    center_lat: float = 0,
+    center_lng: float = 0,
 ) -> list[dict[str, object]]:
     expire_accommodation_posts()
     clauses = [
@@ -12959,6 +13250,7 @@ def mobile_housing_posts(
         rows = con.execute(
             f"""
             SELECT accommodation_posts.*,
+                   (SELECT name FROM users WHERE users.id = accommodation_posts.user_id) AS owner_name,
                    (SELECT image_url FROM accommodation_post_images
                     WHERE accommodation_post_images.post_id = accommodation_posts.id
                     ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
@@ -12976,8 +13268,8 @@ def mobile_housing_posts(
         search_radius_miles = 100
     focus_query = area or city
     center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
-    center_lat = float(center.get("lat") or 0)
-    center_lng = float(center.get("lng") or 0)
+    center_lat = float(center_lat or center.get("lat") or 0)
+    center_lng = float(center_lng or center.get("lng") or 0)
     area_terms: list[str] = []
     if area:
         area_terms = [area, area.replace(", ", ","), area.replace(",", ", ")]
@@ -13004,9 +13296,26 @@ def mobile_housing_posts(
             city_match = row_matches_terms(row, city_terms)
             nearby_limit = search_radius_miles or 60
             nearby_match = distance is not None and distance <= nearby_limit
-            if not (area_match or nearby_match or (not center_lat and city_match)):
-                continue
-            rank = 0 if area_match else 1 if nearby_match else 2
+            requested_city = (city.split(",", 1)[0] if city else "").strip().lower()
+            listing_city = (row_value(row, "city").split(",", 1)[0] if row_value(row, "city") else "").strip().lower()
+            selected_area_text = area.lower()
+            city_consistent = (
+                not requested_city
+                or not listing_city
+                or requested_city == listing_city
+                or listing_city in selected_area_text
+            )
+            if center_lat and center_lng:
+                # A geocoded place search is radius-bound. Text matches must not
+                # bypass distance, and listings tagged to another city are excluded
+                # even when their stored coordinates are stale or incorrect.
+                if not nearby_match or not city_consistent:
+                    continue
+                rank = 0 if area_match else 1
+            else:
+                if not (area_match or city_match):
+                    continue
+                rank = 0 if area_match else 2
         else:
             rank = 0
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
@@ -13730,6 +14039,96 @@ def get_accommodation_post_message_recipient(con: sqlite3.Connection, post: sqli
     return None
 
 
+def get_person_conversation(
+    con: sqlite3.Connection,
+    first_user_id: int,
+    second_user_id: int,
+) -> sqlite3.Row | None:
+    """Return the newest active one-to-one thread shared by two users."""
+    return con.execute(
+        """
+        SELECT conversations.*
+        FROM chat_conversations conversations
+        JOIN chat_participants first_participant
+          ON first_participant.conversation_id = conversations.id
+         AND first_participant.user_id = ?
+        JOIN chat_participants second_participant
+          ON second_participant.conversation_id = conversations.id
+         AND second_participant.user_id = ?
+        WHERE conversations.community_id IS NULL
+          AND conversations.status = 'ACTIVE'
+          AND (SELECT COUNT(*) FROM chat_participants members WHERE members.conversation_id = conversations.id) = 2
+        ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC,
+                 conversations.id DESC
+        LIMIT 1
+        """,
+        (first_user_id, second_user_id),
+    ).fetchone()
+
+
+def consolidate_person_conversations(con: sqlite3.Connection, user_id: int) -> None:
+    """Merge legacy duplicate direct threads so the inbox has one card per person."""
+    rows = con.execute(
+        """
+        SELECT conversations.id,
+               other_participant.user_id AS other_user_id,
+               COALESCE(conversations.last_message_at, conversations.updated_at) AS activity_at
+        FROM chat_conversations conversations
+        JOIN chat_participants participant
+          ON participant.conversation_id = conversations.id
+         AND participant.user_id = ?
+        JOIN chat_participants other_participant
+          ON other_participant.conversation_id = conversations.id
+         AND other_participant.user_id != ?
+        WHERE conversations.community_id IS NULL
+          AND conversations.status = 'ACTIVE'
+          AND (SELECT COUNT(*) FROM chat_participants members WHERE members.conversation_id = conversations.id) = 2
+        ORDER BY datetime(activity_at) DESC, conversations.id DESC
+        """,
+        (user_id, user_id),
+    ).fetchall()
+    canonical_by_person: dict[int, int] = {}
+    for row in rows:
+        conversation_id = int(row_value(row, "id") or 0)
+        other_user_id = int(row_value(row, "other_user_id") or 0)
+        if not conversation_id or not other_user_id:
+            continue
+        canonical_id = canonical_by_person.get(other_user_id)
+        if canonical_id is None:
+            canonical_by_person[other_user_id] = conversation_id
+            continue
+        participant_rows = con.execute(
+            "SELECT user_id, last_read_message_id FROM chat_participants WHERE conversation_id IN (?, ?)",
+            (canonical_id, conversation_id),
+        ).fetchall()
+        read_ids_by_user: dict[int, list[int]] = {}
+        for participant in participant_rows:
+            participant_user_id = int(row_value(participant, "user_id") or 0)
+            read_ids_by_user.setdefault(participant_user_id, []).append(int(row_value(participant, "last_read_message_id") or 0))
+        con.execute("UPDATE chat_messages SET conversation_id = ? WHERE conversation_id = ?", (canonical_id, conversation_id))
+        con.execute("UPDATE chat_message_reports SET conversation_id = ? WHERE conversation_id = ?", (canonical_id, conversation_id))
+        for participant_user_id, read_ids in read_ids_by_user.items():
+            positive_read_ids = [read_id for read_id in read_ids if read_id > 0]
+            merged_read_id = min(positive_read_ids) if positive_read_ids else 0
+            con.execute(
+                "UPDATE chat_participants SET last_read_message_id = ? WHERE conversation_id = ? AND user_id = ?",
+                (merged_read_id, canonical_id, participant_user_id),
+            )
+        con.execute(
+            "UPDATE chat_conversations SET status = 'MERGED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (conversation_id,),
+        )
+        con.execute(
+            """
+            UPDATE chat_conversations
+            SET updated_at = CURRENT_TIMESTAMP,
+                last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE conversation_id = ?)
+            WHERE id = ?
+            """,
+            (canonical_id, canonical_id),
+        )
+
+
 def get_or_create_accommodation_conversation(
     con: sqlite3.Connection,
     post_public_id: str,
@@ -13748,24 +14147,23 @@ def get_or_create_accommodation_conversation(
     if not recipient:
         return None, "This post cannot receive chat messages yet because the poster does not have an active FairFares account."
     recipient_id = int(row_value(recipient, "id") or 0)
-    existing = con.execute(
-        """
-        SELECT conversations.*
-        FROM chat_conversations conversations
-        JOIN chat_participants p1 ON p1.conversation_id = conversations.id AND p1.user_id = ?
-        JOIN chat_participants p2 ON p2.conversation_id = conversations.id AND p2.user_id = ?
-        WHERE conversations.accommodation_post_id = ?
-        LIMIT 1
-        """,
-        (sender_id, recipient_id, post["id"]),
-    ).fetchone()
+    existing = get_person_conversation(con, sender_id, recipient_id)
     if existing:
-        return existing, ""
+        con.execute(
+            """
+            UPDATE chat_conversations
+            SET conversation_type = 'DIRECT', accommodation_post_id = ?, ride_post_id = NULL,
+                subject = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (post["id"], row_value(post, "title"), existing["id"]),
+        )
+        return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (existing["id"],)).fetchone(), ""
     public_id = chat_public_id()
     con.execute(
         """
         INSERT INTO chat_conversations (public_id, conversation_type, accommodation_post_id, subject, last_message_at)
-        VALUES (?, 'HOST_GUEST', ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, 'DIRECT', ?, ?, CURRENT_TIMESTAMP)
         """,
         (public_id, post["id"], row_value(post, "title")),
     )
@@ -13796,6 +14194,47 @@ def get_or_create_ride_conversation(
     if ride_status not in {"ACTIVE", "ACCEPTED", "EN_ROUTE", "ARRIVED"}:
         return None, "That ride is no longer active."
     sender_id = int(row_value(sender, "id") or 0)
+    recipient_id = ride_message_recipient_id(con, ride, sender_id)
+    if not recipient_id or recipient_id == sender_id:
+        return None, "This ride cannot receive chat messages from this account."
+    recipient = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (recipient_id,)).fetchone()
+    if not recipient:
+        return None, "This ride owner does not have an active FairFares account."
+    route = " -> ".join(bit for bit in (row_value(ride, "origin_label"), row_value(ride, "destination_label")) if bit)
+    subject = row_value(ride, "title") or route or "FairFares ride"
+    existing = get_person_conversation(con, sender_id, recipient_id)
+    if existing:
+        con.execute(
+            """
+            UPDATE chat_conversations
+            SET conversation_type = 'DIRECT', accommodation_post_id = NULL, ride_post_id = ?,
+                subject = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (ride["id"], subject, existing["id"]),
+        )
+        return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (existing["id"],)).fetchone(), ""
+    public_id = chat_public_id()
+    con.execute(
+        """
+        INSERT INTO chat_conversations (public_id, conversation_type, ride_post_id, subject, last_message_at)
+        VALUES (?, 'DIRECT', ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (public_id, ride["id"], subject),
+    )
+    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, sender_id),
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, recipient_id),
+    )
+    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
+
+
+def ride_message_recipient_id(con: sqlite3.Connection, ride: sqlite3.Row, sender_id: int) -> int:
     recipient_id = int(row_value(ride, "user_id") or 0)
     accepted_driver_user_id = 0
     if row_value(ride, "rider_role") == "RIDER":
@@ -13813,44 +14252,7 @@ def get_or_create_ride_conversation(
         accepted_driver_user_id = int(row_value(accepted, "driver_user_id") or 0) if accepted else 0
         if accepted_driver_user_id:
             recipient_id = int(row_value(ride, "user_id") or 0) if sender_id == accepted_driver_user_id else accepted_driver_user_id
-    if not recipient_id or recipient_id == sender_id:
-        return None, "This ride cannot receive chat messages from this account."
-    recipient = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (recipient_id,)).fetchone()
-    if not recipient:
-        return None, "This ride owner does not have an active FairFares account."
-    existing = con.execute(
-        """
-        SELECT conversations.*
-        FROM chat_conversations conversations
-        JOIN chat_participants p1 ON p1.conversation_id = conversations.id AND p1.user_id = ?
-        JOIN chat_participants p2 ON p2.conversation_id = conversations.id AND p2.user_id = ?
-        WHERE conversations.ride_post_id = ?
-        LIMIT 1
-        """,
-        (sender_id, recipient_id, ride["id"]),
-    ).fetchone()
-    if existing:
-        return existing, ""
-    route = " -> ".join(bit for bit in (row_value(ride, "origin_label"), row_value(ride, "destination_label")) if bit)
-    subject = row_value(ride, "title") or route or "FairFares ride"
-    public_id = chat_public_id()
-    con.execute(
-        """
-        INSERT INTO chat_conversations (public_id, conversation_type, ride_post_id, subject, last_message_at)
-        VALUES (?, 'RIDE', ?, ?, CURRENT_TIMESTAMP)
-        """,
-        (public_id, ride["id"], subject),
-    )
-    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
-    con.execute(
-        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
-        (conversation_id, sender_id),
-    )
-    con.execute(
-        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
-        (conversation_id, recipient_id),
-    )
-    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
+    return recipient_id
 
 
 def save_chat_message(
@@ -13859,6 +14261,7 @@ def save_chat_message(
     sender: sqlite3.Row,
     message_text: str,
     client_message_id: str = "",
+    context: dict[str, str] | None = None,
 ) -> sqlite3.Row:
     sender_id = int(row_value(sender, "id") or 0)
     if client_message_id:
@@ -13874,13 +14277,41 @@ def save_chat_message(
         ).fetchone()
         if existing:
             return existing
-    con.execute(
-        """
-        INSERT INTO chat_messages (conversation_id, sender_id, message_text, client_message_id)
-        VALUES (?, ?, ?, ?)
+    message_context = context or {}
+    insert_verb = "INSERT OR IGNORE" if client_message_id else "INSERT"
+    cursor = con.execute(
+        f"""
+        {insert_verb} INTO chat_messages
+        (conversation_id, sender_id, message_text, context_type, context_public_id,
+         context_title, context_subtitle, context_owner_user_id, context_owner_name, client_message_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (conversation_id, sender_id, message_text, client_message_id),
+        (
+            conversation_id,
+            sender_id,
+            message_text,
+            message_context.get("type", ""),
+            message_context.get("id", ""),
+            message_context.get("title", ""),
+            message_context.get("subtitle", ""),
+            int(message_context.get("ownerUserId", "0") or 0) or None,
+            message_context.get("ownerName", ""),
+            client_message_id,
+        ),
     )
+    if client_message_id and cursor.rowcount == 0:
+        existing = con.execute(
+            """
+            SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+            FROM chat_messages messages
+            JOIN users ON users.id = messages.sender_id
+            WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ?
+            LIMIT 1
+            """,
+            (conversation_id, sender_id, client_message_id),
+        ).fetchone()
+        if existing:
+            return existing
     message_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
     con.execute(
         """
@@ -13916,7 +14347,20 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
     read_at = row_value(row, "read_at")
     delivered_at = row_value(row, "delivered_at")
     can_edit, _ = chat_message_is_editable(row, current_user_id)
+    stored_attachment_url = row_value(row, "attachment_url")
+    attachment_url = f"/api/chat/attachments/{message_id}" if stored_attachment_url else ""
     status = ""
+    try:
+        metadata = json.loads(row_value(row, "metadata_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if (row_value(row, "message_type") or "") == "POLL":
+        votes = metadata.pop("votes", {}) if isinstance(metadata.get("votes"), dict) else {}
+        options = metadata.get("options") if isinstance(metadata.get("options"), list) else []
+        metadata["voteCounts"] = [sum(1 for choice in votes.values() if choice == index) for index in range(len(options))]
+        metadata["selectedOption"] = votes.get(str(current_user_id), -1)
     if mine:
         if read_at or (seen_message_id and message_id <= seen_message_id):
             status = "seen"
@@ -13932,7 +14376,14 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
         "mine": mine,
         "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
-        "attachmentUrl": row_value(row, "attachment_url"),
+        "attachmentUrl": attachment_url,
+        "metadata": metadata,
+        "contextType": row_value(row, "context_type"),
+        "contextId": row_value(row, "context_public_id"),
+        "contextTitle": row_value(row, "context_title"),
+        "contextSubtitle": row_value(row, "context_subtitle"),
+        "contextOwnerUserId": int(row_value(row, "context_owner_user_id") or 0),
+        "contextOwnerName": row_value(row, "context_owner_name"),
         "createdAt": row_value(row, "created_at"),
         "deliveredAt": delivered_at,
         "readAt": read_at,
@@ -13943,8 +14394,163 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
     }
 
 
+def chat_listing_context(
+    con: sqlite3.Connection,
+    sender_id: int,
+    post_public_id: str = "",
+    ride_public_id: str = "",
+) -> dict[str, str]:
+    if post_public_id:
+        post = con.execute(
+            "SELECT * FROM accommodation_posts WHERE public_id = ? LIMIT 1",
+            (post_public_id,),
+        ).fetchone()
+        if post:
+            owner = get_accommodation_post_message_recipient(con, post, sender_id)
+            if not owner:
+                return {}
+            location = row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or row_value(post, "city")
+            rent = format_accommodation_rent(post)
+            subtitle = " · ".join(bit for bit in (location, rent) if bit)
+            return {
+                "type": "HOUSING",
+                "id": post_public_id,
+                "title": row_value(post, "title") or "Housing listing",
+                "subtitle": subtitle,
+                "ownerUserId": row_value(owner, "id"),
+                "ownerName": row_value(owner, "name") or "FairFares member",
+            }
+    if ride_public_id:
+        ride = con.execute(
+            "SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1",
+            (ride_public_id,),
+        ).fetchone()
+        if ride:
+            owner_user_id = ride_message_recipient_id(con, ride, sender_id)
+            owner = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone() if owner_user_id else None
+            if not owner:
+                return {}
+            route = " → ".join(bit for bit in (row_value(ride, "origin_label"), row_value(ride, "destination_label")) if bit)
+            timing = " · ".join(bit for bit in (row_value(ride, "pickup_date"), row_value(ride, "pickup_time")) if bit)
+            return {
+                "type": "CARPOOL",
+                "id": ride_public_id,
+                "title": route or row_value(ride, "title") or "Carpool listing",
+                "subtitle": timing,
+                "ownerUserId": row_value(owner, "id"),
+                "ownerName": row_value(owner, "name") or "FairFares member",
+            }
+    return {}
+
+
+def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> None:
+    valid_tokens = [token for token in dict.fromkeys(tokens) if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")]
+    if not valid_tokens:
+        return
+    notification_data = data or {}
+    notification_type = str(notification_data.get("type") or "")
+    channel_id = "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "fchat"
+    for offset in range(0, len(valid_tokens), 100):
+        token_batch = valid_tokens[offset:offset + 100]
+        messages = [
+            {
+                "to": token,
+                "sound": "default",
+                "title": title[:120],
+                "body": body[:240],
+                "data": notification_data,
+                "channelId": channel_id,
+            }
+            for token in token_batch
+        ]
+        request = urllib.request.Request(
+            "https://exp.host/--/api/v2/push/send",
+            data=json.dumps(messages).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8") or "{}")
+            tickets = payload.get("data") if isinstance(payload, dict) else []
+            invalid_tokens: list[str] = []
+            if isinstance(tickets, list):
+                for token, ticket in zip(token_batch, tickets):
+                    details = ticket.get("details") if isinstance(ticket, dict) else {}
+                    if isinstance(details, dict) and details.get("error") == "DeviceNotRegistered":
+                        invalid_tokens.append(token)
+            if invalid_tokens:
+                placeholders = ",".join("?" for _ in invalid_tokens)
+                with db() as con:
+                    con.execute(
+                        f"UPDATE mobile_push_tokens SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE token IN ({placeholders})",
+                        tuple(invalid_tokens),
+                    )
+        except Exception as exc:
+            print(f"Expo push notification failed: {exc}")
+
+
+def send_mobile_push_for_users(
+    user_ids: list[int],
+    title: str,
+    body: str,
+    data: dict[str, object] | None = None,
+) -> None:
+    unique_user_ids = [user_id for user_id in dict.fromkeys(int(value or 0) for value in user_ids) if user_id]
+    if not unique_user_ids:
+        return
+    placeholders = ",".join("?" for _ in unique_user_ids)
+    with db() as con:
+        rows = con.execute(
+            f"""
+            SELECT token
+            FROM mobile_push_tokens
+            WHERE enabled = 1 AND user_id IN ({placeholders})
+            ORDER BY datetime(last_seen_at) DESC
+            """,
+            tuple(unique_user_ids),
+        ).fetchall()
+    tokens = [str(row_value(row, "token") or "") for row in rows]
+    if not tokens:
+        return
+    threading.Thread(
+        target=send_expo_push,
+        args=(tokens, title, body, data or {}),
+        daemon=True,
+        name="fairfares-mobile-push",
+    ).start()
+
+
+def send_rental_booking_push(
+    booking: sqlite3.Row | dict[str, object] | None,
+    title: str,
+    body: str,
+    event: str,
+) -> None:
+    if not booking:
+        return
+    user_id = int(row_value(booking, "user_id") or 0)
+    if not user_id:
+        return
+    booking_public_id = str(row_value(booking, "booking_id") or row_value(booking, "id") or "")
+    send_mobile_push_for_users(
+        [user_id],
+        title,
+        body,
+        {
+            "type": "RENTAL_BOOKING",
+            "event": event,
+            "bookingId": booking_public_id,
+            "status": str(row_value(booking, "booking_status") or ""),
+            "paymentStatus": str(row_value(booking, "payment_status") or ""),
+            "target": "rentals",
+        },
+    )
+
+
 def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
     with db() as con:
+        consolidate_person_conversations(con, user_id)
         rows = con.execute(
             """
             SELECT conversations.*,
@@ -13983,6 +14589,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             LEFT JOIN users other_user ON other_user.id = other_participant.user_id
             LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
+            WHERE conversations.status = 'ACTIVE'
             GROUP BY conversations.id
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
             LIMIT 100
@@ -14949,7 +15556,7 @@ def render_template(template_name: str, **context: object) -> bytes:
     favicon_links = "\n".join(
         (
             f'  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png?v={ASSET_VERSION}">',
-            f'  <link rel="icon" type="image/png" sizes="512x512" href="/static/img/favicon-512.png?v={ASSET_VERSION}">',
+            f'  <link rel="icon" type="image/png" sizes="512x512" href="/static/img/appicon.png?v={ASSET_VERSION}">',
             f'  <link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png?v={ASSET_VERSION}">',
         )
     )
@@ -15567,6 +16174,15 @@ def guest_offer_modal() -> str:
 
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
+    sys_version = ""
+
+    def client_ip(self) -> str:
+        # Forwarded headers are trusted only when the deployment explicitly opts in.
+        if os.environ.get("FAIRFARES_TRUST_PROXY", "0") == "1":
+            forwarded = (self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+            if forwarded:
+                return forwarded[:64]
+        return str(self.client_address[0] if self.client_address else "unknown")[:64]
 
     def is_cors_path(self, path: str) -> bool:
         return path.startswith("/api/") or path in {
@@ -15612,6 +16228,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/uploads/"):
             self.serve_upload(parsed.path)
+            return
+        if parsed.path == "/admin/email-automation/run" and not (
+            os.environ.get("EMAIL_AUTOMATION_TOKEN", "").strip()
+            or os.environ.get("FAIRFARES_CRON_TOKEN", "").strip()
+        ):
+            self.send_json({"ok": False, "message": "Use POST for an interactive automation run."}, 405)
             return
         self.not_found()
 
@@ -15679,6 +16301,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/chat/messages":
             self.api_chat_messages(parsed)
+            return
+        if parsed.path == "/api/chat/events":
+            self.api_chat_events(parsed)
+            return
+        if parsed.path.startswith("/api/chat/attachments/"):
+            self.api_chat_attachment(parsed.path.rsplit("/", 1)[-1])
             return
         if parsed.path.startswith("/api/explorer/quests/"):
             self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
@@ -15777,6 +16405,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/messages": self.api_send_chat_message,
+            "/api/chat/attachments": self.api_send_chat_attachment,
+            "/api/chat/rich-messages": self.api_send_chat_rich_message,
+            "/api/chat/polls/vote": self.api_vote_chat_poll,
             "/api/chat/messages/edit": self.api_edit_chat_message,
             "/api/chat/messages/delete": self.api_delete_chat_message,
             "/api/chat/messages/report": self.api_report_chat_message,
@@ -15787,6 +16418,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/signup": self.api_mobile_signup,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/profile": self.api_mobile_update_profile,
+            "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
@@ -15800,6 +16432,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
+            "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
@@ -15866,16 +16499,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
 
     def allow_post_from_same_origin(self, path: str) -> bool:
-        if path in {"/login", "/signup", "/forgot-password", "/reset-password"}:
+        if path == "/stripe/webhook":
             return True
-        if path in {"/payment/stripe-session", "/identity/stripe-session"} and (self.headers.get("Authorization") or "").strip().lower().startswith("bearer "):
-            if self.headers.get("Origin") and not self.cors_allowed_origin():
-                return False
-            return True
-        if path.startswith("/api/"):
-            return True
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            if path.startswith("/api/") or path in {"/payment/stripe-session", "/identity/stripe-session"}:
+                return bool(self.cors_allowed_origin())
+            expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
+            return urllib.parse.urlparse(origin).hostname == expected_host
+        # Native clients do not send Origin. Browser form requests still receive a
+        # Referer check below; authenticated APIs use unguessable bearer tokens.
         expected_host = (self.headers.get("Host") or "").split(":", 1)[0]
-        for header_name in ("Origin", "Referer"):
+        for header_name in ("Referer",):
             value = self.headers.get(header_name)
             if not value:
                 continue
@@ -16131,7 +16766,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_response(303)
         self.send_header("Location", redirect_to)
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
-        self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/{secure}")
+        self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={SESSION_ABSOLUTE_TIMEOUT_DAYS * 86400}{secure}")
         self.end_headers()
 
     def activation_url(self, token: str) -> str:
@@ -16421,6 +17056,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             posts = con.execute(
                 f"""
                 SELECT accommodation_posts.*,
+                       (SELECT name FROM users WHERE users.id = accommodation_posts.user_id) AS owner_name,
                        (SELECT image_url FROM accommodation_post_images
                         WHERE accommodation_post_images.post_id = accommodation_posts.id
                         ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
@@ -16797,10 +17433,106 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_chat_events(self, parsed: urllib.parse.ParseResult) -> None:
+        """Authenticated held request for near-real-time chat delivery.
+
+        The existing HTTP server cannot safely accept WebSocket upgrades. This
+        endpoint keeps one request open briefly, returns as soon as a persisted
+        message appears, and includes delivery/read receipts for recent outgoing
+        messages. It preserves the same participant authorization as history.
+        """
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to receive messages."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
+        after_message_id = max(0, int(float_from_value(params.get("after", ["0"])[0] or "0")))
+        wait_seconds = min(7.5, max(0.0, float_from_value(params.get("wait", ["7"])[0] or "7")))
+        if not conversation_public_id:
+            self.send_json({"ok": False, "message": "Conversation is required."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            conversation_id = int(conversation["id"])
+
+        deadline = time.monotonic() + wait_seconds
+        messages: list[sqlite3.Row] = []
+        receipts: list[dict[str, object]] = []
+        while True:
+            with db() as con:
+                messages = con.execute(
+                    """
+                    SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                    FROM chat_messages messages
+                    JOIN users ON users.id = messages.sender_id
+                    WHERE messages.conversation_id = ?
+                      AND messages.id > ?
+                      AND messages.deleted_at IS NULL
+                    ORDER BY messages.id ASC
+                    LIMIT 100
+                    """,
+                    (conversation_id, after_message_id),
+                ).fetchall()
+                incoming_ids = [int(row_value(message, "id") or 0) for message in messages if int(row_value(message, "sender_id") or 0) != current_user_id]
+                if incoming_ids:
+                    newest_incoming_id = max(incoming_ids)
+                    con.execute(
+                        """
+                        UPDATE chat_messages
+                        SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
+                            read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+                        WHERE conversation_id = ? AND sender_id != ? AND id <= ? AND deleted_at IS NULL
+                        """,
+                        (conversation_id, current_user_id, newest_incoming_id),
+                    )
+                    con.execute(
+                        """
+                        UPDATE chat_participants
+                        SET last_read_message_id = MAX(last_read_message_id, ?)
+                        WHERE conversation_id = ? AND user_id = ?
+                        """,
+                        (newest_incoming_id, conversation_id, current_user_id),
+                    )
+                receipt_rows = con.execute(
+                    """
+                    SELECT id, delivered_at, read_at
+                    FROM chat_messages
+                    WHERE conversation_id = ? AND sender_id = ? AND id > ?
+                    ORDER BY id DESC
+                    LIMIT 100
+                    """,
+                    (conversation_id, current_user_id, max(0, after_message_id - 100)),
+                ).fetchall()
+                receipts = [
+                    {
+                        "id": int(row_value(receipt, "id") or 0),
+                        "deliveredAt": row_value(receipt, "delivered_at"),
+                        "readAt": row_value(receipt, "read_at"),
+                        "status": "seen" if row_value(receipt, "read_at") else "delivered" if row_value(receipt, "delivered_at") else "sent",
+                    }
+                    for receipt in receipt_rows
+                ]
+            if messages or time.monotonic() >= deadline:
+                break
+            time.sleep(0.25)
+        self.send_json(
+            {
+                "ok": True,
+                "messages": [chat_message_payload(message, current_user_id) for message in messages],
+                "receipts": receipts,
+                "cursor": max([after_message_id, *[int(row_value(message, "id") or 0) for message in messages]]),
+            }
+        )
+
     def notify_chat_recipients(self, con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, message: sqlite3.Row) -> None:
         recipients = con.execute(
             """
-            SELECT users.*
+            SELECT users.*, participants.muted_at AS chat_muted_at
             FROM chat_participants participants
             JOIN users ON users.id = participants.user_id
             WHERE participants.conversation_id = ? AND users.id != ?
@@ -16813,21 +17545,58 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
             post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
+        push_tokens: list[str] = []
+        email_jobs: list[tuple[str, str, str, str, str, str]] = []
         for recipient in recipients:
+            recipient_id = int(row_value(recipient, "id") or 0)
+            if not row_value(recipient, "chat_muted_at") and recipient_id:
+                token_rows = con.execute(
+                    "SELECT token FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
+                    (recipient_id,),
+                ).fetchall()
+                push_tokens.extend(row_value(token_row, "token") for token_row in token_rows)
             email = normalize_email(row_value(recipient, "email"))
             if not email:
                 continue
-            try:
-                send_accommodation_message_email(
+            email_jobs.append(
+                (
                     email,
-                    row_value(recipient, "name"),
-                    row_value(sender, "name") or "FairFares member",
-                    post_title,
-                    row_value(message, "message_text"),
+                    str(row_value(recipient, "name") or ""),
+                    str(row_value(sender, "name") or "FairFares member"),
+                    str(post_title),
+                    str(row_value(message, "message_text") or ("Sent an attachment" if row_value(message, "attachment_url") else "Sent you a message")),
                     conversation_url,
                 )
-            except Exception as exc:
-                print(f"Chat email notification failed: {exc}")
+            )
+        if email_jobs:
+            def deliver_chat_emails() -> None:
+                for job in email_jobs:
+                    try:
+                        send_accommodation_message_email(*job)
+                    except Exception as exc:
+                        print(f"Chat email notification failed: {exc}")
+
+            threading.Thread(
+                target=deliver_chat_emails,
+                daemon=True,
+                name="fairfares-fchat-email",
+            ).start()
+        if push_tokens:
+            threading.Thread(
+                target=send_expo_push,
+                args=(
+                    push_tokens,
+                    row_value(sender, "name") or "New FChat message",
+                    row_value(message, "message_text") or "Sent you a message",
+                    {
+                        "type": "FCHAT_MESSAGE",
+                        "conversationId": row_value(conversation, "public_id"),
+                        "messageId": int(row_value(message, "id") or 0),
+                    },
+                ),
+                daemon=True,
+                name="fairfares-fchat-push",
+            ).start()
 
     def api_create_chat_conversation(self) -> None:
         user = self.current_user()
@@ -16842,8 +17611,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         post_public_id = (form.get("post_id") or form.get("postId") or "").strip()
         ride_public_id = (form.get("ride_id") or form.get("rideId") or "").strip()
         community_public_id = (form.get("community_id") or form.get("communityId") or "").strip()
+        open_only = str(form.get("open_only") or form.get("openOnly") or "").strip().lower() in {"1", "true", "yes", "on"}
         raw_message_text = (form.get("message") or "").strip()
-        message_text = raw_message_text or (
+        message_text = "" if open_only else raw_message_text or (
             "Hi, I am interested in this accommodation post."
             if post_public_id
             else "Hi, I am interested in this ride."
@@ -16871,7 +17641,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
                 return
-            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id) if message_text else None
+            listing_context = chat_listing_context(
+                con,
+                int(user["id"]),
+                post_public_id,
+                ride_public_id,
+            )
+            context_owner_user_id = int(listing_context.get("ownerUserId", "0") or 0)
+            if (post_public_id or ride_public_id) and not context_owner_user_id:
+                self.send_json({"ok": False, "message": "Could not verify the listing owner for this message."}, 409)
+                return
+            if context_owner_user_id:
+                verified_participant = con.execute(
+                    "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ? LIMIT 1",
+                    (conversation["id"], context_owner_user_id),
+                ).fetchone()
+                if not verified_participant:
+                    self.send_json({"ok": False, "message": "The listing owner does not match this FChat profile."}, 409)
+                    return
+            message = save_chat_message(
+                con,
+                int(conversation["id"]),
+                user,
+                message_text,
+                client_message_id,
+                listing_context,
+            ) if message_text else None
             full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
             if message:
                 self.notify_chat_recipients(con, full_conversation, user, message)
@@ -16950,6 +17745,233 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))})
+
+    def api_send_chat_attachment(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to send attachments."}, 401)
+            return
+        content_type = (self.headers.get("Content-Type") or "").lower()
+        uploaded_file: dict[str, object] | None = None
+        if "multipart/form-data" in content_type:
+            form, files = self.read_form_with_files()
+            payload: dict[str, object] = form
+            uploaded_file = files.get("attachment") or files.get("file")
+        else:
+            payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId") or payload.get("conversation_id"), 80)
+        data_url = str(payload.get("dataUrl") or payload.get("data_url") or "")
+        requested_filename = clean_text_value(payload.get("fileName") or payload.get("file_name"), 140)
+        requested_mime_type = clean_text_value(payload.get("mimeType") or payload.get("mime_type"), 120).lower()
+        caption = clean_text_value(payload.get("caption"), 500)
+        client_message_id = clean_text_value(payload.get("clientMessageId") or payload.get("client_message_id"), 120)
+        if not conversation_public_id or (not data_url and not uploaded_file):
+            self.send_json({"ok": False, "message": "Conversation and attachment are required."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            block_error = chat_conversation_block_error(con, conversation, current_user_id)
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
+                return
+            if client_message_id:
+                existing = con.execute(
+                    """
+                    SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                    FROM chat_messages messages
+                    JOIN users ON users.id = messages.sender_id
+                    WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ?
+                    LIMIT 1
+                    """,
+                    (conversation["id"], current_user_id, client_message_id),
+                ).fetchone()
+                if existing:
+                    self.send_json({"ok": True, "message": chat_message_payload(existing, current_user_id)})
+                    return
+            allowed_mime_types = ALLOWED_CHAT_IMAGE_MIME_TYPES | ALLOWED_CHAT_FILE_MIME_TYPES
+            if uploaded_file:
+                upload_filename = clean_text_value(uploaded_file.get("filename") or requested_filename or f"chat-{conversation_public_id}", 140)
+                upload_mime_type = clean_text_value(uploaded_file.get("mime_type") or requested_mime_type, 120).lower()
+                upload_payload = uploaded_file.get("payload")
+                upload_parts = (
+                    upload_filename,
+                    upload_mime_type,
+                    upload_payload,
+                ) if isinstance(upload_payload, bytes) and upload_payload and upload_mime_type in allowed_mime_types else None
+            else:
+                upload_parts = data_url_upload_parts(
+                    data_url,
+                    requested_filename or f"chat-{conversation_public_id}",
+                    allowed_mime_types=allowed_mime_types,
+                    max_bytes=MAX_CHAT_FILE_BYTES,
+                )
+            valid_upload = False
+            if upload_parts:
+                upload_filename, upload_mime_type, upload_payload = upload_parts
+                if requested_mime_type and requested_mime_type != upload_mime_type:
+                    upload_parts = None
+                elif upload_mime_type in ALLOWED_CHAT_IMAGE_MIME_TYPES:
+                    valid_upload = len(upload_payload) <= MAX_CHAT_IMAGE_BYTES and (
+                        (upload_mime_type == "image/jpeg" and upload_payload.startswith(b"\xff\xd8\xff"))
+                        or (upload_mime_type == "image/png" and upload_payload.startswith(b"\x89PNG\r\n\x1a\n"))
+                        or (upload_mime_type == "image/webp" and len(upload_payload) >= 12 and upload_payload[:4] == b"RIFF" and upload_payload[8:12] == b"WEBP")
+                    )
+                elif upload_mime_type in ALLOWED_CHAT_FILE_MIME_TYPES:
+                    valid_upload = valid_chat_document_payload(upload_mime_type, upload_filename, upload_payload)
+            attachment_url = save_file_payload_locally(
+                folder_name="chat",
+                file_data={"filename": upload_filename, "mime_type": upload_mime_type, "payload": upload_payload} if upload_parts and valid_upload else None,
+                fallback_name=requested_filename or f"chat-{conversation_public_id}",
+                allowed_mime_types=allowed_mime_types,
+                max_bytes=MAX_CHAT_FILE_BYTES,
+            )
+            if not attachment_url:
+                self.send_json({"ok": False, "message": "Use an image up to 4 MB or a PDF, text, Word, or Excel file up to 8 MB."}, 400)
+                return
+            message = save_chat_message(con, int(conversation["id"]), user, caption, client_message_id)
+            is_image = upload_mime_type in ALLOWED_CHAT_IMAGE_MIME_TYPES
+            metadata = {"fileName": requested_filename or upload_filename, "mimeType": upload_mime_type, "size": len(upload_payload)}
+            con.execute(
+                "UPDATE chat_messages SET message_type = ?, attachment_url = ?, metadata_json = ? WHERE id = ?",
+                ("IMAGE" if is_image else "FILE", attachment_url, json.dumps(metadata), int(message["id"])),
+            )
+            message = con.execute(
+                """
+                SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+                WHERE messages.id = ?
+                """,
+                (int(message["id"]),),
+            ).fetchone()
+            self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
+
+    def api_send_chat_rich_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to send messages."}, 401)
+            return
+        payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId"), 80)
+        message_type = clean_text_value(payload.get("type"), 20).upper()
+        client_message_id = clean_text_value(payload.get("clientMessageId"), 120)
+        raw_metadata = payload.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        if message_type == "POLL":
+            question = clean_text_value(metadata.get("question"), 240)
+            options = [clean_text_value(value, 100) for value in (metadata.get("options") or []) if clean_text_value(value, 100)]
+            if not question or len(options) < 2 or len(options) > 6:
+                self.send_json({"ok": False, "message": "Add a poll question and 2–6 options."}, 400)
+                return
+            clean_metadata = {"question": question, "options": options, "votes": {}}
+            message_text = question
+        elif message_type == "EVENT":
+            title = clean_text_value(metadata.get("title"), 160)
+            date = clean_text_value(metadata.get("date"), 40)
+            time = clean_text_value(metadata.get("time"), 40)
+            location = clean_text_value(metadata.get("location"), 180)
+            if not title or not date:
+                self.send_json({"ok": False, "message": "Event title and date are required."}, 400)
+                return
+            clean_metadata = {"title": title, "date": date, "time": time, "location": location}
+            message_text = title
+        elif message_type == "CONTACT":
+            name = clean_text_value(metadata.get("name"), 120)
+            phone = clean_text_value(metadata.get("phone"), 40)
+            email = clean_text_value(metadata.get("email"), 180)
+            if not name or (not phone and not email):
+                self.send_json({"ok": False, "message": "Contact name and a phone number or email are required."}, 400)
+                return
+            clean_metadata = {"name": name, "phone": phone, "email": email}
+            message_text = name
+        else:
+            self.send_json({"ok": False, "message": "Unsupported message type."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            block_error = chat_conversation_block_error(con, conversation, current_user_id)
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
+                return
+            message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
+            con.execute("UPDATE chat_messages SET message_type = ?, metadata_json = ? WHERE id = ?", (message_type, json.dumps(clean_metadata), int(message["id"])))
+            message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
+            self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
+
+    def api_vote_chat_poll(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to vote."}, 401)
+            return
+        payload = self.read_json_body()
+        message_id = int(payload.get("messageId") or 0)
+        option_index = int(payload.get("optionIndex") if payload.get("optionIndex") is not None else -1)
+        current_user_id = int(user["id"])
+        with db() as con:
+            row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id WHERE messages.id = ? AND participants.user_id = ?", (message_id, current_user_id)).fetchone()
+            if not row or row_value(row, "message_type") != "POLL":
+                self.send_json({"ok": False, "message": "Poll not found."}, 404)
+                return
+            try:
+                metadata = json.loads(row_value(row, "metadata_json") or "{}")
+            except json.JSONDecodeError:
+                metadata = {}
+            options = metadata.get("options") if isinstance(metadata.get("options"), list) else []
+            if option_index < 0 or option_index >= len(options):
+                self.send_json({"ok": False, "message": "Choose a valid poll option."}, 400)
+                return
+            votes = metadata.get("votes") if isinstance(metadata.get("votes"), dict) else {}
+            votes[str(current_user_id)] = option_index
+            metadata["votes"] = votes
+            con.execute("UPDATE chat_messages SET metadata_json = ? WHERE id = ?", (json.dumps(metadata), message_id))
+            row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (message_id,)).fetchone()
+        self.send_json({"ok": True, "message": chat_message_payload(row, current_user_id)})
+
+    def api_chat_attachment(self, message_id_value: str) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to view attachments."}, 401)
+            return
+        try:
+            message_id = int(message_id_value)
+        except (TypeError, ValueError):
+            self.not_found()
+            return
+        with db() as con:
+            message = con.execute(
+                """
+                SELECT messages.attachment_url
+                FROM chat_messages messages
+                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
+                WHERE messages.id = ? AND participants.user_id = ? AND messages.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (message_id, int(user["id"])),
+            ).fetchone()
+        attachment_url = row_value(message, "attachment_url") if message else ""
+        parts = local_upload_parts(attachment_url) if attachment_url else None
+        if not parts:
+            self.not_found()
+            return
+        filename, mime_type, payload = parts
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        disposition = "inline" if mime_type in ALLOWED_CHAT_IMAGE_MIME_TYPES or mime_type == "application/pdf" else "attachment"
+        self.send_header("Content-Disposition", f'{disposition}; filename="{escape(filename)}"')
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def api_edit_chat_message(self) -> None:
         user = self.current_user()
@@ -17710,13 +18732,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         identifier = (form.get("email", "") or "").strip()
         next_path = self.safe_next_path(form.get("next", ""))
+        rate_key = login_rate_limit_key(self.client_ip(), identifier)
+        retry_after = login_retry_after(rate_key)
+        if retry_after:
+            self.send_response(429)
+            self.send_header("Retry-After", str(retry_after))
+            body = render_template(
+                "auth.html", mode="Log in", submit_label="Log In", action="/login",
+                switch_url="/signup", switch_label="Create account",
+                intro_text="Welcome back. Log in to continue.",
+                error=escape("Too many login attempts. Please wait and try again."),
+                next_field="", name_field="", identifier_label="Email or Phone Number",
+                identifier_type="text", identifier_autocomplete="username",
+                identifier_placeholder="Enter your email or phone", password_autocomplete="current-password",
+            )
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         with db() as con:
             user = find_user_by_login_identifier(con, identifier)
         if not user:
+            record_login_failure(rate_key)
             log_login_failure(identifier, "user_not_found")
             self.login_page("That email and password did not match.", next_path)
             return
         if not verify_password(form.get("password", ""), user["password_hash"]):
+            record_login_failure(rate_key)
             log_login_failure(identifier, "password_mismatch")
             self.login_page("That email and password did not match.", next_path)
             return
@@ -17732,6 +18775,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 delivery_status,
             )
             return
+        clear_login_failures(rate_key)
+        if password_hash_needs_upgrade(row_value(user, "password_hash")):
+            with db() as con:
+                con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(form.get("password", "")), user["id"]))
         self.set_session(user["id"], next_path)
 
     def signup(self) -> None:
@@ -17874,7 +18921,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         token = query.get("token", [""])[0]
 
         if not token:
-            self.activation_message_page("Reset link missing", "Please use the password reset link from your FairFares email.")
+            self.activation_message_page(
+                "Reset link missing",
+                "Please request a fresh password reset link.",
+                "Request New Link",
+                "/forgot-password",
+            )
             return
 
         with db() as con:
@@ -17889,13 +18941,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
 
         if not verification:
-            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            self.activation_message_page(
+                "Reset link invalid",
+                "That password reset link is no longer valid. Request a fresh link and use the newest email.",
+                "Request New Link",
+                "/forgot-password",
+            )
             return
 
         created_time = datetime.fromisoformat(verification["created_at"])
         expires_at = created_time + timedelta(minutes=30)
         if datetime.now(UTC).replace(tzinfo=None) > expires_at:
-            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            self.activation_message_page(
+                "Reset link expired",
+                "Your password reset link has expired. Please request a new one.",
+                "Request New Link",
+                "/forgot-password",
+            )
             return
 
         self.send_html(
@@ -17933,13 +18995,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
 
         if not verification:
-            self.activation_message_page("Reset link invalid", "That password reset link is not valid or has expired.")
+            self.activation_message_page(
+                "Reset link invalid",
+                "That password reset link is no longer valid. Request a fresh link and use the newest email.",
+                "Request New Link",
+                "/forgot-password",
+            )
             return
 
         created_time = datetime.fromisoformat(verification["created_at"])
         expires_at = created_time + timedelta(minutes=30)
         if datetime.now(UTC).replace(tzinfo=None) > expires_at:
-            self.activation_message_page("Reset link expired", "Your password reset link has expired. Please request a new one.")
+            self.activation_message_page(
+                "Reset link expired",
+                "Your password reset link has expired. Please request a new one.",
+                "Request New Link",
+                "/forgot-password",
+            )
             return
 
         with db() as con:
@@ -18272,6 +19344,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (booking["car_id"],))
         notify_slack_payment(booking, f"10% hold paid: {format_money(hold_amount)}", self.public_origin())
         send_confirmed_booking_email_once(booking["id"], self.public_origin())
+        confirmed_booking = get_booking_by_id(int(row_value(booking, "id") or 0))
+        send_rental_booking_push(
+            confirmed_booking or booking,
+            "Rental booking confirmed",
+            f"Payment received. Your booking {row_value(booking, 'booking_id')} is confirmed.",
+            "PAYMENT_CONFIRMED",
+        )
         self.send_json(
             {
                 "ok": True,
@@ -18553,8 +19632,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def stripe_webhook(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 1_000_000:
+            self.send_json({"ok": False, "message": "Invalid webhook payload size."}, 400)
+            return
         payload = self.rfile.read(length)
-        if stripe_webhook_secret() and not verify_stripe_signature(payload, self.headers.get("Stripe-Signature", "")):
+        if not stripe_webhook_secret():
+            self.send_json({"ok": False, "message": "Stripe webhook is not configured."}, 503)
+            return
+        if not verify_stripe_signature(payload, self.headers.get("Stripe-Signature", "")):
             self.send_json({"ok": False, "message": "Invalid Stripe signature."}, 400)
             return
         try:
@@ -18585,6 +19670,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if event_type == "payment_intent.succeeded":
             confirm_pickup_balance_payment_intent(data_object, self.public_origin())
             record_security_deposit_authorization(data_object)
+        if event_type == "payment_intent.payment_failed":
+            metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+            try:
+                failed_booking_id = int(metadata.get("booking_id") or 0)
+            except (TypeError, ValueError):
+                failed_booking_id = 0
+            failed_booking = get_booking_by_id(failed_booking_id) if failed_booking_id else None
+            send_rental_booking_push(
+                failed_booking,
+                "Rental payment failed",
+                "Your payment was not completed. Open FairFares to retry or choose another payment method.",
+                "PAYMENT_FAILED",
+            )
         if event_type == "payment_intent.amount_capturable_updated":
             record_security_deposit_authorization(data_object)
         if event_type.startswith("identity.verification_session."):
@@ -21544,7 +22642,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         filename = Path(query.get("file", [""])[0]).name
         requested = (BACKUP_DIR / filename).resolve()
         backup_root = BACKUP_DIR.resolve()
-        if not filename or not str(requested).startswith(str(backup_root)) or not requested.exists():
+        if not filename or not requested.is_relative_to(backup_root) or not requested.exists():
             self.not_found()
             return
         body = requested.read_bytes()
@@ -22015,6 +23113,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     f"Admin set booking {booking_status} / payment {payment_status}",
                     self.public_origin(),
                 )
+        status_changed = bool(
+            updated_booking
+            and (
+                not previous_booking
+                or row_value(previous_booking, "booking_status") != booking_status
+                or row_value(previous_booking, "payment_status") != payment_status
+            )
+        )
+        if status_changed:
+            status_titles = {
+                "CONFIRMED": "Rental booking confirmed",
+                "MODIFIED": "Rental modification updated",
+                "CANCELLATION_REQUESTED": "Rental cancellation under review",
+                "CANCELLED": "Rental booking cancelled",
+                "PICKED_UP": "Rental pickup completed",
+                "RETURNED": "Rental return completed",
+                "EXPIRED_HOLD": "Rental payment window expired",
+            }
+            send_rental_booking_push(
+                updated_booking,
+                status_titles.get(booking_status, "Rental booking updated"),
+                f"Booking {row_value(updated_booking, 'booking_id')} is now {booking_status.replace('_', ' ').lower()}.",
+                f"STATUS_{booking_status}",
+            )
         self.redirect("/admin/bookings")
 
     def update_admin_ticket(self) -> None:
@@ -23198,7 +24320,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <li><b>Insurance requirement:</b> bring proof of a valid auto policy that extends coverage to rental vehicles. Recommended coverage includes collision, comprehensive, liability, rental vehicle coverage when required, and roadside assistance.</li>
                             <li><b>Coverage on file:</b> {escape(insurance_summary)}</li>
                             <li>FairFares may verify insurance coverage before releasing the vehicle. If your policy does not cover rentals, contact your insurer before completing pickup.</li>
-                            <li><a href="/wiki">View the full insurance requirement</a>.</li>
+                            <li><a href="/wiki?q=insurance%20requirement">View the full insurance requirement</a>.</li>
                             <li>Out-of-state breakdowns, unauthorized repairs, towing, tire, glass, key, ticket, toll, cleaning, misuse, or damage costs may be your responsibility under the rental agreement.</li>
                         </ul>
                         <button class="policy-see-more" type="button" data-policy-toggle aria-expanded="false">See more</button>
@@ -23628,7 +24750,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("DELETE FROM sessions WHERE token = ?", (morsel.value,))
         self.send_response(303)
         self.send_header("Location", "/")
-        self.send_header("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; Path=/")
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://") else ""
+        self.send_header("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/{secure}")
         self.end_headers()
 
     def api_site(self) -> None:
@@ -23658,9 +24781,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         identifier = str(payload.get("identifier") or payload.get("email") or payload.get("phone") or "").strip()
         password = str(payload.get("password") or "")
+        rate_key = login_rate_limit_key(self.client_ip(), identifier)
+        retry_after = login_retry_after(rate_key)
+        if retry_after:
+            self.send_response(429)
+            self.send_header("Retry-After", str(retry_after))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            body = json.dumps({"ok": False, "error": "Too many login attempts. Please wait and try again."}).encode()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         with db() as con:
             user = find_user_by_login_identifier(con, identifier)
             if not user or not verify_password(password, row_value(user, "password_hash")):
+                record_login_failure(rate_key)
                 log_login_failure(identifier, "mobile_password_mismatch")
                 self.send_json({"ok": False, "error": "That email/phone and password did not match."}, 401)
                 return
@@ -23674,6 +24809,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     403,
                 )
                 return
+            clear_login_failures(rate_key)
+            if password_hash_needs_upgrade(row_value(user, "password_hash")):
+                con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), int(row_value(user, "id") or 0)))
             cleanup_expired_sessions(con)
             token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, int(row_value(user, "id") or 0)))
@@ -23733,6 +24871,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             with db() as con:
                 con.execute("DELETE FROM sessions WHERE token = ?", (token,))
         self.send_json({"ok": True})
+
+    def api_mobile_push_token(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to register notifications."}, 401)
+            return
+        payload = self.read_json_body() if "application/json" in (self.headers.get("Content-Type") or "").lower() else self.read_form()
+        token = clean_text_value(payload.get("token"), 300)
+        platform = clean_text_value(payload.get("platform"), 30).lower()
+        device_label = clean_text_value(payload.get("deviceLabel") or payload.get("device_label"), 120)
+        enabled = str(payload.get("enabled", "1")).strip().lower() not in {"0", "false", "no", "off"}
+        if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
+            self.send_json({"ok": False, "error": "A valid Expo push token is required."}, 400)
+            return
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, enabled)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(token) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    platform = excluded.platform,
+                    device_label = excluded.device_label,
+                    enabled = excluded.enabled,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_seen_at = CURRENT_TIMESTAMP
+                """,
+                (int(user["id"]), token, platform, device_label, 1 if enabled else 0),
+            )
+        self.send_json({"ok": True, "enabled": enabled})
 
     def api_mobile_update_profile(self) -> None:
         user = self.current_user()
@@ -23979,11 +25147,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         gender = (params.get("gender", [""])[0] or "").strip()
         budget = (params.get("budget", params.get("price", [""]))[0] or "").strip()
         radius = (params.get("radius", params.get("radiusMiles", params.get("radius_miles", [""])))[0] or "").strip()
+        center_lat = float_from_value(params.get("lat", params.get("latitude", ["0"]))[0])
+        center_lng = float_from_value(params.get("lng", params.get("longitude", ["0"]))[0])
         try:
             limit = int(params.get("limit", ["30"])[0] or 30)
         except ValueError:
             limit = 30
-        posts = mobile_housing_posts(city=city, area=area, need=need, category=category, gender=gender, budget=budget, radius=float_from_value(radius), limit=limit)
+        posts = mobile_housing_posts(
+            city=city,
+            area=area,
+            need=need,
+            category=category,
+            gender=gender,
+            budget=budget,
+            radius=float_from_value(radius),
+            limit=limit,
+            center_lat=center_lat,
+            center_lng=center_lng,
+        )
         self.send_json(
             {
                 "ok": True,
@@ -24074,9 +25255,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        notifications.route_deviation_miles AS dispatch_route_deviation_miles,
                        notifications.route_deviation_minutes AS dispatch_route_deviation_minutes,
                        notifications.notified_at AS dispatch_notified_at,
-                       notifications.responded_at AS dispatch_responded_at
+                       notifications.responded_at AS dispatch_responded_at,
+                       driver_posts.public_id AS matched_ride_public_id,
+                       driver_posts.title AS matched_route_title,
+                       driver_posts.origin AS matched_route_origin,
+                       driver_posts.destination AS matched_route_destination,
+                       driver_posts.contribution_per_seat AS matched_contribution_per_seat
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
                 WHERE notifications.driver_user_id = ?
                 ORDER BY datetime(notifications.notified_at) DESC
                 LIMIT 80
@@ -24111,6 +25298,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         payload["dispatchRespondedAt"] = row_value(accepted, "responded_at")
                         payload["acceptedDriverName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["acceptedDriverRideId"] = row_value(accepted, "driver_ride_public_id")
+                        payload["ownerUserId"] = driver_user_id
+                        payload["ownerName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
                 public_id = str(payload.get("id") or "")
                 if public_id:
@@ -24121,6 +25310,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 public_id = str(payload.get("id") or "")
                 if public_id in seen:
                     continue
+                if public_id:
+                    seen.add(public_id)
                 payload["activityRole"] = "DRIVER_NOTIFICATION"
                 payload["dispatchStatus"] = row_value(row, "dispatch_status") or "PENDING"
                 payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
@@ -24131,6 +25322,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["routeDeviationMinutes"] = int(row_value(row, "dispatch_route_deviation_minutes") or 0)
                 payload["dispatchNotifiedAt"] = row_value(row, "dispatch_notified_at")
                 payload["dispatchRespondedAt"] = row_value(row, "dispatch_responded_at")
+                payload["matchedRideId"] = row_value(row, "matched_ride_public_id")
+                payload["matchedRouteTitle"] = row_value(row, "matched_route_title")
+                payload["matchedRouteOrigin"] = row_value(row, "matched_route_origin")
+                payload["matchedRouteDestination"] = row_value(row, "matched_route_destination")
+                payload["matchedContributionPerSeat"] = float(row_value(row, "matched_contribution_per_seat") or 0)
                 if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
                     payload["pickupPin"] = ride_pickup_pin(public_id, user_id)
                 rides.append(payload)
@@ -24366,6 +25562,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.send_json({"ok": False, "error": "Selected car is not available for that pickup time."}, 409)
             return
+        send_rental_booking_push(
+            booking,
+            "Rental checkout started",
+            f"Complete payment to confirm {row_value(booking, 'car_name') or 'your FairFares rental'}.",
+            "BOOKING_CREATED",
+        )
         self.send_json({"ok": True, "booking": mobile_booking_payload(booking)})
 
     def api_mobile_rental_quote(self) -> None:
@@ -24450,6 +25652,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created."
             if auto_cancel
             else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
+        )
+        send_rental_booking_push(
+            updated or booking,
+            "Rental cancelled" if auto_cancel else "Cancellation request received",
+            refund_message or ("Your cancellation is complete." if auto_cancel else "FairFares will notify you after review."),
+            "CANCELLED" if auto_cancel else "CANCELLATION_REQUESTED",
         )
         self.send_json(
             {
@@ -24586,6 +25794,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
                 con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
         updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
+        send_rental_booking_push(
+            updated or booking,
+            "Rental modification submitted",
+            "FairFares will notify you when your requested changes are reviewed.",
+            "MODIFICATION_REQUESTED",
+        )
         self.send_json(
             {
                 "ok": True,
@@ -24924,6 +26138,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
             dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+        notified_driver_user_ids = list(dispatch.pop("driverUserIds", []))
+        if notified_driver_user_ids:
+            requester_name = clean_text_value(row_value(user, "name"), 80) or "A FairFares rider"
+            route_label = " → ".join(value for value in (origin_label, destination_label) if value)
+            send_mobile_push_for_users(
+                notified_driver_user_ids,
+                "New carpool request",
+                f"{requester_name}: {route_label}"[:240],
+                {"type": "CARPOOL_REQUEST", "rideId": public_id, "target": "requests"},
+            )
         self.send_json(
             {
                 "ok": True,
@@ -25125,9 +26349,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 201)
 
     def serve_upload(self, path: str) -> None:
+        if path.startswith("/uploads/chat/"):
+            self.not_found()
+            return
         upload_root = (DB_PATH.parent / "uploads").resolve()
         requested = (upload_root / path.replace("/uploads/", "", 1)).resolve()
-        if not str(requested).startswith(str(upload_root)) or not requested.exists() or not requested.is_file():
+        if not requested.is_relative_to(upload_root) or not requested.exists() or not requested.is_file():
             self.not_found()
             return
         mime_type = mimetypes.guess_type(requested.name)[0] or "application/octet-stream"
@@ -25146,7 +26373,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not requested.exists() and requested.name.endswith((".min.css", ".min.js")):
             source_name = requested.name.replace(".min.css", ".css").replace(".min.js", ".js")
             source = requested.with_name(source_name)
-            if str(source).startswith(str(STATIC_DIR.resolve())) and source.exists():
+            if source.is_relative_to(STATIC_DIR.resolve()) and source.exists():
                 raw = source.read_text(encoding="utf-8")
                 is_css = requested.name.endswith(".min.css")
                 body_text = minify_css(raw) if is_css else minify_js(raw)
@@ -25158,7 +26385,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-        if not str(requested).startswith(str(STATIC_DIR.resolve())) or not requested.exists():
+        if not requested.is_relative_to(STATIC_DIR.resolve()) or not requested.exists():
             self.not_found()
             return
         self.path = path
@@ -25177,6 +26404,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_header("Access-Control-Max-Age", "86400")
         if current_path.startswith("/static/"):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(self), payment=(self)")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+            "form-action 'self' https://checkout.stripe.com; script-src 'self' 'unsafe-inline' https://js.stripe.com; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; "
+            "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com; "
+            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com"
+        )
+        if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://"):
+            self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         super().end_headers()
 
     def not_found(self) -> None:

@@ -75,6 +75,28 @@ export type ChatMessage = {
   type: string;
   text: string;
   attachmentUrl: string;
+  metadata?: {
+    fileName?: string;
+    mimeType?: string;
+    size?: number;
+    question?: string;
+    options?: string[];
+    voteCounts?: number[];
+    selectedOption?: number;
+    title?: string;
+    date?: string;
+    time?: string;
+    location?: string;
+    name?: string;
+    phone?: string;
+    email?: string;
+  };
+  contextType?: "HOUSING" | "CARPOOL" | string;
+  contextId?: string;
+  contextTitle?: string;
+  contextSubtitle?: string;
+  contextOwnerUserId?: number;
+  contextOwnerName?: string;
   createdAt: string;
   deliveredAt: string;
   readAt: string;
@@ -109,6 +131,8 @@ export type RidePost = {
   type: RideType;
   typeLabel: string;
   role: "RIDER" | "DRIVER";
+  ownerUserId?: number;
+  ownerName?: string;
   title: string;
   origin: string;
   destination: string;
@@ -129,10 +153,14 @@ export type RidePost = {
   preferences: string;
   notes: string;
   status: string;
+  statusLabel?: string;
+  isExpired?: boolean;
   distanceMiles: number | null;
   pickupDistanceMiles?: number | null;
   dropoffDistanceMiles?: number | null;
   routeDeviationMiles?: number | null;
+  routeDeviationMinutes?: number | null;
+  routeDeviationSource?: string | null;
   matchScore: number;
   createdAt: string;
   activityRole?: "MINE" | "DRIVER_NOTIFICATION";
@@ -143,6 +171,15 @@ export type RidePost = {
   dispatchRespondedAt?: string;
   acceptedDriverName?: string;
   acceptedDriverRideId?: string;
+  matchedRideId?: string;
+  matchedRouteTitle?: string;
+  matchedRouteOrigin?: string;
+  matchedRouteDestination?: string;
+  matchedRouteOriginLat?: number | null;
+  matchedRouteOriginLng?: number | null;
+  matchedRouteDestinationLat?: number | null;
+  matchedRouteDestinationLng?: number | null;
+  matchedContributionPerSeat?: number;
   pickupPin?: string;
 };
 

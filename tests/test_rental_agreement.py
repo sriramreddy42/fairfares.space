@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import date, timedelta
 
 import app
 
@@ -24,6 +25,10 @@ class RentalAgreementTest(unittest.TestCase):
                 (app.hash_password("Password123!"),),
             )
             self.user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_admin, role, is_verified) VALUES ('Agreement Admin', 'agreement-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("AdminPassword123!"),),
+            )
 
     def tearDown(self):
         if self.old_db_path is None:
@@ -39,12 +44,13 @@ class RentalAgreementTest(unittest.TestCase):
 
     def test_generated_rental_agreement_includes_master_terms_and_booking_facts(self):
         car = app.get_cars()[0]
+        pickup = date.today() + timedelta(days=30)
         booking = app.create_booking_for_user(
             self.user_id,
             car["id"],
             days=3,
-            pickup_date="2026-07-02",
-            return_date="2026-07-05",
+            pickup_date=pickup.isoformat(),
+            return_date=(pickup + timedelta(days=3)).isoformat(),
             pickup_location="1665 Logan St, Denver, CO",
             return_location="1665 Logan St, Denver, CO",
         )
@@ -113,7 +119,7 @@ class RentalAgreementTest(unittest.TestCase):
 
             def require_admin(self):
                 with app.db() as con:
-                    return con.execute("SELECT * FROM users WHERE email = ?", (app.DEFAULT_ADMIN_EMAIL,)).fetchone()
+                    return con.execute("SELECT * FROM users WHERE email = 'agreement-admin@example.com'").fetchone()
 
             def send_html(self, body, status=200):
                 self.rendered_body = body.decode("utf-8") if isinstance(body, bytes) else body

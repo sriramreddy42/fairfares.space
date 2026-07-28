@@ -23,6 +23,7 @@ export const appAssets = {
   arrowUp: require("../assets/icons8-up-94.png") as ImageSourcePropType,
   arrowDown: require("../assets/icons8-arrow-down-94.png") as ImageSourcePropType,
   carFallback: require("../assets/car-toyota-corolla.png") as ImageSourcePropType,
+  housingRentalPromo: require("../assets/housing-rental-promo.png") as ImageSourcePropType,
   rentalPromo: require("../assets/rental-car-promo.png") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip.png") as ImageSourcePropType,

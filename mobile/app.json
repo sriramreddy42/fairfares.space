@@ -5,6 +5,11 @@
     "scheme": "fairfares",
     "version": "0.1.0",
     "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.fairfares.mobile",
@@ -15,19 +20,28 @@
     },
     "android": {
       "package": "com.fairfares.mobile",
+      "versionCode": 1,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "POST_NOTIFICATIONS"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#101010"
       }
     },
+    "web": {
+      "bundler": "metro"
+    },
     "plugins": [
-      "expo-location"
+      "expo-location",
+      "expo-notifications"
     ],
     "extra": {
-      "apiUrl": "http://127.0.0.1:8010"
+      "apiUrl": "https://fairfares.onrender.com",
+      "eas": {
+        "projectId": "e5c86839-49a9-4c8f-9477-37c971df2344"
+      }
     }
   }
 }
