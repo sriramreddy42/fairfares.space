@@ -112,6 +112,25 @@ class SecurityHardeningTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_production_custom_domain_is_allowed_for_mobile_api_cors(self):
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/bootstrap",
+                method="OPTIONS",
+                headers={
+                    "Origin": "https://www.fairfare.space",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                self.assertEqual(response.status, 204)
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://www.fairfare.space")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_unsigned_stripe_webhook_fails_closed_when_secret_missing(self):
         server, thread = self.start_server()
         try:

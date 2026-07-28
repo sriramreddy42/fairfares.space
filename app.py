@@ -97,6 +97,8 @@ POST_RETURN_FEE_RULES = (
 ASSET_VERSION = "20260715mobile-housing"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
+    "https://fairfare.space",
+    "https://www.fairfare.space",
     "https://fairfares.space",
     "https://www.fairfares.space",
     "http://localhost:3000",
