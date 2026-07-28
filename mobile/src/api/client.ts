@@ -1,4 +1,5 @@
 import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
+import Constants from "expo-constants";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -41,17 +42,18 @@ function normalizeExplicitApiUrl(value: string | undefined) {
   return clean;
 }
 
-const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL);
+const CONFIGURED_APP_API_URL = String(Constants.expoConfig?.extra?.apiUrl || "");
+const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL || CONFIGURED_APP_API_URL);
 const WEB_LOCAL_API_URL = Platform.OS === "web" ? browserLocalApiUrl() : "";
 const METRO_HOST_API_URL = metroHostApiUrl();
-const DEFAULT_API_URL = WEB_LOCAL_API_URL || EXPLICIT_API_URL || METRO_HOST_API_URL || "http://127.0.0.1:8010";
+const DEFAULT_API_URL = EXPLICIT_API_URL || WEB_LOCAL_API_URL || METRO_HOST_API_URL || "http://127.0.0.1:8010";
 
 export const API_URL =
   DEFAULT_API_URL;
 
 const API_CANDIDATES = uniqueUrls(
   Platform.OS === "web"
-    ? [WEB_LOCAL_API_URL, EXPLICIT_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
+    ? [EXPLICIT_API_URL, WEB_LOCAL_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
     : [EXPLICIT_API_URL, METRO_HOST_API_URL, "http://127.0.0.1:8010"]
 );
 
