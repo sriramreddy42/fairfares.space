@@ -117,6 +117,18 @@ export type Community = {
   memberCount: number;
   joined: boolean;
   joinUrl?: string;
+  visibility: "PUBLIC" | "PRIVATE";
+  memberRole: "OWNER" | "ADMIN" | "MEMBER" | "";
+  canManageMembers: boolean;
+};
+
+export type ChatGroupMember = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  role: "OWNER" | "ADMIN" | "MEMBER";
+  joinedAt: string;
+  isCurrentUser: boolean;
 };
 
 export type ServiceItem = {

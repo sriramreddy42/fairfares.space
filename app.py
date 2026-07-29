@@ -4170,6 +4170,7 @@ def init_db() -> None:
                 description TEXT NOT NULL DEFAULT '',
                 area_label TEXT NOT NULL DEFAULT '',
                 created_by_user_id INTEGER,
+                visibility TEXT NOT NULL DEFAULT 'PUBLIC',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(created_by_user_id) REFERENCES users(id)
@@ -4184,6 +4185,47 @@ def init_db() -> None:
                 UNIQUE(community_id, user_id),
                 FOREIGN KEY(community_id) REFERENCES chat_communities(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_group_invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                community_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_by_user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                max_uses INTEGER NOT NULL DEFAULT 0,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                revoked_at TEXT,
+                last_used_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(community_id) REFERENCES chat_communities(id),
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_device_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                public_key TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TEXT,
+                UNIQUE(user_id, device_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_message_envelopes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                recipient_user_id INTEGER NOT NULL,
+                recipient_device_id TEXT NOT NULL,
+                sender_public_key TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                ciphertext TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_id, recipient_user_id, recipient_device_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(recipient_user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_message_reports (
@@ -5093,6 +5135,7 @@ def init_db() -> None:
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "area_label", "area_label TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "created_by_user_id", "created_by_user_id INTEGER")
+        ensure_column(con, "chat_communities", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
         ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         ensure_column(con, "chat_community_members", "role", "role TEXT NOT NULL DEFAULT 'MEMBER'")
         con.execute(
@@ -5111,6 +5154,10 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_group_invites_community ON chat_group_invites(community_id, revoked_at, expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_user ON chat_device_keys(user_id, revoked_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_envelopes_recipient ON chat_message_envelopes(message_id, recipient_user_id, recipient_device_id)")
+        con.execute("UPDATE chat_communities SET visibility = 'PRIVATE' WHERE created_by_user_id IS NOT NULL AND visibility = 'PUBLIC'")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
@@ -13420,7 +13467,7 @@ def mobile_sample_housing_posts(
     """Return non-contactable, location-aware preview cards only when real search results are empty."""
     selected_location = " ".join((area or city or "your selected location").split())[:120]
     mode = "NEED_PLACE" if need == "have_place" else "HAVE_PLACE"
-    mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Sample available"
+    mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
     selected_budget = int(float_from_value(budget) or 0)
     location_key = hashlib.sha256(f"{selected_location}|{need}|{category}".encode()).hexdigest()[:10].upper()
     move_in_base = datetime.utcnow().date() + timedelta(days=7)
@@ -13900,13 +13947,19 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
             """
             SELECT communities.*,
                    COUNT(members.id) AS member_count,
-                   MAX(CASE WHEN members.user_id = ? THEN 1 ELSE 0 END) AS joined
+                   MAX(CASE WHEN members.user_id = ? THEN 1 ELSE 0 END) AS joined,
+                   MAX(CASE WHEN members.user_id = ? THEN members.role ELSE '' END) AS member_role
             FROM chat_communities communities
             LEFT JOIN chat_community_members members ON members.community_id = communities.id
+            WHERE communities.visibility = 'PUBLIC'
+               OR EXISTS (
+                   SELECT 1 FROM chat_community_members mine
+                   WHERE mine.community_id = communities.id AND mine.user_id = ?
+               )
             GROUP BY communities.id
             ORDER BY CASE communities.kind WHEN 'GROUP' THEN 0 ELSE 1 END, communities.name
             """,
-            (int(user_id or 0),),
+            (int(user_id or 0), int(user_id or 0), int(user_id or 0)),
         ).fetchall()
     return [
         {
@@ -13918,6 +13971,9 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
             "memberCount": int(row_value(row, "member_count") or 0),
             "joined": int(row_value(row, "joined") or 0) > 0,
             "createdByUserId": int(row_value(row, "created_by_user_id") or 0),
+            "visibility": row_value(row, "visibility") or "PUBLIC",
+            "memberRole": row_value(row, "member_role") or "",
+            "canManageMembers": (row_value(row, "member_role") or "") in {"OWNER", "ADMIN"},
         }
         for row in rows
     ]
@@ -13940,8 +13996,8 @@ def create_chat_community(
     with db() as con:
         con.execute(
             """
-            INSERT INTO chat_communities (public_id, kind, name, description, area_label, created_by_user_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label, created_by_user_id, visibility)
+            VALUES (?, ?, ?, ?, ?, ?, 'PRIVATE')
             """,
             (public_id, kind, name, description, area_label, creator_id),
         )
@@ -13962,12 +14018,242 @@ def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object]
         ).fetchone()
         if not community:
             return None, "Community not found."
+        if (row_value(community, "visibility") or "PUBLIC") != "PUBLIC":
+            return None, "This is a private group. Use a valid invitation link to join."
         con.execute(
             "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
             (community["id"], user_id),
         )
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
     return (joined[0] if joined else None), ""
+
+
+def chat_group_invite_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def chat_group_member_role(con: sqlite3.Connection, community_id: int, user_id: int) -> str:
+    row = con.execute(
+        "SELECT role FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+        (community_id, user_id),
+    ).fetchone()
+    return str(row_value(row, "role") or "") if row else ""
+
+
+def create_chat_group_invite(public_id: str, user_id: int, expires_days: int = 7, max_uses: int = 0) -> tuple[str, str]:
+    expires_days = min(30, max(1, int(expires_days or 7)))
+    max_uses = min(500, max(0, int(max_uses or 0)))
+    with db() as con:
+        community = con.execute("SELECT * FROM chat_communities WHERE public_id = ?", (public_id,)).fetchone()
+        if not community:
+            return "", "Group not found."
+        role = chat_group_member_role(con, int(community["id"]), user_id)
+        if role not in {"OWNER", "ADMIN"}:
+            return "", "Only a group owner or admin can create invitation links."
+        token = secrets.token_urlsafe(32)
+        expires_at = (datetime.utcnow() + timedelta(days=expires_days)).strftime("%Y-%m-%d %H:%M:%S")
+        con.execute(
+            """INSERT INTO chat_group_invites
+               (community_id, token_hash, created_by_user_id, expires_at, max_uses)
+               VALUES (?, ?, ?, ?, ?)""",
+            (int(community["id"]), chat_group_invite_hash(token), user_id, expires_at, max_uses),
+        )
+    return token, ""
+
+
+def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+    clean_token = (token or "").strip()
+    if len(clean_token) < 24:
+        return None, "This invitation link is invalid."
+    with db() as con:
+        invite = con.execute(
+            """SELECT invites.*, communities.public_id
+               FROM chat_group_invites invites
+               JOIN chat_communities communities ON communities.id = invites.community_id
+               WHERE invites.token_hash = ? LIMIT 1""",
+            (chat_group_invite_hash(clean_token),),
+        ).fetchone()
+        if not invite:
+            return None, "This invitation link is invalid."
+        if row_value(invite, "revoked_at"):
+            return None, "This invitation link has been revoked."
+        expires_at = parse_sql_datetime(row_value(invite, "expires_at"))
+        if not expires_at or expires_at <= datetime.utcnow():
+            return None, "This invitation link has expired."
+        max_uses = int(row_value(invite, "max_uses") or 0)
+        use_count = int(row_value(invite, "use_count") or 0)
+        already_member = bool(con.execute(
+            "SELECT 1 FROM chat_community_members WHERE community_id = ? AND user_id = ?",
+            (int(invite["community_id"]), user_id),
+        ).fetchone())
+        if max_uses and use_count >= max_uses and not already_member:
+            return None, "This invitation link has reached its member limit."
+        con.execute(
+            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
+            (int(invite["community_id"]), user_id),
+        )
+        if not already_member:
+            con.execute(
+                "UPDATE chat_group_invites SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (int(invite["id"]),),
+            )
+        public_id = str(row_value(invite, "public_id") or "")
+    joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
+    return (joined[0] if joined else None), ""
+
+
+def get_chat_group_members(public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
+    with db() as con:
+        community = con.execute("SELECT id FROM chat_communities WHERE public_id = ?", (public_id,)).fetchone()
+        if not community:
+            return None, "Group not found."
+        if not chat_group_member_role(con, int(community["id"]), user_id):
+            return None, "Join this group to view its members."
+        rows = con.execute(
+            """SELECT users.id, users.name, users.profile_photo_url, members.role, members.joined_at
+               FROM chat_community_members members JOIN users ON users.id = members.user_id
+               WHERE members.community_id = ?
+               ORDER BY CASE members.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, users.name""",
+            (int(community["id"]),),
+        ).fetchall()
+    return [{
+        "id": int(row["id"]), "name": row_value(row, "name") or "FairFares member",
+        "photoUrl": row_value(row, "profile_photo_url") or "", "role": row_value(row, "role") or "MEMBER",
+        "joinedAt": row_value(row, "joined_at") or "", "isCurrentUser": int(row["id"]) == user_id,
+    } for row in rows], ""
+
+
+def update_chat_group_member(public_id: str, actor_id: int, target_id: int, action: str, role: str = "") -> str:
+    with db() as con:
+        community = con.execute("SELECT id FROM chat_communities WHERE public_id = ?", (public_id,)).fetchone()
+        if not community:
+            return "Group not found."
+        community_id = int(community["id"])
+        actor_role = chat_group_member_role(con, community_id, actor_id)
+        target_role = chat_group_member_role(con, community_id, target_id)
+        if not target_role:
+            return "Member not found."
+        if action == "ROLE":
+            if actor_role != "OWNER" or target_id == actor_id or role not in {"ADMIN", "MEMBER"}:
+                return "Only the owner can change member roles."
+            con.execute("UPDATE chat_community_members SET role = ? WHERE community_id = ? AND user_id = ?", (role, community_id, target_id))
+            return ""
+        if action == "TRANSFER":
+            if actor_role != "OWNER" or target_id == actor_id or target_role not in {"ADMIN", "MEMBER"}:
+                return "Only the owner can transfer group ownership to another member."
+            con.execute("UPDATE chat_community_members SET role = 'MEMBER' WHERE community_id = ? AND user_id = ?", (community_id, actor_id))
+            con.execute("UPDATE chat_community_members SET role = 'OWNER' WHERE community_id = ? AND user_id = ?", (community_id, target_id))
+            con.execute("UPDATE chat_communities SET created_by_user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (target_id, community_id))
+            return ""
+        if action == "REMOVE":
+            if target_id == actor_id:
+                return "Use Leave group to remove yourself."
+            if actor_role not in {"OWNER", "ADMIN"} or target_role == "OWNER" or (actor_role == "ADMIN" and target_role == "ADMIN"):
+                return "You do not have permission to remove this member."
+            con.execute("DELETE FROM chat_community_members WHERE community_id = ? AND user_id = ?", (community_id, target_id))
+            con.execute(
+                """DELETE FROM chat_participants
+                   WHERE user_id = ? AND conversation_id IN (
+                       SELECT id FROM chat_conversations WHERE community_id = ?
+                   )""",
+                (target_id, community_id),
+            )
+            return ""
+        if action == "LEAVE":
+            if actor_id != target_id:
+                return "Invalid leave request."
+            if actor_role == "OWNER":
+                others = int(con.execute("SELECT COUNT(*) AS count FROM chat_community_members WHERE community_id = ? AND user_id != ?", (community_id, actor_id)).fetchone()["count"])
+                if others:
+                    return "Transfer ownership or remove the other members before leaving."
+            con.execute("DELETE FROM chat_community_members WHERE community_id = ? AND user_id = ?", (community_id, actor_id))
+            con.execute(
+                """DELETE FROM chat_participants
+                   WHERE user_id = ? AND conversation_id IN (
+                       SELECT id FROM chat_conversations WHERE community_id = ?
+                   )""",
+                (actor_id, community_id),
+            )
+            return ""
+    return "Unsupported group action."
+
+
+def revoke_chat_group_invites(public_id: str, user_id: int) -> str:
+    with db() as con:
+        community = con.execute("SELECT id FROM chat_communities WHERE public_id = ?", (public_id,)).fetchone()
+        if not community:
+            return "Group not found."
+        community_id = int(community["id"])
+        if chat_group_member_role(con, community_id, user_id) not in {"OWNER", "ADMIN"}:
+            return "Only a group owner or admin can revoke invitation links."
+        con.execute(
+            "UPDATE chat_group_invites SET revoked_at = CURRENT_TIMESTAMP WHERE community_id = ? AND revoked_at IS NULL",
+            (community_id,),
+        )
+    return ""
+
+
+def register_chat_device_key(user_id: int, device_id: str, public_key: str) -> str:
+    device_id = re.sub(r"[^A-Za-z0-9._-]", "", (device_id or ""))[:100]
+    public_key = (public_key or "").strip()[:100]
+    if len(device_id) < 8 or len(public_key) < 40:
+        return "A valid device key is required."
+    with db() as con:
+        con.execute(
+            """INSERT INTO chat_device_keys (user_id, device_id, public_key)
+               VALUES (?, ?, ?)
+               ON CONFLICT(user_id, device_id) DO UPDATE SET
+                   public_key = excluded.public_key, last_seen_at = CURRENT_TIMESTAMP, revoked_at = NULL""",
+            (user_id, device_id, public_key),
+        )
+    return ""
+
+
+def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
+    with db() as con:
+        conversation = get_chat_conversation_by_public_id(con, conversation_public_id, user_id)
+        if not conversation:
+            return None, "Conversation not found."
+        rows = con.execute(
+            """SELECT keys.user_id, keys.device_id, keys.public_key
+               FROM chat_device_keys keys
+               JOIN chat_participants participants ON participants.user_id = keys.user_id
+               WHERE participants.conversation_id = ? AND keys.revoked_at IS NULL
+               ORDER BY keys.user_id, keys.created_at""",
+            (int(conversation["id"]),),
+        ).fetchall()
+        participant_count = int(con.execute("SELECT COUNT(*) AS count FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchone()["count"])
+    keys = [{"userId": int(row["user_id"]), "deviceId": row_value(row, "device_id"), "publicKey": row_value(row, "public_key")} for row in rows]
+    keyed_users = len({int(item["userId"]) for item in keys})
+    return keys, "" if keyed_users == participant_count else "Every participant must open the latest FairFares app before encryption can start."
+
+
+def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str) -> tuple[sqlite3.Row | None, str]:
+    participant_ids = {int(row["user_id"]) for row in con.execute("SELECT user_id FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchall()}
+    active_keys = {(int(row["user_id"]), str(row["device_id"])): str(row["public_key"]) for row in con.execute(
+        "SELECT user_id, device_id, public_key FROM chat_device_keys WHERE revoked_at IS NULL AND user_id IN (%s)" % ",".join("?" * len(participant_ids)), tuple(participant_ids)
+    ).fetchall()} if participant_ids else {}
+    supplied = {(int(item.get("recipientUserId") or 0), str(item.get("recipientDeviceId") or "")) for item in envelopes}
+    if not active_keys or set(active_keys) != supplied:
+        return None, "Encryption keys changed. Refresh the chat and try again."
+    sender_id = int(sender["id"])
+    sender_public_keys = {public_key for (key_user_id, _), public_key in active_keys.items() if key_user_id == sender_id}
+    for item in envelopes:
+        if str(item.get("senderPublicKey") or "") not in sender_public_keys:
+            return None, "The sender encryption key is not registered to this device."
+        if len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000:
+            return None, "Encrypted message is invalid."
+    message = save_chat_message(con, int(conversation["id"]), sender, "🔒 End-to-end encrypted message", client_message_id)
+    for item in envelopes:
+        recipient_user_id = int(item.get("recipientUserId") or 0)
+        recipient_device_id = str(item.get("recipientDeviceId") or "")
+        con.execute(
+            """INSERT OR IGNORE INTO chat_message_envelopes
+               (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (int(message["id"]), recipient_user_id, recipient_device_id, str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or "")),
+        )
+    return message, ""
 
 
 def chat_user_is_blocked(con: sqlite3.Connection, blocker_id: int, blocked_id: int) -> bool:
@@ -16499,6 +16785,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/communities":
             self.api_chat_communities(parsed)
             return
+        if parsed.path == "/api/chat/groups/members":
+            self.api_chat_group_members(parsed)
+            return
+        if parsed.path == "/api/chat/e2ee/keys":
+            self.api_chat_e2ee_keys(parsed)
+            return
+        if parsed.path == "/api/chat/e2ee/envelopes":
+            self.api_chat_e2ee_envelopes(parsed)
+            return
         if parsed.path == "/api/chat/people/by-phone":
             self.api_chat_person_by_phone(parsed)
             return
@@ -16626,6 +16921,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/conversations": self.api_create_chat_conversation,
             "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/communities/join": self.api_join_chat_community,
+            "/api/chat/groups/invites": self.api_create_chat_group_invite,
+            "/api/chat/groups/invites/revoke": self.api_revoke_chat_group_invites,
+            "/api/chat/groups/join-invite": self.api_join_chat_group_invite,
+            "/api/chat/groups/members/role": self.api_chat_group_member_role,
+            "/api/chat/groups/ownership/transfer": self.api_transfer_chat_group_ownership,
+            "/api/chat/groups/members/remove": self.api_remove_chat_group_member,
+            "/api/chat/groups/leave": self.api_leave_chat_group,
+            "/api/chat/e2ee/keys": self.api_register_chat_e2ee_key,
+            "/api/chat/e2ee/messages": self.api_send_encrypted_chat_message,
             "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/attachments": self.api_send_chat_attachment,
@@ -16875,6 +17179,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def community_join_url(self, public_id: str) -> str:
         return f"{self.public_origin()}/accommodations?join_group={urllib.parse.quote(public_id)}"
+
+    def community_invite_url(self, token: str) -> str:
+        return f"fairfares://group?group_invite={urllib.parse.quote(token)}"
 
     def healthz(self) -> None:
         body = b"ok"
@@ -17562,7 +17869,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(user["id"]) if user else None
         communities = get_chat_communities_for_user(user_id)
         for community in communities:
-            community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
+            if community.get("visibility") == "PUBLIC":
+                community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "communities": communities})
 
     def api_chat_person_by_phone(self, parsed: urllib.parse.ParseResult) -> None:
@@ -17947,7 +18255,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not community:
             self.send_json({"ok": False, "message": error or "Could not create this group."}, 400)
             return
-        community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
+        token, invite_error = create_chat_group_invite(str(community.get("id") or ""), int(user["id"]))
+        if invite_error:
+            self.send_json({"ok": False, "message": invite_error}, 400)
+            return
+        community["joinUrl"] = self.community_invite_url(token)
         self.send_json({"ok": True, "community": community})
 
     def api_join_chat_community(self) -> None:
@@ -17964,8 +18276,154 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not community:
             self.send_json({"ok": False, "message": error or "Could not join this community."}, 404)
             return
-        community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
+        if community.get("visibility") == "PUBLIC":
+            community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "community": community})
+
+    def api_create_chat_group_invite(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to invite group members."}, 401)
+            return
+        form = self.read_form()
+        public_id = (form.get("community_id") or "").strip()
+        token, error = create_chat_group_invite(
+            public_id, int(user["id"]),
+            int(float_from_value(form.get("expires_days")) or 7), int(float_from_value(form.get("max_uses")) or 0),
+        )
+        if not token:
+            self.send_json({"ok": False, "message": error or "Could not create an invitation."}, 403)
+            return
+        self.send_json({"ok": True, "inviteUrl": self.community_invite_url(token), "expiresInDays": min(30, max(1, int(float_from_value(form.get("expires_days")) or 7)))})
+
+    def api_revoke_chat_group_invites(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to manage invitations."}, 401)
+            return
+        error = revoke_chat_group_invites((self.read_form().get("community_id") or "").strip(), int(user["id"]))
+        if error:
+            self.send_json({"ok": False, "message": error}, 403)
+            return
+        self.send_json({"ok": True})
+
+    def api_join_chat_group_invite(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to join this private group."}, 401)
+            return
+        token = (self.read_form().get("token") or "").strip()
+        community, error = join_chat_group_by_invite(token, int(user["id"]))
+        if not community:
+            self.send_json({"ok": False, "message": error or "Could not join this group."}, 400)
+            return
+        self.send_json({"ok": True, "community": community})
+
+    def api_chat_group_members(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to view group members."}, 401)
+            return
+        public_id = (urllib.parse.parse_qs(parsed.query).get("community_id") or [""])[0].strip()
+        members, error = get_chat_group_members(public_id, int(user["id"]))
+        if members is None:
+            self.send_json({"ok": False, "message": error}, 403)
+            return
+        self.send_json({"ok": True, "members": members})
+
+    def api_chat_group_member_role(self) -> None:
+        self.api_update_chat_group_member("ROLE")
+
+    def api_remove_chat_group_member(self) -> None:
+        self.api_update_chat_group_member("REMOVE")
+
+    def api_transfer_chat_group_ownership(self) -> None:
+        self.api_update_chat_group_member("TRANSFER")
+
+    def api_leave_chat_group(self) -> None:
+        self.api_update_chat_group_member("LEAVE")
+
+    def api_update_chat_group_member(self, action: str) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to manage this group."}, 401)
+            return
+        form = self.read_form()
+        actor_id = int(user["id"])
+        target_id = actor_id if action == "LEAVE" else int(float_from_value(form.get("target_user_id")) or 0)
+        error = update_chat_group_member(
+            (form.get("community_id") or "").strip(), actor_id, target_id, action,
+            (form.get("role") or "").strip().upper(),
+        )
+        if error:
+            self.send_json({"ok": False, "message": error}, 403)
+            return
+        self.send_json({"ok": True})
+
+    def api_register_chat_e2ee_key(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure FChat."}, 401)
+            return
+        form = self.read_form()
+        error = register_chat_device_key(int(user["id"]), form.get("deviceId", ""), form.get("publicKey", ""))
+        if error:
+            self.send_json({"ok": False, "message": error}, 400)
+            return
+        self.send_json({"ok": True})
+
+    def api_chat_e2ee_keys(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure FChat."}, 401)
+            return
+        conversation_id = (urllib.parse.parse_qs(parsed.query).get("conversation_id") or [""])[0]
+        keys, warning = get_chat_conversation_device_keys(conversation_id, int(user["id"]))
+        if keys is None:
+            self.send_json({"ok": False, "message": warning}, 404)
+            return
+        self.send_json({"ok": True, "keys": keys, "ready": not warning, "warning": warning})
+
+    def api_chat_e2ee_envelopes(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted FChat."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        conversation_public_id = (params.get("conversation_id") or [""])[0]
+        device_id = (params.get("device_id") or [""])[0]
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            rows = con.execute(
+                """SELECT envelopes.message_id, envelopes.sender_public_key, envelopes.nonce, envelopes.ciphertext
+                   FROM chat_message_envelopes envelopes JOIN chat_messages messages ON messages.id = envelopes.message_id
+                   WHERE messages.conversation_id = ? AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?""",
+                (int(conversation["id"]), int(user["id"]), device_id),
+            ).fetchall()
+        self.send_json({"ok": True, "envelopes": [{"messageId": int(row["message_id"]), "senderPublicKey": row["sender_public_key"], "nonce": row["nonce"], "ciphertext": row["ciphertext"]} for row in rows]})
+
+    def api_send_encrypted_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to send encrypted messages."}, 401)
+            return
+        form = self.read_json_body()
+        conversation_public_id = (form.get("conversationId") or "").strip()
+        envelopes = form.get("envelopes") if isinstance(form.get("envelopes"), list) else []
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message, error = save_encrypted_chat_message(con, conversation, user, envelopes, str(form.get("clientMessageId") or ""))
+            if not message:
+                self.send_json({"ok": False, "message": error}, 409)
+                return
+            self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
 
     def api_chat_phone_discoverability(self) -> None:
         user = self.current_user()

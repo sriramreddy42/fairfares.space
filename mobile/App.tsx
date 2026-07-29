@@ -154,6 +154,7 @@ function FairFaresApp() {
   const [authMessage, setAuthMessage] = useState("");
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
+  const [pendingGroupInvite, setPendingGroupInvite] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
@@ -408,8 +409,21 @@ function FairFaresApp() {
   }, [activeTab]);
 
   useEffect(() => {
-    function handlePaymentUrl(url: string | null) {
+    function handleAppUrl(url: string | null) {
       if (!url) return;
+      try {
+        const parsed = new URL(url);
+        const groupInvite = parsed.searchParams.get("group_invite") || "";
+        if (groupInvite) {
+          setPendingPost(null);
+          setPendingRide(null);
+          setPendingGroupInvite(groupInvite);
+          setActiveTab("messenger");
+          return;
+        }
+      } catch {
+        // Ignore malformed external URLs.
+      }
       if (url.includes("payment/success")) {
         setPaymentUrl("");
         setPaymentStatus({
@@ -428,8 +442,8 @@ function FairFaresApp() {
         });
       }
     }
-    Linking.getInitialURL().then(handlePaymentUrl).catch(() => undefined);
-    const subscription = Linking.addEventListener("url", (event) => handlePaymentUrl(event.url));
+    Linking.getInitialURL().then(handleAppUrl).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", (event) => handleAppUrl(event.url));
     return () => subscription.remove();
   }, []);
 
@@ -955,9 +969,11 @@ function FairFaresApp() {
         data={data}
         pendingPost={pendingPost}
         pendingRide={pendingRide}
+        pendingGroupInvite={pendingGroupInvite}
         onRequireLogin={() => setLoginOpen(true)}
         onClearPendingPost={() => setPendingPost(null)}
         onClearPendingRide={() => setPendingRide(null)}
+        onClearPendingGroupInvite={() => setPendingGroupInvite("")}
         onThreadModeChange={setBottomTabsHidden}
         onUnreadCountChange={(unreadCount) => setData((current) => current ? {
           ...current,

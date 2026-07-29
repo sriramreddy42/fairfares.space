@@ -36,7 +36,8 @@
     },
     "plugins": [
       "expo-location",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store"
     ],
     "extra": {
       "apiUrl": "https://fairfares.onrender.com",

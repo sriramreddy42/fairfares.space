@@ -552,8 +552,6 @@ export function HousingScreen({
       return distanceValue(a) - distanceValue(b);
     });
   }, [posts, selectedSort]);
-  const showingSamplePosts = sortedPosts.some((post) => post.sample);
-  const verifiedLocalPostCount = sortedPosts.filter((post) => !post.sample).length;
   const localities = useMemo(() => {
     const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
     posts.filter((post) => !post.sample).forEach((post) => {
@@ -2904,12 +2902,6 @@ export function HousingScreen({
           </>
         ) : null}
       </View>
-      {showingSamplePosts ? (
-        <View style={styles.sampleNotice}>
-          <Text style={styles.sampleNoticeTitle}>{verifiedLocalPostCount ? `${verifiedLocalPostCount} verified local post${verifiedLocalPostCount === 1 ? "" : "s"} shown first` : "No verified local posts yet"}</Text>
-          <Text style={styles.sampleNoticeCopy}>Real matching listings always appear first. The 10 sample previews follow them and cannot receive messages.</Text>
-        </View>
-      ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {sortedPosts.length ? (
           sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} />)
@@ -3360,9 +3352,6 @@ const styles = StyleSheet.create({
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
-  sampleNotice: { backgroundColor: "rgba(37,99,235,0.10)", borderWidth: 1, borderColor: "rgba(96,165,250,0.42)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, gap: 3 },
-  sampleNoticeTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
-  sampleNoticeCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: 10, gap: 7 },
   filterHeader: { gap: 2 },
   filterHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "600" },

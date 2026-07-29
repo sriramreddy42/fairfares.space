@@ -5,15 +5,21 @@ import {
   absoluteAssetUrl,
   blockChatUser,
   createChatCommunity,
+  createChatGroupInvite,
   deleteChatMessage,
   editChatMessage,
   findChatPersonByPhone,
   getChatCommunities,
+  getChatDeviceKeys,
+  getChatEncryptedEnvelopes,
+  getChatGroupMembers,
   getChatConversations,
   getChatMessages,
   getAuthenticatedAssetDataUrl,
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
+  joinChatGroupInvite,
+  leaveChatGroup,
   markChatRead,
   muteChatConversation,
   openChatForRide,
@@ -22,27 +28,35 @@ import {
   openChatWithPerson,
   pollChatEvents,
   reportChatMessage,
+  registerChatDeviceKey,
+  removeChatGroupMember,
   sendChatMessage,
+  sendEncryptedChatMessage,
   sendChatAttachment,
   sendChatRichMessage,
   startChatForPost,
   startChatForRide,
+  transferChatGroupOwnership,
+  updateChatGroupMemberRole,
   voteChatPoll
 } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
-import { BootstrapPayload, ChatConversation, ChatMessage, Community, HousingPost, RidePost } from "../types";
+import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
 import { pickChatImage, pickCompressedImages } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
+import { decryptEnvelope, DeviceIdentity, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 
 type Props = {
   data: BootstrapPayload | null;
   pendingPost: HousingPost | null;
   pendingRide: RidePost | null;
+  pendingGroupInvite?: string;
   onRequireLogin: () => void;
   onClearPendingPost?: () => void;
   onClearPendingRide?: () => void;
+  onClearPendingGroupInvite?: () => void;
   onThreadModeChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
 };
@@ -162,7 +176,7 @@ function PendingPhotoPreview({ uri }: { uri: string }) {
   return <Image source={{ uri }} style={styles.pendingAttachmentImage} resizeMode="cover" onError={() => setFailed(true)} />;
 }
 
-export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin, onClearPendingPost, onClearPendingRide, onThreadModeChange, onUnreadCountChange }: Props) {
+export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
   const messagesScrollRef = useRef<ScrollView>(null);
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
@@ -184,10 +198,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
   const [pendingAttachment, setPendingAttachment] = useState<{ kind: "IMAGE" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number } | null>(null);
   const [wallpaperPanelOpen, setWallpaperPanelOpen] = useState(false);
   const [chatOptionsOpen, setChatOptionsOpen] = useState(false);
+  const [groupMembersOpen, setGroupMembersOpen] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
+  const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
+  const [encryptionReady, setEncryptionReady] = useState(false);
   const [wallpaper, setWallpaper] = useState("midnight");
   const [customWallpaper, setCustomWallpaper] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [phoneSearch, setPhoneSearch] = useState("");
+  const [groupInvite, setGroupInvite] = useState("");
   const [groupDraft, setGroupDraft] = useState(blankGroup);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
 
@@ -195,6 +214,59 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
     setConversations(data?.chat.conversations || []);
     setCommunities(data?.communities || []);
   }, [data?.chat.conversations, data?.communities]);
+
+  useEffect(() => {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId || Platform.OS === "web") return;
+    getOrCreateDeviceIdentity(userId)
+      .then(async (identity) => {
+        await registerChatDeviceKey(identity.deviceId, identity.publicKey);
+        setDeviceIdentity(identity);
+      })
+      .catch(() => setDeviceIdentity(null));
+  }, [data?.user?.id]);
+
+  async function decryptMessages(conversationId: string, nextMessages: ChatMessage[]) {
+    if (!deviceIdentity || Platform.OS === "web") return nextMessages;
+    try {
+      const [envelopePayload, keyPayload] = await Promise.all([
+        getChatEncryptedEnvelopes(conversationId, deviceIdentity.deviceId), getChatDeviceKeys(conversationId)
+      ]);
+      setEncryptionReady(Boolean(keyPayload.ready));
+      const byMessage = new Map(envelopePayload.envelopes.map((item) => [item.messageId, item]));
+      return nextMessages.map((message) => {
+        const envelope = byMessage.get(message.id);
+        if (!envelope) return message;
+        const clearText = decryptEnvelope(envelope, deviceIdentity);
+        return { ...message, text: clearText || "Unable to decrypt this message on this device." };
+      });
+    } catch {
+      setEncryptionReady(false);
+      return nextMessages;
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingGroupInvite) return;
+    if (!signedIn) {
+      onRequireLogin();
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    joinChatGroupInvite(pendingGroupInvite)
+      .then(async (response) => {
+        if (cancelled) return;
+        onClearPendingGroupInvite?.();
+        setCommunities((current) => [response.community, ...current.filter((item) => item.id !== response.community.id)]);
+        await openCommunityThread(response.community);
+      })
+      .catch((error) => {
+        if (!cancelled) Alert.alert("Could not join group", error instanceof Error ? error.message : "This invitation is not valid.");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [pendingGroupInvite, signedIn]);
 
   useEffect(() => {
     if (pendingPost) {
@@ -215,7 +287,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           const payload = await getChatMessages(conversation.id);
           if (cancelled) return;
           setActiveConversation(payload.conversation || conversation);
-          setMessages(payload.messages || []);
+          setMessages(await decryptMessages(conversation.id, payload.messages || []));
         })
         .catch((error) => {
           if (!cancelled) Alert.alert("FChat unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
@@ -248,7 +320,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           const payload = await getChatMessages(conversation.id);
           if (cancelled) return;
           setActiveConversation(payload.conversation || conversation);
-          setMessages(payload.messages || []);
+          setMessages(await decryptMessages(conversation.id, payload.messages || []));
         })
         .catch((error) => {
           if (!cancelled) {
@@ -280,6 +352,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           const payload = await pollChatEvents(activeConversationId, cursor);
           if (cancelled) return;
           cursor = Math.max(cursor, Number(payload.cursor || 0));
+          const incomingMessages = await decryptMessages(activeConversationId, payload.messages || []);
           const receiptById = new Map((payload.receipts || []).map((receipt) => [Number(receipt.id), receipt]));
           setMessages((current) => {
             const byId = new Map<number, ChatMessage>();
@@ -287,7 +360,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
               const receipt = receiptById.get(Number(message.id));
               byId.set(Number(message.id), receipt ? { ...message, ...receipt } : message);
             });
-            (payload.messages || []).forEach((message) => byId.set(Number(message.id), message));
+            incomingMessages.forEach((message) => byId.set(Number(message.id), message));
             return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
           });
           if ((payload.messages || []).some((message) => !message.mine)) {
@@ -430,7 +503,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
         mutedAt: payload.conversation.mutedAt || conversation.mutedAt,
         blockedAt: payload.conversation.blockedAt || conversation.blockedAt
       });
-      setMessages(payload.messages || []);
+      setMessages(await decryptMessages(conversation.id, payload.messages || []));
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
         await markChatRead(conversation.id, String(lastMessage.id));
@@ -520,8 +593,16 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
         setMessages(response.message ? [response.message] : []);
         onClearPendingRide?.();
       } else if (activeConversationId) {
-        const response = await sendChatMessage(activeConversationId, cleanMessage);
-        setMessages((current) => [...current, response.message]);
+        if (deviceIdentity && encryptionReady && Platform.OS !== "web") {
+          const keyPayload = await getChatDeviceKeys(activeConversationId);
+          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+          const envelopes = encryptForDevices(cleanMessage, deviceIdentity, keyPayload.keys);
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes);
+          setMessages((current) => [...current, { ...response.message, text: cleanMessage }]);
+        } else {
+          const response = await sendChatMessage(activeConversationId, cleanMessage);
+          setMessages((current) => [...current, response.message]);
+        }
       } else {
         Alert.alert("Choose a chat", "Open a listing or conversation first.");
         return;
@@ -561,6 +642,24 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
     }
   }
 
+  async function joinPrivateGroup() {
+    if (!groupInvite.trim()) {
+      Alert.alert("Invitation required", "Paste the private FairFares group invitation link.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await joinChatGroupInvite(groupInvite);
+      setGroupInvite("");
+      setCommunities((current) => [response.community, ...current.filter((item) => item.id !== response.community.id)]);
+      await openCommunityThread(response.community);
+    } catch (error) {
+      Alert.alert("Could not join group", error instanceof Error ? error.message : "Check the invitation and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function startPhoneChat() {
     if (!signedIn) {
       onRequireLogin();
@@ -581,7 +680,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       setCreatingGroup(false);
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(payload.messages || []);
+      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Contact not found", error instanceof Error ? error.message : "Could not find this FairFares member.");
@@ -616,7 +715,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       setTab("All");
       setThreadLoading(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(payload.messages || []);
+      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
         await markChatRead(response.conversation.id, String(lastMessage.id));
@@ -635,8 +734,69 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       onRequireLogin();
       return;
     }
-    if (community.joinUrl) {
-      await Share.share({ message: `Join ${community.name} on FairFares: ${community.joinUrl}` });
+    try {
+      const inviteUrl = community.visibility === "PRIVATE"
+        ? (await createChatGroupInvite(community.id)).inviteUrl
+        : community.joinUrl;
+      if (inviteUrl) await Share.share({ message: `Join ${community.name} on FairFares: ${inviteUrl}` });
+    } catch (error) {
+      Alert.alert("Invite unavailable", error instanceof Error ? error.message : "Only group owners and admins can invite members.");
+    }
+  }
+
+  async function showGroupMembers() {
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) return;
+    setChatOptionsOpen(false);
+    setThreadLoading(true);
+    try {
+      const response = await getChatGroupMembers(communityId);
+      setGroupMembers(response.members || []);
+      setGroupMembersOpen(true);
+    } catch (error) {
+      Alert.alert("Members unavailable", error instanceof Error ? error.message : "Could not load group members.");
+    } finally {
+      setThreadLoading(false);
+    }
+  }
+
+  async function changeGroupMember(member: ChatGroupMember, action: "REMOVE" | "ROLE") {
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) return;
+    try {
+      if (action === "REMOVE") await removeChatGroupMember(communityId, member.id);
+      else await updateChatGroupMemberRole(communityId, member.id, member.role === "ADMIN" ? "MEMBER" : "ADMIN");
+      const response = await getChatGroupMembers(communityId);
+      setGroupMembers(response.members || []);
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Group update failed", error instanceof Error ? error.message : "Could not update this member.");
+    }
+  }
+
+  async function transferGroupTo(member: ChatGroupMember) {
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) return;
+    try {
+      await transferChatGroupOwnership(communityId, member.id);
+      const response = await getChatGroupMembers(communityId);
+      setGroupMembers(response.members || []);
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Transfer failed", error instanceof Error ? error.message : "Could not transfer ownership.");
+    }
+  }
+
+  async function leaveActiveGroup() {
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) return;
+    try {
+      await leaveChatGroup(communityId);
+      setGroupMembersOpen(false);
+      closeThread();
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Could not leave group", error instanceof Error ? error.message : "Try again.");
     }
   }
 
@@ -794,6 +954,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
     setAttachmentMenuOpen(false);
     setWallpaperPanelOpen(false);
     setChatOptionsOpen(false);
+    setGroupMembersOpen(false);
+    setGroupMembers([]);
     setAttachmentStatus("");
     setPendingAttachment(null);
     onClearPendingPost?.();
@@ -832,7 +994,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
               {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "FairFares chat"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {presenceLabel(activeConversation)}
+              {encryptionReady ? "🔒 End-to-end encrypted" : presenceLabel(activeConversation)}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
@@ -842,7 +1004,23 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           <View style={styles.chatOptionsPanel}>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
+            {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>♙</Text><Text style={styles.chatOptionText}>Group members</Text></TouchableOpacity> : null}
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
+          </View>
+        ) : null}
+
+        {groupMembersOpen ? (
+          <View style={styles.groupMembersPanel}>
+            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>Group members</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setGroupMembersOpen(false)}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
+            <ScrollView style={styles.groupMembersList}>
+              {groupMembers.map((member) => {
+                const currentRole = groupMembers.find((item) => item.isCurrentUser)?.role || "MEMBER";
+                const canChangeRole = currentRole === "OWNER" && !member.isCurrentUser && member.role !== "OWNER";
+                const canRemove = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
+                return <View key={member.id} style={styles.groupMemberRow}><View style={styles.groupMemberAvatar}><Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text></View><View style={styles.groupMemberCopy}><Text style={styles.groupMemberName}>{member.name}{member.isCurrentUser ? " · You" : ""}</Text><Text style={styles.groupMemberRole}>{member.role.toLowerCase()}</Text></View>{canChangeRole ? <View><TouchableOpacity onPress={() => void transferGroupTo(member)}><Text style={styles.groupMemberAction}>Make owner</Text></TouchableOpacity><TouchableOpacity onPress={() => void changeGroupMember(member, "ROLE")}><Text style={styles.groupMemberAction}>{member.role === "ADMIN" ? "Remove admin" : "Make admin"}</Text></TouchableOpacity></View> : null}{canRemove ? <TouchableOpacity onPress={() => void changeGroupMember(member, "REMOVE")}><Text style={[styles.groupMemberAction, styles.groupMemberRemove]}>Remove</Text></TouchableOpacity> : null}</View>;
+              })}
+            </ScrollView>
+            <TouchableOpacity style={styles.leaveGroupButton} onPress={() => void leaveActiveGroup()}><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
           </View>
         ) : null}
 
@@ -1085,6 +1263,20 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
             <Text style={styles.primaryButtonText}>{loading ? "Finding..." : "Find and message"}</Text>
           </TouchableOpacity>
           <View style={styles.composerDivider} />
+          <Text style={styles.sectionTitle}>Join a private group</Text>
+          <TextInput
+            placeholder="Paste invitation link"
+            placeholderTextColor={theme.colors.muted}
+            value={groupInvite}
+            onChangeText={setGroupInvite}
+            style={styles.input}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TouchableOpacity style={styles.primaryButton} onPress={joinPrivateGroup} disabled={loading}>
+            <Text style={styles.primaryButtonText}>{loading ? "Checking..." : "Join securely"}</Text>
+          </TouchableOpacity>
+          <View style={styles.composerDivider} />
           <Text style={styles.sectionTitle}>Create a group</Text>
           <TextInput
             placeholder="Group name, e.g. Denver roommates"
@@ -1116,6 +1308,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
 
       <ScrollView
         style={styles.list}
+        contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
       >
@@ -1153,7 +1346,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
                 community.joined ? shareCommunity(community) : openCommunityThread(community);
               }}
             >
-              <Text style={styles.memberCount}>{community.joined ? "Share" : "Join"} · {community.memberCount}</Text>
+              <Text style={styles.memberCount}>{community.joined ? (community.canManageMembers || community.visibility === "PUBLIC" ? "Invite" : "Joined") : "Join"} · {community.memberCount}</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         ))}
@@ -1204,8 +1397,8 @@ function SendIcon() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.colors.bg, padding: theme.spacing.md, paddingBottom: 116 },
-  screenAndroid: { paddingBottom: 82 },
+  screen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md },
+  screenAndroid: { paddingTop: 10 },
   threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 18, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 4 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
@@ -1397,7 +1590,8 @@ const styles = StyleSheet.create({
   cancelEdit: { alignSelf: "flex-start", marginTop: 8 },
   cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
   list: { flex: 1 },
-  chatRow: { flexDirection: "row", alignItems: "center", paddingVertical: 13, gap: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  listContent: { paddingBottom: 88 },
+  chatRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 12, marginBottom: 8, gap: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.035)", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
   avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarImage: { width: "100%", height: "100%" },
   groupAvatar: { backgroundColor: "#172138" },
@@ -1411,6 +1605,18 @@ const styles = StyleSheet.create({
   unread: { backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, overflow: "hidden", paddingHorizontal: 8, fontWeight: "900" },
   memberCount: { color: theme.colors.muted, fontWeight: "600" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
+  groupMembersPanel: { position: "absolute", top: 78, right: 10, width: 360, maxWidth: "94%", maxHeight: 430, zIndex: 30, backgroundColor: "#111827", borderWidth: 1, borderColor: theme.colors.line, borderRadius: 20, padding: 14, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18 },
+  groupMembersList: { maxHeight: 310 },
+  groupMemberRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  groupMemberAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#233253", alignItems: "center", justifyContent: "center" },
+  groupMemberAvatarText: { color: theme.colors.text, fontSize: 12, fontWeight: "700" },
+  groupMemberCopy: { flex: 1 },
+  groupMemberName: { color: theme.colors.text, fontSize: 14, fontWeight: "600" },
+  groupMemberRole: { color: theme.colors.muted, fontSize: 11, marginTop: 2, textTransform: "capitalize" },
+  groupMemberAction: { color: "#78a5ff", fontSize: 11, fontWeight: "600", padding: 5 },
+  groupMemberRemove: { color: "#ff7c8c" },
+  leaveGroupButton: { minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: "#843444", alignItems: "center", justifyContent: "center", marginTop: 12 },
+  leaveGroupText: { color: "#ff8b99", fontSize: 13, fontWeight: "600" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg }
 });

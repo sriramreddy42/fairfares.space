@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
 import Constants from "expo-constants";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
@@ -623,6 +623,27 @@ export async function getChatMessages(conversationId: string) {
   );
 }
 
+export async function registerChatDeviceKey(deviceId: string, publicKey: string) {
+  return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey })
+  });
+}
+
+export async function getChatDeviceKeys(conversationId: string) {
+  return request<{ ok: boolean; keys: Array<{ userId: number; deviceId: string; publicKey: string }>; ready: boolean; warning: string }>(`/api/chat/e2ee/keys?conversation_id=${encodeURIComponent(conversationId)}`);
+}
+
+export async function getChatEncryptedEnvelopes(conversationId: string, deviceId: string) {
+  return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/envelopes?conversation_id=${encodeURIComponent(conversationId)}&device_id=${encodeURIComponent(deviceId)}`);
+}
+
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
 export async function pollChatEvents(conversationId: string, afterMessageId: number) {
   const query = new URLSearchParams({
     conversation_id: conversationId,
@@ -810,6 +831,52 @@ export async function joinChatCommunity(communityId: string) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId })
+  });
+}
+
+export async function createChatGroupInvite(communityId: string) {
+  return request<{ ok: boolean; inviteUrl: string; expiresInDays: number }>("/api/chat/groups/invites", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, expires_days: "7" })
+  });
+}
+
+export async function joinChatGroupInvite(value: string) {
+  let token = value.trim();
+  try { token = new URL(token).searchParams.get("group_invite") || token; } catch {}
+  return request<{ ok: boolean; community: Community }>("/api/chat/groups/join-invite", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ token })
+  });
+}
+
+export async function getChatGroupMembers(communityId: string) {
+  return request<{ ok: boolean; members: ChatGroupMember[] }>(`/api/chat/groups/members?community_id=${encodeURIComponent(communityId)}`);
+}
+
+export async function updateChatGroupMemberRole(communityId: string, targetUserId: number, role: "ADMIN" | "MEMBER") {
+  return request<{ ok: boolean }>("/api/chat/groups/members/role", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, target_user_id: String(targetUserId), role })
+  });
+}
+
+export async function removeChatGroupMember(communityId: string, targetUserId: number) {
+  return request<{ ok: boolean }>("/api/chat/groups/members/remove", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, target_user_id: String(targetUserId) })
+  });
+}
+
+export async function transferChatGroupOwnership(communityId: string, targetUserId: number) {
+  return request<{ ok: boolean }>("/api/chat/groups/ownership/transfer", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, target_user_id: String(targetUserId) })
+  });
+}
+
+export async function leaveChatGroup(communityId: string) {
+  return request<{ ok: boolean }>("/api/chat/groups/leave", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ community_id: communityId })
   });
 }
 
