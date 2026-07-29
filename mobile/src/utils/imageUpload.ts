@@ -12,7 +12,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   const result = await ImagePicker.launchImageLibraryAsync({
     allowsMultipleSelection: remaining > 1,
     base64: false,
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: ["images"],
     quality,
     selectionLimit: remaining
   });
@@ -43,7 +43,7 @@ export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
   const result = await ImagePicker.launchImageLibraryAsync({
     allowsMultipleSelection: false,
     base64: false,
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: ["images"],
     quality,
     selectionLimit: 1
   });
