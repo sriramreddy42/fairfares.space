@@ -25700,6 +25700,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         identifier = str(payload.get("identifier") or payload.get("email") or payload.get("phone") or "").strip()
         password = str(payload.get("password") or "")
+        phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
         rate_key = login_rate_limit_key(self.client_ip(), identifier)
         retry_after = login_retry_after(rate_key)
         if retry_after:
@@ -25758,8 +25759,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
                     return
                 con.execute(
-                    "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
-                    (name, email, phone, hash_password(password)),
+                    "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, ?, 0, ?)",
+                    (name, email, phone, hash_password(password), 1 if phone_discoverable else 0),
                 )
                 user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()

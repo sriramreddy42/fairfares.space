@@ -77,6 +77,23 @@ const wallpaperChoices = [
   { id: "sand", label: "Sand", color: "#30271f", accent: "#8a6c48" },
 ] as const;
 
+const emojiGroups = [
+  { id: "recent", label: "Recent", icon: "◷", emojis: ["❤️", "👍", "😂", "😊", "🙏", "🎉", "🔥", "😍"] },
+  { id: "people", label: "Smileys", icon: "☺", emojis: ["😀", "😃", "😄", "😁", "😆", "🥹", "😅", "😂", "🙂", "😉", "😊", "😇", "🥰", "😍", "😘", "😋", "😜", "🤓", "😎", "🥳", "😏", "😔", "😢", "😭", "😤", "😡", "🤯", "😱", "🤔", "🫡", "🤫", "🫠"] },
+  { id: "gestures", label: "Gestures", icon: "☝", emojis: ["👍", "👎", "👏", "🙌", "🫶", "🙏", "🤝", "💪", "👊", "✌️", "🤞", "👌", "👋", "🤟", "🫵", "✍️"] },
+  { id: "animals", label: "Animals", icon: "♞", emojis: ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🦄"] },
+  { id: "food", label: "Food", icon: "♨", emojis: ["🍎", "🍊", "🍋", "🍉", "🍇", "🍓", "🍒", "🥑", "🍕", "🍔", "🌮", "🍜", "🍩", "🍪", "☕", "🥤"] },
+  { id: "travel", label: "Travel", icon: "◆", emojis: ["🚗", "🚕", "🚌", "🚆", "✈️", "🚀", "🚲", "🛵", "🏠", "🏙️", "🏖️", "🏔️", "🗺️", "📍", "🧳", "⛽"] },
+  { id: "objects", label: "Objects", icon: "✦", emojis: ["💡", "📱", "💻", "⌚", "📷", "🎁", "🔑", "🛏️", "🛋️", "🚪", "💵", "💳", "📅", "✅", "❌", "🔒"] },
+  { id: "symbols", label: "Symbols", icon: "#", emojis: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💯", "✨", "🔥", "🎉", "⚠️", "❓", "❗", "♻️"] }
+] as const;
+
+const emojiSearchTerms: Record<string, string> = {
+  "❤️": "heart love", "👍": "thumbs up yes", "👎": "thumbs down no", "😂": "laugh tears", "😊": "smile happy",
+  "🙏": "please thanks prayer", "🎉": "party celebrate", "🔥": "fire", "😍": "love eyes", "📍": "location pin",
+  "🚗": "car ride", "🏠": "home house", "🔑": "key rent", "📅": "calendar date", "✅": "check done yes"
+};
+
 function initials(label: string) {
   const clean = label.trim();
   if (!clean) return "F";
@@ -213,6 +230,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [emojiGroup, setEmojiGroup] = useState("recent");
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(["❤️", "👍", "😂", "😊", "🙏", "🎉", "🔥", "😍"]);
   const [richComposer, setRichComposer] = useState<"POLL" | "EVENT" | "CONTACT" | "">("");
   const [richDraft, setRichDraft] = useState({ primary: "", secondary: "", tertiary: "", fourth: "" });
   const [attachmentStatus, setAttachmentStatus] = useState("");
@@ -235,6 +256,22 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setConversations(data?.chat.conversations || []);
     setCommunities(data?.communities || []);
   }, [data?.chat.conversations, data?.communities]);
+
+  useEffect(() => {
+    AsyncStorage.getItem("fairfares.fchat.recent-emojis")
+      .then((value) => { if (value) setRecentEmojis(JSON.parse(value).slice(0, 16)); })
+      .catch(() => undefined);
+  }, []);
+
+  const visibleEmojis = useMemo(() => {
+    const query = emojiSearch.trim().toLowerCase();
+    const source = query
+      ? Array.from(new Set(emojiGroups.flatMap((group) => [...group.emojis])))
+      : emojiGroup === "recent"
+        ? recentEmojis
+        : [...(emojiGroups.find((group) => group.id === emojiGroup)?.emojis || [])];
+    return query ? source.filter((emoji) => `${emoji} ${emojiSearchTerms[emoji] || ""}`.toLowerCase().includes(query)) : source;
+  }, [emojiGroup, emojiSearch, recentEmojis]);
 
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
@@ -1055,7 +1092,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   function showComposerOptions() {
+    setEmojiPickerOpen(false);
     setAttachmentMenuOpen((current) => !current);
+  }
+
+  function toggleEmojiPicker() {
+    setAttachmentMenuOpen(false);
+    setRichComposer("");
+    setEmojiPickerOpen((current) => !current);
+  }
+
+  function chooseEmoji(emoji: string) {
+    setMessageText((current) => `${current}${emoji}`);
+    const next = [emoji, ...recentEmojis.filter((item) => item !== emoji)].slice(0, 16);
+    setRecentEmojis(next);
+    void AsyncStorage.setItem("fairfares.fchat.recent-emojis", JSON.stringify(next));
   }
 
   function showChatOptions() {
@@ -1097,6 +1148,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setMessageText("");
     setEditingMessageId(null);
     setAttachmentMenuOpen(false);
+    setEmojiPickerOpen(false);
+    setEmojiSearch("");
     setWallpaperPanelOpen(false);
     setChatOptionsOpen(false);
     setGroupMembersOpen(false);
@@ -1321,7 +1374,25 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
         ) : null}
 
-        {!pendingAttachment && !editingMessageId ? (
+        {emojiPickerOpen ? (
+          <View style={styles.emojiPanel}>
+            <View style={styles.emojiSearchRow}>
+              <Text style={styles.emojiSearchIcon}>⌕</Text>
+              <TextInput value={emojiSearch} onChangeText={setEmojiSearch} style={styles.emojiSearchInput} placeholder="Search emoji" placeholderTextColor="#9298a3" autoCapitalize="none" autoCorrect={false} />
+              <TouchableOpacity onPress={() => setEmojiPickerOpen(false)} accessibilityLabel="Close emoji picker"><Text style={styles.emojiClose}>×</Text></TouchableOpacity>
+            </View>
+            {!emojiSearch ? <Text style={styles.emojiSectionTitle}>{emojiGroups.find((group) => group.id === emojiGroup)?.label || "Emoji"}</Text> : <Text style={styles.emojiSectionTitle}>Search results</Text>}
+            <ScrollView style={styles.emojiGridScroll} contentContainerStyle={styles.emojiGrid} keyboardShouldPersistTaps="always">
+              {visibleEmojis.map((emoji, index) => <TouchableOpacity key={`${emoji}-${index}`} style={styles.emojiCell} onPress={() => chooseEmoji(emoji)}><Text style={styles.emojiValue}>{emoji}</Text></TouchableOpacity>)}
+              {!visibleEmojis.length ? <Text style={styles.emojiEmpty}>No matching emoji</Text> : null}
+            </ScrollView>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.emojiCategories} contentContainerStyle={styles.emojiCategoriesContent}>
+              {emojiGroups.map((group) => <TouchableOpacity key={group.id} style={[styles.emojiCategory, emojiGroup === group.id && styles.emojiCategoryActive]} onPress={() => { setEmojiGroup(group.id); setEmojiSearch(""); }} accessibilityLabel={group.label}><Text style={[styles.emojiCategoryText, emojiGroup === group.id && styles.emojiCategoryTextActive]}>{group.icon}</Text></TouchableOpacity>)}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {!pendingAttachment && !editingMessageId && !emojiPickerOpen ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
             {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setMessageText(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
@@ -1329,6 +1400,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
         <View style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
             placeholder={editingMessageId ? "Edit message" : "Write a message…"}
             placeholderTextColor="#7c8493"
@@ -1622,6 +1694,25 @@ const styles = StyleSheet.create({
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingTop: 10, paddingBottom: 4, borderTopWidth: 1, borderTopColor: theme.colors.line },
   composerIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
   paperclipIcon: { color: theme.colors.text, fontSize: 24 },
+  composerEmoji: { width: 32, height: 38, alignItems: "center", justifyContent: "center" },
+  composerEmojiText: { color: theme.colors.text, fontSize: 25, lineHeight: 28 },
+  emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
+  emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
+  emojiSearchIcon: { color: "#62676e", fontSize: 24 },
+  emojiSearchInput: { flex: 1, color: "#20242a", fontSize: 15, paddingVertical: 7 },
+  emojiClose: { color: "#666", fontSize: 25, paddingHorizontal: 4 },
+  emojiSectionTitle: { color: "#666", fontSize: 14, fontWeight: "700", paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 },
+  emojiGridScroll: { maxHeight: 205 },
+  emojiGrid: { paddingHorizontal: 9, paddingBottom: 10, flexDirection: "row", flexWrap: "wrap" },
+  emojiCell: { width: "12.5%", minHeight: 43, alignItems: "center", justifyContent: "center", borderRadius: 9 },
+  emojiValue: { fontSize: 28 },
+  emojiEmpty: { color: "#777", width: "100%", textAlign: "center", paddingVertical: 24 },
+  emojiCategories: { flexGrow: 0, borderTopWidth: 1, borderTopColor: "#d7d4cf", backgroundColor: "#fff" },
+  emojiCategoriesContent: { minWidth: "100%", justifyContent: "space-around", paddingHorizontal: 5, paddingVertical: 5 },
+  emojiCategory: { width: 39, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  emojiCategoryActive: { backgroundColor: "#e5e5e5" },
+  emojiCategoryText: { color: "#777", fontSize: 20 },
+  emojiCategoryTextActive: { color: "#222" },
   quickReplies: { flexGrow: 0, marginTop: 8 },
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
   quickReply: { borderWidth: 1.5, borderColor: "#5f8fff", backgroundColor: "rgba(9,20,38,0.86)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },

@@ -3,7 +3,7 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
@@ -150,6 +150,7 @@ function FairFaresApp() {
   const [identifier, setIdentifier] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupPhone, setSignupPhone] = useState("");
+  const [signupPhoneDiscoverable, setSignupPhoneDiscoverable] = useState(true);
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
@@ -918,7 +919,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(signupName, identifier, signupPhone, password);
+      const payload = await mobileSignup(signupName, identifier, signupPhone, password, signupPhoneDiscoverable);
       if (!payload.activationRequired && payload.token && payload.user) {
         await syncChatIdentityRecovery(Number(payload.user.id || 0), password).catch(() => undefined);
       }
@@ -1240,14 +1241,23 @@ function FairFaresApp() {
               style={styles.input}
             />
             {authMode === "signup" ? (
-              <TextInput
-                value={signupPhone}
-                onChangeText={setSignupPhone}
-                placeholder="Phone number"
-                placeholderTextColor={theme.colors.muted}
-                keyboardType="phone-pad"
-                style={styles.input}
-              />
+              <>
+                <TextInput
+                  value={signupPhone}
+                  onChangeText={setSignupPhone}
+                  placeholder="Phone number"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="phone-pad"
+                  style={styles.input}
+                />
+                <View style={styles.signupDiscoveryRow}>
+                  <View style={styles.signupDiscoveryCopy}>
+                    <Text style={styles.signupDiscoveryTitle}>Let contacts find me</Text>
+                    <Text style={styles.signupDiscoveryText}>People who already have your exact number can find you in FChat. Your number is never displayed.</Text>
+                  </View>
+                  <Switch value={signupPhoneDiscoverable} onValueChange={setSignupPhoneDiscoverable} />
+                </View>
+              </>
             ) : null}
             <TextInput
               value={password}
@@ -1611,6 +1621,10 @@ const styles = StyleSheet.create({
   listingForm: { width: "100%", maxWidth: "100%", alignSelf: "stretch", gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700" },
   modalCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
+  signupDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  signupDiscoveryCopy: { flex: 1, minWidth: 0 },
+  signupDiscoveryTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  signupDiscoveryText: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
   validatedInput: { borderWidth: 1, borderColor: "#22c55e" },
   addressStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
