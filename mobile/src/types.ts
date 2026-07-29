@@ -38,6 +38,7 @@ export type FairFaresUser = {
   role: string;
   isAdmin: boolean;
   isVerified: boolean;
+  chatPhoneDiscoverable?: boolean;
   profilePhotoUrl?: string;
 };
 

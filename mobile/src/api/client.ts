@@ -813,6 +813,26 @@ export async function joinChatCommunity(communityId: string) {
   });
 }
 
+export async function findChatPersonByPhone(phone: string) {
+  return request<{ ok: boolean; person: { id: number; name: string } }>(`/api/chat/people/by-phone?phone=${encodeURIComponent(phone)}`);
+}
+
+export async function openChatWithPerson(targetUserId: number) {
+  return request<{ ok: boolean; conversation: ChatConversation; message?: ChatMessage | null }>("/api/chat/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ target_user_id: String(targetUserId), open_only: "1" })
+  });
+}
+
+export async function setChatPhoneDiscoverability(enabled: boolean) {
+  return request<{ ok: boolean; enabled: boolean }>("/api/chat/phone-discoverability", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ enabled: enabled ? "1" : "0" })
+  });
+}
+
 export async function mobileLogin(identifier: string, password: string) {
   const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>(
     "/api/mobile/login",

@@ -21,6 +21,7 @@
     "android": {
       "package": "com.fairfares.mobile",
       "versionCode": 2,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

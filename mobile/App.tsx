@@ -2,13 +2,12 @@ import { StatusBar } from "expo-status-bar";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getHousing, getRidePlaceSuggestions, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, startRentalCheckout } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -201,17 +200,8 @@ function FairFaresApp() {
   const launchPromiseOffset = useRef(new Animated.Value(10)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [notificationStatus, setNotificationStatus] = useState("Available on the installed mobile app");
-
-  function notificationPreferenceKey() {
-    return `fairfares.mobile.notifications.${data?.user?.id || "guest"}`;
-  }
-
   async function enableMobileNotifications(requestPermission = true) {
     if (Platform.OS === "web" || !Device.isDevice) {
-      setNotificationsEnabled(false);
-      setNotificationStatus("Install FairFares on a physical phone to receive notifications.");
       return false;
     }
     try {
@@ -240,8 +230,6 @@ function FairFaresApp() {
       let permission = await Notifications.getPermissionsAsync();
       if (permission.status !== "granted" && requestPermission) permission = await Notifications.requestPermissionsAsync();
       if (permission.status !== "granted") {
-        setNotificationsEnabled(false);
-        setNotificationStatus("Notification permission is off. Enable it in your phone settings.");
         return false;
       }
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
@@ -250,34 +238,10 @@ function FairFaresApp() {
       if (!token.data) throw new Error("A push token could not be created.");
       await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true);
       pushTokenRef.current = token.data;
-      await AsyncStorage.setItem(notificationPreferenceKey(), "true");
-      setNotificationsEnabled(true);
-      setNotificationStatus("FChat, carpool, and rental alerts are enabled on this device.");
       return true;
-    } catch (error) {
-      setNotificationsEnabled(false);
-      setNotificationStatus(error instanceof Error ? error.message : "Notifications could not be enabled.");
+    } catch {
       return false;
     }
-  }
-
-  async function disableMobileNotifications() {
-    try {
-      if (pushTokenRef.current && data?.user) {
-        await registerMobilePushToken(pushTokenRef.current, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", false);
-      }
-      await AsyncStorage.setItem(notificationPreferenceKey(), "false");
-      pushTokenRef.current = "";
-      setNotificationsEnabled(false);
-      setNotificationStatus("FairFares alerts are off on this device.");
-    } catch (error) {
-      Alert.alert("Notifications", error instanceof Error ? error.message : "Could not turn off notifications.");
-    }
-  }
-
-  async function toggleMobileNotifications() {
-    if (notificationsEnabled) await disableMobileNotifications();
-    else await enableMobileNotifications(true);
   }
 
   async function unregisterNotificationsForLogout() {
@@ -288,7 +252,6 @@ function FairFaresApp() {
       // Logout must still succeed if the device is temporarily offline.
     }
     pushTokenRef.current = "";
-    setNotificationsEnabled(false);
   }
 
   async function load() {
@@ -312,21 +275,33 @@ function FairFaresApp() {
   }, []);
 
   useEffect(() => {
-    if (!data?.user) {
-      setNotificationsEnabled(false);
-      return;
-    }
+    if (data?.user) void enableMobileNotifications(true);
+  }, [data?.user?.id]);
+
+  useEffect(() => {
+    const userId = data?.user?.id;
+    if (!userId) return;
     let cancelled = false;
-    void AsyncStorage.getItem(notificationPreferenceKey()).then((preference) => {
-      if (cancelled) return;
-      if (preference === "false") {
-        setNotificationsEnabled(false);
-        setNotificationStatus("FairFares alerts are off on this device.");
-      } else {
-        void enableMobileNotifications(true);
+    const refreshUnread = async () => {
+      try {
+        const conversations = await getChatConversations();
+        if (cancelled) return;
+        const unreadCount = conversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0);
+        setData((current) => current?.user?.id === userId ? {
+          ...current,
+          chat: { unreadCount, conversations: conversations.slice(0, 10) },
+          dashboard: { ...current.dashboard, messages: unreadCount }
+        } : current);
+      } catch {
+        // Keep the last confirmed count during short network interruptions.
       }
-    });
-    return () => { cancelled = true; };
+    };
+    void refreshUnread();
+    const interval = setInterval(() => void refreshUnread(), 12_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [data?.user?.id]);
 
   useEffect(() => {
@@ -984,6 +959,11 @@ function FairFaresApp() {
         onClearPendingPost={() => setPendingPost(null)}
         onClearPendingRide={() => setPendingRide(null)}
         onThreadModeChange={setBottomTabsHidden}
+        onUnreadCountChange={(unreadCount) => setData((current) => current ? {
+          ...current,
+          chat: { ...current.chat, unreadCount },
+          dashboard: { ...current.dashboard, messages: unreadCount }
+        } : current)}
       />
     ) : activeTab === "activity" ? (
       <DashboardScreen
@@ -1039,9 +1019,6 @@ function FairFaresApp() {
         }}
         onOpenMessenger={() => setActiveTab("messenger")}
         onOpenActivity={() => setActiveTab("activity")}
-        notificationsEnabled={notificationsEnabled}
-        notificationStatus={notificationStatus}
-        onToggleNotifications={() => void toggleMobileNotifications()}
       />
     ) : activeTab === "services" ? (
       <ServicesScreen

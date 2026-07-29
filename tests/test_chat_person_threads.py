@@ -110,6 +110,31 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(message_count, 160)
         self.assertEqual(message_thread_count, 1)
 
+    def test_phone_started_chat_reuses_one_person_thread_and_group_creator_is_owner(self):
+        with app.db() as con:
+            first_id = self.insert_user(con, "Phone User", "phone-user@example.com")
+            second_id = self.insert_user(con, "Discoverable User", "discoverable@example.com")
+            con.execute("UPDATE users SET phone = ?, chat_phone_discoverable = 1 WHERE id = ?", ("+1 303 555 0199", second_id))
+            first = con.execute("SELECT * FROM users WHERE id = ?", (first_id,)).fetchone()
+            created, error = app.get_or_create_person_conversation(con, first, second_id)
+            reused, reused_error = app.get_or_create_person_conversation(con, first, second_id)
+            self.assertEqual(error, "")
+            self.assertEqual(reused_error, "")
+            self.assertEqual(created["id"], reused["id"])
+            active_count = con.execute("SELECT COUNT(*) AS count FROM chat_conversations WHERE status = 'ACTIVE'").fetchone()["count"]
+            self.assertEqual(active_count, 1)
+
+        community, error = app.create_chat_community(first_id, "Private test group")
+        self.assertEqual(error, "")
+        with app.db() as con:
+            role = con.execute(
+                """SELECT members.role FROM chat_community_members members
+                   JOIN chat_communities communities ON communities.id = members.community_id
+                   WHERE communities.public_id = ? AND members.user_id = ?""",
+                (community["id"], first_id),
+            ).fetchone()["role"]
+        self.assertEqual(role, "OWNER")
+
     def test_stress_many_people_posts_and_messages_stay_one_thread_per_person(self):
         people_count = 80
         duplicates_per_person = 5
@@ -177,6 +202,36 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(payload["contextId"], "RIDE-123")
         self.assertEqual(payload["contextTitle"], "Denver → Dayton")
         self.assertEqual(payload["contextSubtitle"], "2026-07-24 · 8:00 AM")
+
+    def test_unread_counts_are_exact_and_isolated_per_profile(self):
+        with app.db() as con:
+            first_user_id = self.insert_user(con, "First User", "first@example.com")
+            second_user_id = self.insert_user(con, "Second User", "second@example.com")
+            unrelated_a_id = self.insert_user(con, "Unrelated A", "unrelated-a@example.com")
+            unrelated_b_id = self.insert_user(con, "Unrelated B", "unrelated-b@example.com")
+            conversation_id = self.insert_direct_conversation(con, first_user_id, second_user_id, 0, 0)
+            unrelated_conversation_id = self.insert_direct_conversation(con, unrelated_a_id, unrelated_b_id, 0, 30)
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, 'incoming one')",
+                (conversation_id, second_user_id),
+            )
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, 'reply')",
+                (conversation_id, first_user_id),
+            )
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, 'incoming two')",
+                (conversation_id, second_user_id),
+            )
+            self.assertGreater(unrelated_conversation_id, conversation_id)
+
+        first_inbox = app.get_chat_conversations_for_user(first_user_id)
+        second_inbox = app.get_chat_conversations_for_user(second_user_id)
+        unrelated_inbox = app.get_chat_conversations_for_user(unrelated_a_id)
+
+        self.assertEqual(first_inbox[0]["unread"], 2)
+        self.assertEqual(second_inbox[0]["unread"], 1)
+        self.assertEqual(unrelated_inbox[0]["unread"], 15)
 
     def test_housing_and_carpool_cards_bind_to_the_correct_profile(self):
         with app.db() as con:

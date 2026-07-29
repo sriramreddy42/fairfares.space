@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, KeyboardAvoidingView, Linking, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
@@ -7,6 +7,7 @@ import {
   createChatCommunity,
   deleteChatMessage,
   editChatMessage,
+  findChatPersonByPhone,
   getChatCommunities,
   getChatConversations,
   getChatMessages,
@@ -18,6 +19,7 @@ import {
   openChatForRide,
   openChatForPost,
   openCommunityChat,
+  openChatWithPerson,
   pollChatEvents,
   reportChatMessage,
   sendChatMessage,
@@ -42,6 +44,7 @@ type Props = {
   onClearPendingPost?: () => void;
   onClearPendingRide?: () => void;
   onThreadModeChange?: (active: boolean) => void;
+  onUnreadCountChange?: (count: number) => void;
 };
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
@@ -159,7 +162,8 @@ function PendingPhotoPreview({ uri }: { uri: string }) {
   return <Image source={{ uri }} style={styles.pendingAttachmentImage} resizeMode="cover" onError={() => setFailed(true)} />;
 }
 
-export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin, onClearPendingPost, onClearPendingRide, onThreadModeChange }: Props) {
+export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin, onClearPendingPost, onClearPendingRide, onThreadModeChange, onUnreadCountChange }: Props) {
+  const messagesScrollRef = useRef<ScrollView>(null);
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
@@ -183,6 +187,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
   const [wallpaper, setWallpaper] = useState("midnight");
   const [customWallpaper, setCustomWallpaper] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [phoneSearch, setPhoneSearch] = useState("");
   const [groupDraft, setGroupDraft] = useState(blankGroup);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
 
@@ -285,6 +290,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
             (payload.messages || []).forEach((message) => byId.set(Number(message.id), message));
             return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
           });
+          if ((payload.messages || []).some((message) => !message.mine)) {
+            await markChatRead(activeConversationId, String(cursor));
+            const nextConversations = await getChatConversations();
+            if (cancelled) return;
+            setConversations(nextConversations);
+            onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
+          }
         } catch {
           if (!cancelled) await new Promise((resolve) => setTimeout(resolve, 1200));
         }
@@ -384,6 +396,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       const [nextConversations, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities()]);
       setConversations(nextConversations);
       setCommunities(nextCommunities);
+      onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
     } catch (error) {
       Alert.alert("Messenger failed", error instanceof Error ? error.message : "Could not load chats.");
     } finally {
@@ -543,6 +556,35 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
       }
     } catch (error) {
       Alert.alert("Group failed", error instanceof Error ? error.message : "Could not create this group.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startPhoneChat() {
+    if (!signedIn) {
+      onRequireLogin();
+      return;
+    }
+    if (phoneSearch.replace(/\D/g, "").length < 10) {
+      Alert.alert("Complete number required", "Enter the full phone number, including country code.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const found = await findChatPersonByPhone(phoneSearch);
+      const response = await openChatWithPerson(found.person.id);
+      setActiveConversationId(response.conversation.id);
+      setActiveConversation(response.conversation);
+      setActiveSubject(found.person.name);
+      setPhoneSearch("");
+      setCreatingGroup(false);
+      onThreadModeChange?.(true);
+      const payload = await getChatMessages(response.conversation.id);
+      setMessages(payload.messages || []);
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Contact not found", error instanceof Error ? error.message : "Could not find this FairFares member.");
     } finally {
       setLoading(false);
     }
@@ -762,9 +804,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
   if (inThread) {
     return (
       <KeyboardAvoidingView
-        style={styles.threadScreen}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+        style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid]}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
       >
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
@@ -804,7 +846,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
           </View>
         ) : null}
 
-        <ScrollView style={styles.threadMessages} contentContainerStyle={styles.threadMessagesContent}>
+        <ScrollView
+          ref={messagesScrollRef}
+          style={styles.threadMessages}
+          contentContainerStyle={styles.threadMessagesContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          onContentSizeChange={() => messagesScrollRef.current?.scrollToEnd({ animated: false })}
+        >
           {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
           {!threadLoading && !messages.length ? (
             <View style={styles.emptyThread}>
@@ -977,7 +1026,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
   }
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, Platform.OS === "android" && styles.screenAndroid]}>
       <View style={styles.header}>
         <View style={styles.chatBrandWrap}>
           <Image source={appAssets.fchatWordmark} style={styles.chatBrand} resizeMode="contain" />
@@ -1022,6 +1071,20 @@ export function MessengerScreen({ data, pendingPost, pendingRide, onRequireLogin
 
       {creatingGroup ? (
         <View style={styles.groupComposer}>
+          <Text style={styles.sectionTitle}>Message by phone</Text>
+          <Text style={styles.loginCopy}>Enter the exact number of a member who enabled phone discovery. Their number stays private.</Text>
+          <TextInput
+            placeholder="Country code and phone number"
+            placeholderTextColor={theme.colors.muted}
+            value={phoneSearch}
+            onChangeText={setPhoneSearch}
+            style={styles.input}
+            keyboardType="phone-pad"
+          />
+          <TouchableOpacity style={styles.primaryButton} onPress={startPhoneChat} disabled={loading}>
+            <Text style={styles.primaryButtonText}>{loading ? "Finding..." : "Find and message"}</Text>
+          </TouchableOpacity>
+          <View style={styles.composerDivider} />
           <Text style={styles.sectionTitle}>Create a group</Text>
           <TextInput
             placeholder="Group name, e.g. Denver roommates"
@@ -1142,7 +1205,9 @@ function SendIcon() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg, padding: theme.spacing.md, paddingBottom: 116 },
+  screenAndroid: { paddingBottom: 82 },
   threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 18, position: "relative", overflow: "hidden" },
+  threadScreenAndroid: { paddingBottom: 4 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
   wallpaperImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   wallpaperShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.43)" },
@@ -1172,6 +1237,7 @@ const styles = StyleSheet.create({
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
   loginButtonText: { color: theme.colors.text, fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
+  composerDivider: { height: 1, backgroundColor: theme.colors.line, marginVertical: 4 },
   sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 13, minHeight: 45, fontSize: 14 },
   multiline: { minHeight: 82, paddingTop: 13, textAlignVertical: "top" },

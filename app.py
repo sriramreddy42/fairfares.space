@@ -3856,6 +3856,7 @@ def init_db() -> None:
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 role TEXT NOT NULL DEFAULT 'CUSTOMER',
                 phone TEXT,
+                chat_phone_discoverable INTEGER NOT NULL DEFAULT 0,
                 address TEXT,
                 date_of_birth TEXT,
                 student_email TEXT,
@@ -4179,6 +4180,7 @@ def init_db() -> None:
                 community_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                role TEXT NOT NULL DEFAULT 'MEMBER',
                 UNIQUE(community_id, user_id),
                 FOREIGN KEY(community_id) REFERENCES chat_communities(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
@@ -4813,6 +4815,7 @@ def init_db() -> None:
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
         ensure_column(con, "users", "phone", "phone TEXT")
+        ensure_column(con, "users", "chat_phone_discoverable", "chat_phone_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "address", "address TEXT")
         ensure_column(con, "users", "date_of_birth", "date_of_birth TEXT")
         ensure_column(con, "users", "student_email", "student_email TEXT")
@@ -5091,6 +5094,18 @@ def init_db() -> None:
         ensure_column(con, "chat_communities", "area_label", "area_label TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "created_by_user_id", "created_by_user_id INTEGER")
         ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        ensure_column(con, "chat_community_members", "role", "role TEXT NOT NULL DEFAULT 'MEMBER'")
+        con.execute(
+            """
+            UPDATE chat_community_members
+            SET role = 'OWNER'
+            WHERE EXISTS (
+                SELECT 1 FROM chat_communities
+                WHERE chat_communities.id = chat_community_members.community_id
+                  AND chat_communities.created_by_user_id = chat_community_members.user_id
+            )
+            """
+        )
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
@@ -12142,6 +12157,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "role": row_value(user, "role") or "CUSTOMER",
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
+        "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
         "profilePhotoUrl": row_value(user, "profile_photo_url"),
     }
 
@@ -13819,7 +13835,7 @@ def create_chat_community(
         )
         community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
         con.execute(
-            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'OWNER')",
             (community_id, creator_id),
         )
     created = [item for item in get_chat_communities_for_user(creator_id) if item.get("id") == public_id]
@@ -13945,6 +13961,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         bit for bit in (row_value(row, "ride_origin_label"), row_value(row, "ride_destination_label")) if bit
     )
     other_online = int(row_value(row, "other_online") or 0) > 0
+    calculated_unread = max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0
+    unread = int(row_value(row, "unread_count", str(calculated_unread)) or 0)
     return {
         "id": row_value(row, "public_id"),
         "conversationId": int(row_value(row, "id") or 0),
@@ -13968,7 +13986,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
         "mutedAt": row_value(row, "muted_at"),
         "blockedAt": row_value(row, "blocked_at"),
-        "unread": max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0,
+        "unread": max(0, unread),
     }
 
 
@@ -14087,6 +14105,41 @@ def get_person_conversation(
         """,
         (first_user_id, second_user_id),
     ).fetchone()
+
+
+def get_or_create_person_conversation(
+    con: sqlite3.Connection,
+    sender: sqlite3.Row,
+    recipient_id: int,
+) -> tuple[sqlite3.Row | None, str]:
+    sender_id = int(row_value(sender, "id") or 0)
+    if not sender_id or not recipient_id or sender_id == recipient_id:
+        return None, "Choose another FairFares member."
+    recipient = con.execute(
+        "SELECT * FROM users WHERE id = ? AND guest_account = 0 LIMIT 1",
+        (recipient_id,),
+    ).fetchone()
+    if not recipient:
+        return None, "This FairFares member is unavailable."
+    if chat_user_is_blocked(con, sender_id, recipient_id) or chat_user_is_blocked(con, recipient_id, sender_id):
+        return None, "This member is not available for messaging."
+    existing = get_person_conversation(con, sender_id, recipient_id)
+    if existing:
+        return existing, ""
+    public_id = chat_public_id()
+    con.execute(
+        """
+        INSERT INTO chat_conversations (public_id, conversation_type, subject, last_message_at)
+        VALUES (?, 'DIRECT', ?, CURRENT_TIMESTAMP)
+        """,
+        (public_id, row_value(recipient, "name") or "FairFares member"),
+    )
+    conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.executemany(
+        "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+        ((conversation_id, sender_id), (conversation_id, recipient_id)),
+    )
+    return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
 
 
 def consolidate_person_conversations(con: sqlite3.Connection, user_id: int) -> None:
@@ -14591,6 +14644,14 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    participant.last_read_message_id,
                    participant.muted_at,
                    participant.blocked_at,
+                   (
+                       SELECT COUNT(*)
+                       FROM chat_messages unread_message
+                       WHERE unread_message.conversation_id = conversations.id
+                         AND unread_message.id > participant.last_read_message_id
+                         AND unread_message.sender_id != ?
+                         AND unread_message.deleted_at IS NULL
+                   ) AS unread_count,
                    last_message.id AS last_message_id,
                    last_message.sender_id AS last_sender_id,
                    last_message.message_text AS last_message,
@@ -14617,7 +14678,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
             LIMIT 100
             """,
-            (user_id, user_id),
+            (user_id, user_id, user_id),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
 
@@ -16326,6 +16387,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/communities":
             self.api_chat_communities(parsed)
             return
+        if parsed.path == "/api/chat/people/by-phone":
+            self.api_chat_person_by_phone(parsed)
+            return
         if parsed.path == "/api/chat/messages":
             self.api_chat_messages(parsed)
             return
@@ -16450,6 +16514,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/conversations": self.api_create_chat_conversation,
             "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/communities/join": self.api_join_chat_community,
+            "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/attachments": self.api_send_chat_attachment,
             "/api/chat/rich-messages": self.api_send_chat_rich_message,
@@ -17388,6 +17453,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "communities": communities})
 
+    def api_chat_person_by_phone(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to find a FairFares contact."}, 401)
+            return
+        phone = normalize_phone((urllib.parse.parse_qs(parsed.query).get("phone") or [""])[0])
+        if len(phone) < 10 or len(phone) > 15:
+            self.send_json({"ok": False, "message": "Enter a complete phone number with country code."}, 400)
+            return
+        with db() as con:
+            matches = con.execute(
+                """
+                SELECT id, name, phone FROM users
+                WHERE chat_phone_discoverable = 1
+                  AND is_verified = 1
+                  AND guest_account = 0
+                  AND id != ?
+                """,
+                (int(user["id"]),),
+            ).fetchall()
+            match = next((row for row in matches if normalize_phone(row_value(row, "phone")) == phone), None)
+        if not match:
+            self.send_json({"ok": False, "message": "No discoverable FairFares member matched that exact number."}, 404)
+            return
+        self.send_json({"ok": True, "person": {"id": int(match["id"]), "name": row_value(match, "name") or "FairFares member"}})
+
     def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -17657,6 +17748,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         post_public_id = (form.get("post_id") or form.get("postId") or "").strip()
         ride_public_id = (form.get("ride_id") or form.get("rideId") or "").strip()
         community_public_id = (form.get("community_id") or form.get("communityId") or "").strip()
+        target_user_id = int(float_from_value(form.get("target_user_id") or form.get("targetUserId") or "0"))
         open_only = str(form.get("open_only") or form.get("openOnly") or "").strip().lower() in {"1", "true", "yes", "on"}
         raw_message_text = (form.get("message") or "").strip()
         message_text = "" if open_only else raw_message_text or (
@@ -17667,8 +17759,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else ""
         )
         client_message_id = (form.get("client_message_id") or form.get("clientMessageId") or "").strip()
-        if not post_public_id and not ride_public_id and not community_public_id:
-            self.send_json({"ok": False, "message": "Choose a housing post, ride, or group first."}, 400)
+        if not post_public_id and not ride_public_id and not community_public_id and not target_user_id:
+            self.send_json({"ok": False, "message": "Choose a housing post, ride, group, or FairFares member first."}, 400)
             return
         if len(message_text) > 2000:
             self.send_json({"ok": False, "message": "Message is too long."}, 400)
@@ -17678,6 +17770,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 conversation, error = get_or_create_community_conversation(con, community_public_id, user)
             elif ride_public_id:
                 conversation, error = get_or_create_ride_conversation(con, ride_public_id, user)
+            elif target_user_id:
+                conversation, error = get_or_create_person_conversation(con, user, target_user_id)
             else:
                 conversation, error = get_or_create_accommodation_conversation(con, post_public_id, user)
             if not conversation:
@@ -17760,6 +17854,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "community": community})
+
+    def api_chat_phone_discoverability(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to change chat privacy."}, 401)
+            return
+        form = self.read_form()
+        enabled = str(form.get("enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if enabled and (not normalize_phone(row_value(user, "phone")) or not int(row_value(user, "is_verified") or 0)):
+            self.send_json({"ok": False, "message": "Add a phone number and verify your FairFares account first."}, 400)
+            return
+        with db() as con:
+            con.execute("UPDATE users SET chat_phone_discoverable = ? WHERE id = ?", (1 if enabled else 0, int(user["id"])))
+        self.send_json({"ok": True, "enabled": enabled})
 
     def api_send_chat_message(self) -> None:
         user = self.current_user()
@@ -25072,7 +25180,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
                 "dashboard": {
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
-                    "messages": len(chats),
+                    "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
             }
         )

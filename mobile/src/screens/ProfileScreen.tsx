@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Image, ImageSourcePropType, Linking, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, getRideActivity, getRideDriverProfile, updateMobileProfile } from "../api/client";
+import { Alert, Image, ImageSourcePropType, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { absoluteAssetUrl, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
@@ -18,9 +18,6 @@ type Props = {
   onOpenServices?: () => void;
   onOpenMessenger?: () => void;
   onOpenActivity?: () => void;
-  notificationsEnabled?: boolean;
-  notificationStatus?: string;
-  onToggleNotifications?: () => void;
 };
 
 const DRIVER_VERIFICATION_DAYS = 30;
@@ -47,10 +44,7 @@ export function ProfileScreen({
   onOpenRide,
   onOpenServices,
   onOpenMessenger,
-  onOpenActivity,
-  notificationsEnabled = false,
-  notificationStatus = "Available on the installed mobile app",
-  onToggleNotifications
+  onOpenActivity
 }: Props) {
   const user = data?.user;
   const [name, setName] = useState(user?.name || "");
@@ -65,6 +59,7 @@ export function ProfileScreen({
   const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
   const [carpoolLoading, setCarpoolLoading] = useState(false);
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
+  const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -74,6 +69,7 @@ export function ProfileScreen({
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
     setProfilePhoto(user?.profilePhotoUrl || "");
+    setPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
     setCurrentPassword("");
     setProfileDirty(false);
   }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.profilePhotoUrl]);
@@ -197,6 +193,17 @@ export function ProfileScreen({
     }
   }
 
+  async function changePhoneDiscovery(enabled: boolean) {
+    setPhoneDiscoverable(enabled);
+    try {
+      await setChatPhoneDiscoverability(enabled);
+      if (user) onProfileUpdated({ ...user, chatPhoneDiscoverable: enabled });
+    } catch (error) {
+      setPhoneDiscoverable(!enabled);
+      Alert.alert("Chat privacy not changed", error instanceof Error ? error.message : "Could not update phone discovery.");
+    }
+  }
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.hero}>
@@ -260,33 +267,23 @@ export function ProfileScreen({
                 <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
               </TouchableOpacity>
             </View>
+            <View style={styles.privacyRow}>
+              <View style={styles.privacyCopy}>
+                <Text style={styles.label}>Find me by exact phone number</Text>
+                <Text style={styles.cardCopy}>Off by default. Your number is never displayed in FChat results.</Text>
+              </View>
+              <Switch value={phoneDiscoverable} onValueChange={(value) => void changePhoneDiscovery(value)} />
+            </View>
           </> : null}
         </View>
       )}
-
-      {user ? (
-        <View style={styles.notificationCard}>
-          <View style={styles.notificationCopy}>
-            <Text style={styles.cardTitle}>Mobile notifications</Text>
-            <Text style={styles.cardCopy}>{notificationStatus}</Text>
-          </View>
-          <TouchableOpacity
-            accessibilityRole="switch"
-            accessibilityState={{ checked: notificationsEnabled }}
-            style={[styles.notificationSwitch, notificationsEnabled && styles.notificationSwitchOn]}
-            onPress={onToggleNotifications}
-          >
-            <View style={[styles.notificationKnob, notificationsEnabled && styles.notificationKnobOn]} />
-          </TouchableOpacity>
-        </View>
-      ) : null}
 
       <View style={styles.activityCard}>
         <Text style={styles.cardTitle}>Your FairFares</Text>
         <Text style={styles.cardCopy}>Track housing posts, carpool activity, rental bookings, and FChat conversations from one account.</Text>
         <View style={styles.metricRow}>
           <View style={styles.metric}><Text style={styles.metricValue}>{data?.dashboard.housingPosts || 0}</Text><Text style={styles.metricLabel}>Housing posts</Text></View>
-          <View style={styles.metric}><Text style={styles.metricValue}>{data?.dashboard.messages || 0}</Text><Text style={styles.metricLabel}>Messages</Text></View>
+          <View style={styles.metric}><Text style={styles.metricValue}>{data?.chat.unreadCount || 0}</Text><Text style={styles.metricLabel}>Unread messages</Text></View>
         </View>
       </View>
 
@@ -371,6 +368,8 @@ const styles = StyleSheet.create({
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15 },
   securityNote: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "600", backgroundColor: "rgba(37,99,235,0.12)", borderRadius: theme.radius.md, padding: 10 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginTop: 4 },
+  privacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  privacyCopy: { flex: 1 },
   primaryButton: { flex: 1, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   primaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
@@ -379,12 +378,6 @@ const styles = StyleSheet.create({
   logoutButton: { minHeight: 50, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(248,113,113,0.5)", backgroundColor: "rgba(127,29,29,0.14)", alignItems: "center", justifyContent: "center", paddingHorizontal: 14, marginTop: 4 },
   logoutText: { color: "#f87171", fontWeight: "700", fontSize: 14 },
   activityCard: { backgroundColor: "#152219", borderRadius: 18, padding: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.4)", gap: 8 },
-  notificationCard: { backgroundColor: theme.colors.panel, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: theme.colors.line, flexDirection: "row", alignItems: "center", gap: 12 },
-  notificationCopy: { flex: 1, minWidth: 0, gap: 3 },
-  notificationSwitch: { width: 48, height: 28, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, padding: 3, justifyContent: "center" },
-  notificationSwitchOn: { backgroundColor: theme.colors.blue, borderColor: theme.colors.blue },
-  notificationKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: theme.colors.soft },
-  notificationKnobOn: { alignSelf: "flex-end", backgroundColor: theme.colors.text },
   statusCard: { backgroundColor: theme.colors.panel, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: theme.colors.line, gap: 9 },
   statusTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
   statusCopy: { flex: 1, minWidth: 0 },
