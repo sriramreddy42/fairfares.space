@@ -545,16 +545,18 @@ export function HousingScreen({
   const sortedPosts = useMemo(() => {
     const distanceValue = (post: HousingPost) => (post.distanceMiles === null ? Number.MAX_SAFE_INTEGER : post.distanceMiles);
     return [...posts].sort((a, b) => {
+      if (Boolean(a.sample) !== Boolean(b.sample)) return a.sample ? 1 : -1;
       if (selectedSort === "distanceDesc") return distanceValue(b) - distanceValue(a);
       if (selectedSort === "rentAsc") return (a.rentValue || Number.MAX_SAFE_INTEGER) - (b.rentValue || Number.MAX_SAFE_INTEGER);
       if (selectedSort === "rentDesc") return (b.rentValue || 0) - (a.rentValue || 0);
       return distanceValue(a) - distanceValue(b);
     });
   }, [posts, selectedSort]);
-  const showingSamplePosts = sortedPosts.length > 0 && sortedPosts.every((post) => post.sample);
+  const showingSamplePosts = sortedPosts.some((post) => post.sample);
+  const verifiedLocalPostCount = sortedPosts.filter((post) => !post.sample).length;
   const localities = useMemo(() => {
     const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
-    posts.forEach((post) => {
+    posts.filter((post) => !post.sample).forEach((post) => {
       const name = (post.area || post.location || data?.location.city || "Area open").trim();
       if (!name) return;
       const current = groups.get(name) || { total: 0, count: 0, offered: 0, needed: 0 };
@@ -2904,8 +2906,8 @@ export function HousingScreen({
       </View>
       {showingSamplePosts ? (
         <View style={styles.sampleNotice}>
-          <Text style={styles.sampleNoticeTitle}>No verified local posts yet</Text>
-          <Text style={styles.sampleNoticeCopy}>These 10 sample previews show the housing options FairFares supports near your selected location. They are not active member listings and cannot receive messages.</Text>
+          <Text style={styles.sampleNoticeTitle}>{verifiedLocalPostCount ? `${verifiedLocalPostCount} verified local post${verifiedLocalPostCount === 1 ? "" : "s"} shown first` : "No verified local posts yet"}</Text>
+          <Text style={styles.sampleNoticeCopy}>Real matching listings always appear first. The 10 sample previews follow them and cannot receive messages.</Text>
         </View>
       ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>

@@ -67,7 +67,10 @@ class HousingLocationSearchTest(unittest.TestCase):
             limit=30,
         )
 
-        self.assertEqual([item["id"] for item in results], ["NEAR-DAYTON"])
+        self.assertEqual(results[0]["id"], "NEAR-DAYTON")
+        self.assertFalse(results[0].get("sample", False))
+        self.assertEqual(len(results), 11)
+        self.assertTrue(all(item.get("sample") is True for item in results[1:]))
         self.assertLessEqual(results[0]["distanceMiles"], 10)
 
     @patch.object(

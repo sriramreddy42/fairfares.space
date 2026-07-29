@@ -13361,9 +13361,7 @@ def mobile_housing_posts(
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
     matched_posts = [item for _, _, item in ranked_payloads[:limit]]
-    if matched_posts:
-        return matched_posts
-    return mobile_sample_housing_posts(
+    sample_posts = mobile_sample_housing_posts(
         city=city,
         area=area,
         need=need,
@@ -13375,6 +13373,7 @@ def mobile_housing_posts(
         center_lng=center_lng,
         limit=limit,
     )
+    return [*matched_posts, *sample_posts]
 
 
 SAMPLE_HOUSING_IMAGES = (
