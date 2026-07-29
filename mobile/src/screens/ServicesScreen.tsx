@@ -903,16 +903,18 @@ const styles = StyleSheet.create({
   },
   servicesTitle: {
     color: theme.colors.text,
-    fontSize: 32,
-    fontWeight: "900"
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: "700"
   },
   serviceSection: {
     gap: 14
   },
   serviceSectionTitle: {
     color: theme.colors.text,
-    fontSize: 22,
-    fontWeight: "900"
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "600"
   },
   serviceTileGrid: {
     flexDirection: "row",

@@ -70,6 +70,48 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in results], ["NEAR-DAYTON"])
         self.assertLessEqual(results[0]["distanceMiles"], 10)
 
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        return_value={"label": "Madison, WI", "lat": 43.0731, "lng": -89.4012, "source": "test"},
+    )
+    def test_empty_location_returns_ten_local_non_contactable_samples(self, _mock_point):
+        results = app.mobile_housing_posts(
+            city="Madison, WI",
+            area="University of Wisconsin–Madison",
+            need="need_place",
+            radius=5,
+            limit=30,
+        )
+
+        self.assertEqual(len(results), 10)
+        self.assertTrue(all(item["sample"] is True for item in results))
+        self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
+        self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
+        self.assertTrue(all(float(item["distanceMiles"]) <= 5 for item in results))
+        self.assertGreaterEqual(len({item["category"] for item in results}), 6)
+        self.assertIn("Shared Room", {item["categoryLabel"] for item in results})
+        self.assertTrue(all(str(item["imageUrl"]).startswith("/static/demo-housing/") for item in results))
+
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        return_value={"label": "Madison, WI", "lat": 43.0731, "lng": -89.4012, "source": "test"},
+    )
+    def test_selected_category_and_intent_are_reflected_in_samples(self, _mock_point):
+        results = app.mobile_housing_posts(
+            city="Madison, WI",
+            need="have_place",
+            category="shared_room",
+            budget="600",
+            limit=30,
+        )
+
+        self.assertEqual(len(results), 10)
+        self.assertTrue(all(item["category"] == "shared_room" for item in results))
+        self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in results))
+        self.assertTrue(all(int(item["rentValue"]) <= 600 for item in results))
+
 
 if __name__ == "__main__":
     unittest.main()

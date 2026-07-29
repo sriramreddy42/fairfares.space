@@ -46,8 +46,8 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel }: Props) {
           <Text style={styles.rent}>{post.rent || "Rent open"}</Text>
           <Text style={styles.expiry}>{post.expiryLabel}</Text>
         </View>
-        <TouchableOpacity style={styles.respond} onPress={() => onMessage(post)}>
-          <Text style={styles.respondText}>Message</Text>
+        <TouchableOpacity style={[styles.respond, post.sample && styles.respondDisabled]} onPress={() => !post.sample && onMessage(post)} disabled={post.sample}>
+          <Text style={[styles.respondText, post.sample && styles.respondTextDisabled]}>{post.sample ? "Sample only" : "Message"}</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -172,5 +172,7 @@ const styles = StyleSheet.create({
   respondText: {
     color: theme.colors.text,
     fontWeight: "900"
-  }
+  },
+  respondDisabled: { borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
+  respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" }
 });

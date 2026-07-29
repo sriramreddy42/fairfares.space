@@ -28,6 +28,7 @@ export type HousingPost = {
   accommodates: number;
   roommateCount: number;
   amenities: string[];
+  sample?: boolean;
 };
 
 export type FairFaresUser = {

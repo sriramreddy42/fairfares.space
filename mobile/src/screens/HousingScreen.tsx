@@ -551,6 +551,7 @@ export function HousingScreen({
       return distanceValue(a) - distanceValue(b);
     });
   }, [posts, selectedSort]);
+  const showingSamplePosts = sortedPosts.length > 0 && sortedPosts.every((post) => post.sample);
   const localities = useMemo(() => {
     const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
     posts.forEach((post) => {
@@ -2901,6 +2902,12 @@ export function HousingScreen({
           </>
         ) : null}
       </View>
+      {showingSamplePosts ? (
+        <View style={styles.sampleNotice}>
+          <Text style={styles.sampleNoticeTitle}>No verified local posts yet</Text>
+          <Text style={styles.sampleNoticeCopy}>These 10 sample previews show the housing options FairFares supports near your selected location. They are not active member listings and cannot receive messages.</Text>
+        </View>
+      ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {sortedPosts.length ? (
           sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} />)
@@ -3015,8 +3022,8 @@ export function HousingScreen({
                   <Text style={styles.detailFact}>Bath: {detailPost.bathroomType || "Open"}</Text>
                   <Text style={styles.detailFact}>Lease: {detailPost.leaseTerm || "Flexible"}</Text>
                 </View>
-                <TouchableOpacity style={styles.detailMessage} onPress={() => onMessage(detailPost)}>
-                  <Text style={styles.detailMessageText}>Message</Text>
+                <TouchableOpacity style={[styles.detailMessage, detailPost.sample && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
+                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
@@ -3351,6 +3358,9 @@ const styles = StyleSheet.create({
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
+  sampleNotice: { backgroundColor: "rgba(37,99,235,0.10)", borderWidth: 1, borderColor: "rgba(96,165,250,0.42)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, gap: 3 },
+  sampleNoticeTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  sampleNoticeCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: 10, gap: 7 },
   filterHeader: { gap: 2 },
   filterHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "600" },
@@ -3512,6 +3522,7 @@ const styles = StyleSheet.create({
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "600" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
+  detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   rideHomeSuggestionCard: {
     borderRadius: 24,

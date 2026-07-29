@@ -137,14 +137,14 @@ export function ProfileScreen({
   const daysLeft = verificationDaysLeft(rideProfile);
   const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
   const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
-  const profileLinks: Array<{ title: string; copy: string; icon: ImageSourcePropType; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
-    { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.bed, onPress: onOpenHousing },
-    { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.ride, onPress: onOpenRide },
-    { title: "Rental Cars", copy: "Bookings, invoices and support", icon: appAssets.serviceInvoice, onPress: onOpenServices },
-    { title: "FChat", copy: "Messages and communities", icon: appAssets.fchat, onPress: onOpenMessenger },
+  const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
+    { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.serviceHome, onPress: onOpenHousing },
+    { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.ride, fullColor: true, onPress: onOpenRide },
+    { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },
+    { title: "FChat", copy: "Messages and communities", icon: appAssets.fchat, fullColor: true, onPress: onOpenMessenger },
     { title: "Help & Support", copy: "Questions, account help, safety concerns, or technical problems", icon: appAssets.serviceSupport, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
-    { title: "Delete account", copy: "Request account and data deletion", icon: appAssets.serviceCancel, requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
+    { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
   ];
 
   async function choosePhoto() {
@@ -323,10 +323,14 @@ export function ProfileScreen({
         </View>
       ) : null}
 
-      {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, onPress, danger }) => (
+      {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
         <TouchableOpacity key={title} style={styles.menuRow} onPress={onPress}>
-          <View style={styles.menuIconCircle}>
-            <Image source={icon} style={styles.menuFchatIcon} resizeMode="contain" />
+          <View style={[styles.menuIconCircle, danger && styles.menuDangerIconCircle]}>
+            {icon ? (
+              <Image source={icon} style={[styles.menuIcon, fullColor && styles.menuIconFullColor]} resizeMode="contain" />
+            ) : (
+              <Text style={[styles.menuGlyph, danger && styles.menuDangerGlyph]}>{glyph}</Text>
+            )}
           </View>
           <View style={styles.menuTextBlock}>
             <Text style={[styles.menuTitle, danger && styles.menuDangerTitle]}>{title}</Text>
@@ -393,7 +397,11 @@ const styles = StyleSheet.create({
   metricLabel: { color: theme.colors.soft, fontWeight: "600", fontSize: 11, marginTop: 1 },
   menuRow: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, minHeight: 70, paddingHorizontal: 13, paddingVertical: 11, borderWidth: 1, borderColor: theme.colors.line, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 11 },
   menuIconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  menuFchatIcon: { width: 23, height: 23, tintColor: theme.colors.soft },
+  menuIcon: { width: 23, height: 23, tintColor: theme.colors.soft },
+  menuIconFullColor: { width: 27, height: 27, tintColor: undefined },
+  menuGlyph: { color: theme.colors.soft, fontSize: 22, lineHeight: 25, fontWeight: "600" },
+  menuDangerIconCircle: { backgroundColor: "rgba(248,113,113,0.10)" },
+  menuDangerGlyph: { color: "#f87171" },
   menuTextBlock: { flex: 1, minWidth: 0 },
   menuTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
   menuDangerTitle: { color: "#f87171" },

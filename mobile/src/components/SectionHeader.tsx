@@ -30,18 +30,19 @@ const styles = StyleSheet.create({
   eyebrow: {
     color: theme.colors.accent,
     fontSize: 11,
-    fontWeight: "900",
+    fontWeight: "700",
     letterSpacing: 1.5,
     textTransform: "uppercase"
   },
   title: {
     color: theme.colors.text,
-    fontSize: 24,
-    fontWeight: "900"
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: "700"
   },
   action: {
     color: theme.colors.soft,
     fontSize: 15,
-    fontWeight: "800"
+    fontWeight: "600"
   }
 });

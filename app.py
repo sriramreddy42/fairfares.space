@@ -13228,6 +13228,7 @@ def mobile_housing_posts(
     clauses = [
         "visibility_status = 'ACTIVE'",
         "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
+        "COALESCE(source_label, '') != 'SAMPLE_DATA'",
     ]
     values: list[object] = []
     if need == "need_place":
@@ -13359,7 +13360,119 @@ def mobile_housing_posts(
             rank = 0
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
-    return [item for _, _, item in ranked_payloads[:limit]]
+    matched_posts = [item for _, _, item in ranked_payloads[:limit]]
+    if matched_posts:
+        return matched_posts
+    return mobile_sample_housing_posts(
+        city=city,
+        area=area,
+        need=need,
+        category=category,
+        gender=gender,
+        budget=budget,
+        radius=radius,
+        center_lat=center_lat,
+        center_lng=center_lng,
+        limit=limit,
+    )
+
+
+SAMPLE_HOUSING_IMAGES = (
+    "/static/demo-housing/roommates_2026-01-08-02-11-55-766_10975734.jpeg",
+    "/static/demo-housing/roommates_2026-01-08-02-44-53-241_10975734.jpeg",
+    "/static/demo-housing/roommates_2026-03-15-09-04-58-780_32.jpg",
+    "/static/demo-housing/roommates_2026-03-15-10-22-00-802_21.jpg",
+    "/static/demo-housing/roommates_2026-07-13-08-50-03-319_68.jpg",
+    "/static/demo-housing/roommates_2026-07-13-08-50-03-975_97.jpg",
+    "/static/demo-housing/roommates_2026-07-28-01-18-03-350_11882278.jpeg",
+    "/static/demo-housing/roommates_2026-07-28-01-19-04-006_11882278.jpeg",
+    "/static/demo-housing/roommates_2026-07-28-03-40-47-063_11882898.jpeg",
+    "/static/demo-housing/roommates_2026-07-28-03-47-47-328_11882898.jpeg",
+    "/static/demo-housing/roommates_2026-07-28-09-51-07-796_11883094.jpeg",
+)
+
+
+SAMPLE_HOUSING_VARIANTS = (
+    ("Private furnished room", "single_room", 850, "Private Bath", "Flexible", 1, 0, "Furnished, WiFi, Laundry, Utilities included"),
+    ("Shared room near transit", "shared_room", 575, "Shared Bath", "3-6 months", 2, 1, "Transit nearby, WiFi, Laundry"),
+    ("Roommate wanted for modern apartment", "apartment", 950, "Private/Shared Bath", "12 months", 2, 1, "Gym, Parking, In-unit laundry"),
+    ("Private room in shared townhouse", "town_house", 780, "Shared Bath", "6-12 months", 1, 0, "Parking, Patio, Laundry"),
+    ("Furnished paying guest room", "paying_guest", 700, "Shared Bath", "Short stay", 1, 0, "Furnished, Utilities included, Kitchen access"),
+    ("Basement suite with separate space", "basement_apartment", 1100, "Private Bath", "Flexible", 2, 0, "Private entrance, Parking, Utilities included"),
+    ("Unfurnished room for long-term renter", "single_room", 650, "Shared Bath", "12 months", 1, 0, "Laundry, Street parking, Kitchen access"),
+    ("Two roommates needed for shared home", "single_family_home", 725, "Private/Shared Bath", "6-12 months", 3, 1, "Backyard, Parking, Laundry"),
+    ("Short-term shared room", "shared_room", 525, "Shared Bath", "Short stay", 2, 1, "Furnished, WiFi, Flexible move-in"),
+    ("Private room with utilities included", "condo", 925, "Private Bath", "3-6 months", 1, 0, "Utilities included, Gym, Secure entry"),
+)
+
+
+def mobile_sample_housing_posts(
+    city: str = "",
+    area: str = "",
+    need: str = "",
+    category: str = "",
+    gender: str = "",
+    budget: str = "",
+    radius: float = 0,
+    center_lat: float = 0,
+    center_lng: float = 0,
+    limit: int = 10,
+) -> list[dict[str, object]]:
+    """Return non-contactable, location-aware preview cards only when real search results are empty."""
+    selected_location = " ".join((area or city or "your selected location").split())[:120]
+    mode = "NEED_PLACE" if need == "have_place" else "HAVE_PLACE"
+    mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Sample available"
+    selected_budget = int(float_from_value(budget) or 0)
+    location_key = hashlib.sha256(f"{selected_location}|{need}|{category}".encode()).hexdigest()[:10].upper()
+    move_in_base = datetime.utcnow().date() + timedelta(days=7)
+    max_distance = max(0.5, min(10.0, float_from_value(radius) or 10.0))
+    samples: list[dict[str, object]] = []
+    for index, variant in enumerate(SAMPLE_HOUSING_VARIANTS[:max(0, min(10, int(limit or 10)))]):
+        title, default_category, base_rent, bath, lease, accommodates, roommate_count, amenities = variant
+        sample_category = category or default_category
+        rent_value = min(base_rent, selected_budget) if selected_budget else base_rent
+        rent_value = max(350, rent_value)
+        image_index = index % len(SAMPLE_HOUSING_IMAGES)
+        images = [SAMPLE_HOUSING_IMAGES[image_index]]
+        if index == 0:
+            images.append(SAMPLE_HOUSING_IMAGES[1])
+        lat_offset = ((index % 5) - 2) * 0.008
+        lng_offset = ((index // 5) * 0.012) - 0.006
+        samples.append(
+            {
+                "id": f"FFH-DEMO-{location_key}-{index + 1:02d}",
+                "title": title,
+                "description": f"Sample housing preview for {selected_location}. Details are illustrative until a verified local member posts a matching listing.",
+                "mode": mode,
+                "modeLabel": mode_label,
+                "category": sample_category,
+                "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, sample_category, "Housing"),
+                "location": selected_location,
+                "area": f"Near {selected_location}",
+                "workLocation": selected_location,
+                "moveIn": (move_in_base + timedelta(days=index * 3)).isoformat(),
+                "rent": f"${rent_value:,} / monthly",
+                "rentValue": rent_value,
+                "radiusMiles": 10,
+                "distanceMiles": round(0.3 + ((index + 1) * max_distance / 11), 1),
+                "lat": float(center_lat or 0) + lat_offset if center_lat else 0,
+                "lng": float(center_lng or 0) + lng_offset if center_lng else 0,
+                "imageUrl": images[0],
+                "images": images,
+                "posterName": "FairFares sample",
+                "daysLeft": 0,
+                "expiryLabel": "Sample preview",
+                "roommateIntent": bool(roommate_count),
+                "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, gender, "Open") if gender else "Open",
+                "leaseTerm": lease,
+                "bathroomType": bath,
+                "accommodates": accommodates,
+                "roommateCount": roommate_count,
+                "amenities": [item.strip() for item in amenities.split(",")],
+                "sample": True,
+            }
+        )
+    return samples
 
 
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
