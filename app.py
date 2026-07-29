@@ -66,6 +66,7 @@ ALLOWED_CHAT_FILE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 MAX_CHAT_FILE_BYTES = 8_000_000
+MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 15_000_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = ""
 DEFAULT_PROMOTED_ADMIN_EMAILS = ""
@@ -4226,6 +4227,13 @@ def init_db() -> None:
                 UNIQUE(message_id, recipient_user_id, recipient_device_id),
                 FOREIGN KEY(message_id) REFERENCES chat_messages(id),
                 FOREIGN KEY(recipient_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_key_backups (
+                user_id INTEGER PRIMARY KEY,
+                encrypted_payload TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_message_reports (
@@ -14024,6 +14032,9 @@ def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object]
             "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
             (community["id"], user_id),
         )
+        conversation = con.execute("SELECT id FROM chat_conversations WHERE community_id = ?", (int(community["id"]),)).fetchone()
+        if conversation:
+            con.execute("INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (int(conversation["id"]), user_id))
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
     return (joined[0] if joined else None), ""
 
@@ -14092,6 +14103,9 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
             "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
             (int(invite["community_id"]), user_id),
         )
+        conversation = con.execute("SELECT id FROM chat_conversations WHERE community_id = ?", (int(invite["community_id"]),)).fetchone()
+        if conversation:
+            con.execute("INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (int(conversation["id"]), user_id))
         if not already_member:
             con.execute(
                 "UPDATE chat_group_invites SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -14100,6 +14114,49 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
         public_id = str(row_value(invite, "public_id") or "")
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
     return (joined[0] if joined else None), ""
+
+
+def preview_chat_group_invite(token: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+    """Validate an invitation without joining or consuming it."""
+    clean_token = (token or "").strip()
+    if len(clean_token) < 24:
+        return None, "This invitation link is invalid."
+    with db() as con:
+        invite = con.execute(
+            """SELECT invites.*, communities.public_id, communities.name,
+                      communities.description, communities.area_label
+               FROM chat_group_invites invites
+               JOIN chat_communities communities ON communities.id = invites.community_id
+               WHERE invites.token_hash = ? LIMIT 1""",
+            (chat_group_invite_hash(clean_token),),
+        ).fetchone()
+        if not invite:
+            return None, "This invitation link is invalid."
+        if row_value(invite, "revoked_at"):
+            return None, "This invitation link has been revoked."
+        expires_at = parse_sql_datetime(row_value(invite, "expires_at"))
+        if not expires_at or expires_at <= datetime.utcnow():
+            return None, "This invitation link has expired."
+        already_member = bool(con.execute(
+            "SELECT 1 FROM chat_community_members WHERE community_id = ? AND user_id = ?",
+            (int(invite["community_id"]), user_id),
+        ).fetchone())
+        max_uses = int(row_value(invite, "max_uses") or 0)
+        use_count = int(row_value(invite, "use_count") or 0)
+        if max_uses and use_count >= max_uses and not already_member:
+            return None, "This invitation link has reached its member limit."
+        member_count = int(con.execute(
+            "SELECT COUNT(*) FROM chat_community_members WHERE community_id = ?",
+            (int(invite["community_id"]),),
+        ).fetchone()[0])
+        return {
+            "id": str(row_value(invite, "public_id") or ""),
+            "name": str(row_value(invite, "name") or "Private group"),
+            "description": str(row_value(invite, "description") or ""),
+            "area": str(row_value(invite, "area_label") or ""),
+            "memberCount": member_count,
+            "alreadyMember": already_member,
+        }, ""
 
 
 def get_chat_group_members(public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
@@ -16788,11 +16845,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/groups/members":
             self.api_chat_group_members(parsed)
             return
+        if parsed.path == "/api/chat/groups/invite-preview":
+            self.api_chat_group_invite_preview(parsed)
+            return
         if parsed.path == "/api/chat/e2ee/keys":
             self.api_chat_e2ee_keys(parsed)
             return
         if parsed.path == "/api/chat/e2ee/envelopes":
             self.api_chat_e2ee_envelopes(parsed)
+            return
+        if parsed.path == "/api/chat/e2ee/backup":
+            self.api_get_chat_e2ee_backup()
             return
         if parsed.path == "/api/chat/people/by-phone":
             self.api_chat_person_by_phone(parsed)
@@ -16930,7 +16993,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/groups/leave": self.api_leave_chat_group,
             "/api/chat/e2ee/keys": self.api_register_chat_e2ee_key,
             "/api/chat/e2ee/messages": self.api_send_encrypted_chat_message,
+            "/api/chat/e2ee/attachments": self.api_send_encrypted_chat_attachment,
+            "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
             "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
+            "/api/chat/people/by-contacts": self.api_chat_people_by_contacts,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/attachments": self.api_send_chat_attachment,
             "/api/chat/rich-messages": self.api_send_chat_rich_message,
@@ -17899,6 +17965,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.send_json({"ok": True, "person": {"id": int(match["id"]), "name": row_value(match, "name") or "FairFares member"}})
 
+    def api_chat_people_by_contacts(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to find FairFares contacts."}, 401)
+            return
+        payload = self.read_json_body()
+        supplied = payload.get("phoneHashes") if isinstance(payload, dict) else []
+        hashes = {
+            str(value).strip().lower() for value in supplied
+            if isinstance(value, str) and len(str(value).strip()) == 64
+        } if isinstance(supplied, list) else set()
+        if not hashes or len(hashes) > 1000:
+            self.send_json({"ok": False, "message": "Choose between 1 and 1,000 contact phone numbers."}, 400)
+            return
+        with db() as con:
+            candidates = con.execute(
+                """SELECT id, name, phone, profile_photo_url FROM users
+                   WHERE chat_phone_discoverable = 1 AND is_verified = 1
+                     AND guest_account = 0 AND id != ?""",
+                (int(user["id"]),),
+            ).fetchall()
+        matches = []
+        for candidate in candidates:
+            normalized = normalize_phone(row_value(candidate, "phone"))
+            phone_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
+            if phone_hash in hashes:
+                matches.append({
+                    "id": int(candidate["id"]),
+                    "name": row_value(candidate, "name") or "FairFares member",
+                    "photoUrl": row_value(candidate, "profile_photo_url") or "",
+                    "phoneHash": phone_hash,
+                })
+        self.send_json({"ok": True, "people": matches[:250]})
+
     def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -18319,6 +18419,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.send_json({"ok": True, "community": community})
 
+    def api_chat_group_invite_preview(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to open this private group invitation."}, 401)
+            return
+        token = (urllib.parse.parse_qs(parsed.query).get("token") or [""])[0].strip()
+        preview, error = preview_chat_group_invite(token, int(user["id"]))
+        if not preview:
+            self.send_json({"ok": False, "message": error or "Could not open this invitation."}, 400)
+            return
+        self.send_json({"ok": True, "group": preview})
+
     def api_chat_group_members(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -18418,12 +18530,90 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
+            block_error = chat_conversation_block_error(con, conversation, int(user["id"]))
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
+                return
             message, error = save_encrypted_chat_message(con, conversation, user, envelopes, str(form.get("clientMessageId") or ""))
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_send_encrypted_chat_attachment(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to send encrypted attachments."}, 401)
+            return
+        payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId"), 80)
+        ciphertext_base64 = str(payload.get("ciphertextBase64") or "")
+        envelopes = payload.get("envelopes") if isinstance(payload.get("envelopes"), list) else []
+        try:
+            ciphertext = base64.b64decode(ciphertext_base64, validate=True)
+        except (ValueError, TypeError):
+            ciphertext = b""
+        if not ciphertext or len(ciphertext) > MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024:
+            self.send_json({"ok": False, "message": "Encrypted attachment is missing or too large."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            block_error = chat_conversation_block_error(con, conversation, current_user_id)
+            if block_error:
+                self.send_json({"ok": False, "message": block_error}, 403)
+                return
+            message, error = save_encrypted_chat_message(con, conversation, user, envelopes, clean_text_value(payload.get("clientMessageId"), 120))
+            if not message:
+                self.send_json({"ok": False, "message": error}, 409)
+                return
+            attachment_url = save_file_payload_locally(
+                folder_name="chat", file_data={"filename": f"encrypted-{message['id']}.ffenc", "mime_type": "application/octet-stream", "payload": ciphertext},
+                fallback_name=f"encrypted-{message['id']}.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
+            )
+            if not attachment_url:
+                con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (int(message["id"]),))
+                con.execute("DELETE FROM chat_messages WHERE id = ?", (int(message["id"]),))
+                self.send_json({"ok": False, "message": "Could not store the encrypted attachment."}, 500)
+                return
+            con.execute(
+                "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ?, metadata_json = ? WHERE id = ?",
+                (attachment_url, json.dumps({"encrypted": True, "size": len(ciphertext)}), int(message["id"])),
+            )
+            message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
+            self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
+
+    def api_save_chat_e2ee_backup(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to back up encryption keys."}, 401)
+            return
+        payload = self.read_json_body()
+        encrypted_payload = str(payload.get("encryptedPayload") or "")
+        if len(encrypted_payload) < 100 or len(encrypted_payload) > 8000:
+            self.send_json({"ok": False, "message": "Encrypted recovery backup is invalid."}, 400)
+            return
+        with db() as con:
+            con.execute(
+                """INSERT INTO chat_key_backups (user_id, encrypted_payload) VALUES (?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET encrypted_payload = excluded.encrypted_payload, updated_at = CURRENT_TIMESTAMP""",
+                (int(user["id"]), encrypted_payload),
+            )
+        self.send_json({"ok": True})
+
+    def api_get_chat_e2ee_backup(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to recover encryption keys."}, 401)
+            return
+        with db() as con:
+            row = con.execute("SELECT encrypted_payload, updated_at FROM chat_key_backups WHERE user_id = ?", (int(user["id"]),)).fetchone()
+        self.send_json({"ok": True, "encryptedPayload": row_value(row, "encrypted_payload") if row else "", "updatedAt": row_value(row, "updated_at") if row else ""})
 
     def api_chat_phone_discoverability(self) -> None:
         user = self.current_user()

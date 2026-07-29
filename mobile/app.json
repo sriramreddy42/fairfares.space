@@ -25,7 +25,11 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "READ_CONTACTS"
+      ],
+      "blockedPermissions": [
+        "android.permission.WRITE_CONTACTS"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#101010"
@@ -37,7 +41,13 @@
     "plugins": [
       "expo-location",
       "expo-notifications",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable. Contact names and your address book are not uploaded."
+        }
+      ]
     ],
     "extra": {
       "apiUrl": "https://fairfares.onrender.com",

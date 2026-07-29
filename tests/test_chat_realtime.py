@@ -1,5 +1,6 @@
 import json
 import base64
+import hashlib
 import os
 import tempfile
 import threading
@@ -92,6 +93,35 @@ class ChatRealtimeTest(unittest.TestCase):
             _, sender_view = self.event_request(server, "sender-token", message_id)
             receipt = next(row for row in sender_view["receipts"] if row["id"] == message_id)
             self.assertEqual(receipt["status"], "seen")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_contact_discovery_matches_only_opted_in_hashes(self):
+        with app.db() as con:
+            con.execute(
+                "UPDATE users SET phone = '+1 (937) 555-0199', chat_phone_discoverable = 1 WHERE id = ?",
+                (self.recipient_id,),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES ('Private Person', 'private@realtime.test', '+1 937 555 0188', 'x', 1, 0)"
+            )
+        discoverable_hash = hashlib.sha256(b"19375550199").hexdigest()
+        private_hash = hashlib.sha256(b"19375550188").hexdigest()
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [discoverable_hash, private_hash]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual([person["name"] for person in payload["people"]], ["Recipient"])
+            self.assertEqual(payload["people"][0]["phoneHash"], discoverable_hash)
+            self.assertNotIn("phone", payload["people"][0])
         finally:
             server.shutdown()
             server.server_close()
@@ -251,6 +281,41 @@ class ChatRealtimeTest(unittest.TestCase):
             self.assertEqual(pdf_status, 201)
             self.assertEqual(document["message"]["type"], "FILE")
             self.assertEqual(document["message"]["metadata"]["fileName"], "trip.pdf")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_encrypted_attachment_and_recovery_backup_never_store_plaintext(self):
+        sender_key, recipient_key = "A" * 44, "B" * 44
+        app.register_chat_device_key(self.sender_id, "sender-device-01", sender_key)
+        app.register_chat_device_key(self.recipient_id, "recipient-device-01", recipient_key)
+        server, thread = self.start_server()
+        try:
+            ciphertext = b"authenticated-ciphertext-not-a-real-photo"
+            envelopes = [
+                {"recipientUserId": self.sender_id, "recipientDeviceId": "sender-device-01", "senderPublicKey": sender_key, "nonce": "sender-nonce", "ciphertext": "wrapped-sender-key"},
+                {"recipientUserId": self.recipient_id, "recipientDeviceId": "recipient-device-01", "senderPublicKey": sender_key, "nonce": "recipient-nonce", "ciphertext": "wrapped-recipient-key"},
+            ]
+            body = json.dumps({"conversationId": "CHAT-REALTIME", "ciphertextBase64": base64.b64encode(ciphertext).decode(), "envelopes": envelopes, "clientMessageId": "encrypted-file-1"}).encode()
+            request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/attachments", data=body, method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=3) as response:
+                result = json.loads(response.read().decode())
+            self.assertEqual(result["message"]["type"], "ENCRYPTED_ATTACHMENT")
+            self.assertNotIn("photo", json.dumps(result["message"]["metadata"]))
+            download = urllib.request.Request(f"http://127.0.0.1:{server.server_port}{result['message']['attachmentUrl']}", headers={"Authorization": "Bearer recipient-token"})
+            with urllib.request.urlopen(download, timeout=3) as response:
+                self.assertEqual(response.read(), ciphertext)
+
+            backup_payload = "encrypted-only-" + ("Z" * 120)
+            backup_request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/backup", data=json.dumps({"encryptedPayload": backup_payload}).encode(), method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
+            with urllib.request.urlopen(backup_request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+            with app.db() as con:
+                stored = con.execute("SELECT encrypted_payload FROM chat_key_backups WHERE user_id = ?", (self.sender_id,)).fetchone()["encrypted_payload"]
+                message = con.execute("SELECT message_text, metadata_json FROM chat_messages WHERE client_message_id = 'encrypted-file-1'").fetchone()
+            self.assertEqual(stored, backup_payload)
+            self.assertNotIn("photo", message["message_text"] + message["metadata_json"])
         finally:
             server.shutdown()
             server.server_close()

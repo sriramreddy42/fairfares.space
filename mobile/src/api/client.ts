@@ -644,6 +644,23 @@ export async function sendEncryptedChatMessage(conversationId: string, envelopes
   });
 }
 
+export async function sendEncryptedChatAttachment(conversationId: string, ciphertextBase64: string, envelopes: Array<Record<string, unknown>>) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, ciphertextBase64, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
+export async function saveChatKeyBackup(encryptedPayload: string) {
+  return request<{ ok: boolean }>("/api/chat/e2ee/backup", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ encryptedPayload })
+  });
+}
+
+export async function getChatKeyBackup() {
+  return request<{ ok: boolean; encryptedPayload: string; updatedAt: string }>("/api/chat/e2ee/backup");
+}
+
 export async function pollChatEvents(conversationId: string, afterMessageId: number) {
   const query = new URLSearchParams({
     conversation_id: conversationId,
@@ -849,6 +866,14 @@ export async function joinChatGroupInvite(value: string) {
   });
 }
 
+export async function previewChatGroupInvite(value: string) {
+  let token = value.trim();
+  try { token = new URL(token).searchParams.get("group_invite") || token; } catch {}
+  return request<{ ok: boolean; group: { id: string; name: string; description: string; area: string; memberCount: number; alreadyMember: boolean } }>(
+    `/api/chat/groups/invite-preview?token=${encodeURIComponent(token)}`
+  );
+}
+
 export async function getChatGroupMembers(communityId: string) {
   return request<{ ok: boolean; members: ChatGroupMember[] }>(`/api/chat/groups/members?community_id=${encodeURIComponent(communityId)}`);
 }
@@ -882,6 +907,14 @@ export async function leaveChatGroup(communityId: string) {
 
 export async function findChatPersonByPhone(phone: string) {
   return request<{ ok: boolean; person: { id: number; name: string } }>(`/api/chat/people/by-phone?phone=${encodeURIComponent(phone)}`);
+}
+
+export async function findChatPeopleByContactHashes(phoneHashes: string[]) {
+  return request<{ ok: boolean; people: Array<{ id: number; name: string; photoUrl: string; phoneHash: string }> }>("/api/chat/people/by-contacts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phoneHashes })
+  });
 }
 
 export async function openChatWithPerson(targetUserId: number) {

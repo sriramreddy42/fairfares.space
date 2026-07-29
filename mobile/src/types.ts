@@ -92,6 +92,11 @@ export type ChatMessage = {
     name?: string;
     phone?: string;
     email?: string;
+    encrypted?: boolean;
+    kind?: "IMAGE" | "VIDEO" | "FILE";
+    decryptedDataUrl?: string;
+    encryptedKeyPayload?: string;
+    caption?: string;
   };
   contextType?: "HOUSING" | "CARPOOL" | string;
   contextId?: string;

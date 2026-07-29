@@ -70,6 +70,22 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNone(blocked)
         self.assertIn("limit", error.lower())
 
+    def test_invite_preview_does_not_join_or_consume_invitation(self):
+        group = self.create_group()
+        token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)
+        self.assertFalse(error)
+        preview, error = app.preview_chat_group_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertEqual(preview["name"], "Private travelers")
+        self.assertEqual(preview["memberCount"], 1)
+        self.assertFalse(preview["alreadyMember"])
+        with app.db() as con:
+            invite = con.execute("SELECT use_count FROM chat_group_invites").fetchone()
+            self.assertEqual(int(invite["use_count"]), 0)
+            self.assertFalse(con.execute(
+                "SELECT 1 FROM chat_community_members WHERE user_id = ?", (self.member,)
+            ).fetchone())
+
     def test_expired_and_revoked_invites_are_rejected(self):
         group = self.create_group()
         expired_token, _ = app.create_chat_group_invite(group["id"], self.owner)
@@ -141,6 +157,26 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             rejected, error = app.save_encrypted_chat_message(con, conversation, owner, [{**item, "senderPublicKey": "X" * 44} for item in envelopes], "encrypted-2")
             self.assertIsNone(rejected)
             self.assertIn("sender", error.lower())
+
+    def test_removed_group_member_is_excluded_from_future_device_envelopes(self):
+        group = self.create_group()
+        token, _ = app.create_chat_group_invite(group["id"], self.owner)
+        app.join_chat_group_by_invite(token, self.member)
+        app.register_chat_device_key(self.owner, "owner-rotation-device", "A" * 44)
+        app.register_chat_device_key(self.member, "member-rotation-device", "B" * 44)
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, _ = app.get_or_create_community_conversation(con, group["id"], owner)
+        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        self.assertFalse(warning)
+        self.assertEqual({item["userId"] for item in keys}, {self.owner, self.member})
+        self.assertFalse(app.update_chat_group_member(group["id"], self.owner, self.member, "REMOVE"))
+        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        self.assertFalse(warning)
+        self.assertEqual({item["userId"] for item in keys}, {self.owner})
+        denied, error = app.get_chat_conversation_device_keys(conversation["public_id"], self.member)
+        self.assertIsNone(denied)
+        self.assertIn("not found", error.lower())
 
 
 if __name__ == "__main__":

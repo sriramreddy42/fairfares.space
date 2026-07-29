@@ -43,12 +43,14 @@ export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
   const result = await ImagePicker.launchImageLibraryAsync({
     allowsMultipleSelection: false,
     base64: false,
-    mediaTypes: ["images"],
+    mediaTypes: ["images", "videos"],
     quality,
     selectionLimit: 1
   });
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
+  const isVideo = asset.type === "video" || String(asset.mimeType || "").startsWith("video/");
+  if (isVideo && Number(asset.fileSize || 0) > 15_000_000) throw new Error("Choose a video smaller than 15 MB.");
   if (Platform.OS === "web") {
     const webFile = (asset as typeof asset & { file?: Blob }).file;
     return {
@@ -56,7 +58,18 @@ export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
       blob: webFile,
       name: asset.fileName || `fchat-${Date.now()}.jpg`,
       mimeType: asset.mimeType || webFile?.type || "image/jpeg",
-      size: Number(asset.fileSize || webFile?.size || 0)
+      size: Number(asset.fileSize || webFile?.size || 0),
+      kind: isVideo ? "VIDEO" as const : "IMAGE" as const
+    };
+  }
+  if (isVideo) {
+    const info = await FileSystem.getInfoAsync(asset.uri);
+    return {
+      uri: asset.uri,
+      name: asset.fileName || `fchat-${Date.now()}.mp4`,
+      mimeType: asset.mimeType || "video/mp4",
+      size: info.exists && "size" in info ? Number(info.size || 0) : Number(asset.fileSize || 0),
+      kind: "VIDEO" as const
     };
   }
   const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
@@ -70,6 +83,7 @@ export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
     uri: compressed.uri,
     name: `fchat-${Date.now()}.jpg`,
     mimeType: "image/jpeg",
-    size: info.exists && "size" in info ? Number(info.size || 0) : 0
+    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
+    kind: "IMAGE" as const
   };
 }
