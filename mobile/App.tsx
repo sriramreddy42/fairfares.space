@@ -12,6 +12,7 @@ import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
+import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
@@ -894,6 +895,7 @@ function FairFaresApp() {
     setAuthMessage("Signing in...");
     try {
       const payload = await mobileLogin(identifier, password);
+      await syncChatIdentityRecovery(Number(payload.user?.id || 0), password).catch(() => undefined);
       setAuthMessage("Login successful.");
       setLoginOpen(false);
       setIdentifier("");
@@ -917,6 +919,9 @@ function FairFaresApp() {
     setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(signupName, identifier, signupPhone, password);
+      if (!payload.activationRequired && payload.token && payload.user) {
+        await syncChatIdentityRecovery(Number(payload.user.id || 0), password).catch(() => undefined);
+      }
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
       setSignupPhone("");

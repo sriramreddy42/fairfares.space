@@ -9,14 +9,19 @@ export type ConversationDeviceKey = { userId: number; deviceId: string; publicKe
 
 const keyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
 
+export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
+  const existing = await SecureStore.getItemAsync(keyName(userId));
+  return existing ? JSON.parse(existing) as DeviceIdentity : null;
+}
+
 export function contactDiscoveryHash(phone: string) {
   const normalized = phone.replace(/\D/g, "");
   return Array.from(sha256(util.decodeUTF8(normalized)), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceIdentity> {
-  const existing = await SecureStore.getItemAsync(keyName(userId));
-  if (existing) return JSON.parse(existing) as DeviceIdentity;
+  const existing = await getStoredDeviceIdentity(userId);
+  if (existing) return existing;
   const pair = nacl.box.keyPair();
   const identity = {
     deviceId: `${Date.now().toString(36)}-${util.encodeBase64(nacl.randomBytes(12)).replace(/[^A-Za-z0-9]/g, "")}`,

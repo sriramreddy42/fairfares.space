@@ -15,7 +15,6 @@ import {
   getChatCommunities,
   getChatDeviceKeys,
   getChatEncryptedEnvelopes,
-  getChatKeyBackup,
   getChatGroupMembers,
   getChatConversations,
   getChatMessages,
@@ -38,7 +37,6 @@ import {
   sendChatMessage,
   sendEncryptedChatMessage,
   sendEncryptedChatAttachment,
-  saveChatKeyBackup,
   sendChatAttachment,
   sendChatRichMessage,
   startChatForPost,
@@ -53,7 +51,7 @@ import { theme } from "../theme";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
 import { pickChatImage, pickCompressedImages } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
-import { contactDiscoveryHash, createEncryptedIdentityBackup, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity, restoreEncryptedIdentityBackup } from "../utils/chatCrypto";
+import { contactDiscoveryHash, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -225,8 +223,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
   const [encryptionReady, setEncryptionReady] = useState(false);
-  const [encryptionPanelOpen, setEncryptionPanelOpen] = useState(false);
-  const [recoveryPassphrase, setRecoveryPassphrase] = useState("");
   const [wallpaper, setWallpaper] = useState("midnight");
   const [customWallpaper, setCustomWallpaper] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -931,37 +927,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
-  async function backUpEncryptionKey() {
-    if (!deviceIdentity) {
-      Alert.alert("Encryption unavailable", "Open FairFares on a supported Android or iOS device.");
-      return;
-    }
-    try {
-      const encryptedPayload = await createEncryptedIdentityBackup(deviceIdentity, recoveryPassphrase);
-      await saveChatKeyBackup(encryptedPayload);
-      setRecoveryPassphrase("");
-      Alert.alert("Recovery backup saved", "Keep your passphrase private. FairFares cannot recover or read it.");
-    } catch (error) {
-      Alert.alert("Backup failed", error instanceof Error ? error.message : "Could not save the encrypted backup.");
-    }
-  }
-
-  async function recoverEncryptionKey() {
-    const userId = Number(data?.user?.id || 0);
-    if (!userId) return;
-    try {
-      const backup = await getChatKeyBackup();
-      if (!backup.encryptedPayload) throw new Error("No encrypted recovery backup exists for this account.");
-      const identity = await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, recoveryPassphrase);
-      await registerChatDeviceKey(identity.deviceId, identity.publicKey);
-      setDeviceIdentity(identity);
-      setRecoveryPassphrase("");
-      Alert.alert("Encryption key recovered", "Encrypted message history can now be decrypted on this device.");
-    } catch (error) {
-      Alert.alert("Recovery failed", error instanceof Error ? error.message : "Could not recover this encryption key.");
-    }
-  }
-
   async function toggleMute() {
     if (!activeConversationId) return;
     const nextMuted = !activeConversation?.mutedAt;
@@ -1135,8 +1100,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setWallpaperPanelOpen(false);
     setChatOptionsOpen(false);
     setGroupMembersOpen(false);
-    setEncryptionPanelOpen(false);
-    setRecoveryPassphrase("");
     setGroupMembers([]);
     setAttachmentStatus("");
     setPendingAttachment(null);
@@ -1176,7 +1139,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "FairFares chat"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {encryptionReady ? "🔒 End-to-end encrypted" : presenceLabel(activeConversation)}
+              {Platform.OS !== "web"
+                ? (encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending")
+                : presenceLabel(activeConversation)}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
@@ -1187,7 +1152,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>♙</Text><Text style={styles.chatOptionText}>Group members</Text></TouchableOpacity> : null}
-            <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setEncryptionPanelOpen(true); }}><Text style={styles.chatOptionIcon}>⌾</Text><Text style={styles.chatOptionText}>Encryption and recovery</Text></TouchableOpacity>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
           </View>
         ) : null}
@@ -1204,19 +1168,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               })}
             </ScrollView>
             <TouchableOpacity style={styles.leaveGroupButton} onPress={() => void leaveActiveGroup()}><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
-          </View>
-        ) : null}
-
-        {encryptionPanelOpen ? (
-          <View style={styles.encryptionPanel}>
-            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>Privacy and recovery</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setEncryptionPanelOpen(false)}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
-            <Text style={styles.encryptionStatus}>{encryptionReady ? "🔒 Messages are end-to-end encrypted" : "Encryption is being prepared"}</Text>
-            <Text style={styles.encryptionHelp}>{encryptionReady ? "Only people in this conversation can read its new messages and attachments." : "A participant needs to open the latest FairFares app. You cannot send an unencrypted native message while setup is incomplete."}</Text>
-            <Text style={styles.recoveryTitle}>Encrypted-history recovery</Text>
-            <Text style={styles.encryptionHelp}>Create a private passphrase backup if you want to restore encrypted messages after changing or losing your phone.</Text>
-            <TextInput secureTextEntry style={styles.encryptionInput} placeholder="Recovery passphrase" placeholderTextColor={theme.colors.muted} value={recoveryPassphrase} onChangeText={setRecoveryPassphrase} autoCapitalize="none" />
-            <View style={styles.encryptionActions}><TouchableOpacity style={styles.encryptionAction} onPress={() => void backUpEncryptionKey()}><Text style={styles.encryptionActionText}>Save backup</Text></TouchableOpacity><TouchableOpacity style={styles.encryptionAction} onPress={() => void recoverEncryptionKey()}><Text style={styles.encryptionActionText}>Recover key</Text></TouchableOpacity></View>
-            <Text style={styles.encryptionWarning}>FairFares never receives your passphrase or unencrypted private key. Losing both means encrypted history cannot be recovered.</Text>
           </View>
         ) : null}
 
@@ -1816,19 +1767,6 @@ const styles = StyleSheet.create({
   groupMemberRemove: { color: "#ff7c8c" },
   leaveGroupButton: { minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: "#843444", alignItems: "center", justifyContent: "center", marginTop: 12 },
   leaveGroupText: { color: "#ff8b99", fontSize: 13, fontWeight: "600" },
-  encryptionPanel: { position: "absolute", top: 78, right: 10, width: 360, maxWidth: "94%", zIndex: 31, backgroundColor: "#111827", borderWidth: 1, borderColor: "#315a91", borderRadius: 20, padding: 15, elevation: 22, shadowColor: "#000", shadowOpacity: 0.38, shadowRadius: 18, gap: 10 },
-  encryptionStatus: { color: "#73e2aa", fontSize: 14, fontWeight: "700" },
-  encryptionHelp: { color: theme.colors.soft, fontSize: 12, lineHeight: 17 },
-  recoveryTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "700", marginTop: 3 },
-  securityFingerprint: { color: "#c8d8ff", backgroundColor: "#0a1020", borderRadius: 12, padding: 12, fontSize: 15, lineHeight: 22, letterSpacing: 0.8, textAlign: "center" },
-  encryptionInput: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, color: theme.colors.text, paddingHorizontal: 12 },
-  encryptionActions: { flexDirection: "row", gap: 8 },
-  encryptionAction: { flex: 1, minHeight: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.blue },
-  encryptionActionText: { color: theme.colors.text, fontSize: 13, fontWeight: "700" },
-  encryptionWarning: { color: theme.colors.muted, fontSize: 10, lineHeight: 15 },
-  verifyFingerprintButton: { minHeight: 40, borderRadius: 12, borderWidth: 1, borderColor: "#45638c", alignItems: "center", justifyContent: "center" },
-  verifyFingerprintButtonActive: { backgroundColor: "#123c2d", borderColor: "#2ba36f" },
-  verifyFingerprintText: { color: "#dbe7ff", fontSize: 12, fontWeight: "700" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg }
 });

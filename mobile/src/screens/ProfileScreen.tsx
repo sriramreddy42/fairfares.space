@@ -7,6 +7,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload, RideDriverProfile, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
+import { syncChatIdentityRecovery } from "../utils/chatRecovery";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -170,6 +171,7 @@ export function ProfileScreen({
     }
     setSaving(true);
     try {
+      const phoneChanged = phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "");
       const payload = await updateMobileProfile({ name, email, phone, profilePhoto, currentPassword });
       draftUserIdRef.current = payload.user?.id ?? user.id;
       setName(payload.user?.name || "");
@@ -183,6 +185,9 @@ export function ProfileScreen({
         Alert.alert("Verify your new email", payload.message || "Please activate your new email before logging in again.");
         onLogout();
       } else {
+        if (phoneChanged && currentPassword) {
+          await syncChatIdentityRecovery(Number(payload.user?.id || user.id), currentPassword).catch(() => undefined);
+        }
         setCurrentPassword("");
         Alert.alert("Profile updated", payload.message || "Your FairFares profile was saved.");
       }
