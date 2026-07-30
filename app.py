@@ -25881,6 +25881,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <span class="checkout-wallet-badge checkout-wallet-amazon"><b>amazon pay</b></span>
                         </div>
             """
+            deposit_wallet_badges = """
+                        <div class="checkout-wallet-row" aria-label="Supported secure deposit authorization options">
+                            <span class="checkout-wallet-badge checkout-wallet-apple"><span aria-hidden="true">&#63743;</span><b>Pay</b></span>
+                            <span class="checkout-wallet-badge checkout-wallet-link"><b>G Pay</b></span>
+                            <span class="checkout-wallet-badge checkout-wallet-amazon"><b>Card</b></span>
+                        </div>
+            """
             if hold_expired:
                 hold_decision = """
                     <div class="booking-hold-expired-actions">
@@ -25918,7 +25925,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                                 <span>Authorize {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable deposit</span>
                                 <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
                             </button>
-                            {payment_wallet_badges}
+                            {deposit_wallet_badges}
                             <small>Stripe places an authorization hold. FairFares releases it after return when condition, fuel, mileage, photos, signatures, and charge review are clear.</small>
                         </form>
                     """
@@ -25936,6 +25943,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 payment_panel_heading = "Window expired" if hold_expired else "Choose payment option"
                 payment_panel_copy = "Restart checkout or remove this vehicle." if hold_expired else "Pay in full for pickup savings, or hold the booking with 10% due now."
+            original_payment_form = "" if (is_guest_checkout or hold_paid or full_paid or hold_expired) else f"""
+                    <form class="payment-hold-form" id="paymentHoldForm">
+                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
+                            <span>Pay in full and save $10. Enjoy faster, hassle-free pickup.</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
+                        <button class="stripe-pay-button" type="submit" name="payment_option" value="hold">
+                            <span>Pay 10% now to hold your booking. Balance due at pickup.</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
+                        {payment_wallet_badges}
+                    </form>
+            """
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
@@ -25956,17 +25976,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     {'<p class="payment-hold-paid">10% hold received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     {'<p class="payment-hold-paid">Full payment received. Your pickup balance is $0.00.</p>' if full_paid else ''}
                     {deposit_checkout_panel}
-                    <form class="payment-hold-form" id="{'paymentHoldFormInactive' if hold_paid else 'paymentHoldForm'}"{' hidden' if (is_guest_checkout or hold_paid or full_paid or hold_expired) else ''}>
-                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
-                            <span>Pay in full and save $10. Enjoy faster, hassle-free pickup.</span>
-                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
-                        </button>
-                        <button class="stripe-pay-button" type="submit" name="payment_option" value="hold">
-                            <span>Pay 10% now to hold your booking. Balance due at pickup.</span>
-                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
-                        </button>
-                        {payment_wallet_badges}
-                    </form>
+                    {original_payment_form}
                     {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
                     <p class="modify-status" id="securityDepositStatus" aria-live="polite"></p>
