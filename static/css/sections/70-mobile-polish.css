@@ -1,4 +1,7 @@
 /* Final mobile system pass. Keep this file last so small-screen surfaces stay compact. */
+.web-app-mobile-tabs {
+  display: none;
+}
 @media (min-width: 861px) {
   body:not(.admin-screen):not(.login-screen):not(.auth-page) {
     padding-top: 180px !important;
@@ -185,6 +188,78 @@
     overflow-x: hidden;
     text-size-adjust: 100%;
     -webkit-text-size-adjust: 100%;
+  }
+
+  body:not(.admin-screen):not(.login-screen):not(.auth-page):has(.web-app-mobile-tabs) {
+    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .web-app-mobile-tabs {
+    align-items: center;
+    background: rgba(12, 14, 20, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 24px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    left: 10px;
+    min-height: 68px;
+    padding: 6px;
+    position: fixed;
+    right: 10px;
+    z-index: 1200;
+  }
+
+  .web-app-mobile-tabs a {
+    align-items: center;
+    border-radius: 18px;
+    color: #aeb4c0;
+    display: grid;
+    gap: 2px;
+    justify-items: center;
+    min-width: 0;
+    padding: 7px 2px 6px;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .web-app-mobile-tabs a span {
+    align-items: center;
+    color: inherit;
+    display: inline-flex;
+    font-size: 1.48rem;
+    font-weight: 500;
+    height: 25px;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  .web-app-mobile-tabs a b {
+    color: inherit;
+    font-size: clamp(0.62rem, 2.7vw, 0.72rem);
+    font-weight: 700;
+    line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+    text-align: center;
+  }
+
+  .web-app-mobile-tabs a.is-active {
+    background: linear-gradient(145deg, #25304a, #182137);
+    color: #fff;
+  }
+
+  .web-app-mobile-tabs a.is-active span {
+    color: #4f7cff;
+    filter: drop-shadow(0 0 7px rgba(79, 124, 255, 0.48));
+  }
+
+  .web-app-mobile-tabs a:active {
+    background: #252a35;
+    transform: scale(0.97);
   }
 
   h1,
