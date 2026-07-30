@@ -40,7 +40,8 @@ class BookingHoldTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_select_creates_pending_hold_with_daily_rate_pricing(self):
-        car = app.get_cars()[0]
+        cars = app.get_cars()
+        car = cars[0]
 
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
 
@@ -102,6 +103,37 @@ class BookingHoldTest(unittest.TestCase):
             self.assertIsNone(con.execute("SELECT 1 FROM transactions WHERE booking_id = ?", (booking["id"],)).fetchone())
             self.assertIsNotNone(con.execute("SELECT 1 FROM users WHERE email = 'keep@example.com'").fetchone())
 
+    def test_booking_cleanup_keeps_only_requested_booking_and_profiles(self):
+        cars = app.get_cars()
+        kept = app.create_booking_for_user(self.user_id, cars[0]["id"], days=3)
+        with app.db() as con:
+            con.execute("UPDATE bookings SET booking_id = 'FF428555938' WHERE id = ?", (kept["id"],))
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Other User', 'other@example.com', ?, 1)",
+                (app.hash_password("Password123!"),),
+            )
+            other_user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        removed = app.create_booking_for_user(other_user_id, cars[1]["id"], days=4)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO transactions (booking_id, payment_method, amount, transaction_status, invoice_number) VALUES (?, 'Test', 10, 'HOLD_PAID', 'KEEP-TEST')",
+                (kept["id"],),
+            )
+            con.execute(
+                "INSERT INTO transactions (booking_id, payment_method, amount, transaction_status, invoice_number) VALUES (?, 'Test', 10, 'HOLD_PAID', 'REMOVE-TEST')",
+                (removed["id"],),
+            )
+            result = app.purge_bookings_except(con, "FF428555938")
+
+        self.assertEqual(result["bookings"], 1)
+        with app.db() as con:
+            self.assertIsNotNone(con.execute("SELECT 1 FROM bookings WHERE id = ?", (kept["id"],)).fetchone())
+            self.assertIsNotNone(con.execute("SELECT 1 FROM transactions WHERE booking_id = ?", (kept["id"],)).fetchone())
+            self.assertIsNone(con.execute("SELECT 1 FROM bookings WHERE id = ?", (removed["id"],)).fetchone())
+            self.assertIsNone(con.execute("SELECT 1 FROM transactions WHERE booking_id = ?", (removed["id"],)).fetchone())
+            self.assertIsNotNone(con.execute("SELECT 1 FROM users WHERE id = ?", (self.user_id,)).fetchone())
+            self.assertIsNotNone(con.execute("SELECT 1 FROM users WHERE id = ?", (other_user_id,)).fetchone())
+
     def test_admin_pickup_calendar_excludes_unpaid_checkout_holds(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
@@ -118,6 +150,48 @@ class BookingHoldTest(unittest.TestCase):
         paid_html = handler.render_admin_booking_calendar(app.get_admin_bookings(), "today", "ALL")
         self.assertIn("1 pickup shown", paid_html)
         self.assertIn(booking["booking_id"], paid_html)
+
+    def test_pickup_surfaces_only_include_paid_confirmed_bookings(self):
+        cars = app.get_cars()
+        car = cars[0]
+        pickup_day = date.today() + timedelta(days=1)
+        confirmed = app.create_booking_for_user(
+            self.user_id,
+            car["id"],
+            days=3,
+            pickup_date=pickup_day.isoformat(),
+        )
+        modified = app.create_booking_for_user(
+            self.user_id,
+            cars[1]["id"],
+            days=3,
+            pickup_date=pickup_day.isoformat(),
+        )
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'HOLD_PAID' WHERE id = ?",
+                (confirmed["id"],),
+            )
+            con.execute(
+                "UPDATE bookings SET booking_status = 'MODIFIED', status = 'MODIFIED', payment_status = 'PAID' WHERE id = ?",
+                (modified["id"],),
+            )
+
+        rows = app.get_admin_bookings()
+        confirmed_row = next(row for row in rows if row["id"] == confirmed["id"])
+        modified_row = next(row for row in rows if row["id"] == modified["id"])
+        self.assertTrue(app.booking_ready_for_pickup(confirmed_row))
+        self.assertFalse(app.booking_ready_for_pickup(modified_row))
+
+        metrics = app.employee_operations_metrics()
+        pickup_ids = {row["id"] for row in metrics["tomorrow_pickups"]}
+        self.assertIn(confirmed["id"], pickup_ids)
+        self.assertNotIn(modified["id"], pickup_ids)
+
+        handler = app.FairFaresHandler.__new__(app.FairFaresHandler)
+        calendar_html = handler.render_admin_booking_calendar(rows, "tomorrow", "ALL")
+        self.assertIn(confirmed["booking_id"], calendar_html)
+        self.assertNotIn(modified["booking_id"], calendar_html)
 
     def test_booking_days_are_calculated_from_selected_dates(self):
         car = app.get_cars()[0]

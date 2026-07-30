@@ -1399,6 +1399,11 @@ body.housing-map-full-open {
   font-size: 0.9rem;
 }
 
+.housing-map-canvas.is-fallback {
+  min-height: 180px;
+  padding: 24px;
+}
+
 .housing-map-rail {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

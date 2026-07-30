@@ -44,6 +44,14 @@ class SecurityHardeningTest(unittest.TestCase):
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
 
+    def test_google_maps_loader_reports_auth_failures_and_uses_async_loader(self):
+        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test maps key"}):
+            loader = app.explorer_maps_loader()
+        self.assertIn("loading=async", loader)
+        self.assertIn("gm_authFailure", loader)
+        self.assertIn("fairfares-map-error", loader)
+        self.assertIn("referrerpolicy=\"origin\"", loader)
+
     def start_server(self):
         server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -107,7 +115,10 @@ class SecurityHardeningTest(unittest.TestCase):
             self.assertEqual(error.exception.code, 403)
             self.assertEqual(error.exception.headers["X-Frame-Options"], "DENY")
             self.assertEqual(error.exception.headers["X-Content-Type-Options"], "nosniff")
-            self.assertIn("frame-ancestors 'none'", error.exception.headers["Content-Security-Policy"])
+            content_security_policy = error.exception.headers["Content-Security-Policy"]
+            self.assertIn("frame-ancestors 'none'", content_security_policy)
+            self.assertIn("https://maps.googleapis.com", content_security_policy)
+            self.assertIn("https://maps.gstatic.com", content_security_policy)
         finally:
             server.shutdown()
             server.server_close()

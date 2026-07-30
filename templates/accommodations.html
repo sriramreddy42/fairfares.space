@@ -1033,6 +1033,7 @@
       const renderMapFallbackList = (payload, message) => {
         const mapCanvas = document.getElementById("housingMapCanvas");
         if (mapCanvas) {
+          mapCanvas.classList.add("is-fallback");
           mapCanvas.innerHTML = `<b>${message || "Map preview"}</b><span>Live pins render when Google Maps is available. The listings below still show saved location, rent, and radius.</span>`;
         }
         const fallbackPosts = mapCenterOverride
@@ -1055,12 +1056,18 @@
         const posts = Array.isArray(payload.posts) ? payload.posts : [];
         const center = { ...(payload.center || {}), ...(mapCenterOverride || {}) };
         if (!window.google?.maps) {
-          if (payload.mapsEnabled && attempt < 20) {
+          if (payload.mapsEnabled && !window.FAIRFARES_MAP_LOAD_FAILED && attempt < 20) {
+            mapCanvas.classList.remove("is-fallback");
             mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Connecting housing pins and distance circles.</span>";
             window.setTimeout(() => renderHousingMap(attempt + 1), 350);
             return;
           }
-          renderMapFallbackList(payload, payload.mapsEnabled ? "Map could not load" : "Map ready when Google Maps key is enabled");
+          renderMapFallbackList(
+            payload,
+            payload.mapsEnabled
+              ? "Google Maps authorization needs attention"
+              : "Map ready when Google Maps key is enabled"
+          );
           return;
         }
         const geocoder = mapGeocoder || new google.maps.Geocoder();
@@ -1102,6 +1109,7 @@
             renderMapFallbackList(payload, "Choose a location to map results");
             return;
           }
+          mapCanvas.classList.remove("is-fallback");
           mapCanvas.innerHTML = "";
           const map = new google.maps.Map(mapCanvas, {
             center: { lat: Number(center.lat), lng: Number(center.lng) },
@@ -1160,6 +1168,7 @@
           renderMapResults(visiblePosts, "No mappable housing leads match this search yet.");
         });
       };
+      window.addEventListener("fairfares-map-error", () => renderHousingMap(20));
       mapPointForm?.addEventListener("submit", (event) => {
         event.preventDefault();
         const { query, label } = mapPointQuery();

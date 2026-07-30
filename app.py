@@ -1317,6 +1317,8 @@ def create_db_backup(reason: str = "manual") -> Path:
 
 
 REQUESTED_PROFILE_CLEANUP_KEY = "maintenance_cleanup_20260729_test_profiles"
+REQUESTED_BOOKING_CLEANUP_KEY = "maintenance_cleanup_20260729_keep_ff428555938"
+REQUESTED_BOOKING_TO_KEEP = "FF428555938"
 REQUESTED_PROFILE_CLEANUP_EMAILS = {
     "alex@student.edu",
     "jagdalekrutika2181@gmail.com",
@@ -1477,6 +1479,89 @@ def run_requested_profile_cleanup(con: sqlite3.Connection) -> dict[str, object]:
     con.execute(
         "INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)",
         (REQUESTED_PROFILE_CLEANUP_KEY, json.dumps(result, sort_keys=True)),
+    )
+    return result
+
+
+def purge_bookings_except(con: sqlite3.Connection, booking_id_to_keep: str) -> dict[str, object]:
+    """Delete all bookings except one public booking ID and their dependent records."""
+    keep = str(booking_id_to_keep or "").strip().upper()
+    bookings = con.execute(
+        "SELECT id, booking_id, car_id FROM bookings WHERE UPPER(TRIM(booking_id)) != ? ORDER BY id",
+        (keep,),
+    ).fetchall()
+    booking_ids = {int(row["id"]) for row in bookings}
+    if not booking_ids:
+        return {"bookings": 0, "booking_ids": [], "deleted_rows": {}}
+
+    table_names = [
+        str(row["name"])
+        for row in con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    ]
+    selected: dict[str, set[object]] = {"bookings": set(booking_ids)}
+    primary_keys: dict[str, str] = {}
+    for table in table_names:
+        columns = con.execute(f'PRAGMA table_info("{table}")').fetchall()
+        primary_keys[table] = next(
+            (str(row["name"]) for row in columns if int(row["pk"] or 0) == 1),
+            "rowid",
+        )
+
+    changed = True
+    while changed:
+        changed = False
+        for table in table_names:
+            for foreign_key in con.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+                parent_ids = selected.get(str(foreign_key["table"]))
+                if not parent_ids:
+                    continue
+                placeholders = ",".join("?" for _ in parent_ids)
+                rows = con.execute(
+                    f'SELECT "{primary_keys[table]}" AS record_id FROM "{table}" '
+                    f'WHERE "{foreign_key["from"]}" IN ({placeholders})',
+                    tuple(parent_ids),
+                ).fetchall()
+                new_ids = {row["record_id"] for row in rows} - selected.get(table, set())
+                if new_ids:
+                    selected.setdefault(table, set()).update(new_ids)
+                    changed = True
+
+    affected_car_ids = {int(row["car_id"]) for row in bookings if row["car_id"] is not None}
+    deleted_rows: dict[str, int] = {}
+    for table, record_ids in sorted(selected.items(), key=lambda item: item[0] == "bookings"):
+        placeholders = ",".join("?" for _ in record_ids)
+        cursor = con.execute(
+            f'DELETE FROM "{table}" WHERE "{primary_keys[table]}" IN ({placeholders})',
+            tuple(record_ids),
+        )
+        deleted_rows[table] = max(0, int(cursor.rowcount or 0))
+
+    for car_id in affected_car_ids:
+        active = con.execute(
+            "SELECT 1 FROM bookings WHERE car_id = ? AND booking_status NOT IN ('CANCELLED', 'RETURNED', 'EXPIRED_HOLD') LIMIT 1",
+            (car_id,),
+        ).fetchone()
+        if not active:
+            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ? AND owner_user_id IS NULL", (car_id,))
+
+    return {
+        "bookings": len(booking_ids),
+        "booking_ids": [str(row["booking_id"]) for row in bookings],
+        "kept_booking_id": keep,
+        "deleted_rows": deleted_rows,
+    }
+
+
+def run_requested_booking_cleanup(con: sqlite3.Connection) -> dict[str, object]:
+    completed = con.execute("SELECT value FROM site_content WHERE key = ?", (REQUESTED_BOOKING_CLEANUP_KEY,)).fetchone()
+    if completed:
+        return {"already_completed": True, "bookings": 0, "deleted_rows": {}}
+    result = purge_bookings_except(con, REQUESTED_BOOKING_TO_KEEP)
+    con.execute(
+        "INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)",
+        (REQUESTED_BOOKING_CLEANUP_KEY, json.dumps(result, sort_keys=True)),
     )
     return result
 
@@ -2013,6 +2098,14 @@ BOOKING_HISTORY_PAYMENT_STATUSES = PAYMENT_CONFIRMED_STATUSES | {"REFUND_REVIEW"
 
 def booking_payment_confirmed(booking: sqlite3.Row | dict[str, object] | None) -> bool:
     return row_value(booking, "payment_status") in PAYMENT_CONFIRMED_STATUSES
+
+
+def booking_ready_for_pickup(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    """A pickup becomes operational only after both booking and payment confirmation."""
+    return (
+        row_value(booking, "booking_status") == "CONFIRMED"
+        and booking_payment_confirmed(booking)
+    )
 
 
 def booking_visible_in_customer_history(booking: sqlite3.Row | dict[str, object] | None) -> bool:
@@ -5544,6 +5637,14 @@ def init_db() -> None:
                 f"{profile_cleanup_result.get('users')} users; "
                 f"{profile_cleanup_result.get('deleted_rows', {})}"
             )
+        booking_cleanup_result = run_requested_booking_cleanup(con)
+        if int(booking_cleanup_result.get("bookings") or 0):
+            print(
+                "Removed requested booking records: "
+                f"{booking_cleanup_result.get('bookings')} bookings; "
+                f"kept {REQUESTED_BOOKING_TO_KEEP}; "
+                f"{booking_cleanup_result.get('deleted_rows', {})}"
+            )
 
         seed_defaults = os.environ.get("FAIRFARES_SEED_DEFAULTS", "0").strip() == "1"
         if not seed_defaults:
@@ -7704,8 +7805,13 @@ def explorer_maps_loader() -> str:
         return '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=false;</script>'
     escaped_key = html.escape(urllib.parse.quote(api_key, safe=""), quote=True)
     return (
-        '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=true;</script>'
-        f'<script async defer src="https://maps.googleapis.com/maps/api/js?key={escaped_key}"></script>'
+        '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=true;'
+        'window.FAIRFARES_MAP_LOAD_FAILED=false;'
+        'window.gm_authFailure=function(){window.FAIRFARES_MAP_LOAD_FAILED=true;'
+        'window.dispatchEvent(new Event("fairfares-map-error"));};</script>'
+        f'<script async src="https://maps.googleapis.com/maps/api/js?key={escaped_key}&amp;loading=async&amp;v=weekly" '
+        'referrerpolicy="origin" onerror="window.FAIRFARES_MAP_LOAD_FAILED=true;window.dispatchEvent(new Event(\'fairfares-map-error\'));">'
+        '</script>'
     )
 
 
@@ -8160,12 +8266,12 @@ def employee_operations_metrics() -> dict[str, object]:
     tomorrow = today + timedelta(days=1)
     today_pickups = [
         row for row in bookings
-        if row_value(row, "booking_status") not in {"CANCELLED", "EXPIRED_HOLD"}
+        if booking_ready_for_pickup(row)
         and (booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.min).date() == today
     ]
     tomorrow_pickups = [
         row for row in bookings
-        if row_value(row, "booking_status") not in {"CANCELLED", "EXPIRED_HOLD"}
+        if booking_ready_for_pickup(row)
         and (booking_datetime_from_row(row, "pickup_date", "pickup_time") or datetime.min).date() == tomorrow
     ]
     active_bookings = [
@@ -22065,8 +22171,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         visible_rows = [
             row
             for row in rows
-            if row_value(row, "booking_status") != "CANCELLED"
-            and booking_payment_confirmed(row)
+            if booking_ready_for_pickup(row)
             and self.booking_overlaps_calendar_days(row, days)
         ]
         booking_count = len(visible_rows)
@@ -23001,12 +23106,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
-        records = "\n".join(self.render_pickup_record(row) for row in get_admin_bookings())
+        pickup_bookings = [row for row in get_admin_bookings() if booking_ready_for_pickup(row)]
+        records = "\n".join(self.render_pickup_record(row) for row in pickup_bookings)
         body = render_template(
             "admin_pickup.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "pickup"),
-            records=records or '<p class="admin-empty">No pickup records yet.</p>',
+            records=records or '<p class="admin-empty">No confirmed pickups yet.</p>',
         )
         self.send_html(body)
 
@@ -27513,9 +27619,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "form-action 'self' https://checkout.stripe.com; script-src 'self' 'unsafe-inline' https://js.stripe.com; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; "
-            "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com; "
+            "form-action 'self' https://checkout.stripe.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
+            "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "
             "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com"
         )
         if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://"):
