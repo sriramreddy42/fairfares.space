@@ -56,6 +56,69 @@ class BookingHoldTest(unittest.TestCase):
         held_car = app.get_car(car["id"])
         self.assertEqual(held_car["status"], "HOLD")
 
+    def test_unpaid_hold_is_hidden_until_ten_percent_or_full_payment(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+
+        self.assertEqual(app.get_bookings_for_user(self.user_id), [])
+
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'HOLD_PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+        visible = app.get_bookings_for_user(self.user_id)
+        self.assertEqual([row["id"] for row in visible], [booking["id"]])
+
+        with app.db() as con:
+            con.execute("UPDATE bookings SET payment_status = 'REFUNDED', booking_status = 'CANCELLED' WHERE id = ?", (booking["id"],))
+        self.assertEqual([row["id"] for row in app.get_bookings_for_user(self.user_id)], [booking["id"]])
+
+    def test_customer_pickup_return_tools_unlock_only_after_payment(self):
+        self.assertFalse(app.booking_customer_tools_unlocked({"payment_status": "HOLD_PENDING"}))
+        self.assertFalse(app.booking_customer_tools_unlocked({"payment_status": "HOLD_EXPIRED"}))
+        self.assertTrue(app.booking_customer_tools_unlocked({"payment_status": "HOLD_PAID"}))
+        self.assertTrue(app.booking_customer_tools_unlocked({"payment_status": "PAID"}))
+        self.assertFalse(app.booking_customer_tools_unlocked({"payment_status": "REFUNDED"}))
+
+    def test_profile_purge_removes_related_booking_data_only(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Keep User', 'keep@example.com', ?, 1)",
+                (app.hash_password("Password123!"),),
+            )
+            con.execute(
+                "INSERT INTO transactions (booking_id, payment_method, amount, transaction_status, invoice_number) VALUES (?, 'Test', 10, 'HOLD_PAID', 'PURGE-TEST')",
+                (booking["id"],),
+            )
+            result = app.purge_user_accounts(con, {"hold@example.com"})
+
+        self.assertEqual(result["users"], 1)
+        with app.db() as con:
+            self.assertIsNone(con.execute("SELECT 1 FROM users WHERE id = ?", (self.user_id,)).fetchone())
+            self.assertIsNone(con.execute("SELECT 1 FROM bookings WHERE id = ?", (booking["id"],)).fetchone())
+            self.assertIsNone(con.execute("SELECT 1 FROM transactions WHERE booking_id = ?", (booking["id"],)).fetchone())
+            self.assertIsNotNone(con.execute("SELECT 1 FROM users WHERE email = 'keep@example.com'").fetchone())
+
+    def test_admin_pickup_calendar_excludes_unpaid_checkout_holds(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute("UPDATE bookings SET pickup_date = ?, dropoff_date = ? WHERE id = ?", (date.today().isoformat(), (date.today() + timedelta(days=3)).isoformat(), booking["id"]))
+
+        handler = app.FairFaresHandler.__new__(app.FairFaresHandler)
+        unpaid_html = handler.render_admin_booking_calendar(app.get_admin_bookings(), "today", "ALL")
+        self.assertIn("0 pickups shown", unpaid_html)
+        self.assertNotIn(booking["booking_id"], unpaid_html)
+
+        with app.db() as con:
+            con.execute("UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID' WHERE id = ?", (booking["id"],))
+        paid_html = handler.render_admin_booking_calendar(app.get_admin_bookings(), "today", "ALL")
+        self.assertIn("1 pickup shown", paid_html)
+        self.assertIn(booking["booking_id"], paid_html)
+
     def test_booking_days_are_calculated_from_selected_dates(self):
         car = app.get_cars()[0]
         pickup = date.today() + timedelta(days=5)

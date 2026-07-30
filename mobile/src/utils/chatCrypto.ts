@@ -1,4 +1,7 @@
+import "react-native-get-random-values";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 import nacl from "tweetnacl";
 import * as util from "tweetnacl-util";
 import { pbkdf2 } from "@noble/hashes/pbkdf2";
@@ -10,7 +13,9 @@ export type ConversationDeviceKey = { userId: number; deviceId: string; publicKe
 const keyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
 
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
-  const existing = await SecureStore.getItemAsync(keyName(userId));
+  const existing = Platform.OS === "web"
+    ? await AsyncStorage.getItem(keyName(userId))
+    : await SecureStore.getItemAsync(keyName(userId));
   return existing ? JSON.parse(existing) as DeviceIdentity : null;
 }
 
@@ -36,9 +41,8 @@ export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceI
     publicKey: util.encodeBase64(pair.publicKey),
     secretKey: util.encodeBase64(pair.secretKey)
   };
-  await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), {
-    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
-  });
+  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
+  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
   return identity;
 }
 
@@ -59,7 +63,8 @@ export async function restoreEncryptedIdentityBackup(userId: number, encryptedPa
   const identity = JSON.parse(util.encodeUTF8(opened)) as DeviceIdentity;
   const derivedPublicKey = util.encodeBase64(nacl.box.keyPair.fromSecretKey(util.decodeBase64(identity.secretKey)).publicKey);
   if (derivedPublicKey !== identity.publicKey) throw new Error("The recovery backup failed integrity verification.");
-  await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
+  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
   return identity;
 }
 

@@ -38,8 +38,6 @@ import {
   sendChatMessage,
   sendEncryptedChatMessage,
   sendEncryptedChatAttachment,
-  sendChatAttachment,
-  sendChatRichMessage,
   startChatForPost,
   startChatForRide,
   transferChatGroupOwnership,
@@ -277,7 +275,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
-    if (!userId || Platform.OS === "web") return;
+    if (!userId) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const initialize = async () => {
@@ -304,7 +302,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   async function ensureChatDeviceIdentity() {
     const userId = Number(data?.user?.id || 0);
-    if (!userId || Platform.OS === "web") throw new Error("Sign in on the FairFares mobile app to use encrypted FChat.");
+    if (!userId) throw new Error("Sign in to use encrypted FChat.");
     const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
     setDeviceIdentity(identity);
     await registerChatDeviceKey(identity.deviceId, identity.publicKey);
@@ -312,7 +310,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   async function decryptMessages(conversationId: string, nextMessages: ChatMessage[]) {
-    if (Platform.OS === "web") return nextMessages;
     try {
       const identity = await ensureChatDeviceIdentity();
       const [envelopePayload, keyPayload] = await Promise.all([
@@ -322,7 +319,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       const byMessage = new Map(envelopePayload.envelopes.map((item) => [item.messageId, item]));
       return await Promise.all(nextMessages.map(async (message) => {
         const envelope = byMessage.get(message.id);
-        if (!envelope) return message;
+        if (!envelope) return message.text.includes("End-to-end encrypted message")
+          ? { ...message, text: "Encrypted message unavailable on this device. Ask the sender to resend it.", canEdit: false }
+          : message;
         const clearText = decryptEnvelope(envelope, identity);
         if (message.type === "ENCRYPTED_ATTACHMENT" && message.attachmentUrl && clearText) {
           const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string };
@@ -617,18 +616,25 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       setAttachmentStatus(pendingAttachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${pendingAttachment.name}…`);
       try {
         let response: { message: ChatMessage };
-        if (Platform.OS !== "web") {
-          const identity = await ensureChatDeviceIdentity();
-          const keyPayload = await getChatDeviceKeys(activeConversationId);
-          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
-          setEncryptionReady(true);
-          const fileBase64 = await FileSystem.readAsStringAsync(pendingAttachment.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, caption: cleanMessage, kind: pendingAttachment.kind }, identity, keyPayload.keys);
-          response = await sendEncryptedChatAttachment(activeConversationId, encrypted.ciphertextBase64, encrypted.envelopes);
-          response.message = { ...response.message, type: pendingAttachment.kind, text: cleanMessage, metadata: { ...response.message.metadata, encrypted: true, kind: pendingAttachment.kind, fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, decryptedDataUrl: `data:${pendingAttachment.mimeType};base64,${fileBase64}` } };
-        } else {
-          response = await sendChatAttachment(activeConversationId, pendingAttachment, cleanMessage);
-        }
+        const identity = await ensureChatDeviceIdentity();
+        const keyPayload = await getChatDeviceKeys(activeConversationId);
+        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+        setEncryptionReady(true);
+        const fileBase64 = Platform.OS === "web"
+          ? await new Promise<string>(async (resolve, reject) => {
+              try {
+                let blob = pendingAttachment.blob;
+                if (!blob) blob = await fetch(pendingAttachment.uri).then((item) => item.blob());
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error("Could not read this attachment."));
+                reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+                reader.readAsDataURL(blob as Blob);
+              } catch (error) { reject(error); }
+            })
+          : await FileSystem.readAsStringAsync(pendingAttachment.uri, { encoding: FileSystem.EncodingType.Base64 });
+        const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, caption: cleanMessage, kind: pendingAttachment.kind }, identity, keyPayload.keys);
+        response = await sendEncryptedChatAttachment(activeConversationId, encrypted.ciphertextBase64, encrypted.envelopes);
+        response.message = { ...response.message, type: pendingAttachment.kind, text: cleanMessage, metadata: { ...response.message.metadata, encrypted: true, kind: pendingAttachment.kind, fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, decryptedDataUrl: `data:${pendingAttachment.mimeType};base64,${fileBase64}` } };
         setMessages((current) => [...current.filter((item) => item.id !== response.message.id), response.message].sort((a, b) => a.id - b.id));
         const sentKind = pendingAttachment.kind;
         setPendingAttachment(null);
@@ -650,7 +656,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       Alert.alert("Message required", "Type a message or select an attachment before sending.");
       return;
     }
-    if (Platform.OS !== "web" && (pendingPost || pendingRide) && !activeConversationId) {
+    if ((pendingPost || pendingRide) && !activeConversationId) {
       Alert.alert("Securing FChat", "Wait a moment while FairFares prepares the encrypted conversation.");
       return;
     }
@@ -660,7 +666,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         const response = await editChatMessage(activeConversationId, editingMessageId, cleanMessage);
         setMessages((current) => current.map((item) => (item.id === editingMessageId ? response.message : item)));
         setEditingMessageId(null);
-      } else if (activeConversationId && Platform.OS !== "web") {
+      } else if (activeConversationId) {
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getChatDeviceKeys(activeConversationId);
         if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
@@ -1092,17 +1098,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       setThreadLoading(true);
       let response: { message: ChatMessage };
-      if (Platform.OS !== "web") {
-        const identity = await ensureChatDeviceIdentity();
-        const keyPayload = await getChatDeviceKeys(activeConversationId);
-        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
-        setEncryptionReady(true);
-        const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type: richComposer, metadata })}`, identity, keyPayload.keys);
-        response = await sendEncryptedChatMessage(activeConversationId, envelopes);
-        response.message = { ...response.message, type: richComposer, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } };
-      } else {
-        response = await sendChatRichMessage(activeConversationId, richComposer, metadata);
-      }
+      const identity = await ensureChatDeviceIdentity();
+      const keyPayload = await getChatDeviceKeys(activeConversationId);
+      if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+      setEncryptionReady(true);
+      const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type: richComposer, metadata })}`, identity, keyPayload.keys);
+      response = await sendEncryptedChatMessage(activeConversationId, envelopes);
+      response.message = { ...response.message, type: richComposer, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } };
       setMessages((current) => [...current.filter((item) => item.id !== response.message.id), response.message].sort((a, b) => a.id - b.id));
       setRichComposer("");
       await refreshMessenger();
@@ -1189,6 +1191,19 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
+  function showMessageActions(message: ChatMessage) {
+    const actions: Array<{ text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }> = [];
+    if (message.mine && message.canEdit) {
+      actions.push({ text: "Edit message", onPress: () => editMessage(message) });
+      actions.push({ text: "Delete message", style: "destructive", onPress: () => void deleteMessage(message) });
+    }
+    if (!message.mine) {
+      actions.push({ text: "Report message", style: "destructive", onPress: () => void reportMessage(message) });
+    }
+    actions.push({ text: "Cancel", style: "cancel" });
+    Alert.alert("Message options", undefined, actions);
+  }
+
   function closeThread() {
     setActiveConversationId("");
     setActiveConversation(null);
@@ -1241,9 +1256,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "FairFares chat"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {Platform.OS !== "web"
-                ? (encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending")
-                : presenceLabel(activeConversation)}
+              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending"}`}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
@@ -1299,7 +1312,12 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 </View>
               ) : null}
               <View style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble]}>
-                {!message.mine ? <View style={styles.senderLine}><Text style={styles.senderName}>{message.senderName}</Text><Text style={styles.senderTime}>· {chatClock(message.createdAt)}</Text></View> : null}
+                {!message.mine || message.canEdit ? (
+                  <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
+                    <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {!message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.senderLine}><Text style={styles.senderName}>{message.senderName}</Text><Text style={styles.senderTime}>· {chatClock(message.createdAt)}</Text></View> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -1339,19 +1357,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 {message.text && !["POLL", "EVENT", "CONTACT"].includes(message.type) ? <Text style={[styles.bubbleText, message.mine ? styles.myBubbleText : styles.theirBubbleText]}>{message.text}</Text> : null}
                 <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>
                   {message.editedAt ? "Edited · " : ""}
-                  {message.mine ? `${chatClock(message.createdAt)} · ${message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent"}` : ""}
+                  {message.mine ? `${chatClock(message.createdAt)} · ${message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent"}` : !activeConversation?.communityId ? chatClock(message.createdAt) : ""}
                 </Text>
-                <View style={styles.messageActions}>
-                  {message.mine && message.canEdit ? (
-                    <>
-                      <TouchableOpacity onPress={() => editMessage(message)}><Text style={styles.messageActionText}>Edit</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => deleteMessage(message)}><Text style={styles.messageActionText}>Delete</Text></TouchableOpacity>
-                    </>
-                  ) : null}
-                  {!message.mine ? (
-                    <TouchableOpacity onPress={() => reportMessage(message)}><Text style={styles.messageActionText}>Report</Text></TouchableOpacity>
-                  ) : null}
-                </View>
               </View>
             </View>
             </React.Fragment>
@@ -1877,12 +1884,16 @@ const styles = StyleSheet.create({
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
-  bubble: { maxWidth: "84%", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, borderWidth: 1 },
+  bubble: { maxWidth: "84%", borderRadius: 20, paddingLeft: 13, paddingRight: 34, paddingVertical: 10, borderWidth: 1, position: "relative" },
   myBubble: { backgroundColor: "rgba(65,111,230,0.95)", borderColor: "rgba(137,170,255,0.48)", alignSelf: "flex-end", borderBottomRightRadius: 6 },
   theirBubble: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "rgba(255,255,255,0.68)", alignSelf: "flex-start", borderBottomLeftRadius: 6 },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   senderName: { color: "#17202d", fontSize: 12, fontWeight: "600" },
   senderTime: { color: "#667085", fontSize: 11, fontWeight: "700" },
+  messageMenuButton: { position: "absolute", top: 3, right: 7, minWidth: 24, minHeight: 24, alignItems: "center", justifyContent: "center", zIndex: 2 },
+  messageMenuText: { fontSize: 12, letterSpacing: 1, fontWeight: "700" },
+  myMessageMenuText: { color: "rgba(255,255,255,0.72)" },
+  theirMessageMenuText: { color: "#7a8494" },
   messageContext: { borderLeftWidth: 4, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, minWidth: 190 },
   myMessageContext: { borderLeftColor: "#9dddf5", backgroundColor: "rgba(255,255,255,0.15)" },
   theirMessageContext: { borderLeftColor: "#0f9f8f", backgroundColor: "rgba(8,122,109,0.10)" },
@@ -1904,8 +1915,6 @@ const styles = StyleSheet.create({
   bubbleMeta: { fontSize: 10, fontWeight: "800", marginTop: 4, opacity: 0.8 },
   myBubbleMeta: { color: "rgba(255,255,255,0.78)" },
   theirBubbleMeta: { color: "#667085" },
-  messageActions: { flexDirection: "row", gap: 10, marginTop: 6 },
-  messageActionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "900" },
   messageBox: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-end" },
   messageInput: { flex: 1, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, paddingHorizontal: 12, minHeight: 46, maxHeight: 110 },
   send: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, minHeight: 46, justifyContent: "center" },

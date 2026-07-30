@@ -1316,6 +1316,171 @@ def create_db_backup(reason: str = "manual") -> Path:
     return backup_path
 
 
+REQUESTED_PROFILE_CLEANUP_KEY = "maintenance_cleanup_20260729_test_profiles"
+REQUESTED_PROFILE_CLEANUP_EMAILS = {
+    "alex@student.edu",
+    "jagdalekrutika2181@gmail.com",
+    "demo@fairfares.com",
+    "info@fairfare.space",
+    "fallback-payment-1784329043955@example.com",
+    "fallback-payment-ok-1784329143895@example.com",
+    "krishna@gmail.com",
+    "krish@gmail.com",
+    "jagdaekrutika2181@gmail.com",
+    "loki@gmail.com",
+    "render-payment-1784328832079@example.com",
+    "sriram@gmail.com",
+    "rammandly143@gmail.com",
+    "sriramreddy41@gmail.com",
+    "sriramreddy22@gmail.com",
+    "sriramreddybandari@gmail.com",
+    "mobile-signup-1784259343158@fairfares.local",
+}
+
+
+def purge_user_accounts(
+    con: sqlite3.Connection,
+    emails: set[str],
+    email_patterns: tuple[str, ...] = (),
+    name_patterns: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Delete selected users and records that depend on them through the SQLite schema."""
+    normalized_emails = sorted({normalize_email(email) for email in emails if normalize_email(email)})
+    clauses: list[str] = []
+    parameters: list[object] = []
+    if normalized_emails:
+        clauses.append(f"LOWER(TRIM(email)) IN ({','.join('?' for _ in normalized_emails)})")
+        parameters.extend(normalized_emails)
+    for pattern in email_patterns:
+        clauses.append("LOWER(TRIM(email)) LIKE ?")
+        parameters.append(pattern.lower())
+    for pattern in name_patterns:
+        clauses.append("LOWER(TRIM(name)) LIKE ?")
+        parameters.append(pattern.lower())
+    if not clauses:
+        return {"users": 0, "user_ids": [], "deleted_rows": {}}
+
+    targets = con.execute(
+        f"SELECT id, email FROM users WHERE {' OR '.join(clauses)} ORDER BY id",
+        parameters,
+    ).fetchall()
+    target_ids = {int(row["id"]) for row in targets}
+    if not target_ids:
+        return {"users": 0, "user_ids": [], "deleted_rows": {}}
+
+    table_names = [
+        str(row["name"])
+        for row in con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    ]
+    selected: dict[str, set[object]] = {"users": set(target_ids)}
+    primary_keys: dict[str, str] = {}
+    for table in table_names:
+        columns = con.execute(f'PRAGMA table_info("{table}")').fetchall()
+        primary = next((str(row["name"]) for row in columns if int(row["pk"] or 0) == 1), "rowid")
+        primary_keys[table] = primary
+
+    # A few ownership columns were added to older tables after their original
+    # CREATE TABLE statements, so SQLite does not expose them as foreign keys.
+    logical_user_columns = {
+        "cars": ("owner_user_id",),
+        "chat_messages": ("context_owner_user_id",),
+        "support_tickets": ("escalated_by",),
+    }
+    placeholders = ",".join("?" for _ in target_ids)
+    for table, columns in logical_user_columns.items():
+        if table not in table_names:
+            continue
+        available = {str(row["name"]) for row in con.execute(f'PRAGMA table_info("{table}")').fetchall()}
+        conditions = [f'"{column}" IN ({placeholders})' for column in columns if column in available]
+        if not conditions:
+            continue
+        rows = con.execute(
+            f'SELECT "{primary_keys[table]}" AS record_id FROM "{table}" WHERE {" OR ".join(conditions)}',
+            tuple(target_ids) * len(conditions),
+        ).fetchall()
+        if rows:
+            selected.setdefault(table, set()).update(row["record_id"] for row in rows)
+
+    changed = True
+    while changed:
+        changed = False
+        for table in table_names:
+            for foreign_key in con.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+                parent_table = str(foreign_key["table"])
+                parent_ids = selected.get(parent_table)
+                if not parent_ids:
+                    continue
+                child_column = str(foreign_key["from"])
+                parent_placeholders = ",".join("?" for _ in parent_ids)
+                rows = con.execute(
+                    f'SELECT "{primary_keys[table]}" AS record_id FROM "{table}" '
+                    f'WHERE "{child_column}" IN ({parent_placeholders})',
+                    tuple(parent_ids),
+                ).fetchall()
+                found = {row["record_id"] for row in rows}
+                new_ids = found - selected.get(table, set())
+                if new_ids:
+                    selected.setdefault(table, set()).update(new_ids)
+                    changed = True
+
+    booking_car_ids: set[int] = set()
+    booking_ids = selected.get("bookings", set())
+    if booking_ids:
+        booking_placeholders = ",".join("?" for _ in booking_ids)
+        booking_car_ids = {
+            int(row["car_id"])
+            for row in con.execute(
+                f"SELECT DISTINCT car_id FROM bookings WHERE id IN ({booking_placeholders})",
+                tuple(booking_ids),
+            ).fetchall()
+        }
+
+    deleted_rows: dict[str, int] = {}
+    for table, record_ids in sorted(selected.items(), key=lambda item: item[0] == "users"):
+        if not record_ids:
+            continue
+        record_placeholders = ",".join("?" for _ in record_ids)
+        cursor = con.execute(
+            f'DELETE FROM "{table}" WHERE "{primary_keys[table]}" IN ({record_placeholders})',
+            tuple(record_ids),
+        )
+        deleted_rows[table] = max(0, int(cursor.rowcount or 0))
+
+    for car_id in booking_car_ids:
+        active = con.execute(
+            "SELECT 1 FROM bookings WHERE car_id = ? AND booking_status NOT IN ('CANCELLED', 'RETURNED', 'EXPIRED_HOLD') LIMIT 1",
+            (car_id,),
+        ).fetchone()
+        if not active:
+            con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ? AND owner_user_id IS NULL", (car_id,))
+
+    return {
+        "users": len(target_ids),
+        "user_ids": sorted(target_ids),
+        "emails": [str(row["email"]) for row in targets],
+        "deleted_rows": deleted_rows,
+    }
+
+
+def run_requested_profile_cleanup(con: sqlite3.Connection) -> dict[str, object]:
+    completed = con.execute("SELECT value FROM site_content WHERE key = ?", (REQUESTED_PROFILE_CLEANUP_KEY,)).fetchone()
+    if completed:
+        return {"already_completed": True, "users": 0, "deleted_rows": {}}
+    result = purge_user_accounts(
+        con,
+        REQUESTED_PROFILE_CLEANUP_EMAILS,
+        email_patterns=("mobile.services.%",),
+        name_patterns=("%mobile services test%",),
+    )
+    con.execute(
+        "INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)",
+        (REQUESTED_PROFILE_CLEANUP_KEY, json.dumps(result, sort_keys=True)),
+    )
+    return result
+
+
 def auto_backup_on_startup() -> None:
     if os.environ.get("FAIRFARES_AUTO_BACKUP", "1") == "0":
         return
@@ -1843,10 +2008,21 @@ def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]
 
 PAYMENT_CONFIRMED_STATUSES = {"HOLD_PAID", "PAID"}
 PAYMENT_UNCONFIRMED_STATUSES = {"", "HOLD_PENDING", "HOLD_EXPIRED", "PAY_AT_PICKUP", "PENDING"}
+BOOKING_HISTORY_PAYMENT_STATUSES = PAYMENT_CONFIRMED_STATUSES | {"REFUND_REVIEW", "REFUNDED"}
 
 
 def booking_payment_confirmed(booking: sqlite3.Row | dict[str, object] | None) -> bool:
     return row_value(booking, "payment_status") in PAYMENT_CONFIRMED_STATUSES
+
+
+def booking_visible_in_customer_history(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    """Only a paid booking (or its later refund record) belongs in booking history."""
+    return row_value(booking, "payment_status") in BOOKING_HISTORY_PAYMENT_STATUSES
+
+
+def booking_customer_tools_unlocked(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    """Unlock customer pickup/return tools after the 10% hold or full payment."""
+    return booking_payment_confirmed(booking)
 
 
 def stripe_secret_key() -> str:
@@ -5361,6 +5537,14 @@ def init_db() -> None:
                 (*article, article[0]),
             )
 
+        profile_cleanup_result = run_requested_profile_cleanup(con)
+        if int(profile_cleanup_result.get("users") or 0):
+            print(
+                "Removed requested test profiles: "
+                f"{profile_cleanup_result.get('users')} users; "
+                f"{profile_cleanup_result.get('deleted_rows', {})}"
+            )
+
         seed_defaults = os.environ.get("FAIRFARES_SEED_DEFAULTS", "0").strip() == "1"
         if not seed_defaults:
             return
@@ -5499,53 +5683,12 @@ def init_db() -> None:
                 ),
             )
 
-        demo = con.execute("SELECT id FROM users WHERE email = ?", ("demo@fairfares.com",)).fetchone()
-        if not demo:
-            con.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-                ("Demo Student", "demo@fairfares.com", hash_password("Demo12345!")),
-            )
-            demo = con.execute("SELECT id FROM users WHERE email = ?", ("demo@fairfares.com",)).fetchone()
-
-        if demo:
-            con.execute("UPDATE bookings SET user_id = ? WHERE booking_id LIKE 'FFDEMO%'", (demo["id"],))
-            cars = con.execute("SELECT id, total_price FROM cars ORDER BY sort_order, id").fetchall()
-            for index, car in enumerate(cars, start=1):
-                demo_id = f"FFDEMO{index:03d}"
-                exists = con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (demo_id,)).fetchone()
-                if exists:
-                    continue
-                con.execute(
-                    """
-                    INSERT INTO bookings
-                    (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
-                     dropoff_location, dropoff_date, dropoff_time, days, total_price, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        demo_id,
-                        demo["id"],
-                        car["id"],
-                        "AVIS",
-                        "Denver International Airport (DEN)",
-                        "Jun 10, 2025",
-                        "10:00 AM",
-                        "Denver International Airport (DEN)",
-                        "Jun 20, 2025",
-                        "10:00 AM",
-                        10,
-                        car["total_price"],
-                        "CONFIRMED",
-                    ),
-                )
-
         con.execute(
             """
             UPDATE users
             SET is_verified = 1,
                 verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
             WHERE is_admin = 1
-               OR email = 'demo@fairfares.com'
             """
         )
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
@@ -9846,7 +9989,7 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
 def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
     expire_stale_booking_holds()
     with db() as con:
-        return con.execute(
+        rows = con.execute(
             """
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url, cars.daily_price
             FROM bookings
@@ -9857,6 +10000,7 @@ def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
             ,
             (user_id,),
         ).fetchall()
+    return [row for row in rows if booking_visible_in_customer_history(row)]
 
 
 def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.Row] | None = None) -> str:
@@ -19958,6 +20102,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.not_found()
             return
+        if not booking_customer_tools_unlocked(booking):
+            self.send_json(
+                {"ok": False, "message": "Pay the 10% hold or full balance before modifying pickup or return details."},
+                403,
+            )
+            return
         new_pickup_date = form.get("pickup_date") or booking["pickup_date"]
         new_pickup_time = form.get("pickup_time") or booking["pickup_time"]
         new_return_date = form.get("return_date") or booking["dropoff_date"]
@@ -20132,6 +20282,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking = get_booking_for_user(user["id"])
         if not booking:
             self.not_found()
+            return
+        if not booking_customer_tools_unlocked(booking):
+            self.send_json(
+                {"ok": False, "message": "This checkout is not confirmed yet. Pay first, or remove the unpaid hold."},
+                403,
+            )
             return
         if booking["booking_status"] == "CANCELLED":
             self.send_json({"ok": False, "message": "This booking is already cancelled."}, 409)
@@ -20364,6 +20520,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking = get_booking_for_user(user["id"])
         if not booking:
             self.send_json({"ok": False, "message": "Book a vehicle before starting identity verification."}, 404)
+            return
+        if not booking_customer_tools_unlocked(booking):
+            self.send_json(
+                {"ok": False, "message": "Pay the 10% hold or full balance before starting pickup verification."},
+                403,
+            )
             return
         if not stripe_identity_enabled():
             self.send_json({"ok": False, "message": "Stripe Identity is not configured on this server."}, 503)
@@ -21903,7 +22065,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         visible_rows = [
             row
             for row in rows
-            if row_value(row, "booking_status") != "CANCELLED" and self.booking_overlaps_calendar_days(row, days)
+            if row_value(row, "booking_status") != "CANCELLED"
+            and booking_payment_confirmed(row)
+            and self.booking_overlaps_calendar_days(row, days)
         ]
         booking_count = len(visible_rows)
         day_cards = []
@@ -25120,6 +25284,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
         booking_status = row_value(booking, "booking_status") if booking else ""
         booking_payment_status = row_value(booking, "payment_status") if booking else ""
+        customer_tools_unlocked = booking_customer_tools_unlocked(booking)
         hold_pending = booking_payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"} and booking_status != "EXPIRED_HOLD"
         hold_expired = booking_status == "EXPIRED_HOLD" or booking_payment_status == "HOLD_EXPIRED"
         if is_guest_checkout:
@@ -25532,6 +25697,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if booking
             else "Provider contact details appear after a booking is selected."
         )
+        payment_access_notice = ""
+        if booking and not customer_tools_unlocked and not hold_expired:
+            payment_access_notice = """
+            <div class="request-notice payment-access-notice">
+                <div>
+                    <b>Pickup and return tools unlock after payment</b>
+                    <span>Your selected trip is still a checkout preview. Pay the 10% hold or full amount to confirm it and access pickup, return, modification, documents, and live-status tools.</span>
+                </div>
+            </div>
+            """
         signed_out_auth = f'<a class="user-chip" href="/login">{user_avatar_span(None)}<b>Sign in</b><small>Join FairFares</small></a><a href="/login">Sign in / Join</a>'
         booking_id_label = public_booking_id_label(booking)
         booking_error_notice = (
@@ -25579,6 +25754,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_error_notice=booking_error_notice,
             trip_policy_cards=trip_policy_cards,
             request_notice=request_notice,
+            payment_access_notice=payment_access_notice,
             trip_payment_summary=trip_payment_summary,
             trip_card_class="trip-card" if booking else "trip-card is-hidden",
             booking_car_visual=booking_car_visual,
@@ -25586,7 +25762,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             support_ticket_message=support_ticket_message,
             support_history=support_history,
             support_provider_summary=escape(support_provider_summary),
-            manage_panels_class="manage-panels" if (user and not is_guest_checkout) else "manage-panels is-hidden",
+            manage_panels_class="manage-panels" if (user and not is_guest_checkout and customer_tools_unlocked) else "manage-panels is-hidden",
             provider=escape(booking["provider"] if booking else "Pending"),
             car_name=escape(booking["car_name"] if booking else "Select a car"),
             category=escape(booking["category"] if booking else "Pending"),
