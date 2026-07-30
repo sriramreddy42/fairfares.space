@@ -25813,7 +25813,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
-        if booking and (selected_car_id or hold_pending or hold_expired):
+        if booking and (selected_car_id or hold_pending or hold_expired or customer_tools_unlocked):
             name_parts = ((user["name"] if user else "") or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
@@ -25922,12 +25922,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <small>Stripe places an authorization hold. FairFares releases it after return when condition, fuel, mileage, photos, signatures, and charge review are clear.</small>
                         </form>
                     """
+            payment_panel_eyebrow = "Pickup requirement" if (hold_paid or full_paid) else ("Action needed" if hold_expired else "Payment window")
+            if hold_paid or full_paid:
+                if deposit_status == "AUTHORIZED":
+                    payment_panel_heading = "Security deposit authorized"
+                    payment_panel_copy = "Your booking remains confirmed. Complete the remaining identity and pickup checks before vehicle release."
+                elif deposit_status == "RELEASED":
+                    payment_panel_heading = "Security deposit released"
+                    payment_panel_copy = "Stripe released the authorization after the completed return review."
+                else:
+                    payment_panel_heading = f"Authorize {format_money(SECURITY_DEPOSIT_AMOUNT)} refundable deposit"
+                    payment_panel_copy = "Your rental payment is confirmed. Authorize the separate refundable card hold before pickup."
+            else:
+                payment_panel_heading = "Window expired" if hold_expired else "Choose payment option"
+                payment_panel_copy = "Restart checkout or remove this vehicle." if hold_expired else "Pay in full for pickup savings, or hold the booking with 10% due now."
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
-                        <p class="eyebrow">{'Action needed' if hold_expired else 'Payment window'}</p>
-                    <h3>{'Window expired' if hold_expired else 'Choose payment option'}</h3>
-                    <p>{'Restart checkout or remove this vehicle.' if hold_expired else 'Pay in full for pickup savings, or hold the booking with 10% due now.'}</p>
+                        <p class="eyebrow">{escape(payment_panel_eyebrow)}</p>
+                    <h3>{escape(payment_panel_heading)}</h3>
+                    <p>{escape(payment_panel_copy)}</p>
                     </div>
                     {hold_decision}
                     <div class="booking-hold-breakdown">

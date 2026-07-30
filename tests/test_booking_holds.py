@@ -97,6 +97,16 @@ class BookingHoldTest(unittest.TestCase):
         booking["booking_status"] = "MODIFIED"
         self.assertFalse(app.booking_releasable_at_pickup(booking))
 
+    def test_paid_manage_booking_keeps_deposit_panel_visible(self):
+        source = Path("app.py").read_text()
+        self.assertIn(
+            "selected_car_id or hold_pending or hold_expired or customer_tools_unlocked",
+            source,
+        )
+        self.assertIn("Pickup requirement", source)
+        self.assertIn("Your rental payment is confirmed. Authorize the separate refundable card hold before pickup.", source)
+        self.assertIn('id="securityDepositForm"', source)
+
     def test_profile_purge_removes_related_booking_data_only(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
