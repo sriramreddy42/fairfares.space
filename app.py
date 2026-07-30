@@ -95,7 +95,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260730-booking-history"
+ASSET_VERSION = "20260730-pickup-workspace"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -639,7 +639,7 @@ ACCOMMODATION_LEASE_TERMS = (
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
-    f"/static/css/sections/20-admin.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/20-admin.css?v={ASSET_VERSION}",
     f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
     f"/static/css/sections/40-explorer.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/50-home-results-late-explorer.min.css?v={ASSET_VERSION}",
@@ -5996,6 +5996,8 @@ def get_cars() -> list[sqlite3.Row]:
         return con.execute(
             """
             SELECT cars.*,
+                   active.pickup_date AS booked_from_date,
+                   active.pickup_time AS booked_from_time,
                    active.dropoff_date AS booked_until_date,
                    active.dropoff_time AS booked_until_time,
                    active.booking_status AS active_booking_status
@@ -13479,7 +13481,7 @@ def mobile_car_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, object
     public_fields = (
         "id", "name", "brand", "model", "year", "category", "type", "fuel_type",
         "seats", "bags", "doors", "transmission", "daily_price", "badge",
-        "features", "location", "image_url", "booked_until_date", "booked_until_time",
+        "features", "location", "image_url", "booked_from_date", "booked_from_time", "booked_until_date", "booked_until_time",
         "listing_source", "review_status", "available_from_date", "available_to_date",
     )
     return {field: row_value(row, field) for field in public_fields}
@@ -16550,8 +16552,8 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = html_text.replace("$favicon_links", favicon_links)
     if favicon_links not in html_text:
         html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
-    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.min.js?v={ASSET_VERSION}")
-    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.min.js?v=explorer-{ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
     html_text = inject_social_meta(html_text, template_name)
     html_text = inject_structured_data(html_text, template_name)
     if should_track_google_analytics(template_name):
@@ -19993,12 +19995,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         booked_until_date = row_value(row, "booked_until_date")
         booked_until_time = row_value(row, "booked_until_time")
+        booked_from_date = row_value(row, "booked_from_date")
+        booked_from_time = row_value(row, "booked_from_time")
         daily_low, daily_high = daily_price_range(row["daily_price"])
         location_list = "|".join(split_inventory_locations(row["location"]))
         is_saved = bool(saved_car_ids and row["id"] in saved_car_ids)
         save_label = "Unsave" if is_saved else "Save Trip"
         return f"""
-        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-locations="{escape(location_list)}" data-price="{row["daily_price"]}" data-price-low="{daily_low}" data-price-high="{daily_high}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
+        <article class="car-card" data-category="{escape(row["category"])}" data-fuel="{escape(row["fuel_type"])}" data-location="{escape(row["location"])}" data-locations="{escape(location_list)}" data-price="{row["daily_price"]}" data-price-low="{daily_low}" data-price-high="{daily_high}" data-booked-from-date="{escape(booked_from_date)}" data-booked-from-time="{escape(booked_from_time)}" data-booked-until-date="{escape(booked_until_date)}" data-booked-until-time="{escape(booked_until_time)}">
             <div class="car-art car-{escape(row["color"])}">
                 <span class="deal-badge">{escape(row["badge"])}</span>
                 {car_visual}
@@ -25598,8 +25602,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """)
             booking_history_cards = f"""
                 <section class="booking-history-strip" aria-label="Your booking history">
-                    <div><p class="eyebrow">Your bookings</p><h2>Active and past trips</h2></div>
-                    <div class="booking-history-scroll">{''.join(history_cards)}</div>
+                    <div class="booking-history-heading">
+                        <div><p class="eyebrow">Your bookings</p><h2>Active and past trips</h2></div>
+                        <div class="booking-history-controls" aria-label="Scroll booking history">
+                            <button type="button" data-booking-history-prev aria-label="Previous bookings">&#8592;</button>
+                            <button type="button" data-booking-history-next aria-label="Next bookings">&#8594;</button>
+                        </div>
+                    </div>
+                    <div class="booking-history-scroll" tabindex="0">{''.join(history_cards)}</div>
                 </section>
             """
         live_status = live_status_for_booking(booking)

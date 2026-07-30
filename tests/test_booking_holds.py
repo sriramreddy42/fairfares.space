@@ -125,6 +125,16 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("$mutable_booking_link_class", template)
         self.assertIn('name="booking_id" value="$selected_booking_identifier"', template)
 
+    def test_search_hides_cars_when_requested_window_overlaps_booking(self):
+        server_source = Path("app.py").read_text()
+        client_source = Path("static/js/app.js").read_text()
+        self.assertIn("active.pickup_date AS booked_from_date", server_source)
+        self.assertIn('data-booked-from-date="{escape(booked_from_date)}"', server_source)
+        self.assertIn("const overlapsBookedWindow", client_source)
+        self.assertIn("selectedPickup < availableAfter", client_source)
+        self.assertIn("selectedReturn > bookedFrom", client_source)
+        self.assertIn("availabilityMatch = false", client_source)
+
     def test_profile_purge_removes_related_booking_data_only(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

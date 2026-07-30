@@ -588,26 +588,54 @@
 
 .booking-history-strip {
   display: grid;
-  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
-  gap: 18px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 20px;
   align-items: center;
-  margin: 0 0 22px;
-  padding: 18px;
-  border: 1px solid #d5e2f1;
-  border-radius: 18px;
-  background: #f7fbff;
+  margin: -22px -22px 2px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #dce5ef;
+  border-radius: 8px 8px 0 0;
+  background: linear-gradient(110deg, #f4f8ff 0%, #fff 68%);
 }
 
 .booking-history-strip h2,
 .booking-history-strip p { margin: 0; }
 
-.booking-history-strip h2 { font-size: 20px; }
+.booking-history-strip h2 { font-size: 19px; }
+
+.booking-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.booking-history-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.booking-history-controls button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #c8d5e5;
+  border-radius: 50%;
+  color: #17315f;
+  background: #fff;
+  box-shadow: none;
+}
 
 .booking-history-scroll {
   display: flex;
   gap: 12px;
   overflow-x: auto;
-  padding: 2px 2px 7px;
+  padding: 3px 3px 9px;
+  scroll-behavior: smooth;
+  scroll-snap-type: x mandatory;
   scrollbar-width: thin;
 }
 
@@ -622,7 +650,11 @@
   border: 1px solid #cbd9e8;
   border-radius: 14px;
   background: #fff;
+  scroll-snap-align: start;
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
+
+.booking-history-card:hover { transform: translateY(-2px); }
 
 .booking-history-card.is-selected {
   border-color: #3867dc;
@@ -637,8 +669,25 @@
 .booking-history-card em { color: #3867dc; font-style: normal; }
 
 @media (max-width: 760px) {
-  .booking-history-strip { grid-template-columns: 1fr; padding: 14px; }
+  .booking-history-strip {
+    grid-template-columns: 1fr;
+    margin: -14px -14px 2px;
+    padding: 14px;
+  }
   .booking-history-card { flex-basis: 205px; }
+  body.manage-screen.manage-checkout-screen .booking-history-strip {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+  }
+  body.manage-screen.manage-checkout-screen .trip-car {
+    grid-row: 2 !important;
+  }
+  body.manage-screen.manage-checkout-screen .trip-details {
+    grid-row: 2 !important;
+  }
+  body.manage-screen.manage-checkout-screen .trip-route {
+    grid-row: 3 !important;
+  }
 }
 .trip-card,
 .manage-card {

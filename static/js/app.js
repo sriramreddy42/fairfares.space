@@ -1073,6 +1073,12 @@ function selectedPickupDateTime() {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function selectedReturnDateTime() {
+  if (!returnDate?.value) return null;
+  const parsed = new Date(`${returnDate.value}T${timeTo24(returnTime?.value)}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function sameCalendarDay(left, right) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth()
@@ -1127,6 +1133,7 @@ function updateCars() {
   const selectedFuel = fuelFilters.filter((input) => input.checked).map((input) => input.value);
   const selectedLocation = locationSelect?.value || "";
   const selectedPickup = selectedPickupDateTime();
+  const selectedReturn = selectedReturnDateTime();
   const cards = [...carList.querySelectorAll(".car-card")];
 
   cards.forEach((card) => {
@@ -1135,6 +1142,7 @@ function updateCars() {
     const cardLocations = cardLocationValues(card);
     const selectedLocationKey = normalizeLocationKey(selectedLocation);
     const locationMatch = !selectedLocationKey || cardLocations.some((location) => normalizeLocationKey(location) === selectedLocationKey);
+    const bookedFrom = parseCardAvailabilityDate(card.dataset.bookedFromDate, card.dataset.bookedFromTime);
     const availableAfter = parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime);
     const availabilityNote = card.querySelector("[data-availability-note]");
     const selectButton = card.querySelector(".select-button");
@@ -1142,14 +1150,16 @@ function updateCars() {
     if (availabilityNote) availabilityNote.textContent = "";
     card.classList.remove("is-available-after");
     if (selectButton) selectButton.textContent = "Select";
-    if (selectedPickup && availableAfter && selectedPickup < availableAfter) {
-      if (sameCalendarDay(selectedPickup, availableAfter)) {
-        card.classList.add("is-available-after");
-        if (availabilityNote) availabilityNote.textContent = `Available after ${card.dataset.bookedUntilTime}`;
-        if (selectButton) selectButton.textContent = `Select after ${card.dataset.bookedUntilTime}`;
-      } else {
-        availabilityMatch = false;
-      }
+    const overlapsBookedWindow = Boolean(
+      selectedPickup && selectedReturn && bookedFrom && availableAfter
+      && selectedPickup < availableAfter
+      && selectedReturn > bookedFrom
+    );
+    if (overlapsBookedWindow) {
+      availabilityMatch = false;
+    } else if (availableAfter && availabilityNote) {
+      const endLabel = `${card.dataset.bookedUntilDate || ""} ${card.dataset.bookedUntilTime || ""}`.trim();
+      availabilityNote.textContent = `Available for your dates · prior booking ends ${endLabel}`;
     }
     const visible = typeMatch && fuelMatch && locationMatch && availabilityMatch;
     card.hidden = !visible;
@@ -1298,18 +1308,13 @@ document.querySelectorAll(".select-button[href^='/manage-booking?car_id=']").for
     }
     const url = new URL(button.getAttribute("href"), window.location.origin);
     const card = button.closest(".car-card");
-    const selectedPickup = selectedPickupDateTime();
-    const availableAfter = card ? parseCardAvailabilityDate(card.dataset.bookedUntilDate, card.dataset.bookedUntilTime) : null;
-    const adjustedPickupTime = selectedPickup && availableAfter && selectedPickup < availableAfter && sameCalendarDay(selectedPickup, availableAfter)
-      ? card.dataset.bookedUntilTime
-      : pickupTime?.value;
     url.searchParams.set("days", String(getRentalDays()));
     const selectedLocation = selectedOrCardLocation(card);
     if (selectedLocation) url.searchParams.set("pickup_location", selectedLocation);
     if (selectedLocation) url.searchParams.set("return_location", selectedLocation);
     if (pickupDate?.value) url.searchParams.set("pickup_date", pickupDate.value);
     if (returnDate?.value) url.searchParams.set("return_date", returnDate.value);
-    if (adjustedPickupTime) url.searchParams.set("pickup_time", adjustedPickupTime);
+    if (pickupTime?.value) url.searchParams.set("pickup_time", pickupTime.value);
     if (returnTime?.value) url.searchParams.set("return_time", returnTime.value);
     if (discountCode?.value.trim()) {
       const code = discountCode.value.trim().toUpperCase();
@@ -1681,6 +1686,14 @@ const refundMethod = document.getElementById("refundMethod");
 const refundTimeline = document.getElementById("refundTimeline");
 const cancelStatus = document.getElementById("cancelStatus");
 const bookingStatusBadge = document.getElementById("bookingStatusBadge");
+
+const bookingHistoryScroll = document.querySelector(".booking-history-scroll");
+document.querySelector("[data-booking-history-prev]")?.addEventListener("click", () => {
+  bookingHistoryScroll?.scrollBy({ left: -Math.max(220, bookingHistoryScroll.clientWidth * 0.75), behavior: "smooth" });
+});
+document.querySelector("[data-booking-history-next]")?.addEventListener("click", () => {
+  bookingHistoryScroll?.scrollBy({ left: Math.max(220, bookingHistoryScroll.clientWidth * 0.75), behavior: "smooth" });
+});
 
 refundMethod?.addEventListener("change", () => {
   refundTimeline.textContent = refundMethod.value.includes("credit")
