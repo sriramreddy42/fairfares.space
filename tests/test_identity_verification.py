@@ -207,6 +207,32 @@ class IdentityVerificationTest(unittest.TestCase):
         params = stripe_request.call_args.args[1]
         self.assertEqual(params["provided_details[phone]"], "+19375551234")
 
+    def test_unfinished_identity_session_can_be_resumed(self):
+        app.save_identity_verification_from_session(
+            {
+                "id": "vs_resume_123",
+                "status": "requires_input",
+                "metadata": {"user_id": str(self.user_id), "booking_id": str(self.booking["id"])},
+            }
+        )
+        with mock.patch.object(
+            app,
+            "stripe_api_get",
+            return_value=(
+                {
+                    "id": "vs_resume_123",
+                    "status": "requires_input",
+                    "url": "https://verify.stripe.com/resume-test",
+                    "metadata": {"user_id": str(self.user_id), "booking_id": str(self.booking["id"])},
+                },
+                "ok",
+            ),
+        ):
+            session, status = app.resumable_stripe_identity_session(self.user_id, int(self.booking["id"]))
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(session["url"], "https://verify.stripe.com/resume-test")
+
     def test_frontend_and_routes_include_identity_providers(self):
         js = Path("static/js/app.js").read_text()
         py = Path("app.py").read_text()

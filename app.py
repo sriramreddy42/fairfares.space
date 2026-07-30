@@ -95,7 +95,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260715mobile-housing"
+ASSET_VERSION = "20260730-stripe-identity"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -2326,6 +2326,26 @@ def refresh_identity_verification_from_stripe(row: sqlite3.Row | None) -> sqlite
     return row
 
 
+def resumable_stripe_identity_session(
+    user_id: int,
+    booking_id: int,
+) -> tuple[dict[str, object], str]:
+    """Return the latest unfinished Stripe Identity session when it remains usable."""
+    existing = latest_identity_verification(user_id, booking_id)
+    session_id = str(row_value(existing, "provider_session_id") or "").strip()
+    if not session_id:
+        return {}, "No existing Stripe Identity session."
+    session, status = stripe_api_get(f"identity/verification_sessions/{urllib.parse.quote(session_id)}")
+    if session.get("id"):
+        save_identity_verification_from_session(session, user_id, booking_id)
+    if (
+        str(session.get("status") or "") == "requires_input"
+        and str(session.get("url") or "").startswith("https://")
+    ):
+        return session, "ok"
+    return {}, status if status != "ok" else "The previous Stripe Identity session cannot be resumed."
+
+
 def create_stripe_identity_session_for(
     user: sqlite3.Row,
     booking: sqlite3.Row,
@@ -2354,7 +2374,10 @@ def create_stripe_identity_session_for(
     return stripe_api_request(
         "identity/verification_sessions",
         params,
-        idempotency_key=f"identity-{row_value(user, 'id')}-{row_value(booking, 'id')}-{date.today().isoformat()}",
+        idempotency_key=(
+            f"identity-{row_value(user, 'id')}-{row_value(booking, 'id')}-"
+            f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
+        ),
     )
 
 
@@ -20793,6 +20816,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if existing and row_value(existing, "status") == "VERIFIED":
             self.send_json({"ok": True, "verified": True, "message": "Identity is already verified."})
             return
+        session, status = resumable_stripe_identity_session(int(user["id"]), int(booking["id"]))
+        if session.get("url"):
+            self.send_json({"ok": True, "url": session["url"], "message": "Resuming Stripe Identity."})
+            return
         origin = self.public_origin().rstrip("/")
         session, status = create_stripe_identity_session_for(user, booking, f"{origin}/manage-booking?identity=return")
         url = str(session.get("url") or "")
@@ -20826,6 +20853,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         existing = latest_identity_verification(int(customer["id"]), int(booking["id"]))
         if existing and row_value(existing, "status") == "VERIFIED":
             self.send_json({"ok": True, "verified": True, "message": "Identity is already verified."})
+            return
+        session, status = resumable_stripe_identity_session(int(customer["id"]), int(booking["id"]))
+        if session.get("url"):
+            self.send_json({"ok": True, "url": session["url"], "message": "Resuming Stripe Identity for pickup verification."})
             return
         origin = self.public_origin().rstrip("/")
         session, status = create_stripe_identity_session_for(customer, booking, f"{origin}/admin/pickup?identity=return")
