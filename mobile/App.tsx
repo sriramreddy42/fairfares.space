@@ -12,6 +12,7 @@ import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
+import { StaffPickupScreen } from "./src/screens/StaffPickupScreen";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
@@ -188,6 +189,7 @@ function FairFaresApp() {
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
   const [listingValidatedLabel, setListingValidatedLabel] = useState("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
+  const [staffPickupOpen, setStaffPickupOpen] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<{ title: string; body: string; action: string } | null>(null);
@@ -969,8 +971,9 @@ function FairFaresApp() {
     setActiveTab(tab);
   }
 
-  const screen =
-    activeTab === "messenger" ? (
+  const screen = staffPickupOpen ? (
+      <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
+    ) : activeTab === "messenger" ? (
       <MessengerScreen
         data={data}
         pendingPost={pendingPost}
@@ -1041,6 +1044,7 @@ function FairFaresApp() {
         }}
         onOpenMessenger={() => setActiveTab("messenger")}
         onOpenActivity={() => setActiveTab("activity")}
+        onOpenStaffPickup={() => setStaffPickupOpen(true)}
       />
     ) : activeTab === "services" ? (
       <ServicesScreen
@@ -1164,7 +1168,7 @@ function FairFaresApp() {
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}
           onChange={changeTab}
-          hidden={bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
+          hidden={staffPickupOpen || bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
         />
       </Animated.View>
       {launchVisible ? (

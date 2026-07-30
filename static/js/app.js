@@ -3615,6 +3615,36 @@ document.getElementById("paymentHoldForm")?.addEventListener("submit", (event) =
     });
 });
 
+document.getElementById("securityDepositForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById("securityDepositStatus");
+  const submitButton = event.submitter || form.querySelector("button[type='submit']");
+  const originalLabel = submitButton ? submitButton.innerHTML : "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.innerHTML = "<span>Opening secure deposit checkout...</span>";
+  }
+  if (status) status.textContent = "Opening Stripe to authorize the refundable $250 hold...";
+  fetch("/payment/security-deposit-session", {
+    method: "POST",
+    body: new URLSearchParams(new FormData(form)),
+  })
+    .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+    .then((payload) => {
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+      throw payload;
+    })
+    .catch((payload) => {
+      if (status) status.textContent = payload?.message || "Stripe deposit checkout could not be opened.";
+      if (submitButton) submitButton.disabled = false;
+      if (submitButton && originalLabel) submitButton.innerHTML = originalLabel;
+    });
+});
+
 document.getElementById("stripeIdentityButton")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
   const status = document.getElementById("stripeIdentityStatus");
@@ -3657,15 +3687,40 @@ document.querySelectorAll("[data-admin-stripe-identity-button]").forEach((button
     button.textContent = "Opening Stripe Identity...";
     if (status) status.textContent = "Opening secure DL and selfie verification for pickup...";
     try {
-      const response = await fetch("/admin/identity/stripe-session", {
-        method: "POST",
-        body: payload,
-        headers: {
-          Accept: "application/json",
-          "X-Requested-With": "fetch",
-        },
-      });
-      const result = await response.json();
+      let response;
+      let lastNetworkError;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await fetch("/admin/identity/stripe-session", {
+            method: "POST",
+            body: payload,
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "X-Requested-With": "fetch",
+            },
+          });
+          break;
+        } catch (error) {
+          lastNetworkError = error;
+          if (attempt === 0) {
+            if (status) status.textContent = "The server connection dropped. Retrying Stripe Identity...";
+            await new Promise((resolve) => window.setTimeout(resolve, 900));
+          }
+        }
+      }
+      if (!response) {
+        throw new Error(`Could not reach FairFares to start Stripe Identity. Check the connection and try again.${lastNetworkError?.message ? ` (${lastNetworkError.message})` : ""}`);
+      }
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        throw new Error(response.ok
+          ? "FairFares returned an invalid Stripe Identity response."
+          : `FairFares could not start Stripe Identity (${response.status}).`);
+      }
       if (!response.ok || result.ok === false) throw new Error(result.message || "Stripe Identity could not be opened.");
       if (result.verified) {
         if (status) status.textContent = result.message || "Identity is already verified.";
@@ -3753,18 +3808,10 @@ document.querySelectorAll("[data-admin-security-deposit-button]").forEach((butto
       });
       const result = await response.json();
       if (!response.ok || result.ok === false) throw new Error(result.message || "Could not create deposit authorization.");
-      if (status) {
-        status.textContent = `${result.amount || "Deposit"} authorization created: ${result.payment_intent_id || "Stripe PaymentIntent"}. Collect with Terminal/Tap to Pay, then release after return review if clear.`;
-        if (result.dashboard_url) {
-          const link = document.createElement("a");
-          link.href = result.dashboard_url;
-          link.target = "_blank";
-          link.rel = "noopener";
-          link.textContent = " Open in Stripe";
-          status.appendChild(link);
-        }
-      }
-      button.textContent = "Deposit created";
+      if (!result.url) throw new Error("Stripe did not return a secure checkout link.");
+      if (status) status.textContent = `${result.amount || "$250.00"} authorization checkout opened. Complete it with card, Apple Pay, or Google Pay.`;
+      button.textContent = "Opening Stripe...";
+      window.location.href = result.url;
     } catch (error) {
       if (status) status.textContent = error.message || "Could not create deposit authorization.";
       button.disabled = false;

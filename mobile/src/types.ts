@@ -43,6 +43,21 @@ export type FairFaresUser = {
   profilePhotoUrl?: string;
 };
 
+export type StaffPickupBooking = {
+  id: number;
+  bookingId: string;
+  customerName: string;
+  customerEmail: string;
+  carName: string;
+  pickupDate: string;
+  pickupTime: string;
+  pickupLocation: string;
+  bookingStatus: "CONFIRMED";
+  paymentStatus: "HOLD_PAID" | "PAID";
+  depositStatus: string;
+  depositAmount: number;
+};
+
 export type ChatConversation = {
   id: string;
   communityId?: string;

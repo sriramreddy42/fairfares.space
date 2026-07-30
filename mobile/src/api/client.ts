@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
@@ -97,6 +97,27 @@ export function setAuthToken(token: string) {
 
 export function hasAuthToken() {
   return Boolean(authToken);
+}
+
+export async function getStaffPickupBookings() {
+  return request<{
+    ok: boolean;
+    pickups: StaffPickupBooking[];
+    deposit: { configured: boolean; amount: number };
+  }>("/api/mobile/admin/pickups");
+}
+
+export async function createSecurityDepositCheckout(bookingId: number) {
+  return request<{
+    ok: boolean;
+    bookingId: number;
+    url: string;
+    amount: number;
+  }>("/api/mobile/admin/security-deposit-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId })
+  });
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

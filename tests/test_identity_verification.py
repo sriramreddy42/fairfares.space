@@ -165,6 +165,48 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertIn("Stripe status: verified", html)
         self.assertIn(">Verified</button>", html)
 
+    def test_identity_session_uses_booking_customer_and_secure_return_url(self):
+        with app.db() as con:
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.user_id,)).fetchone()
+        captured = {}
+
+        def fake_stripe_request(path, params, idempotency_key=""):
+            captured.update({"path": path, "params": params, "key": idempotency_key})
+            return {"id": "vs_test_checkout", "url": "https://verify.stripe.com/test"}, "ok"
+
+        with mock.patch.object(app, "stripe_identity_enabled", return_value=True), mock.patch.object(
+            app, "stripe_api_request", side_effect=fake_stripe_request
+        ):
+            session, status = app.create_stripe_identity_session_for(
+                user,
+                self.booking,
+                "https://www.fairfare.space/admin/pickup?identity=return",
+            )
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(session["id"], "vs_test_checkout")
+        self.assertEqual(captured["path"], "identity/verification_sessions")
+        self.assertEqual(str(captured["params"]["metadata[booking_id]"]), str(self.booking["id"]))
+        self.assertEqual(str(captured["params"]["metadata[user_id]"]), str(self.user_id))
+        self.assertEqual(captured["params"]["options[document][allowed_types][]"], "driving_license")
+        self.assertEqual(captured["params"]["options[document][require_matching_selfie]"], "true")
+        self.assertNotIn("provided_details[phone]", captured["params"])
+        self.assertIn("/admin/pickup?identity=return", captured["params"]["return_url"])
+
+    def test_identity_session_includes_only_e164_phone(self):
+        with app.db() as con:
+            user = dict(con.execute("SELECT * FROM users WHERE id = ?", (self.user_id,)).fetchone())
+        user["phone"] = "+19375551234"
+        with mock.patch.object(app, "stripe_identity_enabled", return_value=True), mock.patch.object(
+            app,
+            "stripe_api_request",
+            return_value=({"id": "vs_e164", "url": "https://verify.stripe.com/test"}, "ok"),
+        ) as stripe_request:
+            app.create_stripe_identity_session_for(user, self.booking, "https://www.fairfare.space/manage-booking")
+
+        params = stripe_request.call_args.args[1]
+        self.assertEqual(params["provided_details[phone]"], "+19375551234")
+
     def test_frontend_and_routes_include_identity_providers(self):
         js = Path("static/js/app.js").read_text()
         py = Path("app.py").read_text()

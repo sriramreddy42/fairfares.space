@@ -2108,6 +2108,14 @@ def booking_ready_for_pickup(booking: sqlite3.Row | dict[str, object] | None) ->
     )
 
 
+def booking_releasable_at_pickup(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    """A vehicle cannot leave until payment and the refundable deposit hold are verified."""
+    return (
+        booking_ready_for_pickup(booking)
+        and row_value(booking, "security_deposit_status") == "AUTHORIZED"
+    )
+
+
 def booking_visible_in_customer_history(booking: sqlite3.Row | dict[str, object] | None) -> bool:
     """Only a paid booking (or its later refund record) belongs in booking history."""
     return row_value(booking, "payment_status") in BOOKING_HISTORY_PAYMENT_STATUSES
@@ -2331,12 +2339,18 @@ def create_stripe_identity_session_for(
         "metadata[user_id]": row_value(user, "id"),
         "metadata[booking_id]": row_value(booking, "id"),
         "metadata[public_booking_id]": row_value(booking, "booking_id"),
-        "provided_details[email]": row_value(user, "email"),
-        "provided_details[phone]": row_value(user, "phone") or "",
         "options[document][allowed_types][]": "driving_license",
         "options[document][require_matching_selfie]": "true",
         "options[document][require_live_capture]": "true",
     }
+    email = str(row_value(user, "email") or "").strip()
+    phone = str(row_value(user, "phone") or "").strip()
+    if email and "@" in email:
+        params["provided_details[email]"] = email
+    # Stripe only accepts E.164 here. A local-format or missing phone must not
+    # prevent the required driving-licence and selfie verification session.
+    if re.fullmatch(r"\+[1-9]\d{7,14}", phone):
+        params["provided_details[phone]"] = phone
     return stripe_api_request(
         "identity/verification_sessions",
         params,
@@ -6651,36 +6665,52 @@ def create_pickup_balance_payment_intent(booking: sqlite3.Row, admin: sqlite3.Ro
     return payment_intent, "ok"
 
 
-def create_security_deposit_payment_intent(booking: sqlite3.Row, admin: sqlite3.Row) -> tuple[dict[str, object], str]:
+def create_security_deposit_checkout_session(
+    booking: sqlite3.Row,
+    actor: sqlite3.Row,
+    origin: str,
+) -> tuple[dict[str, object], str]:
     if row_value(booking, "payment_status") not in {"HOLD_PAID", "PAID"}:
         return {}, "Security deposit can be authorized after the 10% hold or full payment is recorded."
-    if row_value(booking, "booking_status") in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}:
-        return {}, "This booking cannot accept a security deposit authorization."
+    if row_value(booking, "booking_status") != "CONFIRMED":
+        return {}, "Only a confirmed booking can accept a security deposit authorization."
+    if row_value(booking, "security_deposit_status") == "AUTHORIZED":
+        return {}, "The security deposit is already authorized for this booking."
     amount_cents = int(round(SECURITY_DEPOSIT_AMOUNT * 100))
     public_booking_id = row_value(booking, "booking_id")
+    origin = origin.rstrip("/")
     params = {
-        "amount": amount_cents,
-        "currency": "usd",
-        "payment_method_types[]": "card_present",
-        "capture_method": "manual",
-        "description": f"FairFares refundable security deposit - {public_booking_id}",
+        "mode": "payment",
+        "success_url": f"{origin}/payment/success?deposit=1&session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": f"{origin}/manage-booking?deposit=cancelled#bookingHoldPanel",
+        "customer_email": row_value(booking, "contact_email") or row_value(actor, "email"),
+        "client_reference_id": public_booking_id,
+        "line_items[0][quantity]": 1,
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][unit_amount]": amount_cents,
+        "line_items[0][price_data][product_data][name]": "FairFares refundable security deposit authorization",
+        "line_items[0][price_data][product_data][description]": f"Authorization hold for booking {public_booking_id}; released after a clear return review.",
         "metadata[payment_option]": "security_deposit",
         "metadata[booking_id]": row_value(booking, "id"),
         "metadata[public_booking_id]": public_booking_id,
         "metadata[user_id]": row_value(booking, "user_id"),
-        "metadata[created_by_admin_id]": row_value(admin, "id"),
-        "metadata[created_by_admin_email]": row_value(admin, "email"),
-        "metadata[deposit_release_policy]": "release_after_return_review",
-        "receipt_email": row_value(booking, "contact_email"),
+        "payment_intent_data[capture_method]": "manual",
+        "payment_method_options[card][request_extended_authorization]": "if_available",
+        "payment_intent_data[metadata][payment_option]": "security_deposit",
+        "payment_intent_data[metadata][booking_id]": row_value(booking, "id"),
+        "payment_intent_data[metadata][public_booking_id]": public_booking_id,
+        "payment_intent_data[metadata][user_id]": row_value(booking, "user_id"),
+        "payment_intent_data[metadata][created_by_user_id]": row_value(actor, "id"),
+        "payment_intent_data[metadata][deposit_release_policy]": "release_after_clear_return_review",
     }
-    payment_intent, status = stripe_api_request(
-        "payment_intents",
+    session, status = stripe_api_request(
+        "checkout/sessions",
         params,
-        idempotency_key=f"security-deposit-{row_value(booking, 'id')}-{amount_cents}",
+        idempotency_key=f"security-deposit-checkout-{row_value(booking, 'id')}-{amount_cents}-{int(time.time() // 1800)}",
     )
     if status != "ok":
         return {}, status
-    return payment_intent, "ok"
+    return session, "ok"
 
 
 def record_security_deposit_authorization(data_object: dict[str, object]) -> tuple[bool, str]:
@@ -6706,7 +6736,7 @@ def record_security_deposit_authorization(data_object: dict[str, object]) -> tup
             """
             INSERT INTO transactions
             (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
-            VALUES (?, 'Stripe Terminal / Tap to Pay deposit', 'Stripe in-person customer', ?, 'SECURITY_DEPOSIT_AUTHORIZED', 'MATCHED', ?, ?)
+            VALUES (?, 'Stripe Checkout deposit hold', 'Stripe customer', ?, 'SECURITY_DEPOSIT_AUTHORIZED', 'MATCHED', ?, ?)
             """,
             (booking_id, round(amount, 2), SECURITY_DEPOSIT_RELEASE_COPY, payment_reference),
         )
@@ -6732,6 +6762,124 @@ def record_security_deposit_authorization(data_object: dict[str, object]) -> tup
         "SECURITY_DEPOSIT_AUTHORIZED",
     )
     return True, payment_reference
+
+
+def verify_and_record_security_deposit(payment_intent_id: str, booking_id: int) -> tuple[bool, str]:
+    """Verify the Checkout authorization with Stripe before unlocking vehicle pickup."""
+    payment_intent_id = (payment_intent_id or "").strip()
+    if not payment_intent_id.startswith("pi_") or not booking_id:
+        return False, "Missing Stripe deposit authorization details."
+    payment_intent, status = stripe_api_get(f"payment_intents/{urllib.parse.quote(payment_intent_id)}")
+    if status != "ok":
+        return False, status
+    metadata = payment_intent.get("metadata") if isinstance(payment_intent.get("metadata"), dict) else {}
+    if metadata.get("payment_option") != "security_deposit" or str(metadata.get("booking_id") or "") != str(booking_id):
+        return False, "Stripe authorization does not belong to this FairFares booking."
+    if str(payment_intent.get("status") or "") != "requires_capture":
+        return False, "Stripe has not authorized this deposit yet. Ask the customer to tap again."
+    expected_amount = int(round(SECURITY_DEPOSIT_AMOUNT * 100))
+    if payment_intent.get("currency") != "usd" or int(payment_intent.get("amount") or 0) != expected_amount:
+        return False, "Stripe authorization amount or currency does not match the FairFares security deposit."
+    return record_security_deposit_authorization(payment_intent)
+
+
+def return_checks_clear_for_deposit_release(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    required_photos = (
+        "return_front_image",
+        "return_back_image",
+        "return_left_image",
+        "return_right_image",
+        "return_odometer_image",
+        "return_fuel_image",
+        "return_interior_front_image",
+        "return_interior_rear_image",
+    )
+    return bool(
+        booking
+        and row_value(booking, "security_deposit_status") == "AUTHORIZED"
+        and row_value(booking, "return_review_status") == "CLEAR_TO_RELEASE"
+        and row_value(booking, "actual_return_date")
+        and row_value(booking, "actual_return_time")
+        and int(row_value(booking, "return_odometer") or 0) > 0
+        and row_value(booking, "return_fuel_level")
+        and row_value(booking, "return_condition_status") == "ACCEPTABLE"
+        and row_value(booking, "new_damage_found") == "NO"
+        and float(row_value(booking, "post_return_charge_amount") or 0) == 0
+        and row_value(booking, "return_customer_signature")
+        and row_value(booking, "return_staff_signature")
+        and all(row_value(booking, field) for field in required_photos)
+    )
+
+
+def release_security_deposit_after_clear_return(booking: sqlite3.Row | dict[str, object]) -> tuple[bool, str]:
+    if not return_checks_clear_for_deposit_release(booking):
+        return False, "Return checks are not complete or require review."
+    payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
+    if not payment_intent_id.startswith("pi_"):
+        return False, "The Stripe deposit authorization reference is missing."
+    released, status = stripe_api_request(
+        f"payment_intents/{urllib.parse.quote(payment_intent_id)}/cancel",
+        {"cancellation_reason": "requested_by_customer"},
+        idempotency_key=f"release-security-deposit-{row_value(booking, 'id')}",
+    )
+    if status != "ok" or str(released.get("status") or "") != "canceled":
+        return False, status if status != "ok" else "Stripe did not confirm release of the authorization."
+    with db() as con:
+        con.execute(
+            """
+            UPDATE bookings
+            SET security_deposit_status = 'RELEASED',
+                return_review_status = 'RELEASED'
+            WHERE id = ? AND security_deposit_status = 'AUTHORIZED'
+            """,
+            (row_value(booking, "id"),),
+        )
+    released_booking = get_booking_by_id(int(row_value(booking, "id") or 0))
+    send_rental_booking_push(
+        released_booking or booking,
+        "Security deposit released",
+        f"Your {format_money(SECURITY_DEPOSIT_AMOUNT)} authorization hold was released after the clear return review.",
+        "SECURITY_DEPOSIT_RELEASED",
+    )
+    return True, payment_intent_id
+
+
+def record_security_deposit_final_status(data_object: dict[str, object], event_type: str) -> None:
+    metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+    if metadata.get("payment_option") != "security_deposit":
+        return
+    try:
+        booking_id = int(metadata.get("booking_id") or 0)
+    except (TypeError, ValueError):
+        booking_id = 0
+    if not booking_id:
+        return
+    booking = get_booking_by_id(booking_id)
+    if not booking:
+        return
+    if event_type == "payment_intent.succeeded":
+        next_status = "CAPTURED"
+    elif row_value(booking, "security_deposit_status") == "RELEASED":
+        return
+    elif return_checks_clear_for_deposit_release(booking):
+        # Stripe may deliver the cancellation webhook before the request handler
+        # persists RELEASED. A fully cleared return is therefore authoritative.
+        next_status = "RELEASED"
+    else:
+        next_status = "EXPIRED"
+    with db() as con:
+        con.execute(
+            """
+            UPDATE bookings
+            SET security_deposit_status = ?,
+                return_review_status = CASE
+                    WHEN ? = 'RELEASED' THEN 'RELEASED'
+                    ELSE return_review_status
+                END
+            WHERE id = ?
+            """,
+            (next_status, next_status, booking_id),
+        )
 
 
 def confirm_pickup_balance_payment_intent(data_object: dict[str, object], origin: str = "") -> tuple[bool, str]:
@@ -17086,6 +17234,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rentals/policy":
             self.send_json({"ok": True, "policy": mobile_rental_policy_payload()})
             return
+        if parsed.path == "/api/mobile/admin/pickups":
+            self.api_mobile_admin_pickups()
+            return
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
             return
@@ -17217,6 +17368,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/bookings/request-cancel": self.cancel_booking_request,
             "/bookings/save": self.save_current_booking,
             "/payment/stripe-session": self.create_stripe_checkout_session,
+            "/payment/security-deposit-session": self.create_security_deposit_checkout,
             "/stripe/webhook": self.stripe_webhook,
             "/identity/stripe-session": self.create_stripe_identity_session,
             "/admin/identity/stripe-session": self.create_admin_stripe_identity_session,
@@ -17275,6 +17427,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
+            "/api/mobile/admin/security-deposit-session": self.api_mobile_security_deposit_checkout,
             "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
@@ -20738,26 +20891,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.send_json({"ok": False, "message": "Booking not found."}, 404)
             return
-        payment_intent, status = create_security_deposit_payment_intent(booking, admin)
+        session, status = create_security_deposit_checkout_session(booking, admin, self.public_origin())
         if status != "ok":
             self.send_json({"ok": False, "message": status}, 400)
             return
-        payment_intent_id = str(payment_intent.get("id") or "")
-        client_secret = str(payment_intent.get("client_secret") or "")
-        amount = float(payment_intent.get("amount") or 0) / 100
+        checkout_url = str(session.get("url") or "")
+        if not checkout_url:
+            self.send_json({"ok": False, "message": "Stripe did not return a secure checkout URL."}, 502)
+            return
         self.send_json(
             {
                 "ok": True,
-                "message": (
-                    "Refundable security deposit authorization created. Collect it with Stripe Terminal/Tap to Pay; "
-                    "release it after return review if there are no tickets, damage, tolls, cleaning, fuel, or other charges."
-                ),
-                "payment_intent_id": payment_intent_id,
-                "client_secret": client_secret,
-                "amount": format_money(amount),
-                "dashboard_url": stripe_dashboard_payment_url(payment_intent_id),
+                "message": "Secure Stripe deposit checkout created.",
+                "url": checkout_url,
+                "session_id": str(session.get("id") or ""),
+                "amount": format_money(SECURITY_DEPOSIT_AMOUNT),
             }
         )
+
+    def create_security_deposit_checkout(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "message": "Sign in before authorizing the security deposit."}, 401)
+            return
+        form = self.read_form()
+        booking = get_booking_for_user_by_identifier(user["id"], form.get("booking_id")) or get_booking_for_user(user["id"])
+        if not booking:
+            self.send_json({"ok": False, "message": "Booking not found."}, 404)
+            return
+        session, status = create_security_deposit_checkout_session(booking, user, self.public_origin())
+        checkout_url = str(session.get("url") or "")
+        if status != "ok" or not checkout_url:
+            self.send_json({"ok": False, "message": status if status != "ok" else "Stripe did not return a secure checkout URL."}, 400)
+            return
+        self.send_json({"ok": True, "url": checkout_url, "amount": SECURITY_DEPOSIT_AMOUNT})
 
     def payment_success_page(self) -> None:
         user = self.current_user()
@@ -20787,9 +20954,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "/manage-booking",
                 )
                 return
-            if session.get("payment_status") == "paid" and booking_id:
+            payment_option = str(metadata.get("payment_option") or "")
+            if payment_option == "security_deposit" and booking_id:
+                payment_intent_id = str(session.get("payment_intent") or "")
+                ok, _message = verify_and_record_security_deposit(payment_intent_id, booking_id)
+                if ok:
+                    success_title = "Security deposit authorized"
+                    success_message = "Your refundable $250 authorization hold is confirmed. Pickup can continue after the remaining checks."
+                else:
+                    success_title = "Deposit authorization processing"
+                    success_message = "Stripe is still confirming the authorization. The pickup page updates automatically after confirmation."
+            elif session.get("payment_status") == "paid" and booking_id:
                 amount_total = float(session.get("amount_total") or 0) / 100
-                payment_option = "full" if metadata.get("payment_option") == "full" else "hold"
+                payment_option = "full" if payment_option == "full" else "hold"
                 if payment_option == "full":
                     success_title = "Full payment received"
                     success_message = "Your booking is paid in full. Your pickup balance is $0.00."
@@ -20836,15 +21013,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         event_type = str(event.get("type") or "")
         data_object = ((event.get("data") or {}).get("object") or {}) if isinstance(event.get("data"), dict) else {}
-        if event_type == "checkout.session.completed" and data_object.get("payment_status") == "paid":
+        if event_type == "checkout.session.completed":
             metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
             try:
                 booking_id = int(metadata.get("booking_id") or "0")
             except (TypeError, ValueError):
                 booking_id = 0
-            if booking_id:
+            payment_option = str(metadata.get("payment_option") or "")
+            if booking_id and payment_option == "security_deposit":
+                verify_and_record_security_deposit(str(data_object.get("payment_intent") or ""), booking_id)
+            elif booking_id and data_object.get("payment_status") == "paid":
                 amount_total = float(data_object.get("amount_total") or 0) / 100
-                payment_option = "full" if metadata.get("payment_option") == "full" else "hold"
+                payment_option = "full" if payment_option == "full" else "hold"
                 confirm_booking_hold_payment(
                     booking_id,
                     amount_total,
@@ -20856,7 +21036,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
         if event_type == "payment_intent.succeeded":
             confirm_pickup_balance_payment_intent(data_object, self.public_origin())
-            record_security_deposit_authorization(data_object)
+            record_security_deposit_final_status(data_object, event_type)
         if event_type == "payment_intent.payment_failed":
             metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
             try:
@@ -20872,6 +21052,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         if event_type == "payment_intent.amount_capturable_updated":
             record_security_deposit_authorization(data_object)
+        if event_type == "payment_intent.canceled":
+            record_security_deposit_final_status(data_object, event_type)
         if event_type.startswith("identity.verification_session."):
             save_identity_verification_from_session(data_object)
         self.send_json({"received": True})
@@ -23336,7 +23518,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         condition_options = ("ACCEPTABLE", "ISSUES_NOTED", "DAMAGE_NOTED", "PENDING")
         damage_options = ("NO", "YES", "PENDING")
         review_options = ("PENDING", "CLEAR_TO_RELEASE", "CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW", "RELEASED", "CLOSED")
-        deposit_status_options = ("NOT_AUTHORIZED", "AUTHORIZED", "RELEASE_READY", "RELEASED", "PARTIALLY_CAPTURED", "CAPTURED", "EXPIRED", "FAILED")
 
         def compact_select_options(options: tuple[str, ...], selected: str) -> str:
             return "".join(
@@ -23373,7 +23554,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             pickup_balance_action_copy = "Collect the 10% hold first; then this section can create the pickup balance payment."
         pickup_balance_button_attrs = "" if can_collect_pickup_balance else " disabled"
         pickup_balance_button_label = "Create in-person payment" if can_collect_pickup_balance else "Not eligible yet"
-        can_authorize_deposit = payment_status in {"HOLD_PAID", "PAID"} and booking_status not in {"CANCELLED", "CANCELLATION_REQUESTED", "RETURNED"}
+        can_authorize_deposit = booking_ready_for_pickup(row)
         deposit_button_attrs = "" if can_authorize_deposit else " disabled"
         deposit_button_label = "Create deposit authorization" if can_authorize_deposit else "Available after payment"
         deposit_action_copy = (
@@ -23563,7 +23744,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <label><span>Return Condition</span><select name="return_condition_status">{compact_select_options(condition_options, return_condition_status)}</select></label>
                         <label><span>New Damage Found</span><select name="new_damage_found">{compact_select_options(damage_options, new_damage_found)}</select></label>
                         <label><span>Return Review Status</span><select name="return_review_status">{compact_select_options(review_options, return_review_status)}</select></label>
-                        <label><span>Deposit Status</span><select name="security_deposit_status">{compact_select_options(deposit_status_options, security_deposit_status)}</select></label>
+                        <label><span>Deposit Status</span><input value="{escape(security_deposit_status.replace('_', ' ').title())}" readonly></label>
                         <label><span>Post-return Charges</span><input name="post_return_charge_amount" type="number" step="0.01" min="0" value="{escape(f'{post_return_charge_amount:.2f}' if post_return_charge_amount else '')}" placeholder="0.00"></label>
                         <label><span>Pickup Customer Signature</span><input name="pickup_customer_signature" value="{escape(row_value(row, "pickup_customer_signature"))}" placeholder="Typed at pickup"></label>
                         <label><span>Pickup Staff Signature</span><input name="pickup_staff_signature" value="{escape(row_value(row, "pickup_staff_signature"))}" placeholder="Staff initials/name"></label>
@@ -24236,6 +24417,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (form.get("booking_id"),),
             ).fetchone()
+            if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
+                self.send_error(
+                    409,
+                    "Pickup blocked: confirm payment and authorize the refundable security deposit first.",
+                )
+                return
             con.execute(
                 """
                 UPDATE bookings
@@ -25007,22 +25194,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "RELEASED",
                 "CLOSED",
             }
-            allowed_deposit_statuses = {
-                "NOT_AUTHORIZED",
-                "AUTHORIZED",
-                "RELEASE_READY",
-                "RELEASED",
-                "PARTIALLY_CAPTURED",
-                "CAPTURED",
-                "EXPIRED",
-                "FAILED",
-            }
             return_review_status = (form.get("return_review_status") or "PENDING").strip().upper()
             if return_review_status not in allowed_return_reviews:
                 return_review_status = "PENDING"
-            security_deposit_status = (form.get("security_deposit_status") or "NOT_AUTHORIZED").strip().upper()
-            if security_deposit_status not in allowed_deposit_statuses:
-                security_deposit_status = "NOT_AUTHORIZED"
+            security_deposit_status = str(row_value(booking_for_fees, "security_deposit_status") or "NOT_AUTHORIZED")
             con.execute(
                 """
                 UPDATE bookings
@@ -25198,6 +25373,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         updated_booking,
                         self.public_origin(),
                     )
+        try:
+            saved_booking_id = int(booking_id or 0)
+        except (TypeError, ValueError):
+            saved_booking_id = 0
+        saved_booking = get_booking_by_id(saved_booking_id) if saved_booking_id else None
+        if saved_booking and return_checks_clear_for_deposit_release(saved_booking):
+            release_security_deposit_after_clear_return(saved_booking)
         self.redirect("/admin/pickup")
 
     def prefill_pickup_documents(self) -> None:
@@ -25444,12 +25626,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             elif payment_status == "HOLD_PAID":
                 trip_payment_summary = f"""
                     <div class="trip-payment-summary is-hold-paid">
-                        <div><b>10% hold received</b><span>Pay the remaining {escape(format_money(active_breakdown["due_at_pickup"]))} for hassle-free pickup.</span></div>
-                        <form class="payment-hold-form trip-payment-form" id="paymentHoldForm">
-                            <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
-                                <span>Pay remaining balance</span>
-                            </button>
-                        </form>
+                        <div><b>10% hold received</b><span>Your refundable deposit authorization is the next payment step.</span></div>
                     </div>
                 """
             elif payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"}:
@@ -25638,6 +25815,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             referral_share_url = f"{self.public_origin()}/deals"
             hold_paid = bool(row_value(booking, "payment_status") == "HOLD_PAID")
             full_paid = bool(row_value(booking, "payment_status") == "PAID")
+            deposit_status = str(row_value(booking, "security_deposit_status") or "NOT_AUTHORIZED")
             hold_remaining = booking_hold_remaining_label(booking)
             active_discount_amount = float(active_breakdown["discount_amount"] or 0)
             active_discount_code = row_value(booking, "discount_code") if booking else ""
@@ -25648,7 +25826,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             savings_summary = booking_savings_label(booking) if booking else "FairFares pricing is typically around 10% lower than comparable major rental totals."
             hold_decision = ""
-            post_hold_full_payment_form = ""
+            deposit_checkout_panel = ""
             payment_wallet_badges = """
                         <div class="checkout-wallet-row" aria-label="Supported secure payment options">
                             <span class="checkout-wallet-badge checkout-wallet-apple"><span aria-hidden="true">&#63743;</span><b>Pay</b></span>
@@ -25670,16 +25848,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <b id="holdCountdown">{escape(hold_remaining)}</b>
                     </div>
                 """
-            elif hold_paid:
-                post_hold_full_payment_form = f"""
-                    <form class="payment-hold-form payment-balance-form" id="paymentHoldForm">
-                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
-                            <span>Pay remaining {escape(format_money(active_breakdown["due_at_pickup"]))} for hassle-free pickup.</span>
-                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
-                        </button>
-                        <small>Your 10% hold is already paid. Paying the balance now makes pickup faster.</small>
-                    </form>
-                """
+            if hold_paid or full_paid:
+                if deposit_status == "AUTHORIZED":
+                    deposit_checkout_panel = f"""
+                        <div class="payment-hold-paid deposit-authorized-status">
+                            <b>{escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable deposit authorized</b>
+                            <span>This is a hold, not a charge. It is released after the vehicle is returned and all return checks are clear.</span>
+                        </div>
+                    """
+                elif deposit_status == "RELEASED":
+                    deposit_checkout_panel = f"""
+                        <div class="payment-hold-paid deposit-authorized-status">
+                            <b>{escape(format_money(SECURITY_DEPOSIT_AMOUNT))} deposit hold released</b>
+                            <span>Stripe confirmed release after the clear return review.</span>
+                        </div>
+                    """
+                else:
+                    deposit_checkout_panel = f"""
+                        <form class="payment-hold-form payment-balance-form" id="securityDepositForm">
+                            <input type="hidden" name="booking_id" value="{escape(row_value(booking, 'booking_id'))}">
+                            <button class="stripe-pay-button full-pay-button" type="submit">
+                                <span>Authorize {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable deposit</span>
+                                <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                            </button>
+                            {payment_wallet_badges}
+                            <small>Stripe places an authorization hold. FairFares releases it after return when condition, fuel, mileage, photos, signatures, and charge review are clear.</small>
+                        </form>
+                    """
             payment_hold_card = f"""
                 <section class="booking-hold-panel {'is-expired' if hold_expired else ''}" id="bookingHoldPanel">
                     <div class="booking-hold-panel-copy">
@@ -25699,7 +25894,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
                     {'<p class="payment-hold-paid">10% hold received. Your pickup balance is updated.</p>' if hold_paid else ''}
                     {'<p class="payment-hold-paid">Full payment received. Your pickup balance is $0.00.</p>' if full_paid else ''}
-                    {post_hold_full_payment_form}
+                    {deposit_checkout_panel}
                     <form class="payment-hold-form" id="{'paymentHoldFormInactive' if hold_paid else 'paymentHoldForm'}"{' hidden' if (is_guest_checkout or hold_paid or full_paid or hold_expired) else ''}>
                         <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
                             <span>Pay in full and save $10. Enjoy faster, hassle-free pickup.</span>
@@ -25713,6 +25908,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </form>
                     {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
                     <p class="modify-status" id="paymentHoldStatus" aria-live="polite"></p>
+                    <p class="modify-status" id="securityDepositStatus" aria-live="polite"></p>
                 </section>
             """
             booking_summary_heading = "Review booking" if hold_expired else ("Review booking" if hold_pending else "Booking confirmed")
@@ -26230,6 +26426,80 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
                     "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
+            }
+        )
+
+    def require_mobile_admin(self) -> sqlite3.Row | None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Staff login required."}, 401)
+            return None
+        if not int(row_value(user, "is_admin") or 0):
+            self.send_json({"ok": False, "error": "FairFares staff access required."}, 403)
+            return None
+        return user
+
+    def api_mobile_admin_pickups(self) -> None:
+        if not self.require_mobile_admin():
+            return
+        pickups = []
+        for row in get_admin_bookings():
+            if not booking_ready_for_pickup(row):
+                continue
+            pickups.append(
+                {
+                    "id": int(row_value(row, "id") or 0),
+                    "bookingId": row_value(row, "booking_id"),
+                    "customerName": row_value(row, "user_name"),
+                    "customerEmail": row_value(row, "user_email"),
+                    "carName": row_value(row, "car_name"),
+                    "pickupDate": row_value(row, "pickup_date"),
+                    "pickupTime": row_value(row, "pickup_time"),
+                    "pickupLocation": row_value(row, "pickup_location"),
+                    "bookingStatus": row_value(row, "booking_status"),
+                    "paymentStatus": row_value(row, "payment_status"),
+                    "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
+                    "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
+                }
+            )
+        self.send_json(
+            {
+                "ok": True,
+                "pickups": pickups,
+                "deposit": {
+                    "configured": bool(stripe_secret_key() and stripe_webhook_secret()),
+                    "amount": SECURITY_DEPOSIT_AMOUNT,
+                },
+            }
+        )
+
+    def api_mobile_security_deposit_checkout(self) -> None:
+        admin = self.require_mobile_admin()
+        if not admin:
+            return
+        payload = self.read_json_body()
+        try:
+            booking_id = int(payload.get("bookingId") or 0)
+        except (TypeError, ValueError):
+            booking_id = 0
+        booking = get_booking_by_id(booking_id) if booking_id else None
+        if not booking:
+            self.send_json({"ok": False, "error": "Booking not found."}, 404)
+            return
+        if not booking_ready_for_pickup(booking):
+            self.send_json({"ok": False, "error": "Only paid, confirmed bookings can authorize a pickup deposit."}, 409)
+            return
+        session, status = create_security_deposit_checkout_session(booking, admin, self.public_origin())
+        checkout_url = str(session.get("url") or "")
+        if status != "ok" or not checkout_url:
+            self.send_json({"ok": False, "error": status}, 502)
+            return
+        self.send_json(
+            {
+                "ok": True,
+                "bookingId": booking_id,
+                "url": checkout_url,
+                "amount": SECURITY_DEPOSIT_AMOUNT,
             }
         )
 
