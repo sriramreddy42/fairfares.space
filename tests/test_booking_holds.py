@@ -107,6 +107,24 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("Your rental payment is confirmed. Authorize the separate refundable card hold before pickup.", source)
         self.assertIn('id="securityDepositForm"', source)
 
+    def test_manage_booking_guides_balance_before_refundable_deposit(self):
+        source = Path("app.py").read_text()
+        self.assertIn("Pay remaining rental balance", source)
+        self.assertIn("Step 1 of 2: finish the rental payment", source)
+        self.assertIn("if full_paid:", source)
+        self.assertIn("Authorize {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable deposit", source)
+
+    def test_manage_booking_supports_history_selection_and_read_only_returns(self):
+        source = Path("app.py").read_text()
+        template = Path("templates/dashboard.html").read_text()
+        self.assertIn('query.get("booking_id", [""])[0]', source)
+        self.assertIn("get_booking_for_user_by_identifier(user[\"id\"], booking_identifier)", source)
+        self.assertIn("Active and past trips", source)
+        self.assertIn("is_returned_booking", source)
+        self.assertIn("$booking_history_cards", template)
+        self.assertIn("$mutable_booking_link_class", template)
+        self.assertIn('name="booking_id" value="$selected_booking_identifier"', template)
+
     def test_profile_purge_removes_related_booking_data_only(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

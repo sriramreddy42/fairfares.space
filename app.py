@@ -95,7 +95,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260730-stripe-identity"
+ASSET_VERSION = "20260730-booking-history"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -640,7 +640,7 @@ BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/20-admin.min.css?v={ASSET_VERSION}",
-    f"/static/css/sections/30-dashboard-manage.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
     f"/static/css/sections/40-explorer.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/50-home-results-late-explorer.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/60-payment-admin-final.min.css?v={ASSET_VERSION}",
@@ -20396,9 +20396,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
             return
         form = self.read_form()
-        booking = get_booking_for_user(user["id"])
+        booking = get_booking_for_user_by_identifier(user["id"], form.get("booking_id")) or get_booking_for_user(user["id"])
         if not booking:
             self.not_found()
+            return
+        if row_value(booking, "booking_status") in {"RETURNED", "CANCELLED", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "Past bookings are read-only. You can still download their invoices and documents."}, 409)
             return
         if not booking_customer_tools_unlocked(booking):
             self.send_json(
@@ -20577,9 +20580,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
             return
         form = self.read_form()
-        booking = get_booking_for_user(user["id"])
+        booking = get_booking_for_user_by_identifier(user["id"], form.get("booking_id")) or get_booking_for_user(user["id"])
         if not booking:
             self.not_found()
+            return
+        if row_value(booking, "booking_status") in {"RETURNED", "CANCELLED", "EXPIRED_HOLD"}:
+            self.send_json({"ok": False, "message": "Past bookings cannot be cancelled or modified. Their invoices remain available."}, 409)
             return
         if not booking_customer_tools_unlocked(booking):
             self.send_json(
@@ -25488,6 +25494,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             selected_car_id = None
         discount_code = query.get("discount_code", [""])[0]
+        booking_identifier = query.get("booking_id", [""])[0]
         try:
             days = int(query.get("days", ["10"])[0])
         except ValueError:
@@ -25503,6 +25510,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             query.get("return_time", ["10:00 AM"])[0],
             query.get("pickup_location", [""])[0],
             query.get("return_location", [""])[0],
+            booking_identifier,
         )
 
     def render_manage_booking(
@@ -25517,6 +25525,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return_time: str = "10:00 AM",
         pickup_location: str = "",
         return_location: str = "",
+        booking_identifier: str = "",
     ) -> None:
         booking_error = ""
         try:
@@ -25524,6 +25533,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 booking = ensure_booking_for_user(user["id"], selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
             elif not user and selected_car_id:
                 booking = build_booking_preview(selected_car_id, discount_code, days, pickup_date, return_date, pickup_time, return_time, pickup_location, return_location)
+            elif user and booking_identifier:
+                booking = get_booking_for_user_by_identifier(user["id"], booking_identifier)
+                if not booking:
+                    booking_error = "That booking was not found in your account. Showing your latest booking instead."
+                    booking = get_booking_for_user(user["id"])
             elif user:
                 booking = get_booking_for_user(user["id"])
             else:
@@ -25558,6 +25572,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         trip_rows = render_user_trip_rows(user_bookings, saved_cars)
         upcoming_count = sum(1 for row in user_bookings if row["booking_status"] not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         past_count = sum(1 for row in user_bookings if row["booking_status"] in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+        selected_booking_id = str(row_value(booking, "booking_id") or "") if booking else ""
+        booking_history_cards = ""
+        if user_bookings:
+            history_cards = []
+            history_order = sorted(
+                user_bookings,
+                key=lambda row: (
+                    row_value(row, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"},
+                    -int(row_value(row, "id") or 0),
+                ),
+            )
+            for history_booking in history_order:
+                history_public_id = str(row_value(history_booking, "booking_id") or row_value(history_booking, "id") or "")
+                history_status = str(row_value(history_booking, "booking_status") or "")
+                history_kind = "Past trip" if history_status in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"} else "Active booking"
+                selected_class = " is-selected" if history_public_id == selected_booking_id else ""
+                history_cards.append(f"""
+                    <a class="booking-history-card{selected_class}" href="/manage-booking?booking_id={urllib.parse.quote(history_public_id)}">
+                        <span>{escape(history_kind)}</span>
+                        <b>{escape(row_value(history_booking, 'car_name') or 'Rental car')}</b>
+                        <small>{escape(row_value(history_booking, 'pickup_date') or '')} &middot; {escape(booking_status_label(history_status, row_value(history_booking, 'payment_status')))}</small>
+                        <em>{escape(public_booking_id_label(history_booking))}</em>
+                    </a>
+                """)
+            booking_history_cards = f"""
+                <section class="booking-history-strip" aria-label="Your booking history">
+                    <div><p class="eyebrow">Your bookings</p><h2>Active and past trips</h2></div>
+                    <div class="booking-history-scroll">{''.join(history_cards)}</div>
+                </section>
+            """
         live_status = live_status_for_booking(booking)
         default_pickup, default_return = default_trip_dates()
         modify_pickup_date = display_date_to_input(booking["pickup_date"] if booking else "", default_pickup)
@@ -25652,7 +25696,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if is_guest_checkout
             else ("Select a vehicle to begin booking." if show_signed_out_empty else ("Search available student deals and create your first booking." if is_first_time_user else "Review and manage your active reservations."))
         )
+        is_returned_booking = bool(booking and row_value(booking, "booking_status") == "RETURNED")
         booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
+        mutable_booking_link_class = "is-hidden" if (booking_link_class or is_returned_booking) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
         if booking and booking["image_url"]:
             booking_car_visual = f'<img class="trip-car-image" src="{escape(optimized_static_image_url(booking["image_url"]))}" alt="{escape(booking["car_name"])}">'
@@ -25673,7 +25719,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             elif payment_status == "HOLD_PAID":
                 trip_payment_summary = f"""
                     <div class="trip-payment-summary is-hold-paid">
-                        <div><b>10% hold received</b><span>Your refundable deposit authorization is the next payment step.</span></div>
+                        <div><b>10% received</b><span>Pay the remaining {escape(format_money(active_breakdown['due_at_pickup']))} rental balance, then authorize the refundable deposit.</span></div>
                     </div>
                 """
             elif payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"}:
@@ -25813,7 +25859,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </div>
             </section>
             """
-        if booking and (selected_car_id or hold_pending or hold_expired or customer_tools_unlocked):
+        if booking and not is_returned_booking and (selected_car_id or hold_pending or hold_expired or customer_tools_unlocked):
             name_parts = ((user["name"] if user else "") or "").split(" ", 1)
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[1] if len(name_parts) > 1 else ""
@@ -25902,7 +25948,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <b id="holdCountdown">{escape(hold_remaining)}</b>
                     </div>
                 """
-            if hold_paid or full_paid:
+            if full_paid:
                 if deposit_status == "AUTHORIZED":
                     deposit_checkout_panel = f"""
                         <div class="payment-hold-paid deposit-authorized-status">
@@ -25930,7 +25976,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         </form>
                     """
             payment_panel_eyebrow = "Pickup requirement" if (hold_paid or full_paid) else ("Action needed" if hold_expired else "Payment window")
-            if hold_paid or full_paid:
+            if hold_paid:
+                payment_panel_heading = f"Pay {format_money(active_breakdown['due_at_pickup'])} remaining balance"
+                payment_panel_copy = f"Step 1 of 2: finish the rental payment. After Stripe confirms it, Step 2 will authorize the separate refundable {format_money(SECURITY_DEPOSIT_AMOUNT)} hold."
+            elif full_paid:
                 if deposit_status == "AUTHORIZED":
                     payment_panel_heading = "Security deposit authorized"
                     payment_panel_copy = "Your booking remains confirmed. Complete the remaining identity and pickup checks before vehicle release."
@@ -25943,6 +25992,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 payment_panel_heading = "Window expired" if hold_expired else "Choose payment option"
                 payment_panel_copy = "Restart checkout or remove this vehicle." if hold_expired else "Pay in full for pickup savings, or hold the booking with 10% due now."
+            remaining_balance_form = ""
+            if hold_paid:
+                remaining_balance_form = f"""
+                    <form class="payment-hold-form payment-balance-form" id="paymentHoldForm">
+                        <input type="hidden" name="booking_id" value="{escape(row_value(booking, 'booking_id'))}">
+                        <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
+                            <span>Pay remaining rental balance · {escape(format_money(active_breakdown['due_at_pickup']))}</span>
+                            <img src="https://logosmarken.com/wp-content/uploads/2021/03/Stripe-Logo.png" alt="Stripe">
+                        </button>
+                        {payment_wallet_badges}
+                        <small>The refundable {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} authorization is a separate hold and appears here after this payment succeeds.</small>
+                    </form>
+                """
             original_payment_form = "" if (is_guest_checkout or hold_paid or full_paid or hold_expired) else f"""
                     <form class="payment-hold-form" id="paymentHoldForm">
                         <button class="stripe-pay-button full-pay-button" type="submit" name="payment_option" value="full">
@@ -25973,8 +26035,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <span><b id="dueAtPickupLabel">{escape(format_money(active_breakdown["due_at_pickup"]))}</b>Due at pickup</span>
                     </div>
                     <p class="checkout-savings-note">{escape(savings_summary)}</p>
-                    {'<p class="payment-hold-paid">10% hold received. Your pickup balance is updated.</p>' if hold_paid else ''}
+                    {'<p class="payment-hold-paid">10% received. Complete the remaining rental balance before the refundable deposit authorization.</p>' if hold_paid else ''}
                     {'<p class="payment-hold-paid">Full payment received. Your pickup balance is $0.00.</p>' if full_paid else ''}
+                    {remaining_balance_form}
                     {deposit_checkout_panel}
                     {original_payment_form}
                     {'<p class="guest-booking-note">Save your contact details first, then sign in or create an account to pay.</p>' if is_guest_checkout else ''}
@@ -26122,6 +26185,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             sidebar_primary_body=escape(sidebar_primary_body),
             manage_flow_class="manage-checkout-screen" if booking_confirmation_card else "",
             booking_link_class=booking_link_class,
+            mutable_booking_link_class=mutable_booking_link_class,
+            booking_history_cards=booking_history_cards,
+            selected_booking_identifier=escape(selected_booking_id),
             first_booking_promo=first_booking_promo,
             booking_confirmation_card=booking_confirmation_card,
             booking_error_notice=booking_error_notice,

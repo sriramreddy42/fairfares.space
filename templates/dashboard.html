@@ -40,8 +40,8 @@
     <aside class="manage-sidebar">
       <h2>$sidebar_title</h2>
       <a class="side-active" href="#upcoming"><b>$sidebar_primary_label</b><span>$sidebar_primary_body</span></a>
-      <a class="$booking_link_class" href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
-      <a class="$booking_link_class" href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
+      <a class="$mutable_booking_link_class" href="#modify" data-manage-tab="modify"><b>Modify Reservation</b><span>Change dates, location, vehicle & more</span></a>
+      <a class="$mutable_booking_link_class" href="#cancel" data-manage-tab="cancel"><b>Cancel Reservation</b><span>Cancel your booking and check refund</span></a>
       <a class="$booking_link_class" href="#documents" data-manage-tab="documents"><b>Download Receipt</b><span>Download invoice, receipt & rental agreement</span></a>
       <a href="#student" data-manage-tab="details" data-detail-jump="student"><b>Student Verification</b><span>Verify student status & unlock discounts</span></a>
       <a href="#saved" data-manage-tab="details" data-detail-jump="saved"><b>Saved Cars</b><span>View saved, past & favorite rentals</span></a>
@@ -60,6 +60,8 @@
         <div><h1>$dashboard_booking_title</h1><p>$dashboard_booking_body</p></div>
         <button type="button" data-manage-tab="details" data-detail-jump="saved">View All Bookings</button>
       </div>
+
+      $booking_history_cards
 
       $booking_error_notice
       $first_booking_promo
@@ -92,8 +94,8 @@
       $first_time_manage_content
       <section class="$manage_panels_class">
         <div class="trip-actions" role="tablist" aria-label="Manage booking actions">
-          <button type="button" data-manage-tab="modify">Modify Reservation</button>
-          <button type="button" data-manage-tab="cancel">Cancel Reservation</button>
+          <button class="$mutable_booking_link_class" type="button" data-manage-tab="modify">Modify Reservation</button>
+          <button class="$mutable_booking_link_class" type="button" data-manage-tab="cancel">Cancel Reservation</button>
           <button class="active" type="button" data-manage-tab="documents">Download Invoice</button>
           <button type="button" data-manage-tab="details">View Details</button>
           <button type="button" data-manage-tab="details" data-detail-jump="housing">Housing</button>
@@ -103,6 +105,7 @@
           <h2>1. Modify Your Booking</h2>
           <p>Make changes to fit your plans</p>
           <form class="modify-form" id="modifyForm">
+            <input type="hidden" name="booking_id" value="$selected_booking_identifier">
             <section class="modify-section">
               <div class="section-heading"><b>Change Dates</b><span>Update pickup or drop-off dates</span></div>
               <div class="modify-grid">
@@ -155,6 +158,7 @@
           <h2>2. Cancel Booking</h2>
           <p>Submit a cancellation request for admin approval</p>
           <form class="workflow-form" id="cancelForm">
+            <input type="hidden" name="booking_id" value="$selected_booking_identifier">
             <div class="green-note"><b>Cancellation approval required</b><br>Admin will review your request and confirm refund details.</div>
             <div class="modify-grid two">
               <label><span>Cancellation Reason</span><select id="cancelReason" required><option value="">Choose reason</option><option>Plans changed</option><option>Found a better price</option><option>Need a different vehicle</option><option>Booked by mistake</option></select></label>
