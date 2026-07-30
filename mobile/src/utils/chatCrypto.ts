@@ -19,6 +19,14 @@ export function contactDiscoveryHash(phone: string) {
   return Array.from(sha256(util.decodeUTF8(normalized)), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+export function contactDiscoveryVariants(phone: string) {
+  const normalized = phone.replace(/\D/g, "");
+  if (normalized.length < 10 || normalized.length > 15) return [];
+  // Contact books and FairFares profiles do not always store country codes in
+  // the same form. Include the national-number suffix without assuming +1.
+  return Array.from(new Set([normalized, normalized.slice(-10)]));
+}
+
 export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceIdentity> {
   const existing = await getStoredDeviceIdentity(userId);
   if (existing) return existing;

@@ -122,6 +122,18 @@ class ChatRealtimeTest(unittest.TestCase):
             self.assertEqual([person["name"] for person in payload["people"]], ["Recipient"])
             self.assertEqual(payload["people"][0]["phoneHash"], discoverable_hash)
             self.assertNotIn("phone", payload["people"][0])
+
+            national_hash = hashlib.sha256(b"9375550199").hexdigest()
+            national_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [national_hash]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(national_request, timeout=3) as response:
+                national_payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual([person["name"] for person in national_payload["people"]], ["Recipient"])
+            self.assertEqual(national_payload["people"][0]["phoneHash"], national_hash)
         finally:
             server.shutdown()
             server.server_close()

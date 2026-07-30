@@ -17989,13 +17989,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         matches = []
         for candidate in candidates:
             normalized = normalize_phone(row_value(candidate, "phone"))
-            phone_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
-            if phone_hash in hashes:
+            variants = {normalized, normalized[-10:]} if len(normalized) >= 10 else set()
+            matching_hash = next(
+                (hashlib.sha256(value.encode("utf-8")).hexdigest() for value in variants
+                 if hashlib.sha256(value.encode("utf-8")).hexdigest() in hashes),
+                "",
+            )
+            if matching_hash:
                 matches.append({
                     "id": int(candidate["id"]),
                     "name": row_value(candidate, "name") or "FairFares member",
                     "photoUrl": row_value(candidate, "profile_photo_url") or "",
-                    "phoneHash": phone_hash,
+                    "phoneHash": matching_hash,
                 })
         self.send_json({"ok": True, "people": matches[:250]})
 

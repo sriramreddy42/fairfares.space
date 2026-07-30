@@ -140,7 +140,7 @@ export function ProfileScreen({
   const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
     { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.serviceHome, onPress: onOpenHousing },
-    { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.ride, fullColor: true, onPress: onOpenRide },
+    { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenRide },
     { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },
     { title: "FChat", copy: "Messages and communities", icon: appAssets.fchat, fullColor: true, onPress: onOpenMessenger },
     { title: "Help & Support", copy: "Questions, account help, safety concerns, or technical problems", icon: appAssets.serviceSupport, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") },

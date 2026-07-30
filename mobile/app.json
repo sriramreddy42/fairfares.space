@@ -3,7 +3,7 @@
     "name": "FairFares",
     "slug": "fairfares-mobile",
     "scheme": "fairfares",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.fairfares.mobile",
-      "versionCode": 2,
+      "versionCode": 3,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "ACCESS_COARSE_LOCATION",

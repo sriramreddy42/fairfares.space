@@ -9,6 +9,7 @@ export const appAssets = {
   bed: require("../assets/icons8-double-bed.png") as ImageSourcePropType,
   roommates: require("../assets/icons8-roommates.png") as ImageSourcePropType,
   ride: require("../assets/icons8-ride.gif") as ImageSourcePropType,
+  carpoolProfile: require("../assets/carpool-profile.png") as ImageSourcePropType,
   message: require("../assets/icons8-message.gif") as ImageSourcePropType,
   fchat: require("../assets/fchat-nav.png") as ImageSourcePropType,
   fchatWordmark: require("../assets/fchat-wordmark-white.png") as ImageSourcePropType,
