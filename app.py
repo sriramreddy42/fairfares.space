@@ -6704,6 +6704,7 @@ def create_security_deposit_checkout_session(
     origin = origin.rstrip("/")
     params = {
         "mode": "payment",
+        "payment_method_types[]": "card",
         "success_url": f"{origin}/payment/success?deposit=1&session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{origin}/manage-booking?deposit=cancelled#bookingHoldPanel",
         "customer_email": row_value(booking, "contact_email") or row_value(actor, "email"),
@@ -6726,11 +6727,26 @@ def create_security_deposit_checkout_session(
         "payment_intent_data[metadata][created_by_user_id]": row_value(actor, "id"),
         "payment_intent_data[metadata][deposit_release_policy]": "release_after_clear_return_review",
     }
+    idempotency_base = (
+        f"security-deposit-checkout-{row_value(booking, 'id')}-{amount_cents}-{int(time.time() // 1800)}"
+    )
     session, status = stripe_api_request(
         "checkout/sessions",
         params,
-        idempotency_key=f"security-deposit-checkout-{row_value(booking, 'id')}-{amount_cents}-{int(time.time() // 1800)}",
+        idempotency_key=f"{idempotency_base}-extended",
     )
+    if status != "ok" and (
+        "not eligible for the requested card features" in status.lower()
+        or "payment_intent_invalid_parameter" in status.lower()
+    ):
+        # Extended authorizations require Stripe/card-network eligibility. Keep
+        # the deposit operational with Stripe's standard manual-capture window.
+        params.pop("payment_method_options[card][request_extended_authorization]", None)
+        session, status = stripe_api_request(
+            "checkout/sessions",
+            params,
+            idempotency_key=f"{idempotency_base}-standard",
+        )
     if status != "ok":
         return {}, status
     return session, "ok"

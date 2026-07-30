@@ -666,10 +666,41 @@ class BookingHoldTest(unittest.TestCase):
         path, params = stripe_request.call_args.args[:2]
         self.assertEqual(path, "checkout/sessions")
         self.assertEqual(params["payment_intent_data[capture_method]"], "manual")
+        self.assertEqual(params["payment_method_types[]"], "card")
         self.assertEqual(params["payment_method_options[card][request_extended_authorization]"], "if_available")
         self.assertEqual(params["line_items[0][price_data][unit_amount]"], 25000)
         self.assertEqual(params["metadata[payment_option]"], "security_deposit")
         self.assertEqual(params["payment_intent_data[metadata][payment_option]"], "security_deposit")
+
+    def test_security_deposit_falls_back_when_extended_authorization_is_unavailable(self):
+        car = app.get_cars()[0]
+        created = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET payment_status = 'PAID', booking_status = 'CONFIRMED' WHERE id = ?",
+                (created["id"],),
+            )
+        booking = app.get_booking_by_id(int(created["id"]))
+        admin = {"id": 99, "email": "admin@fairfares.com"}
+        calls = []
+
+        def fake_stripe_request(path, params, idempotency_key=""):
+            calls.append((dict(params), idempotency_key))
+            if len(calls) == 1:
+                return {}, "Stripe rejected the request: payment_intent_invalid_parameter; account is not eligible for the requested card features"
+            return {"id": "cs_standard_deposit", "url": "https://checkout.stripe.com/standard"}, "ok"
+
+        with patch.object(app, "stripe_api_request", side_effect=fake_stripe_request):
+            session, status = app.create_security_deposit_checkout_session(
+                booking, admin, "https://www.fairfare.space"
+            )
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(session["id"], "cs_standard_deposit")
+        self.assertIn("payment_method_options[card][request_extended_authorization]", calls[0][0])
+        self.assertNotIn("payment_method_options[card][request_extended_authorization]", calls[1][0])
+        self.assertTrue(calls[0][1].endswith("-extended"))
+        self.assertTrue(calls[1][1].endswith("-standard"))
 
     def test_security_deposit_webhook_records_authorization_without_marking_booking_paid(self):
         car = app.get_cars()[0]
