@@ -95,7 +95,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260730-mobile-web-shell"
+ASSET_VERSION = "20260730-pickup-workspace"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -644,7 +644,7 @@ BASE_STYLESHEETS = [
     f"/static/css/sections/40-explorer.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/50-home-results-late-explorer.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/60-payment-admin-final.min.css?v={ASSET_VERSION}",
-    f"/static/css/sections/70-mobile-polish.css?v={ASSET_VERSION}",
+    f"/static/css/sections/70-mobile-polish.min.css?v={ASSET_VERSION}",
 ]
 PAGE_STYLESHEETS = {
     "admin_wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
@@ -16559,50 +16559,7 @@ def render_template(template_name: str, **context: object) -> bytes:
     if should_track_google_analytics(template_name):
         html_text = inject_google_tag(html_text)
     html_text = re.sub(r"(<body\b[^>]*>)", r"\1\n" + render_site_loader(), html_text, count=1)
-    mobile_tabs = render_mobile_web_tabs(template_name)
-    if mobile_tabs:
-        html_text = html_text.replace("</body>", mobile_tabs + "\n</body>")
     return html_text.encode("utf-8")
-
-
-def render_mobile_web_tabs(template_name: str) -> str:
-    """Render the native-app-style dock on customer-facing mobile web pages."""
-    excluded = {
-        "accommodations.html",
-        "auth.html",
-        "activation_message.html",
-        "activation_pending.html",
-        "forgot_password.html",
-        "forgot_password_sent.html",
-        "reset_password.html",
-        "404.html",
-    }
-    if template_name.startswith("admin_") or template_name == "admin.html" or template_name in excluded:
-        return ""
-    active_key = {
-        "index.html": "home",
-        "dashboard.html": "activity",
-        "explorer.html": "services",
-        "deals.html": "services",
-        "buy_cars.html": "services",
-    }.get(template_name, "")
-    tabs = (
-        ("home", "Home", "/", "⌂"),
-        ("services", "Services", "/deals", "▦"),
-        ("activity", "Activity", "/dashboard", "◷"),
-        ("fchat", "FChat", "/dashboard?tab=messages#messages", "◇"),
-        ("account", "Account", "/dashboard", "○"),
-    )
-    links = []
-    for key, label, href, icon in tabs:
-        is_active = key == active_key
-        current_attr = ' aria-current="page"' if is_active else ""
-        links.append(
-            f'<a href="{href}" class="{"is-active" if is_active else ""}" '
-            f'aria-label="{label}"{current_attr}>'
-            f'<span aria-hidden="true">{icon}</span><b>{label}</b></a>'
-        )
-    return f'<nav class="web-app-mobile-tabs" aria-label="FairFares mobile navigation">{"".join(links)}</nav>'
 
 
 def render_internal_links() -> str:
