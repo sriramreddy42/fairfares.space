@@ -6,6 +6,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
   absoluteAssetUrl,
+  addChatGroupMember,
   blockChatUser,
   createChatCommunity,
   createChatGroupInvite,
@@ -51,6 +52,7 @@ import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Commu
 import { pickChatImage, pickCompressedImages } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
+import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -67,7 +69,8 @@ type Props = {
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
 
-const blankGroup = { name: "", area: "", description: "" };
+const blankGroup = { name: "" };
+const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#080d18", accent: "#163a6b" },
   { id: "ocean", label: "Ocean", color: "#071d2b", accent: "#0d6685" },
@@ -215,6 +218,7 @@ function PendingPhotoPreview({ uri }: { uri: string }) {
 
 export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
   const messagesScrollRef = useRef<ScrollView>(null);
+  const outboxFlushRunning = useRef(false);
   const signedIn = Boolean(data?.user);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
@@ -249,6 +253,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [contactMatches, setContactMatches] = useState<Array<{ id: number; name: string; localName: string; photoUrl: string }>>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [contactPickerMode, setContactPickerMode] = useState<"chat" | "create" | "add">("chat");
+  const [selectedGroupPeople, setSelectedGroupPeople] = useState<number[]>([]);
+  const [addPeopleCommunityId, setAddPeopleCommunityId] = useState("");
   const [groupDraft, setGroupDraft] = useState(blankGroup);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
 
@@ -284,7 +291,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         if (cancelled) return;
         // Preserve the device key even if the network registration must retry.
         setDeviceIdentity(identity);
-        await registerChatDeviceKey(identity.deviceId, identity.publicKey);
+        await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
         if (activeConversationId) {
           const keyPayload = await getChatDeviceKeys(activeConversationId);
           if (!cancelled) setEncryptionReady(Boolean(keyPayload.ready));
@@ -305,8 +312,99 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     if (!userId) throw new Error("Sign in to use encrypted FChat.");
     const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
     setDeviceIdentity(identity);
-    await registerChatDeviceKey(identity.deviceId, identity.publicKey);
+    try {
+      await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+    } catch (error) {
+      if (!isRetryableChatNetworkError(error)) throw error;
+    }
     return identity;
+  }
+
+  async function getEncryptionKeysForSend(conversationId: string) {
+    const userId = Number(data?.user?.id || 0);
+    try {
+      const payload = await getChatDeviceKeys(conversationId);
+      if (payload.ready && payload.keys.length) {
+        await AsyncStorage.setItem(conversationKeyCacheName(userId, conversationId), JSON.stringify(payload));
+      }
+      return payload;
+    } catch (error) {
+      if (!isRetryableChatNetworkError(error)) throw error;
+      const cached = await AsyncStorage.getItem(conversationKeyCacheName(userId, conversationId));
+      if (!cached) throw error;
+      return JSON.parse(cached) as Awaited<ReturnType<typeof getChatDeviceKeys>>;
+    }
+  }
+
+  function queuedMessage(item: EncryptedOutboxItem, identity: DeviceIdentity): ChatMessage {
+    const ownEnvelope = item.envelopes.find((envelope) => envelope.recipientDeviceId === identity.deviceId);
+    const text = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "Encrypted message waiting to send";
+    return {
+      id: item.localMessageId,
+      senderId: Number(data?.user?.id || 0),
+      senderName: data?.user?.name || "You",
+      mine: true,
+      type: "TEXT",
+      text: text || "Encrypted message waiting to send",
+      attachmentUrl: "",
+      metadata: { encrypted: true },
+      createdAt: item.createdAt,
+      deliveredAt: "",
+      readAt: "",
+      editedAt: "",
+      deletedAt: "",
+      canEdit: false,
+      status: "pending",
+      localClientMessageId: item.clientMessageId
+    };
+  }
+
+  async function flushEncryptedOutbox() {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId || outboxFlushRunning.current) return;
+    outboxFlushRunning.current = true;
+    try {
+      const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
+      await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+      const items = await readEncryptedOutbox(userId);
+      for (const item of items) {
+        const lastAttempt = Date.parse(item.lastAttemptAt || "") || 0;
+        const retryDelay = Math.min(60_000, Math.max(3_000, 2 ** Math.min(item.attempts, 5) * 1_000));
+        if (lastAttempt && Date.now() - lastAttempt < retryDelay) continue;
+        try {
+          const ownEnvelope = item.envelopes.find((envelope) => envelope.recipientDeviceId === identity.deviceId);
+          const clearText = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "";
+          if (!clearText) throw new Error("This device cannot recover the queued encrypted message.");
+          const keyPayload = await getChatDeviceKeys(item.conversationId);
+          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+          await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
+          const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys);
+          await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
+          const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId);
+          await removeEncryptedOutboxItem(userId, item.clientMessageId);
+          if (activeConversationId === item.conversationId) {
+            setMessages((current) => {
+              const withoutServerDuplicate = current.filter((message) => message.id !== response.message.id || message.localClientMessageId === item.clientMessageId);
+              const hasLocal = withoutServerDuplicate.some((message) => message.localClientMessageId === item.clientMessageId);
+              const sentMessage = { ...response.message, text: clearText, canEdit: false, metadata: { ...response.message.metadata, encrypted: true } };
+              return hasLocal
+                ? withoutServerDuplicate.map((message) => message.localClientMessageId === item.clientMessageId ? sentMessage : message)
+                : [...withoutServerDuplicate, sentMessage];
+            });
+          }
+        } catch (error) {
+          await updateEncryptedOutboxItem(userId, item.clientMessageId, { attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
+          if (!isRetryableChatNetworkError(error)) {
+            setMessages((current) => current.map((message) => message.localClientMessageId === item.clientMessageId ? { ...message, status: "failed" } : message));
+          }
+          if (isRetryableChatNetworkError(error)) break;
+        }
+      }
+    } catch {
+      // The timer retries when connectivity or device-key registration returns.
+    } finally {
+      outboxFlushRunning.current = false;
+    }
   }
 
   async function decryptMessages(conversationId: string, nextMessages: ChatMessage[]) {
@@ -343,6 +441,30 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       return nextMessages;
     }
   }
+
+  useEffect(() => {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId || !activeConversationId || !deviceIdentity) return;
+    let cancelled = false;
+    void readEncryptedOutbox(userId).then((items) => {
+      if (cancelled) return;
+      const queued = items.filter((item) => item.conversationId === activeConversationId).map((item) => queuedMessage(item, deviceIdentity));
+      if (!queued.length) return;
+      setMessages((current) => {
+        const existing = new Set(current.map((message) => message.localClientMessageId).filter(Boolean));
+        return [...current, ...queued.filter((message) => !existing.has(message.localClientMessageId))]
+          .sort((a, b) => chatDate(a.createdAt).getTime() - chatDate(b.createdAt).getTime());
+      });
+    });
+    return () => { cancelled = true; };
+  }, [activeConversationId, deviceIdentity?.deviceId, data?.user?.id, messages.length]);
+
+  useEffect(() => {
+    if (!signedIn || !deviceIdentity) return;
+    void flushEncryptedOutbox();
+    const timer = setInterval(() => void flushEncryptedOutbox(), 5000);
+    return () => clearInterval(timer);
+  }, [signedIn, deviceIdentity?.deviceId, activeConversationId]);
 
   useEffect(() => {
     if (!pendingGroupInvite) return;
@@ -603,6 +725,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
+    let queuedOffline = false;
     if (!signedIn) {
       onRequireLogin();
       return;
@@ -668,12 +791,32 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         setEditingMessageId(null);
       } else if (activeConversationId) {
         const identity = await ensureChatDeviceIdentity();
-        const keyPayload = await getChatDeviceKeys(activeConversationId);
+        const keyPayload = await getEncryptionKeysForSend(activeConversationId);
         if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
         setEncryptionReady(true);
         const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
-        const response = await sendEncryptedChatMessage(activeConversationId, envelopes);
-        setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: false, metadata: { ...response.message.metadata, encrypted: true } }]);
+        const clientMessageId = createOutboxClientMessageId(identity.deviceId);
+        try {
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId);
+          setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: false, metadata: { ...response.message.metadata, encrypted: true } }]);
+        } catch (error) {
+          if (!isRetryableChatNetworkError(error)) throw error;
+          const createdAt = new Date().toISOString();
+          const outboxItem: EncryptedOutboxItem = {
+            version: 1,
+            userId: Number(data?.user?.id || 0),
+            conversationId: activeConversationId,
+            clientMessageId,
+            localMessageId: -Date.now(),
+            createdAt,
+            envelopes,
+            attempts: 0,
+            lastAttemptAt: ""
+          };
+          await enqueueEncryptedMessage(outboxItem);
+          setMessages((current) => [...current, queuedMessage(outboxItem, identity)]);
+          queuedOffline = true;
+        }
         onClearPendingPost?.();
         onClearPendingRide?.();
       } else if (pendingPost) {
@@ -718,7 +861,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         return;
       }
       setMessageText("");
-      await refreshMessenger();
+      if (!queuedOffline) {
+        try {
+          await refreshMessenger();
+        } catch {
+          // Sending succeeded; the conversation list can refresh on the next poll.
+        }
+      }
     } catch (error) {
       Alert.alert("Message failed", error instanceof Error ? error.message : "Could not send this message.");
     } finally {
@@ -736,15 +885,19 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       Alert.alert("Group name required", "Add a name so people know what they are joining.");
       return;
     }
+    if (!selectedGroupPeople.length) {
+      await findPeopleFromContacts("create");
+      return;
+    }
     setLoading(true);
     try {
-      const response = await createChatCommunity(name, "GROUP", groupDraft.description.trim(), groupDraft.area.trim());
+      const response = await createChatCommunity(name, "GROUP", "", "");
+      await Promise.all(selectedGroupPeople.map((personId) => addChatGroupMember(response.community.id, personId)));
       setCommunities((current) => [response.community, ...current.filter((community) => community.id !== response.community.id)]);
       setGroupDraft(blankGroup);
+      setSelectedGroupPeople([]);
       setCreatingGroup(false);
-      if (response.community.joinUrl) {
-        await Share.share({ message: `Join ${response.community.name} on FairFares: ${response.community.joinUrl}` });
-      }
+      await openCommunityThread({ ...response.community, joined: true });
     } catch (error) {
       Alert.alert("Group failed", error instanceof Error ? error.message : "Could not create this group.");
     } finally {
@@ -835,7 +988,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
-  async function findPeopleFromContacts() {
+  async function findPeopleFromContacts(mode: "chat" | "create" | "add" = "chat", communityId = "") {
     if (!signedIn) {
       onRequireLogin();
       return;
@@ -868,10 +1021,39 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       }
       const found = await findChatPeopleByContactHashes(hashes);
       setContactMatches(found.people.map((person) => ({ ...person, localName: localNames.get(person.phoneHash) || person.name })));
-      if (found.people.length) setContactPickerOpen(true);
+      if (found.people.length) {
+        setContactPickerMode(mode);
+        setAddPeopleCommunityId(communityId);
+        setContactPickerOpen(true);
+      }
       else Alert.alert("No FairFares contacts yet", "None of your accessible contacts currently allow phone discovery on FairFares.");
     } catch (error) {
       Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");
+    } finally {
+      setContactsLoading(false);
+    }
+  }
+
+  function toggleGroupPerson(personId: number) {
+    setSelectedGroupPeople((current) => current.includes(personId) ? current.filter((id) => id !== personId) : [...current, personId]);
+  }
+
+  async function addSelectedPeopleToExistingGroup() {
+    if (!addPeopleCommunityId || !selectedGroupPeople.length) return;
+    setContactsLoading(true);
+    try {
+      await Promise.all(selectedGroupPeople.map((personId) => addChatGroupMember(addPeopleCommunityId, personId)));
+      setContactPickerOpen(false);
+      setSelectedGroupPeople([]);
+      setAddPeopleCommunityId("");
+      await refreshMessenger();
+      if (activeConversation?.communityId === addPeopleCommunityId) {
+        const response = await getChatGroupMembers(addPeopleCommunityId);
+        setGroupMembers(response.members || []);
+      }
+      Alert.alert("People added", "Selected FairFares members were added to the group.");
+    } catch (error) {
+      Alert.alert("Could not add people", error instanceof Error ? error.message : "Try again.");
     } finally {
       setContactsLoading(false);
     }
@@ -1267,6 +1449,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>♙</Text><Text style={styles.chatOptionText}>Group members</Text></TouchableOpacity> : null}
+            {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group && (group.visibility === "PUBLIC" || group.canManageMembers)); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
           </View>
@@ -1312,7 +1495,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 </View>
               ) : null}
               <View style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble]}>
-                {!message.mine || message.canEdit ? (
+                {(!message.mine || message.canEdit) && message.status !== "pending" && message.status !== "failed" ? (
                   <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
                     <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
                   </TouchableOpacity>
@@ -1357,7 +1540,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 {message.text && !["POLL", "EVENT", "CONTACT"].includes(message.type) ? <Text style={[styles.bubbleText, message.mine ? styles.myBubbleText : styles.theirBubbleText]}>{message.text}</Text> : null}
                 <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>
                   {message.editedAt ? "Edited · " : ""}
-                  {message.mine ? `${chatClock(message.createdAt)} · ${message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent"}` : !activeConversation?.communityId ? chatClock(message.createdAt) : ""}
+                  {message.mine ? `${chatClock(message.createdAt)} · ${message.status === "pending" ? "Waiting for internet" : message.status === "failed" ? "Not sent" : message.status === "seen" ? "Seen" : message.status === "delivered" ? "Delivered" : "Sent"}` : !activeConversation?.communityId ? chatClock(message.createdAt) : ""}
                 </Text>
               </View>
             </View>
@@ -1531,7 +1714,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <View style={styles.contactPickerHeader}>
               <View style={styles.contactPickerHeadingCopy}>
                 <Text style={styles.contactPickerTitle}>Contacts on FairFares</Text>
-                <Text style={styles.contactPickerSubtitle}>Select a member to open FChat</Text>
+                <Text style={styles.contactPickerSubtitle}>{contactPickerMode === "chat" ? "Select a member to open FChat" : "Select FairFares members to add"}</Text>
               </View>
               <TouchableOpacity style={styles.contactPickerClose} onPress={() => setContactPickerOpen(false)} accessibilityLabel="Close contacts">
                 <Text style={styles.contactPickerCloseText}>×</Text>
@@ -1539,7 +1722,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </View>
             <ScrollView style={styles.contactPickerList} contentContainerStyle={styles.contactPickerListContent} showsVerticalScrollIndicator={false}>
               {contactMatches.map((person) => (
-                <TouchableOpacity key={`contact-picker-${person.id}`} style={styles.contactPickerRow} onPress={() => void openContactChat(person)}>
+                <TouchableOpacity key={`contact-picker-${person.id}`} style={[styles.contactPickerRow, contactPickerMode !== "chat" && selectedGroupPeople.includes(person.id) && styles.contactPickerRowSelected]} onPress={() => contactPickerMode === "chat" ? void openContactChat(person) : toggleGroupPerson(person.id)}>
                   <View style={styles.avatar}>
                     {chatPhotoUrl(person.photoUrl) ? <Image source={{ uri: chatPhotoUrl(person.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(person.localName)}</Text>}
                   </View>
@@ -1547,10 +1730,22 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                     <Text style={styles.chatName}>{person.localName}</Text>
                     <Text style={styles.chatLast}>{person.name !== person.localName ? `${person.name} · FairFares member` : "FairFares member"}</Text>
                   </View>
-                  <View style={styles.contactPickerMessageButton}><Text style={styles.contactPickerMessageText}>Message</Text></View>
+                  <View style={styles.contactPickerMessageButton}><Text style={styles.contactPickerMessageText}>{contactPickerMode === "chat" ? "Message" : selectedGroupPeople.includes(person.id) ? "Selected" : "Add"}</Text></View>
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {contactPickerMode !== "chat" ? (
+              <TouchableOpacity
+                style={[styles.primaryButton, !selectedGroupPeople.length && styles.disabledButton]}
+                disabled={!selectedGroupPeople.length || contactsLoading}
+                onPress={() => {
+                  if (contactPickerMode === "create") setContactPickerOpen(false);
+                  else void addSelectedPeopleToExistingGroup();
+                }}
+              >
+                <Text style={styles.primaryButtonText}>{contactsLoading ? "Adding..." : contactPickerMode === "create" ? `Use ${selectedGroupPeople.length} selected` : `Add ${selectedGroupPeople.length} people`}</Text>
+              </TouchableOpacity>
+            ) : null}
             <Text style={styles.contactPickerPrivacy}>Phone numbers stay private and are never displayed.</Text>
           </View>
         </View>
@@ -1576,23 +1771,16 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             onChangeText={(name) => setGroupDraft((current) => ({ ...current, name }))}
             style={styles.input}
           />
-          <TextInput
-            placeholder="Area, city, or community"
-            placeholderTextColor={theme.colors.muted}
-            value={groupDraft.area}
-            onChangeText={(area) => setGroupDraft((current) => ({ ...current, area }))}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="What is this group for?"
-            placeholderTextColor={theme.colors.muted}
-            value={groupDraft.description}
-            onChangeText={(description) => setGroupDraft((current) => ({ ...current, description }))}
-            style={[styles.input, styles.multiline]}
-            multiline
-          />
+          <TouchableOpacity style={styles.groupPeoplePicker} onPress={() => void findPeopleFromContacts("create")} disabled={contactsLoading}>
+            <Text style={styles.groupPeoplePickerIcon}>＋</Text>
+            <View style={styles.groupPeoplePickerCopy}>
+              <Text style={styles.groupPeoplePickerTitle}>{selectedGroupPeople.length ? `${selectedGroupPeople.length} people selected` : "Add people"}</Text>
+              <Text style={styles.groupPeoplePickerMeta}>Choose FairFares members from your contacts</Text>
+            </View>
+            <Text style={styles.groupPeoplePickerArrow}>›</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.primaryButton} onPress={createGroup} disabled={loading}>
-            <Text style={styles.primaryButtonText}>{loading ? "Creating..." : "Create and share"}</Text>
+            <Text style={styles.primaryButtonText}>{loading ? "Creating..." : "Create group and add people"}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -1728,6 +1916,7 @@ const styles = StyleSheet.create({
   contactPickerList: { flexGrow: 0 },
   contactPickerListContent: { paddingVertical: 4 },
   contactPickerRow: { minHeight: 72, flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  contactPickerRowSelected: { backgroundColor: "rgba(79,124,255,0.16)" },
   contactPickerMessageButton: { backgroundColor: theme.colors.blue, borderRadius: 17, paddingHorizontal: 12, paddingVertical: 8, marginLeft: 8 },
   contactPickerMessageText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   contactPickerPrivacy: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingVertical: 12 },
@@ -1742,11 +1931,18 @@ const styles = StyleSheet.create({
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
   loginButtonText: { color: theme.colors.text, fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
+  groupPeoplePicker: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 10 },
+  groupPeoplePickerIcon: { color: theme.colors.blue, fontSize: 26, fontWeight: "600" },
+  groupPeoplePickerCopy: { flex: 1, gap: 2 },
+  groupPeoplePickerTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
+  groupPeoplePickerMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 16 },
+  groupPeoplePickerArrow: { color: theme.colors.muted, fontSize: 28 },
   composerDivider: { height: 1, backgroundColor: theme.colors.line, marginVertical: 4 },
   sectionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 13, minHeight: 45, fontSize: 14 },
   multiline: { minHeight: 82, paddingTop: 13, textAlignVertical: "top" },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
+  disabledButton: { opacity: 0.45 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   threadHeader: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },

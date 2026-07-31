@@ -21,7 +21,7 @@ export async function syncChatIdentityRecovery(userId: number, password: string)
       ? await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, wrappingPassphrase)
       : await getOrCreateDeviceIdentity(userId);
   }
-  await registerChatDeviceKey(identity.deviceId, identity.publicKey);
+  await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
   const encryptedPayload = await createEncryptedIdentityBackup(identity, wrappingPassphrase);
   await saveChatKeyBackup(encryptedPayload);
 }

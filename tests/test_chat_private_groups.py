@@ -1,10 +1,14 @@
 import os
+import base64
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import app
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 class ChatPrivateGroupsTest(unittest.TestCase):
@@ -120,6 +124,25 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertFalse(error)
         self.assertEqual([member["id"] for member in members], [self.owner])
 
+    def test_owner_can_add_member_directly_and_outsider_cannot(self):
+        group = self.create_group()
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+            conversation_id = int(conversation["id"])
+        self.assertFalse(app.add_chat_group_member(group["id"], self.owner, self.member))
+        with app.db() as con:
+            self.assertTrue(con.execute(
+                "SELECT 1 FROM chat_community_members WHERE community_id = (SELECT id FROM chat_communities WHERE public_id = ?) AND user_id = ?",
+                (group["id"], self.member),
+            ).fetchone())
+            self.assertTrue(con.execute(
+                "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, self.member),
+            ).fetchone())
+        self.assertIn("owners and admins", app.add_chat_group_member(group["id"], self.outsider, self.member).lower())
+
     def test_owner_can_transfer_ownership_and_then_leave(self):
         group = self.create_group()
         token, _ = app.create_chat_group_invite(group["id"], self.owner)
@@ -177,6 +200,56 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         denied, error = app.get_chat_conversation_device_keys(conversation["public_id"], self.member)
         self.assertIsNone(denied)
         self.assertIn("not found", error.lower())
+
+    def test_signed_relay_rejects_tampering_expiry_and_duplicates(self):
+        group = self.create_group()
+        signing_key = Ed25519PrivateKey.generate()
+        signing_public = base64.b64encode(signing_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )).decode()
+        sender_box_key = "A" * 44
+        self.assertFalse(app.register_chat_device_key(self.owner, "owner-relay-device", sender_box_key, signing_public))
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+        now = int(time.time())
+        unsigned = {
+            "version": 1,
+            "senderUserId": self.owner,
+            "senderDeviceId": "owner-relay-device",
+            "conversationId": conversation["public_id"],
+            "clientMessageId": "relay-dedup-1",
+            "createdAt": now,
+            "expiresAt": now + 600,
+            "envelopes": [{
+                "recipientUserId": self.owner,
+                "recipientDeviceId": "owner-relay-device",
+                "senderPublicKey": sender_box_key,
+                "nonce": "relay-nonce",
+                "ciphertext": "relay-ciphertext",
+            }],
+        }
+        bundle = {**unsigned, "signature": base64.b64encode(signing_key.sign(app.chat_relay_signature_payload(unsigned))).decode()}
+        first, error = app.accept_encrypted_chat_relay(bundle)
+        self.assertFalse(error)
+        duplicate, error = app.accept_encrypted_chat_relay(bundle)
+        self.assertFalse(error)
+        self.assertEqual(first["id"], duplicate["id"])
+        tampered = {**bundle, "conversationId": "FFC-TAMPERED"}
+        rejected, error = app.accept_encrypted_chat_relay(tampered)
+        self.assertIsNone(rejected)
+        self.assertIn("signature", error.lower())
+        impersonated = {**bundle, "senderUserId": self.member}
+        rejected, error = app.accept_encrypted_chat_relay(impersonated)
+        self.assertIsNone(rejected)
+        self.assertIn("signature", error.lower())
+        expired_unsigned = {**unsigned, "clientMessageId": "relay-expired", "createdAt": now - 1200, "expiresAt": now - 600}
+        expired = {**expired_unsigned, "signature": base64.b64encode(signing_key.sign(app.chat_relay_signature_payload(expired_unsigned))).decode()}
+        rejected, error = app.accept_encrypted_chat_relay(expired)
+        self.assertIsNone(rejected)
+        self.assertIn("expired", error.lower())
 
 
 if __name__ == "__main__":

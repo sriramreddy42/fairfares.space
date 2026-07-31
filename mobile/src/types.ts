@@ -125,7 +125,8 @@ export type ChatMessage = {
   editedAt: string;
   deletedAt: string;
   canEdit: boolean;
-  status: "sent" | "delivered" | "seen" | "";
+  status: "pending" | "failed" | "sent" | "delivered" | "seen" | "";
+  localClientMessageId?: string;
 };
 
 export type Community = {

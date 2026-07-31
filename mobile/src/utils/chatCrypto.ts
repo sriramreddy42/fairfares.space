@@ -7,7 +7,7 @@ import * as util from "tweetnacl-util";
 import { pbkdf2 } from "@noble/hashes/pbkdf2";
 import { sha256 } from "@noble/hashes/sha256";
 
-export type DeviceIdentity = { deviceId: string; publicKey: string; secretKey: string };
+export type DeviceIdentity = { deviceId: string; publicKey: string; secretKey: string; signingPublicKey: string; signingSecretKey: string };
 export type ConversationDeviceKey = { userId: number; deviceId: string; publicKey: string };
 
 const keyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
@@ -16,7 +16,14 @@ export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIde
   const existing = Platform.OS === "web"
     ? await AsyncStorage.getItem(keyName(userId))
     : await SecureStore.getItemAsync(keyName(userId));
-  return existing ? JSON.parse(existing) as DeviceIdentity : null;
+  if (!existing) return null;
+  const identity = JSON.parse(existing) as DeviceIdentity;
+  if (identity.signingPublicKey && identity.signingSecretKey) return identity;
+  const signingPair = nacl.sign.keyPair();
+  const upgraded = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
+  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(upgraded));
+  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(upgraded), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+  return upgraded;
 }
 
 export function contactDiscoveryHash(phone: string) {
@@ -36,10 +43,13 @@ export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceI
   const existing = await getStoredDeviceIdentity(userId);
   if (existing) return existing;
   const pair = nacl.box.keyPair();
+  const signingPair = nacl.sign.keyPair();
   const identity = {
     deviceId: `${Date.now().toString(36)}-${util.encodeBase64(nacl.randomBytes(12)).replace(/[^A-Za-z0-9]/g, "")}`,
     publicKey: util.encodeBase64(pair.publicKey),
-    secretKey: util.encodeBase64(pair.secretKey)
+    secretKey: util.encodeBase64(pair.secretKey),
+    signingPublicKey: util.encodeBase64(signingPair.publicKey),
+    signingSecretKey: util.encodeBase64(signingPair.secretKey)
   };
   if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
   else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
@@ -60,9 +70,13 @@ export async function restoreEncryptedIdentityBackup(userId: number, encryptedPa
   const key = pbkdf2(sha256, util.decodeUTF8(passphrase), util.decodeBase64(payload.salt), { c: 210_000, dkLen: nacl.secretbox.keyLength });
   const opened = nacl.secretbox.open(util.decodeBase64(payload.ciphertext), util.decodeBase64(payload.nonce), key);
   if (!opened) throw new Error("The recovery passphrase is incorrect.");
-  const identity = JSON.parse(util.encodeUTF8(opened)) as DeviceIdentity;
+  let identity = JSON.parse(util.encodeUTF8(opened)) as DeviceIdentity;
   const derivedPublicKey = util.encodeBase64(nacl.box.keyPair.fromSecretKey(util.decodeBase64(identity.secretKey)).publicKey);
   if (derivedPublicKey !== identity.publicKey) throw new Error("The recovery backup failed integrity verification.");
+  if (!identity.signingPublicKey || !identity.signingSecretKey) {
+    const signingPair = nacl.sign.keyPair();
+    identity = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
+  }
   if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
   else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
   return identity;

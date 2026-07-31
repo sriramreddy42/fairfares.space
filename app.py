@@ -29,6 +29,13 @@ from pathlib import Path
 from string import Template
 from zoneinfo import ZoneInfo
 
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+except ImportError:  # Deployment startup remains readable while dependencies install.
+    InvalidSignature = Exception
+    Ed25519PublicKey = None
+
 UTC = timezone.utc
 FAIRFARES_TZ = ZoneInfo(os.environ.get("FAIRFARES_TIMEZONE", "America/Denver"))
 
@@ -4514,6 +4521,7 @@ def init_db() -> None:
                 user_id INTEGER NOT NULL,
                 device_id TEXT NOT NULL,
                 public_key TEXT NOT NULL,
+                signing_public_key TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 revoked_at TEXT,
@@ -5444,6 +5452,7 @@ def init_db() -> None:
         ensure_column(con, "chat_messages", "read_at", "read_at TEXT")
         ensure_column(con, "chat_messages", "edited_at", "edited_at TEXT")
         ensure_column(con, "chat_messages", "deleted_at", "deleted_at TEXT")
+        ensure_column(con, "chat_device_keys", "signing_public_key", "signing_public_key TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -14689,18 +14698,56 @@ def revoke_chat_group_invites(public_id: str, user_id: int) -> str:
     return ""
 
 
-def register_chat_device_key(user_id: int, device_id: str, public_key: str) -> str:
+def add_chat_group_member(public_id: str, actor_id: int, target_id: int) -> str:
+    if not target_id or target_id == actor_id:
+        return "Choose another FairFares member to add."
+    with db() as con:
+        community = con.execute("SELECT id FROM chat_communities WHERE public_id = ? LIMIT 1", (public_id,)).fetchone()
+        if not community:
+            return "Group not found."
+        community_id = int(community["id"])
+        if chat_group_member_role(con, community_id, actor_id) not in {"OWNER", "ADMIN"}:
+            return "Only group owners and admins can add people."
+        target = con.execute("SELECT id FROM users WHERE id = ? LIMIT 1", (target_id,)).fetchone()
+        if not target:
+            return "FairFares member not found."
+        con.execute(
+            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
+            (community_id, target_id),
+        )
+        conversation = con.execute(
+            "SELECT id FROM chat_conversations WHERE community_id = ? LIMIT 1",
+            (community_id,),
+        ).fetchone()
+        if conversation:
+            con.execute(
+                "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                (int(conversation["id"]), target_id),
+            )
+    return ""
+
+
+def register_chat_device_key(user_id: int, device_id: str, public_key: str, signing_public_key: str = "") -> str:
     device_id = re.sub(r"[^A-Za-z0-9._-]", "", (device_id or ""))[:100]
     public_key = (public_key or "").strip()[:100]
+    signing_public_key = (signing_public_key or "").strip()[:100]
     if len(device_id) < 8 or len(public_key) < 40:
         return "A valid device key is required."
+    if signing_public_key:
+        try:
+            if len(base64.b64decode(signing_public_key, validate=True)) != 32:
+                return "A valid device signing key is required."
+        except (ValueError, TypeError):
+            return "A valid device signing key is required."
     with db() as con:
         con.execute(
-            """INSERT INTO chat_device_keys (user_id, device_id, public_key)
-               VALUES (?, ?, ?)
+            """INSERT INTO chat_device_keys (user_id, device_id, public_key, signing_public_key)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(user_id, device_id) DO UPDATE SET
-                   public_key = excluded.public_key, last_seen_at = CURRENT_TIMESTAMP, revoked_at = NULL""",
-            (user_id, device_id, public_key),
+                   public_key = excluded.public_key,
+                   signing_public_key = CASE WHEN excluded.signing_public_key != '' THEN excluded.signing_public_key ELSE chat_device_keys.signing_public_key END,
+                   last_seen_at = CURRENT_TIMESTAMP, revoked_at = NULL""",
+            (user_id, device_id, public_key, signing_public_key),
         )
     return ""
 
@@ -14749,6 +14796,82 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
                VALUES (?, ?, ?, ?, ?, ?)""",
             (int(message["id"]), recipient_user_id, recipient_device_id, str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or "")),
         )
+    return message, ""
+
+
+def chat_relay_signature_payload(bundle: dict[str, object]) -> bytes:
+    envelopes = bundle.get("envelopes") if isinstance(bundle.get("envelopes"), list) else []
+    normalized = [
+        {
+            "recipientUserId": int(item.get("recipientUserId") or 0),
+            "recipientDeviceId": str(item.get("recipientDeviceId") or ""),
+            "senderPublicKey": str(item.get("senderPublicKey") or ""),
+            "nonce": str(item.get("nonce") or ""),
+            "ciphertext": str(item.get("ciphertext") or ""),
+        }
+        for item in envelopes if isinstance(item, dict)
+    ]
+    envelope_hash = hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return "\n".join([
+        "FFRELAY1",
+        str(int(float_from_value(bundle.get("senderUserId")) or 0)),
+        clean_text_value(bundle.get("senderDeviceId"), 100),
+        clean_text_value(bundle.get("conversationId"), 80),
+        clean_text_value(bundle.get("clientMessageId"), 120),
+        str(int(float_from_value(bundle.get("createdAt")) or 0)),
+        str(int(float_from_value(bundle.get("expiresAt")) or 0)),
+        envelope_hash,
+    ]).encode("utf-8")
+
+
+def accept_encrypted_chat_relay(bundle: dict[str, object]) -> tuple[sqlite3.Row | None, str]:
+    if Ed25519PublicKey is None:
+        return None, "Secure relay verification is temporarily unavailable."
+    if int(float_from_value(bundle.get("version")) or 0) != 1:
+        return None, "The encrypted relay version is not supported."
+    sender_user_id = int(float_from_value(bundle.get("senderUserId")) or 0)
+    sender_device_id = clean_text_value(bundle.get("senderDeviceId"), 100)
+    conversation_public_id = clean_text_value(bundle.get("conversationId"), 80)
+    client_message_id = clean_text_value(bundle.get("clientMessageId"), 120)
+    created_at = int(float_from_value(bundle.get("createdAt")) or 0)
+    expires_at = int(float_from_value(bundle.get("expiresAt")) or 0)
+    signature_base64 = clean_text_value(bundle.get("signature"), 200)
+    envelopes = bundle.get("envelopes") if isinstance(bundle.get("envelopes"), list) else []
+    now = int(time.time())
+    if not sender_user_id or not sender_device_id or not conversation_public_id or not client_message_id or not envelopes:
+        return None, "The encrypted relay bundle is incomplete."
+    if created_at < now - 900 or created_at > now + 60 or expires_at <= now or expires_at > created_at + 900:
+        return None, "The encrypted relay bundle has expired."
+    try:
+        signature = base64.b64decode(signature_base64, validate=True)
+    except (ValueError, TypeError):
+        signature = b""
+    if len(signature) != 64:
+        return None, "The encrypted relay signature is invalid."
+    with db() as con:
+        device = con.execute(
+            """SELECT signing_public_key FROM chat_device_keys
+               WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL LIMIT 1""",
+            (sender_user_id, sender_device_id),
+        ).fetchone()
+        signing_public_key = str(row_value(device, "signing_public_key") or "") if device else ""
+        try:
+            public_key_bytes = base64.b64decode(signing_public_key, validate=True)
+            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(signature, chat_relay_signature_payload(bundle))
+        except (ValueError, TypeError, InvalidSignature):
+            return None, "The encrypted relay signature is invalid."
+        conversation = get_chat_conversation_by_public_id(con, conversation_public_id, sender_user_id)
+        if not conversation:
+            return None, "Conversation not found."
+        block_error = chat_conversation_block_error(con, conversation, sender_user_id)
+        if block_error:
+            return None, block_error
+        sender = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (sender_user_id,)).fetchone()
+        if not sender:
+            return None, "Sender not found."
+        message, error = save_encrypted_chat_message(con, conversation, sender, envelopes, client_message_id)
+        if not message:
+            return None, error
     return message, ""
 
 
@@ -17431,11 +17554,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/groups/invites/revoke": self.api_revoke_chat_group_invites,
             "/api/chat/groups/join-invite": self.api_join_chat_group_invite,
             "/api/chat/groups/members/role": self.api_chat_group_member_role,
+            "/api/chat/groups/members/add": self.api_add_chat_group_member,
             "/api/chat/groups/ownership/transfer": self.api_transfer_chat_group_ownership,
             "/api/chat/groups/members/remove": self.api_remove_chat_group_member,
             "/api/chat/groups/leave": self.api_leave_chat_group,
             "/api/chat/e2ee/keys": self.api_register_chat_e2ee_key,
             "/api/chat/e2ee/messages": self.api_send_encrypted_chat_message,
+            "/api/chat/e2ee/relay": self.api_relay_encrypted_chat_message,
             "/api/chat/e2ee/attachments": self.api_send_encrypted_chat_attachment,
             "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
             "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
@@ -18895,6 +19020,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_chat_group_member_role(self) -> None:
         self.api_update_chat_group_member("ROLE")
 
+    def api_add_chat_group_member(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to add group members."}, 401)
+            return
+        form = self.read_form()
+        error = add_chat_group_member(
+            (form.get("community_id") or "").strip(),
+            int(user["id"]),
+            int(float_from_value(form.get("target_user_id")) or 0),
+        )
+        if error:
+            self.send_json({"ok": False, "message": error}, 403)
+            return
+        self.send_json({"ok": True})
+
     def api_remove_chat_group_member(self) -> None:
         self.api_update_chat_group_member("REMOVE")
 
@@ -18927,7 +19068,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure FChat."}, 401)
             return
         form = self.read_form()
-        error = register_chat_device_key(int(user["id"]), form.get("deviceId", ""), form.get("publicKey", ""))
+        error = register_chat_device_key(int(user["id"]), form.get("deviceId", ""), form.get("publicKey", ""), form.get("signingPublicKey", ""))
         if error:
             self.send_json({"ok": False, "message": error}, 400)
             return
@@ -18989,6 +19130,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_relay_encrypted_chat_message(self) -> None:
+        relay_user = self.current_user()
+        if not relay_user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to relay encrypted FChat messages."}, 401)
+            return
+        bundle = self.read_json_body()
+        message, error = accept_encrypted_chat_relay(bundle)
+        if not message:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        with db() as con:
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (int(message["conversation_id"]),)).fetchone()
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (int(message["sender_id"]),)).fetchone()
+            if conversation and sender:
+                self.notify_chat_recipients(con, conversation, sender, message)
+        self.send_json({"ok": True, "messageId": int(message["id"])}, 201)
 
     def api_send_encrypted_chat_attachment(self) -> None:
         user = self.current_user()

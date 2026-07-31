@@ -644,9 +644,15 @@ export async function getChatMessages(conversationId: string) {
   );
 }
 
-export async function registerChatDeviceKey(deviceId: string, publicKey: string) {
+export async function registerChatDeviceKey(deviceId: string, publicKey: string, signingPublicKey = "") {
   return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
-    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey })
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey, signingPublicKey })
+  });
+}
+
+export async function relayEncryptedChatMessage(bundle: Record<string, unknown>) {
+  return request<{ ok: boolean; messageId: number }>("/api/chat/e2ee/relay", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bundle)
   });
 }
 
@@ -658,10 +664,10 @@ export async function getChatEncryptedEnvelopes(conversationId: string, deviceId
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/envelopes?conversation_id=${encodeURIComponent(conversationId)}&device_id=${encodeURIComponent(deviceId)}`);
 }
 
-export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>) {
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId })
   });
 }
 
@@ -903,6 +909,14 @@ export async function updateChatGroupMemberRole(communityId: string, targetUserI
   return request<{ ok: boolean }>("/api/chat/groups/members/role", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId, target_user_id: String(targetUserId), role })
+  });
+}
+
+export async function addChatGroupMember(communityId: string, targetUserId: number) {
+  return request<{ ok: boolean }>("/api/chat/groups/members/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, target_user_id: String(targetUserId) })
   });
 }
 
