@@ -87,3 +87,41 @@ export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
     kind: "IMAGE" as const
   };
 }
+
+export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) throw new Error("Allow camera access to take a photo.");
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ["images"],
+    allowsEditing: false,
+    base64: false,
+    quality
+  });
+  if (result.canceled || !result.assets.length) return null;
+  const asset = result.assets[0];
+  if (Platform.OS === "web") {
+    const webFile = (asset as typeof asset & { file?: Blob }).file;
+    return {
+      uri: asset.uri,
+      blob: webFile,
+      name: asset.fileName || `fchat-camera-${Date.now()}.jpg`,
+      mimeType: asset.mimeType || webFile?.type || "image/jpeg",
+      size: Number(asset.fileSize || webFile?.size || 0),
+      kind: "IMAGE" as const
+    };
+  }
+  const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
+  const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+    base64: false,
+    compress: quality,
+    format: ImageManipulator.SaveFormat.JPEG
+  });
+  const info = await FileSystem.getInfoAsync(compressed.uri);
+  return {
+    uri: compressed.uri,
+    name: `fchat-camera-${Date.now()}.jpg`,
+    mimeType: "image/jpeg",
+    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
+    kind: "IMAGE" as const
+  };
+}

@@ -523,6 +523,17 @@ export async function startRentalCheckout(
   throw new Error(lastError || "Unable to open Stripe checkout.");
 }
 
+export async function startRentalSecurityDeposit(bookingId: string) {
+  return request<{ ok: boolean; url: string; amount: number; message?: string }>(
+    "/api/mobile/rentals/security-deposit-session",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingId })
+    }
+  );
+}
+
 export async function getRentalBookings() {
   const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
   return payload.bookings || [];
@@ -664,10 +675,10 @@ export async function getChatEncryptedEnvelopes(conversationId: string, deviceId
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/envelopes?conversation_id=${encodeURIComponent(conversationId)}&device_id=${encodeURIComponent(deviceId)}`);
 }
 
-export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, envelopes, clientMessageId })
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent })
   });
 }
 
@@ -698,8 +709,17 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     ok: boolean;
     messages: ChatMessage[];
     receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
+    typing: Array<{ userId: number; name: string }>;
     cursor: number;
   }>(`/api/chat/events?${query}`);
+}
+
+export async function updateChatTyping(conversationId: string, active: boolean) {
+  return request<{ ok: boolean; active: boolean }>("/api/chat/typing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, active })
+  });
 }
 
 export async function startChatForPost(postId: string, message: string) {
@@ -739,70 +759,6 @@ export async function openCommunityChat(communityId: string) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId })
-  });
-}
-
-export async function sendChatMessage(conversationId: string, message: string) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ conversation_id: conversationId, message, client_message_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
-  });
-}
-
-export async function sendChatImage(conversationId: string, dataUrl: string, caption = "", file?: { name: string; mimeType: string }) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      conversationId,
-      dataUrl,
-      caption,
-      fileName: file?.name || "",
-      mimeType: file?.mimeType || "",
-      clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    })
-  });
-}
-
-export async function sendChatAttachment(
-  conversationId: string,
-  attachment: { uri: string; blob?: Blob; name: string; mimeType: string },
-  caption = ""
-) {
-  const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  if (Platform.OS !== "web") {
-    const base64 = await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
-    if (!base64) throw new Error("The selected attachment could not be read. Choose it again and retry.");
-    return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId,
-        caption,
-        clientMessageId,
-        fileName: attachment.name,
-        mimeType: attachment.mimeType,
-        dataUrl: `data:${attachment.mimeType};base64,${base64}`
-      })
-    });
-  }
-  const body = new FormData();
-  body.append("conversationId", conversationId);
-  body.append("caption", caption);
-  body.append("clientMessageId", clientMessageId);
-  body.append("fileName", attachment.name);
-  body.append("mimeType", attachment.mimeType);
-  const blob = attachment.blob || await (await fetch(attachment.uri)).blob();
-  body.append("attachment", blob, attachment.name);
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/attachments", { method: "POST", body });
-}
-
-export async function sendChatRichMessage(conversationId: string, type: "POLL" | "EVENT" | "CONTACT", metadata: Record<string, unknown>) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/rich-messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, type, metadata, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
   });
 }
 

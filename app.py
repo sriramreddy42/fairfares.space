@@ -84,6 +84,8 @@ LOGIN_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_LOGIN_WINDOW_SECON
 LOGIN_RATE_LIMIT_LOCK_SECONDS = positive_int_env("FAIRFARES_LOGIN_LOCK_SECONDS", 15 * 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
+_CHAT_TYPING: dict[tuple[int, int], float] = {}
+_CHAT_TYPING_LOCK = threading.Lock()
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -6884,11 +6886,65 @@ def release_security_deposit_after_clear_return(booking: sqlite3.Row | dict[str,
             """,
             (row_value(booking, "id"),),
         )
+        con.execute(
+            """
+            UPDATE transactions
+            SET transaction_status = 'SECURITY_DEPOSIT_RELEASED',
+                billing_verification_status = 'RELEASED',
+                billing_verification_notes = 'Authorization released after clear return review.'
+            WHERE booking_id = ? AND invoice_number = ?
+            """,
+            (row_value(booking, "id"), payment_intent_id),
+        )
     released_booking = get_booking_by_id(int(row_value(booking, "id") or 0))
     send_rental_booking_push(
         released_booking or booking,
         "Security deposit released",
         f"Your {format_money(SECURITY_DEPOSIT_AMOUNT)} authorization hold was released after the clear return review.",
+        "SECURITY_DEPOSIT_RELEASED",
+    )
+    return True, payment_intent_id
+
+
+def release_security_deposit_after_cancellation(
+    booking: sqlite3.Row | dict[str, object] | None,
+) -> tuple[bool, str]:
+    """Release, never capture, an authorized deposit after cancellation is approved."""
+    if not booking or row_value(booking, "security_deposit_status") != "AUTHORIZED":
+        return True, "No authorized security deposit required release."
+    payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
+    if not payment_intent_id.startswith("pi_"):
+        return False, "The Stripe deposit authorization reference is missing; staff review is required."
+    released, status = stripe_api_request(
+        f"payment_intents/{urllib.parse.quote(payment_intent_id)}/cancel",
+        {"cancellation_reason": "requested_by_customer"},
+        idempotency_key=f"cancelled-booking-deposit-release-{row_value(booking, 'id')}",
+    )
+    if status != "ok" or str(released.get("status") or "") != "canceled":
+        return False, status if status != "ok" else "Stripe did not confirm release of the deposit authorization."
+    with db() as con:
+        con.execute(
+            """
+            UPDATE bookings
+            SET security_deposit_status = 'RELEASED'
+            WHERE id = ? AND security_deposit_status = 'AUTHORIZED'
+            """,
+            (row_value(booking, "id"),),
+        )
+        con.execute(
+            """
+            UPDATE transactions
+            SET transaction_status = 'SECURITY_DEPOSIT_RELEASED',
+                billing_verification_status = 'RELEASED',
+                billing_verification_notes = 'Authorization released after approved booking cancellation.'
+            WHERE booking_id = ? AND invoice_number = ?
+            """,
+            (row_value(booking, "id"), payment_intent_id),
+        )
+    send_rental_booking_push(
+        booking,
+        "Security deposit released",
+        f"Your {format_money(SECURITY_DEPOSIT_AMOUNT)} authorization hold was released after cancellation.",
         "SECURITY_DEPOSIT_RELEASED",
     )
     return True, payment_intent_id
@@ -6911,6 +6967,8 @@ def record_security_deposit_final_status(data_object: dict[str, object], event_t
         next_status = "CAPTURED"
     elif row_value(booking, "security_deposit_status") == "RELEASED":
         return
+    elif row_value(booking, "booking_status") == "CANCELLED":
+        next_status = "RELEASED"
     elif return_checks_clear_for_deposit_release(booking):
         # Stripe may deliver the cancellation webhook before the request handler
         # persists RELEASED. A fully cleared return is therefore authoritative.
@@ -13517,6 +13575,8 @@ def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, ob
         "savings": breakdown.get("savings"),
         "status": row_value(row, "booking_status"),
         "paymentStatus": row_value(row, "payment_status"),
+        "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
+        "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
         "holdRemainingSeconds": booking_hold_remaining_seconds(row),
     }
 
@@ -13634,6 +13694,7 @@ def mobile_rental_service_booking_payload(
         {
             "statusLabel": booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")),
             "paymentLabel": payment_status_label(row_value(row, "payment_status")),
+            "depositLabel": str(row_value(row, "security_deposit_status") or "NOT_AUTHORIZED").replace("_", " ").title(),
             "totalLabel": format_money(breakdown.get("total")),
             "dueNowLabel": format_money(breakdown.get("booking_hold")),
             "dueAtPickupLabel": format_money(breakdown.get("due_at_pickup")),
@@ -14733,6 +14794,11 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
     signing_public_key = (signing_public_key or "").strip()[:100]
     if len(device_id) < 8 or len(public_key) < 40:
         return "A valid device key is required."
+    try:
+        if len(base64.b64decode(public_key, validate=True)) != 32:
+            return "A valid device key is required."
+    except (ValueError, TypeError):
+        return "A valid device key is required."
     if signing_public_key:
         try:
             if len(base64.b64decode(signing_public_key, validate=True)) != 32:
@@ -14768,6 +14834,13 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
         participant_count = int(con.execute("SELECT COUNT(*) AS count FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchone()["count"])
     keys = [{"userId": int(row["user_id"]), "deviceId": row_value(row, "device_id"), "publicKey": row_value(row, "public_key")} for row in rows]
     keyed_users = len({int(item["userId"]) for item in keys})
+    is_group = bool(int(row_value(conversation, "community_id") or 0)) or str(row_value(conversation, "conversation_type") or "").upper() == "GROUP"
+    sender_has_key = any(int(item["userId"]) == user_id for item in keys)
+    # A missing device key must not freeze an entire group. Messages are sealed
+    # only for currently registered member devices; a member who has not opened
+    # the current app cannot decrypt messages sent before their key registration.
+    if is_group and sender_has_key:
+        return keys, ""
     return keys, "" if keyed_users == participant_count else "Every participant must open the latest FairFares app before encryption can start."
 
 
@@ -14919,6 +14992,14 @@ def chat_message_is_editable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]
 
 
 def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conversation_id: int, community_id: int) -> None:
+    con.execute(
+        """DELETE FROM chat_participants
+           WHERE conversation_id = ?
+             AND user_id NOT IN (
+                 SELECT user_id FROM chat_community_members WHERE community_id = ?
+             )""",
+        (conversation_id, community_id),
+    )
     members = con.execute(
         "SELECT user_id FROM chat_community_members WHERE community_id = ?",
         (community_id,),
@@ -15078,10 +15159,18 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
         LEFT JOIN users other_user ON other_user.id = other_participant.user_id
         LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
         WHERE conversations.public_id = ? AND participant.user_id = ?
+          AND (
+              conversations.community_id IS NULL
+              OR EXISTS (
+                  SELECT 1 FROM chat_community_members current_membership
+                  WHERE current_membership.community_id = conversations.community_id
+                    AND current_membership.user_id = ?
+              )
+          )
         GROUP BY conversations.id
         LIMIT 1
         """,
-        (user_id, public_id, user_id),
+        (user_id, public_id, user_id, user_id),
     ).fetchone()
 
 
@@ -15691,11 +15780,19 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
             LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             WHERE conversations.status = 'ACTIVE'
+              AND (
+                  conversations.community_id IS NULL
+                  OR EXISTS (
+                      SELECT 1 FROM chat_community_members current_membership
+                      WHERE current_membership.community_id = conversations.community_id
+                        AND current_membership.user_id = ?
+                  )
+              )
             GROUP BY conversations.id
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
             LIMIT 100
             """,
-            (user_id, user_id, user_id),
+            (user_id, user_id, user_id, user_id),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
 
@@ -17573,6 +17670,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/messages/delete": self.api_delete_chat_message,
             "/api/chat/messages/report": self.api_report_chat_message,
             "/api/chat/read": self.api_mark_chat_read,
+            "/api/chat/typing": self.api_chat_typing,
             "/api/chat/mute": self.api_mute_chat_conversation,
             "/api/chat/block": self.api_block_chat_user,
             "/api/mobile/login": self.api_mobile_login,
@@ -17588,6 +17686,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
             "/api/mobile/rentals/listing": self.api_mobile_create_rental_listing,
             "/api/mobile/rentals/checkout-session": self.api_mobile_rental_checkout_session,
+            "/api/mobile/rentals/security-deposit-session": self.api_mobile_rental_security_deposit_checkout,
             "/api/mobile/rentals/cancel-request": self.api_mobile_rental_cancel_request,
             "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
@@ -18694,6 +18793,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         deadline = time.monotonic() + wait_seconds
         messages: list[sqlite3.Row] = []
         receipts: list[dict[str, object]] = []
+        typing: list[dict[str, object]] = []
         while True:
             with db() as con:
                 messages = con.execute(
@@ -18748,7 +18848,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     }
                     for receipt in receipt_rows
                 ]
-            if messages or time.monotonic() >= deadline:
+                participant_rows = con.execute(
+                    """SELECT participants.user_id, users.name
+                       FROM chat_participants participants
+                       JOIN users ON users.id = participants.user_id
+                       WHERE participants.conversation_id = ? AND participants.user_id != ?""",
+                    (conversation_id, current_user_id),
+                ).fetchall()
+            now_monotonic = time.monotonic()
+            with _CHAT_TYPING_LOCK:
+                expired = [key for key, expires_at in _CHAT_TYPING.items() if expires_at <= now_monotonic]
+                for key in expired:
+                    _CHAT_TYPING.pop(key, None)
+                typing = [
+                    {"userId": int(row["user_id"]), "name": row_value(row, "name") or "Someone"}
+                    for row in participant_rows
+                    if _CHAT_TYPING.get((conversation_id, int(row["user_id"])), 0) > now_monotonic
+                ]
+            if messages or typing or time.monotonic() >= deadline:
                 break
             time.sleep(0.25)
         self.send_json(
@@ -18756,9 +18873,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "messages": [chat_message_payload(message, current_user_id) for message in messages],
                 "receipts": receipts,
+                "typing": typing,
                 "cursor": max([after_message_id, *[int(row_value(message, "id") or 0) for message in messages]]),
             }
         )
+
+    def api_chat_typing(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to update typing status."}, 401)
+            return
+        payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId"), 80)
+        # Accept only a JSON boolean. Values such as the string "false" must
+        # never be treated as an active typing indicator.
+        active = payload.get("active") is True
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            conversation_id = int(conversation["id"])
+        with _CHAT_TYPING_LOCK:
+            now_monotonic = time.monotonic()
+            expired = [entry for entry, expires_at in _CHAT_TYPING.items() if expires_at <= now_monotonic]
+            for entry in expired:
+                _CHAT_TYPING.pop(entry, None)
+            key = (conversation_id, current_user_id)
+            if active:
+                _CHAT_TYPING[key] = now_monotonic + 5.0
+            else:
+                _CHAT_TYPING.pop(key, None)
+        self.send_json({"ok": True, "active": active})
 
     def notify_chat_recipients(self, con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, message: sqlite3.Row) -> None:
         recipients = con.execute(
@@ -19128,7 +19275,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
-            self.notify_chat_recipients(con, conversation, user, message)
+            if not bool(form.get("silent")):
+                self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
 
     def api_relay_encrypted_chat_message(self) -> None:
@@ -20565,6 +20713,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if row_value(booking, "booking_status") in {"RETURNED", "CANCELLED", "EXPIRED_HOLD"}:
             self.send_json({"ok": False, "message": "Past bookings are read-only. You can still download their invoices and documents."}, 409)
             return
+        if row_value(booking, "booking_status") in {"MODIFIED", "CANCELLATION_REQUESTED"}:
+            self.send_json({"ok": False, "message": "This booking already has a pending request. Cancel or wait for that review before submitting another change."}, 409)
+            return
         if not booking_customer_tools_unlocked(booking):
             self.send_json(
                 {"ok": False, "message": "Pay the 10% hold or full balance before modifying pickup or return details."},
@@ -20703,7 +20854,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.not_found()
             return
-        booking = get_booking_for_user(user["id"])
+        form = self.read_form()
+        booking = get_booking_for_user_by_identifier(user["id"], form.get("booking_id")) or get_booking_for_user(user["id"])
         if not booking or booking["booking_status"] not in {"MODIFIED", "CANCELLATION_REQUESTED"}:
             self.send_json({"ok": False, "message": "No pending request to cancel."})
             return
@@ -20749,6 +20901,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if row_value(booking, "booking_status") in {"RETURNED", "CANCELLED", "EXPIRED_HOLD"}:
             self.send_json({"ok": False, "message": "Past bookings cannot be cancelled or modified. Their invoices remain available."}, 409)
             return
+        if row_value(booking, "booking_status") in {"MODIFIED", "CANCELLATION_REQUESTED"}:
+            self.send_json({"ok": False, "message": "This booking already has a pending request. Cancel or wait for that review before requesting cancellation."}, 409)
+            return
         if not booking_customer_tools_unlocked(booking):
             self.send_json(
                 {"ok": False, "message": "This checkout is not confirmed yet. Pay first, or remove the unpaid hold."},
@@ -20762,6 +20917,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "This booking has already been refunded."}, 409)
             return
         reason = form.get("reason") or "Customer cancellation"
+        refund_method = (form.get("refund_method") or "Original payment method").strip()
+        if refund_method != "Original payment method":
+            self.send_json({"ok": False, "message": "Refunds can only return to the original Stripe payment method."}, 400)
+            return
         note = form.get("note", "")
         if note:
             reason = f"{reason}: {note}"
@@ -20789,10 +20948,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if auto_cancel:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
             ticket_id = make_cancellation_task(con, booking, user, reason, auto_cancel)
+        deposit_release_message = ""
+        if auto_cancel:
+            deposit_released, deposit_release_message = release_security_deposit_after_cancellation(booking)
+            if not deposit_released:
+                deposit_release_message = f"Deposit release needs staff review: {deposit_release_message}"
         self.send_json({
             "ok": True,
             "message": (
-                f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created for admin recordkeeping."
+                f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} {deposit_release_message} Task {ticket_id} was created for admin recordkeeping."
                 if auto_cancel
                 else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
             ),
@@ -24632,12 +24796,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (form.get("booking_id"),),
             ).fetchone()
-            if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
-                self.send_error(
-                    409,
-                    "Pickup blocked: confirm payment and authorize the refundable security deposit first.",
+        if not previous_booking:
+            self.send_error(404, "Booking not found.")
+            return
+        if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
+            self.send_error(
+                409,
+                "Pickup blocked: confirm payment and authorize the refundable security deposit first.",
+            )
+            return
+        cancellation_refund_message = ""
+        cancellation_deposit_message = ""
+        if booking_status == "CANCELLED" and row_value(previous_booking, "booking_status") != "CANCELLED":
+            if row_value(previous_booking, "payment_status") in {"PAID", "HOLD_PAID", "REFUND_REVIEW"}:
+                payment_status, cancellation_refund_message = auto_refund_booking_payments(
+                    int(row_value(previous_booking, "id") or 0)
                 )
-                return
+            deposit_released, cancellation_deposit_message = release_security_deposit_after_cancellation(previous_booking)
+            if not deposit_released:
+                cancellation_deposit_message = f"Deposit release requires review: {cancellation_deposit_message}"
+        with db() as con:
             con.execute(
                 """
                 UPDATE bookings
@@ -24706,7 +24884,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ):
                 notify_slack_payment(
                     updated_booking,
-                    f"Admin set booking {booking_status} / payment {payment_status}",
+                    f"Admin set booking {booking_status} / payment {payment_status}. {cancellation_refund_message} {cancellation_deposit_message}",
                     self.public_origin(),
                 )
         status_changed = bool(
@@ -25864,9 +26042,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if is_guest_checkout
             else ("Select a vehicle to begin booking." if show_signed_out_empty else ("Search available student deals and create your first booking." if is_first_time_user else "Review and manage your active reservations."))
         )
-        is_returned_booking = bool(booking and row_value(booking, "booking_status") == "RETURNED")
+        booking_is_immutable = bool(
+            booking
+            and row_value(booking, "booking_status")
+            in {"RETURNED", "CANCELLED", "EXPIRED_HOLD", "MODIFIED", "CANCELLATION_REQUESTED"}
+        )
         booking_link_class = "is-hidden" if (show_start_experience or show_signed_out_empty or is_guest_checkout) else ""
-        mutable_booking_link_class = "is-hidden" if (booking_link_class or is_returned_booking) else ""
+        mutable_booking_link_class = "is-hidden" if (booking_link_class or booking_is_immutable) else ""
         car_color_class = escape(f"car-{booking['color']}" if booking and booking["color"] else "car-charcoal")
         if booking and booking["image_url"]:
             booking_car_visual = f'<img class="trip-car-image" src="{escape(optimized_static_image_url(booking["image_url"]))}" alt="{escape(booking["car_name"])}">'
@@ -26488,7 +26670,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         identifier = str(payload.get("identifier") or payload.get("email") or payload.get("phone") or "").strip()
         password = str(payload.get("password") or "")
-        phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
         rate_key = login_rate_limit_key(self.client_ip(), identifier)
         retry_after = login_retry_after(rate_key)
         if retry_after:
@@ -26508,11 +26689,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "That email/phone and password did not match."}, 401)
                 return
             if not int(row_value(user, "is_verified") or 0):
+                token = create_verification(int(row_value(user, "id") or 0), row_value(user, "email"))
+                link = self.activation_url(token)
+                _outbox_file, delivery_status = send_activation_email(row_value(user, "email"), row_value(user, "name"), link)
+                delivery_message = (
+                    "Your account is not activated yet. We sent a fresh activation link to your email."
+                    if delivery_status.startswith("sent")
+                    else "Your account is not activated, and the activation email could not be delivered. Check the address or contact FairFares support."
+                )
                 self.send_json(
                     {
                         "ok": False,
                         "activationRequired": True,
-                        "error": "Please activate your account from the email link before using the mobile app.",
+                        "error": delivery_message,
                     },
                     403,
                 )
@@ -26527,12 +26716,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_signup(self) -> None:
         payload = self.read_json_body()
-        name = " ".join(str(payload.get("name") or "FairFares Member").split())[:120] or "FairFares Member"
+        name = " ".join(str(payload.get("name") or "").split())[:120]
         email = normalize_email(payload.get("email") or payload.get("identifier") or "")
         phone = str(payload.get("phone") or "").strip()
         clean_phone = normalize_phone(phone)
         password = str(payload.get("password") or "")
-        if "@" not in email or len(clean_phone) < 7 or len(password) < 8:
+        phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
+        if len(name) < 2 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or not 7 <= len(clean_phone) <= 15 or len(password) < 8:
             self.send_json(
                 {
                     "ok": False,
@@ -26543,14 +26733,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             with db() as con:
-                if find_user_by_email(con, email):
+                existing_email_user = find_user_by_email(con, email)
+                if existing_email_user and not int(row_value(existing_email_user, "guest_account") or 0):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
                     return
-                con.execute(
-                    "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, ?, 0, ?)",
-                    (name, email, phone, hash_password(password), 1 if phone_discoverable else 0),
-                )
-                user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                phone_owner = find_user_by_login_identifier(con, phone)
+                if phone_owner and (not existing_email_user or int(phone_owner["id"]) != int(existing_email_user["id"])) and not int(row_value(phone_owner, "guest_account") or 0):
+                    self.send_json({"ok": False, "error": "An account with that phone number already exists. Log in or recover that account."}, 409)
+                    return
+                guest = existing_email_user or (phone_owner if phone_owner and int(row_value(phone_owner, "guest_account") or 0) else None)
+                if guest:
+                    con.execute(
+                        """UPDATE users
+                           SET name = ?, email = ?, phone = ?, password_hash = ?, is_verified = 0,
+                               guest_account = 0, chat_phone_discoverable = ?
+                           WHERE id = ?""",
+                        (name, email, phone, hash_password(password), 1 if phone_discoverable else 0, int(guest["id"])),
+                    )
+                    user_id = int(guest["id"])
+                else:
+                    con.execute(
+                        "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, ?, 0, ?)",
+                        (name, email, phone, hash_password(password), 1 if phone_discoverable else 0),
+                    )
+                    user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
                 cleanup_expired_sessions(con)
         except sqlite3.IntegrityError:
@@ -26558,16 +26764,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         token = create_verification(user_id, email)
         link = self.activation_url(token)
-        outbox_file, delivery_status = send_activation_email(email, name, link)
+        _outbox_file, delivery_status = send_activation_email(email, name, link)
+        delivered = delivery_status.startswith("sent")
         self.send_json(
             {
                 "ok": True,
                 "activationRequired": True,
                 "token": "",
                 "user": mobile_user_payload(user),
-                "message": "Account created. Please activate your account from the email link before logging in.",
-                "activationLink": link if not delivery_status.startswith("sent") else "",
-                "outboxFile": str(outbox_file),
+                "message": (
+                    "Account created. We sent an activation link to your email."
+                    if delivered
+                    else "Account created, but the activation email could not be delivered. Check the address or contact FairFares support."
+                ),
             },
             201,
         )
@@ -27401,8 +27610,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         reason = str(payload.get("reason") or "Customer cancellation request").strip()[:240]
         refund_method = str(payload.get("refundMethod") or payload.get("refund_method") or "Original payment method").strip()[:120]
         note = str(payload.get("note") or "").strip()[:400]
-        if refund_method and refund_method != "Original payment method":
-            reason = f"{reason} · Refund method: {refund_method}"[:240]
+        if refund_method != "Original payment method":
+            self.send_json({"ok": False, "error": "Refunds can only return to the original Stripe payment method."}, 400)
+            return
         if note:
             reason = f"{reason} · Note: {note}"[:240]
         auto_cancel = not cancellation_requires_admin_review(booking)
@@ -27429,9 +27639,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if auto_cancel:
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
             ticket_id = make_cancellation_task(con, booking, user, reason, auto_cancel)
+        deposit_release_message = ""
+        if auto_cancel:
+            deposit_released, deposit_release_message = release_security_deposit_after_cancellation(booking)
+            if not deposit_released:
+                deposit_release_message = f"Deposit release needs staff review: {deposit_release_message}"
         updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
         message = (
-            f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} Task {ticket_id} was created."
+            f"Booking cancelled automatically. {refund_message or 'No online payment refund was needed.'} {deposit_release_message} Task {ticket_id} was created."
             if auto_cancel
             else f"Cancellation request sent to admin for approval. Task {ticket_id} was created."
         )
@@ -27794,6 +28009,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": status}, 502)
             return
         self.send_json({"ok": True, "url": url, "paymentOption": payment_option, "amount": checkout_amount})
+
+    def api_mobile_rental_security_deposit_checkout(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required before authorizing the security deposit."}, 401)
+            return
+        payload = self.read_json_body()
+        booking = (
+            get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
+            or get_mobile_current_rental_booking(user)
+        )
+        if not booking:
+            self.send_json({"ok": False, "error": "Booking not found."}, 404)
+            return
+        session, status = create_security_deposit_checkout_session(booking, user, self.public_origin())
+        checkout_url = str(session.get("url") or "")
+        if status != "ok" or not checkout_url:
+            self.send_json(
+                {"ok": False, "error": status if status != "ok" else "Stripe did not return a secure checkout URL."},
+                400,
+            )
+            return
+        self.send_json(
+            {
+                "ok": True,
+                "url": checkout_url,
+                "amount": SECURITY_DEPOSIT_AMOUNT,
+                "message": "Opening the refundable security deposit authorization.",
+            }
+        )
 
     def api_mobile_create_ride(self) -> None:
         user = self.current_user()

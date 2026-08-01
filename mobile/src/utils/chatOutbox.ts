@@ -18,6 +18,7 @@ export type EncryptedOutboxItem = {
   envelopes: EncryptedEnvelope[];
   attempts: number;
   lastAttemptAt: string;
+  relayedAt?: string;
 };
 
 const outboxKey = (userId: number) => `fairfares.fchat.encrypted-outbox.${userId}`;

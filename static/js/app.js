@@ -1682,7 +1682,6 @@ updateModifySummary();
 
 const cancelForm = document.getElementById("cancelForm");
 const cancelReason = document.getElementById("cancelReason");
-const refundMethod = document.getElementById("refundMethod");
 const refundTimeline = document.getElementById("refundTimeline");
 const cancelStatus = document.getElementById("cancelStatus");
 const bookingStatusBadge = document.getElementById("bookingStatusBadge");
@@ -1693,13 +1692,6 @@ document.querySelector("[data-booking-history-prev]")?.addEventListener("click",
 });
 document.querySelector("[data-booking-history-next]")?.addEventListener("click", () => {
   bookingHistoryScroll?.scrollBy({ left: Math.max(220, bookingHistoryScroll.clientWidth * 0.75), behavior: "smooth" });
-});
-
-refundMethod?.addEventListener("change", () => {
-  refundTimeline.textContent = refundMethod.value.includes("credit")
-    ? "Travel credit can be issued after admin approval."
-    : (refundTimeline.dataset.defaultNote || "Refund timeline starts after admin approval.");
-  cancelStatus.textContent = "";
 });
 
 cancelReason?.addEventListener("change", () => {
@@ -1720,16 +1712,17 @@ cancelForm?.addEventListener("submit", (event) => {
     return;
   }
   const payload = new URLSearchParams();
+  payload.set("booking_id", cancelForm.querySelector('input[name="booking_id"]')?.value || "");
   payload.set("reason", cancelReason.value);
   payload.set("note", document.getElementById("cancelNote")?.value || "");
-  payload.set("refund_method", refundMethod.value);
+  payload.set("refund_method", "Original payment method");
   fetch("/bookings/cancel", {
     method: "POST",
     body: payload,
   })
     .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
     .then((data) => {
-      cancelStatus.textContent = data.message || `Cancellation request sent to admin. Refund method: ${refundMethod.value}.`;
+      cancelStatus.textContent = data.message || "Cancellation request received. Eligible refunds return to the original Stripe payment method.";
       if (bookingStatusBadge && data.status_label) {
         bookingStatusBadge.textContent = data.status_label;
         bookingStatusBadge.className = `status-badge ${data.status_class || "status-pending"}`;
@@ -3397,7 +3390,8 @@ document.addEventListener("click", (event) => {
 });
 
 document.getElementById("cancelPendingRequest")?.addEventListener("click", () => {
-  fetch("/bookings/request-cancel", { method: "POST" })
+  const bookingId = document.querySelector('#cancelForm input[name="booking_id"]')?.value || "";
+  fetch("/bookings/request-cancel", { method: "POST", body: new URLSearchParams({ booking_id: bookingId }) })
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((payload) => {
       const notice = document.getElementById("requestNotice");

@@ -19,6 +19,8 @@ import {
   requestRentalCancellation,
   requestRentalModification,
   setAuthToken,
+  startRentalCheckout,
+  startRentalSecurityDeposit,
   updateMobileStudentVerification
 } from "../api/client";
 import { appAssets } from "../assets";
@@ -315,6 +317,30 @@ export function ServicesScreen({
     }
   }
 
+  async function openRentalPayment(kind: "balance" | "deposit") {
+    if (!selectedBooking) return;
+    setBusy(true);
+    try {
+      const result = kind === "balance"
+        ? await startRentalCheckout("full", selectedBooking.id)
+        : await startRentalSecurityDeposit(selectedBooking.id);
+      if (!result.url || !(await Linking.canOpenURL(result.url))) {
+        throw new Error("Stripe checkout could not be opened on this device.");
+      }
+      await Linking.openURL(result.url);
+    } catch (paymentError) {
+      Alert.alert(
+        kind === "balance" ? "Payment could not be opened" : "Deposit could not be opened",
+        paymentError instanceof Error ? paymentError.message : "Try again."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const bookingIsPast = Boolean(selectedBooking && ["CANCELLED", "RETURNED", "EXPIRED_HOLD"].includes(selectedBooking.status));
+  const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED"].includes(selectedBooking.status));
+  const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
   const actions: ServiceAction[] = [
     {
       label: "Modify Reservation",
@@ -337,7 +363,8 @@ export function ServicesScreen({
       icon: appAssets.serviceEye,
       onPress: () => openPanel("details")
     }
-  ];
+  ].filter((action) => !bookingIsPast || ["Download Invoice", "View Details"].includes(action.label))
+    .filter((action) => bookingCanChange || !["Modify Reservation", "Cancel Reservation"].includes(action.label));
 
   const selectedDocumentSet = selectedBooking?.documents?.find((item) => item.id === selectedDocumentSetId)
     || selectedBooking?.documents?.[0]
@@ -436,6 +463,41 @@ export function ServicesScreen({
                 </TouchableOpacity>
               ))}
             </View>
+
+            {selectedBooking && bookingCanPay ? (
+              <View style={styles.paymentCard}>
+                <View style={styles.paymentHeader}>
+                  <View style={styles.paymentHeaderCopy}>
+                    <Text style={styles.paymentEyebrow}>Payment &amp; refundable deposit</Text>
+                    <Text style={styles.paymentTitle}>{selectedBooking.paymentLabel}</Text>
+                  </View>
+                  <Text style={styles.paymentAmount}>{selectedBooking.totalLabel}</Text>
+                </View>
+                {selectedBooking.paymentStatus === "HOLD_PAID" ? (
+                  <>
+                    <Text style={styles.paymentCopy}>Your booking is confirmed. Pay the remaining {selectedBooking.dueAtPickupLabel} rental balance before pickup.</Text>
+                    <TouchableOpacity style={styles.paymentButton} onPress={() => void openRentalPayment("balance")} disabled={busy}>
+                      <Text style={styles.paymentButtonText}>{busy ? "Opening Stripe..." : `Pay remaining ${selectedBooking.dueAtPickupLabel}`}</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+                {selectedBooking.paymentStatus === "PAID" ? (
+                  <Text style={styles.paymentCopy}>Rental payment is complete. The refundable deposit is a card authorization—not an additional rental charge.</Text>
+                ) : null}
+                {selectedBooking.depositStatus === "AUTHORIZED" ? (
+                  <View style={styles.depositReady}>
+                    <Text style={styles.depositReadyTitle}>Deposit authorized</Text>
+                    <Text style={styles.paymentCopy}>The {`$${Number(selectedBooking.depositAmount || 250).toFixed(2)}`} hold will be reviewed and released after an approved return.</Text>
+                  </View>
+                ) : selectedBooking.paymentStatus === "PAID" ? (
+                  <TouchableOpacity style={styles.depositButton} onPress={() => void openRentalPayment("deposit")} disabled={busy}>
+                    <Text style={styles.depositButtonText}>{busy ? "Opening Stripe..." : `Authorize refundable $${Number(selectedBooking.depositAmount || 250).toFixed(2)} deposit`}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.depositLocked}>Deposit authorization becomes available after the rental balance is paid in full.</Text>
+                )}
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -518,6 +580,7 @@ export function ServicesScreen({
                     <AmountPill label="Selected vehicle" value={selectedUpgrade?.name || selectedBooking.carName} />
                     <AmountPill label="Estimated price" value={estimatedPrice} />
                   </View>
+                  <Text style={styles.detailsLine}>Submitting a modification does not immediately charge or refund your card. FairFares reviews availability and any price difference before confirming the change.</Text>
                   <InputField label="Notes for FairFares" value={modifyNote} onChangeText={setModifyNote} multiline placeholder="Tell us what changed." />
                   <View style={styles.inlineActions}>
                     <SecondaryButton label="Reset changes" onPress={() => {
@@ -542,7 +605,7 @@ export function ServicesScreen({
                 <>
                   <View style={styles.greenNote}>
                     <Text style={styles.greenNoteTitle}>Cancellation approval required</Text>
-                    <Text style={styles.greenNoteBody}>Admin will review your request and confirm refund details.</Text>
+                    <Text style={styles.greenNoteBody}>Eligible refunds return only to the original Stripe payment method. Any authorized security-deposit hold is released after cancellation is approved.</Text>
                   </View>
                   <Summary booking={selectedBooking} />
                   <Text style={styles.fieldLabel}>Cancellation reason</Text>
@@ -553,13 +616,9 @@ export function ServicesScreen({
                       </TouchableOpacity>
                     ))}
                   </View>
-                  <Text style={styles.fieldLabel}>Refund method</Text>
-                  <View style={styles.chipWrap}>
-                    {["Original payment method", "FairFares travel credit"].map((method) => (
-                      <TouchableOpacity key={method} style={[styles.choiceChip, refundMethod === method && styles.activeChoiceChip]} onPress={() => setRefundMethod(method)}>
-                        <Text style={[styles.choiceChipText, refundMethod === method && styles.activeChoiceChipText]}>{method}</Text>
-                      </TouchableOpacity>
-                    ))}
+                  <Text style={styles.fieldLabel}>Refund destination</Text>
+                  <View style={[styles.choiceChip, styles.activeChoiceChip]}>
+                    <Text style={[styles.choiceChipText, styles.activeChoiceChipText]}>Original Stripe payment method</Text>
                   </View>
                   <InputField label="Optional note" value={cancelNote} onChangeText={setCancelNote} multiline placeholder="Add details for support" />
                   <View style={styles.refundBox}>
@@ -1146,6 +1205,20 @@ const styles = StyleSheet.create({
     shadowColor: theme.colors.accent,
     shadowOpacity: 0.52
   },
+  paymentCard: { marginTop: 16, borderRadius: 22, borderWidth: 1, borderColor: "rgba(80,124,255,0.45)", backgroundColor: "#101827", padding: 16, gap: 12 },
+  paymentHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  paymentHeaderCopy: { flex: 1, gap: 4 },
+  paymentEyebrow: { color: "#8fb0ff", fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
+  paymentTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" },
+  paymentAmount: { color: "#4ade80", fontSize: 17, fontWeight: "800" },
+  paymentCopy: { color: theme.colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 19 },
+  paymentButton: { minHeight: 48, borderRadius: 15, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  paymentButtonText: { color: "#fff", fontSize: 14, fontWeight: "800", textAlign: "center" },
+  depositButton: { minHeight: 48, borderRadius: 15, borderWidth: 1, borderColor: "#4ade80", backgroundColor: "rgba(34,197,94,0.10)", alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  depositButtonText: { color: "#86efac", fontSize: 14, fontWeight: "800", textAlign: "center" },
+  depositLocked: { color: "#aab2c0", fontSize: 12, fontWeight: "600", lineHeight: 18 },
+  depositReady: { borderRadius: 15, backgroundColor: "rgba(34,197,94,0.12)", padding: 12, gap: 4 },
+  depositReadyTitle: { color: "#86efac", fontSize: 14, fontWeight: "800" },
   actionIcon: {
     width: 36,
     height: 36

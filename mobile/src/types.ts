@@ -112,6 +112,12 @@ export type ChatMessage = {
     decryptedDataUrl?: string;
     encryptedKeyPayload?: string;
     caption?: string;
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number;
+    expiresAt?: string;
+    live?: boolean;
+    stopped?: boolean;
   };
   contextType?: "HOUSING" | "CARPOOL" | string;
   contextId?: string;
@@ -125,7 +131,7 @@ export type ChatMessage = {
   editedAt: string;
   deletedAt: string;
   canEdit: boolean;
-  status: "pending" | "failed" | "sent" | "delivered" | "seen" | "";
+  status: "pending" | "relayed" | "failed" | "sent" | "delivered" | "seen" | "";
   localClientMessageId?: string;
 };
 
@@ -344,12 +350,15 @@ export type RentalBooking = {
   savings: number;
   status: string;
   paymentStatus: string;
+  depositStatus?: string;
+  depositAmount?: number;
   holdRemainingSeconds: number;
 };
 
 export type RentalServiceBooking = RentalBooking & {
   statusLabel: string;
   paymentLabel: string;
+  depositLabel?: string;
   totalLabel: string;
   dueNowLabel: string;
   dueAtPickupLabel: string;

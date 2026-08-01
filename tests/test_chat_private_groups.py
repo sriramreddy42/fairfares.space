@@ -155,14 +155,29 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertEqual(roles[self.owner], "MEMBER")
         self.assertFalse(app.update_chat_group_member(group["id"], self.owner, self.owner, "LEAVE"))
 
+    def test_member_who_leaves_cannot_list_or_reopen_group_messages(self):
+        group = self.create_group()
+        token, _ = app.create_chat_group_invite(group["id"], self.owner)
+        app.join_chat_group_by_invite(token, self.member)
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+            conversation_public_id = conversation["public_id"]
+        self.assertTrue(any(row["id"] == conversation_public_id for row in app.get_chat_conversations_for_user(self.member)))
+        self.assertFalse(app.update_chat_group_member(group["id"], self.member, self.member, "LEAVE"))
+        self.assertFalse(any(row["id"] == conversation_public_id for row in app.get_chat_conversations_for_user(self.member)))
+        with app.db() as con:
+            self.assertIsNone(app.get_chat_conversation_by_public_id(con, conversation_public_id, self.member))
+
     def test_encrypted_message_stores_only_placeholder_and_per_device_envelopes(self):
         with app.db() as con:
             con.execute("INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('CHAT-E2EE', 'DIRECT', 'Secure chat')")
             conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, self.owner))
             con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, self.member))
-        owner_key = "A" * 44
-        member_key = "B" * 44
+        owner_key = base64.b64encode(b"A" * 32).decode("ascii")
+        member_key = base64.b64encode(b"B" * 32).decode("ascii")
         self.assertFalse(app.register_chat_device_key(self.owner, "owner-device-01", owner_key))
         self.assertFalse(app.register_chat_device_key(self.member, "member-device-01", member_key))
         with app.db() as con:
@@ -177,16 +192,27 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             self.assertNotIn("secret words", message["message_text"])
             stored = con.execute("SELECT * FROM chat_message_envelopes WHERE message_id = ?", (message["id"],)).fetchall()
             self.assertEqual(len(stored), 2)
-            rejected, error = app.save_encrypted_chat_message(con, conversation, owner, [{**item, "senderPublicKey": "X" * 44} for item in envelopes], "encrypted-2")
+            unregistered_key = base64.b64encode(b"X" * 32).decode("ascii")
+            rejected, error = app.save_encrypted_chat_message(con, conversation, owner, [{**item, "senderPublicKey": unregistered_key} for item in envelopes], "encrypted-2")
             self.assertIsNone(rejected)
             self.assertIn("sender", error.lower())
+
+    def test_device_key_registration_rejects_malformed_curve_key(self):
+        malformed = base64.b64encode(b"too short").decode("ascii")
+        error = app.register_chat_device_key(self.owner, "owner-device-invalid", malformed)
+        self.assertIn("valid device key", error.lower())
+        with app.db() as con:
+            self.assertFalse(con.execute(
+                "SELECT 1 FROM chat_device_keys WHERE user_id = ? AND device_id = ?",
+                (self.owner, "owner-device-invalid"),
+            ).fetchone())
 
     def test_removed_group_member_is_excluded_from_future_device_envelopes(self):
         group = self.create_group()
         token, _ = app.create_chat_group_invite(group["id"], self.owner)
         app.join_chat_group_by_invite(token, self.member)
-        app.register_chat_device_key(self.owner, "owner-rotation-device", "A" * 44)
-        app.register_chat_device_key(self.member, "member-rotation-device", "B" * 44)
+        app.register_chat_device_key(self.owner, "owner-rotation-device", base64.b64encode(b"A" * 32).decode("ascii"))
+        app.register_chat_device_key(self.member, "member-rotation-device", base64.b64encode(b"B" * 32).decode("ascii"))
         with app.db() as con:
             owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
             conversation, _ = app.get_or_create_community_conversation(con, group["id"], owner)
@@ -201,6 +227,33 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNone(denied)
         self.assertIn("not found", error.lower())
 
+    def test_unkeyed_member_does_not_freeze_encrypted_group_messaging(self):
+        group = self.create_group()
+        token, _ = app.create_chat_group_invite(group["id"], self.owner)
+        app.join_chat_group_by_invite(token, self.member)
+        owner_key = base64.b64encode(b"A" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.owner, "owner-group-device", owner_key))
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        self.assertFalse(warning)
+        self.assertEqual({item["userId"] for item in keys}, {self.owner})
+        with app.db() as con:
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE public_id = ?", (conversation["public_id"],)).fetchone()
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            envelopes = [{
+                "recipientUserId": self.owner,
+                "recipientDeviceId": "owner-group-device",
+                "senderPublicKey": owner_key,
+                "nonce": "group-nonce",
+                "ciphertext": "group-ciphertext",
+            }]
+            message, error = app.save_encrypted_chat_message(con, conversation, owner, envelopes, "group-message-1")
+            self.assertFalse(error)
+            self.assertIsNotNone(message)
+
     def test_signed_relay_rejects_tampering_expiry_and_duplicates(self):
         group = self.create_group()
         signing_key = Ed25519PrivateKey.generate()
@@ -208,7 +261,7 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )).decode()
-        sender_box_key = "A" * 44
+        sender_box_key = base64.b64encode(b"A" * 32).decode("ascii")
         self.assertFalse(app.register_chat_device_key(self.owner, "owner-relay-device", sender_box_key, signing_public))
         with app.db() as con:
             owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()

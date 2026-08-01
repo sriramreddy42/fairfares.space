@@ -28,13 +28,18 @@ class ChatRealtimeTest(unittest.TestCase):
         os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
         app.refresh_storage_paths()
         app.init_db()
+        with app._CHAT_TYPING_LOCK:
+            app._CHAT_TYPING.clear()
         with app.db() as con:
             con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Sender', 'sender@realtime.test', 'x', 1)")
             self.sender_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Recipient', 'recipient@realtime.test', 'x', 1)")
             self.recipient_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Outsider', 'outsider@realtime.test', 'x', 1)")
+            self.outsider_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute("INSERT INTO sessions (token, user_id) VALUES ('sender-token', ?)", (self.sender_id,))
             con.execute("INSERT INTO sessions (token, user_id) VALUES ('recipient-token', ?)", (self.recipient_id,))
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('outsider-token', ?)", (self.outsider_id,))
             con.execute("INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('CHAT-REALTIME', 'DIRECT', 'Realtime test')")
             self.conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (self.conversation_id, self.sender_id))
@@ -50,6 +55,8 @@ class ChatRealtimeTest(unittest.TestCase):
         else:
             os.environ["FAIRFARES_SEED_DEFAULTS"] = self.old_seed
         app.refresh_storage_paths()
+        with app._CHAT_TYPING_LOCK:
+            app._CHAT_TYPING.clear()
         self.temp_dir.cleanup()
 
     def start_server(self):
@@ -93,6 +100,69 @@ class ChatRealtimeTest(unittest.TestCase):
             _, sender_view = self.event_request(server, "sender-token", message_id)
             receipt = next(row for row in sender_view["receipts"] if row["id"] == message_id)
             self.assertEqual(receipt["status"], "seen")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_typing_status_is_authorized_visible_and_stoppable(self):
+        server, thread = self.start_server()
+        try:
+            typing_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "active": True}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(typing_request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+
+            _, recipient_view = self.event_request(server, "recipient-token")
+            self.assertEqual(recipient_view["typing"], [{"userId": self.sender_id, "name": "Sender"}])
+            _, sender_view = self.event_request(server, "sender-token")
+            self.assertEqual(sender_view["typing"], [])
+
+            stop_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "active": False}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(stop_request, timeout=3).close()
+            _, stopped_view = self.event_request(server, "recipient-token")
+            self.assertEqual(stopped_view["typing"], [])
+
+            malformed_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "active": "false"}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(malformed_request, timeout=3) as response:
+                malformed_payload = json.loads(response.read().decode("utf-8"))
+            self.assertFalse(malformed_payload["active"])
+            _, malformed_view = self.event_request(server, "recipient-token")
+            self.assertEqual(malformed_view["typing"], [])
+
+            outsider_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "active": True}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer outsider-token", "Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as outsider_error:
+                urllib.request.urlopen(outsider_request, timeout=3)
+            self.assertEqual(outsider_error.exception.code, 404)
+
+            unauthorized = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "active": True}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(unauthorized, timeout=3)
+            self.assertEqual(error.exception.code, 401)
         finally:
             server.shutdown()
             server.server_close()
@@ -299,7 +369,8 @@ class ChatRealtimeTest(unittest.TestCase):
             thread.join(timeout=3)
 
     def test_encrypted_attachment_and_recovery_backup_never_store_plaintext(self):
-        sender_key, recipient_key = "A" * 44, "B" * 44
+        sender_key = base64.b64encode(b"A" * 32).decode("ascii")
+        recipient_key = base64.b64encode(b"B" * 32).decode("ascii")
         app.register_chat_device_key(self.sender_id, "sender-device-01", sender_key)
         app.register_chat_device_key(self.recipient_id, "recipient-device-01", recipient_key)
         server, thread = self.start_server()

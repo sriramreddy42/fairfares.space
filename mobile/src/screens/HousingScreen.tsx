@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -1265,7 +1266,7 @@ export function HousingScreen({
     const trackerTitle = rideOwnerOpenTarget === "listings" ? "Your listings" : rideOwnerOpenTarget === "requests" ? "Rider requests" : "Request tracker";
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
-        <View style={styles.rideOwnerScreen}>
+        <SafeAreaView style={styles.rideOwnerScreen} edges={["top", "right", "bottom", "left"]}>
           <ScrollView ref={rideOwnerScrollRef} contentContainerStyle={styles.rideOwnerContent} showsVerticalScrollIndicator={false}>
             <View style={styles.rideOwnerHeader}>
               <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRideOwnerTracker}>
@@ -1488,7 +1489,7 @@ export function HousingScreen({
               )}
             </View>
           </ScrollView>
-        </View>
+        </SafeAreaView>
       </Modal>
     );
   }

@@ -200,13 +200,15 @@ body {
 
 @media (max-width: 760px) {
   body {
-    padding-bottom: max(66px, calc(env(safe-area-inset-bottom) + 66px));
+    padding-bottom: max(108px, calc(env(safe-area-inset-bottom) + 108px));
   }
 
   .fairfares-fixed-footer {
-    gap: 10px;
-    min-height: 58px;
-    overflow-x: auto;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 96px;
+    overflow-x: hidden;
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   }
 
@@ -214,10 +216,14 @@ body {
   .fairfares-fixed-footer button {
     background: rgba(255, 255, 255, 0.06);
     border-radius: 999px;
-    flex: 0 0 auto;
-    font-size: 0.84rem;
+    font-size: 0.78rem;
+    justify-content: center;
     min-height: 36px;
     padding: 8px 12px;
+    overflow-wrap: anywhere;
+    text-align: center;
+    white-space: normal;
+    width: 100%;
   }
 
   .app-feedback-widget {

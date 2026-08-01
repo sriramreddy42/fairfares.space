@@ -120,10 +120,21 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn('query.get("booking_id", [""])[0]', source)
         self.assertIn("get_booking_for_user_by_identifier(user[\"id\"], booking_identifier)", source)
         self.assertIn("Active and past trips", source)
-        self.assertIn("is_returned_booking", source)
+        self.assertIn("booking_is_immutable", source)
         self.assertIn("$booking_history_cards", template)
         self.assertIn("$mutable_booking_link_class", template)
         self.assertIn('name="booking_id" value="$selected_booking_identifier"', template)
+
+    def test_website_cancellation_targets_selected_booking_and_original_payment_method(self):
+        server_source = Path("app.py").read_text()
+        client_source = Path("static/js/app.js").read_text()
+        template = Path("templates/dashboard.html").read_text()
+        self.assertIn('payload.set("booking_id", cancelForm.querySelector', client_source)
+        self.assertIn('payload.set("refund_method", "Original payment method")', client_source)
+        self.assertIn('get_booking_for_user_by_identifier(user["id"], form.get("booking_id"))', server_source)
+        self.assertIn("Refunds can only return to the original Stripe payment method.", server_source)
+        self.assertIn("original Stripe payment method", template)
+        self.assertNotIn("FairFares travel credit", template)
 
     def test_search_hides_cars_when_requested_window_overlaps_booking(self):
         server_source = Path("app.py").read_text()
@@ -774,6 +785,53 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(deposit_transaction["transaction_status"], "SECURITY_DEPOSIT_AUTHORIZED")
         self.assertAlmostEqual(float(deposit_transaction["amount"]), app.SECURITY_DEPOSIT_AMOUNT)
         self.assertIn("Release after vehicle return review", deposit_transaction["billing_verification_notes"])
+
+    def test_approved_cancellation_releases_authorized_deposit_and_audits_transaction(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+        app.record_security_deposit_authorization(
+            {
+                "id": "pi_cancelled_deposit",
+                "amount_capturable": 25000,
+                "metadata": {
+                    "payment_option": "security_deposit",
+                    "booking_id": str(booking["id"]),
+                    "public_booking_id": booking["booking_id"],
+                    "user_id": str(self.user_id),
+                },
+            }
+        )
+        authorized = app.get_booking_by_id(int(booking["id"]))
+
+        with patch.object(
+            app,
+            "stripe_api_request",
+            return_value=({"id": "pi_cancelled_deposit", "status": "canceled"}, "ok"),
+        ) as stripe_request, patch.object(app, "send_rental_booking_push"):
+            released, message = app.release_security_deposit_after_cancellation(authorized)
+
+        self.assertTrue(released)
+        self.assertEqual(message, "pi_cancelled_deposit")
+        path, params = stripe_request.call_args.args[:2]
+        self.assertEqual(path, "payment_intents/pi_cancelled_deposit/cancel")
+        self.assertEqual(params["cancellation_reason"], "requested_by_customer")
+        with app.db() as con:
+            refreshed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            transaction = con.execute(
+                "SELECT * FROM transactions WHERE invoice_number = 'pi_cancelled_deposit'"
+            ).fetchone()
+        self.assertEqual(refreshed["security_deposit_status"], "RELEASED")
+        self.assertEqual(transaction["transaction_status"], "SECURITY_DEPOSIT_RELEASED")
+        self.assertEqual(transaction["billing_verification_status"], "RELEASED")
+
+    def test_cancellation_deposit_release_is_idempotent_when_no_authorization_exists(self):
+        released, message = app.release_security_deposit_after_cancellation(
+            {"id": 123, "security_deposit_status": "NOT_AUTHORIZED"}
+        )
+        self.assertTrue(released)
+        self.assertIn("No authorized", message)
 
     def test_security_deposit_rejects_paid_booking_under_modification_review(self):
         car = app.get_cars()[0]

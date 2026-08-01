@@ -141,7 +141,6 @@ export function ProfileScreen({
   const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
   const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
-    ...(user?.isAdmin ? [{ title: "Staff Pickup", copy: "Confirmed rentals and secure deposit checkout", glyph: "◉", onPress: onOpenStaffPickup }] : []),
     { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.serviceHome, onPress: onOpenHousing },
     { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenRide },
     { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },

@@ -158,14 +158,14 @@
           <p>Submit a cancellation request for admin approval</p>
           <form class="workflow-form" id="cancelForm">
             <input type="hidden" name="booking_id" value="$selected_booking_identifier">
-            <div class="green-note"><b>Cancellation approval required</b><br>Admin will review your request and confirm refund details.</div>
-            <div class="modify-grid two">
+            <div class="green-note"><b>Secure cancellation review</b><br>Eligible early cancellations process automatically. Other requests are reviewed before any refund or deposit release is confirmed.</div>
+            <div class="modify-grid">
               <label><span>Cancellation Reason</span><select id="cancelReason" required><option value="">Choose reason</option><option>Plans changed</option><option>Found a better price</option><option>Need a different vehicle</option><option>Booked by mistake</option></select></label>
-              <label><span>Refund Method</span><select id="refundMethod"><option>Original payment method</option><option>FairFares travel credit</option></select></label>
             </div>
+            <div class="green-note"><b>Refund destination</b><br>Eligible refunds return only to the original Stripe payment method. An authorized security-deposit hold is released after cancellation approval.</div>
             <label><span>Optional Note</span><textarea id="cancelNote" rows="3" placeholder="Add details for support"></textarea></label>
             <div class="refund-box"><span>Refund Amount (Est.)</span><strong>$cancel_refund_amount</strong><small id="refundTimeline" data-default-note="$cancel_refund_note">$cancel_refund_note</small></div>
-            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this sends the selected booking to admin for cancellation approval.</label>
+            <label class="toggle-row"><input id="cancelConfirm" type="checkbox" required> I understand this cancellation may process automatically when eligible or be sent for staff approval.</label>
             <div class="modify-actions">
               <button type="reset" class="light-button">Keep Booking</button>
               <button type="submit">Submit Request</button>

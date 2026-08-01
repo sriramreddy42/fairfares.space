@@ -18,6 +18,7 @@ import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 import { pickCompressedImages } from "./src/utils/imageUpload";
+import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -918,10 +919,29 @@ function FairFaresApp() {
   async function submitSignup() {
     if (authBusy) return;
     setAuthMessage("");
+    const cleanName = signupName.trim().replace(/\s+/g, " ");
+    const cleanEmail = identifier.trim().toLowerCase();
+    const phoneDigits = signupPhone.replace(/\D/g, "");
+    if (cleanName.length < 2) {
+      setAuthMessage("Enter your full name.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setAuthMessage("Enter a valid email address.");
+      return;
+    }
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setAuthMessage("Enter a valid phone number, including country code when applicable.");
+      return;
+    }
+    if (password.length < 8) {
+      setAuthMessage("Create a password with at least 8 characters.");
+      return;
+    }
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(signupName, identifier, signupPhone, password, signupPhoneDiscoverable);
+      const payload = await mobileSignup(cleanName, cleanEmail, signupPhone.trim(), password, signupPhoneDiscoverable);
       if (!payload.activationRequired && payload.token && payload.user) {
         await syncChatIdentityRecovery(Number(payload.user.id || 0), password).catch(() => undefined);
       }
@@ -1153,6 +1173,7 @@ function FairFaresApp() {
     );
 
   return (
+    <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView style={styles.safe} edges={["top", "right", "bottom", "left"]}>
       <StatusBar style="light" backgroundColor={theme.colors.bg} translucent={false} />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
@@ -1219,8 +1240,14 @@ function FairFaresApp() {
         </Animated.View>
       ) : null}
       <Modal visible={loginOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setLoginOpen(false)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={styles.modalCard}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <ScrollView
+            style={styles.authModalScroll}
+            contentContainerStyle={styles.modalCard}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
             <Text style={styles.modalCopy}>
               {authMode === "login"
@@ -1233,6 +1260,9 @@ function FairFaresApp() {
                 onChangeText={setSignupName}
                 placeholder="Full name"
                 placeholderTextColor={theme.colors.muted}
+                autoCapitalize="words"
+                autoComplete="name"
+                accessibilityLabel="Full name"
                 style={styles.input}
               />
             ) : null}
@@ -1242,6 +1272,10 @@ function FairFaresApp() {
               placeholder={authMode === "login" ? "Email or phone" : "Email"}
               placeholderTextColor={theme.colors.muted}
               autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType={authMode === "signup" ? "email-address" : "default"}
+              autoComplete={authMode === "signup" ? "email" : "username"}
+              accessibilityLabel={authMode === "login" ? "Email or phone" : "Email address"}
               style={styles.input}
             />
             {authMode === "signup" ? (
@@ -1252,6 +1286,8 @@ function FairFaresApp() {
                   placeholder="Phone number"
                   placeholderTextColor={theme.colors.muted}
                   keyboardType="phone-pad"
+                  autoComplete="tel"
+                  accessibilityLabel="Phone number"
                   style={styles.input}
                 />
                 <View style={styles.signupDiscoveryRow}>
@@ -1259,7 +1295,7 @@ function FairFaresApp() {
                     <Text style={styles.signupDiscoveryTitle}>Let contacts find me</Text>
                     <Text style={styles.signupDiscoveryText}>People who already have your exact number can find you in FChat. Your number is never displayed.</Text>
                   </View>
-                  <Switch value={signupPhoneDiscoverable} onValueChange={setSignupPhoneDiscoverable} />
+                  <Switch value={signupPhoneDiscoverable} onValueChange={setSignupPhoneDiscoverable} accessibilityLabel="Let contacts find me by exact phone number" />
                 </View>
               </>
             ) : null}
@@ -1269,13 +1305,18 @@ function FairFaresApp() {
               placeholder="Password"
               placeholderTextColor={theme.colors.muted}
               secureTextEntry
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              accessibilityLabel="Password"
               style={styles.input}
             />
+            {authMode === "signup" ? <Text style={styles.authHint}>Use at least 8 characters. You must activate the account from the email we send.</Text> : null}
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
             <TouchableOpacity
               style={[styles.primaryButton, authBusy && styles.disabledButton]}
               onPress={authMode === "login" ? submitLogin : submitSignup}
               disabled={authBusy}
+              accessibilityRole="button"
+              accessibilityLabel={authMode === "login" ? "Log in" : "Create account"}
             >
               <Text style={styles.primaryButtonText}>
                 {authBusy ? (authMode === "login" ? "Signing in..." : "Creating...") : authMode === "login" ? "Login" : "Sign up"}
@@ -1298,7 +1339,7 @@ function FairFaresApp() {
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setLoginOpen(false)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={Boolean(paymentUrl)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentUrl("")}>
@@ -1590,6 +1631,7 @@ function FairFaresApp() {
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
+    </NearbyRelayProvider>
   );
 }
 
@@ -1616,7 +1658,8 @@ const styles = StyleSheet.create({
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
-  modalCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
+  authModalScroll: { width: "100%", maxWidth: 560, maxHeight: "88%", alignSelf: "center" },
+  modalCard: { backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
   searchModalCard: { height: "90%", maxHeight: "90%", paddingBottom: theme.spacing.md },
   searchModalScroll: { flex: 1 },
   searchModalContent: { gap: 14, paddingBottom: 20 },
@@ -1677,6 +1720,7 @@ const styles = StyleSheet.create({
   chipText: { color: theme.colors.text, fontWeight: "800" },
   chipTextActive: { color: theme.colors.bg },
   authMessage: { color: theme.colors.soft, fontWeight: "900", lineHeight: 20 },
+  authHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginTop: -6 },
   suggestionPanel: { gap: 6 },
   suggestionList: { maxHeight: 96 },
   suggestionListContent: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 4 },

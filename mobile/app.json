@@ -3,7 +3,7 @@
     "name": "FairFares",
     "slug": "fairfares-mobile",
     "scheme": "fairfares",
-    "version": "0.1.2",
+    "version": "0.1.4",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -15,16 +15,23 @@
       "bundleIdentifier": "com.fairfares.mobile",
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance."
+        "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
+        "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in FChat.",
+        "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in FChat."
       }
     },
     "android": {
       "package": "com.fairfares.mobile",
-      "versionCode": 3,
+      "versionCode": 5,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "BLUETOOTH_ADVERTISE",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "NEARBY_WIFI_DEVICES",
         "POST_NOTIFICATIONS",
         "READ_CONTACTS"
       ],
@@ -39,13 +46,26 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-location",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in FChat."
+        }
+      ],
       "expo-notifications",
       "expo-secure-store",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow FairFares to select photos and videos that you choose to send in FChat.",
+          "cameraPermission": "Allow FairFares to take a photo that you choose to send in FChat.",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-contacts",
         {
-          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable. Contact names and your address book are not uploaded."
+          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in FChat. Your address book is not uploaded."
         }
       ]
     ],
