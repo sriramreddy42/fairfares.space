@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
+import { BlurView } from "expo-blur";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
@@ -506,8 +507,10 @@ export function HousingScreen({
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
   const rideOwnerScrollRef = useRef<ScrollView | null>(null);
+  const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
+
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
@@ -687,6 +690,8 @@ export function HousingScreen({
   }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
 
   function updateScrollVisibility(y: number) {
+    const nextSearchIsScrolled = y > 8;
+    setSearchIsScrolled((current) => current === nextSearchIsScrolled ? current : nextSearchIsScrolled);
     const previous = lastScrollYRef.current;
     if (Math.abs(y - previous) < 18) return;
     onBottomTabsHiddenChange?.(y > previous && y > 80);
@@ -2769,7 +2774,23 @@ export function HousingScreen({
           </View>
         </View>
 
-        <View style={styles.stickySearch}>
+        <View style={[styles.stickySearch, searchIsScrolled && styles.stickySearchRaised]}>
+          <BlurView
+            pointerEvents="none"
+            tint="dark"
+            intensity={searchIsScrolled ? 62 : 18}
+            experimentalBlurMethod="dimezisBlurView"
+            style={styles.stickySearchBlur}
+          />
+          {searchIsScrolled ? (
+            <BlurView
+              pointerEvents="none"
+              tint="dark"
+              intensity={34}
+              experimentalBlurMethod="dimezisBlurView"
+              style={styles.stickySearchUnderBlur}
+            />
+          ) : null}
           <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
             <Text style={styles.searchText} numberOfLines={1}>{searchBarText}</Text>
@@ -3121,8 +3142,11 @@ const styles = StyleSheet.create({
     padding: 2
   },
   topTagHole: { width: 4, height: 4, borderRadius: 2 },
-  stickySearch: { backgroundColor: theme.colors.bg, paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
+  stickySearch: { backgroundColor: "rgba(10,10,12,0.68)", paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line, overflow: "visible", zIndex: 20 },
+  stickySearchRaised: { borderBottomColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 9 },
+  stickySearchBlur: { ...StyleSheet.absoluteFillObject },
+  stickySearchUnderBlur: { position: "absolute", left: 0, right: 0, bottom: -16, height: 18, opacity: 0.72 },
+  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9, overflow: "hidden" },
   searchIcon: { width: 23, height: 23 },
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 15, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 11, paddingVertical: 7, fontWeight: "900", fontSize: 13 },
@@ -3920,7 +3944,7 @@ const styles = StyleSheet.create({
   rideOwnerOfferTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "700" },
   rideOwnerOfferSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "500", marginTop: 2 },
   rideOwnerScreen: { flex: 1, backgroundColor: "#101010" },
-  rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingTop: 18, paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
+  rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingTop: Platform.OS === "android" ? 44 : 18, paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
   rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 1 },

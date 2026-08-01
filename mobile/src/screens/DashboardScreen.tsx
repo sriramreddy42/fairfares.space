@@ -450,10 +450,10 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       </View>
 
       {refreshError ? (
-        <TouchableOpacity style={styles.warningCard} onPress={onOpenServices}>
-          <Text style={styles.warningTitle}>Some activity could not refresh</Text>
-          <Text style={styles.warningCopy}>{refreshError}</Text>
-        </TouchableOpacity>
+        <View style={styles.syncNotice} accessibilityLiveRegion="polite">
+          <Text style={styles.syncNoticeDot}>•</Text>
+          <Text style={styles.syncNoticeText}>Activity is syncing. Existing information remains available.</Text>
+        </View>
       ) : null}
 
       <View style={styles.sectionHeader}>
@@ -620,9 +620,9 @@ const styles = StyleSheet.create({
   roleBadge: { color: theme.colors.text, backgroundColor: "rgba(59,130,246,0.25)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontWeight: "900", fontSize: 12 },
   requestBadge: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(34,197,94,0.25)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 3, overflow: "hidden", fontWeight: "500", fontSize: 10 },
   expiredBadge: { backgroundColor: "rgba(148,163,184,0.18)", color: theme.colors.muted },
-  warningCard: { backgroundColor: "#221914", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "#6b3b20", padding: theme.spacing.md },
-  warningTitle: { color: theme.colors.warning, fontWeight: "900", fontSize: 16 },
-  warningCopy: { color: theme.colors.soft, marginTop: 6, fontWeight: "700", lineHeight: 20 },
+  syncNotice: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 4, paddingVertical: 3 },
+  syncNoticeDot: { color: "#f3ad4f", fontSize: 20, lineHeight: 20 },
+  syncNoticeText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "500", flex: 1 },
   filterButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   filterText: { color: theme.colors.text, fontWeight: "900", fontSize: 20 },
   pastFeature: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 3 },

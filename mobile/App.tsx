@@ -1386,7 +1386,12 @@ function FairFaresApp() {
       <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView style={[styles.modalCard, styles.listingModalCard]} contentContainerStyle={styles.listingForm} keyboardShouldPersistTaps="handled">
-            <Text style={styles.modalTitle}>List room / property</Text>
+            <View style={styles.modalHeaderRow}>
+              <TouchableOpacity style={styles.modalBackButton} onPress={() => setListingOpen(false)} accessibilityRole="button" accessibilityLabel="Back">
+                <Text style={styles.modalBackGlyph}>‹</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>List room / property</Text>
+            </View>
             <Text style={styles.modalCopy}>This saves to the same FairFares housing database and expires in 30 days.</Text>
             {renderFormSection(
               "Your need",
@@ -1557,7 +1562,12 @@ function FairFaresApp() {
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={[styles.modalCard, styles.searchModalCard]}>
             <ScrollView style={styles.searchModalScroll} contentContainerStyle={styles.searchModalContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>Search housing</Text>
+              <View style={styles.modalHeaderRow}>
+                <TouchableOpacity style={styles.modalBackButton} onPress={() => setSearchOpen(false)} accessibilityRole="button" accessibilityLabel="Back">
+                  <Text style={styles.modalBackGlyph}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Search housing</Text>
+              </View>
               <Text style={styles.modalCopy}>Enter a metro city, then narrow results by neighborhood, building, campus, or nearby landmark.</Text>
               <View style={styles.miniGroup}>
                 <Text style={styles.miniLabel}>What are you looking for?</Text>
@@ -1667,6 +1677,9 @@ const styles = StyleSheet.create({
   listingModalCard: { maxHeight: "94%" },
   listingForm: { width: "100%", maxWidth: "100%", alignSelf: "stretch", gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
   modalTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700" },
+  modalHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 42 },
+  modalBackButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },
+  modalBackGlyph: { color: theme.colors.text, fontSize: 34, lineHeight: 36, fontWeight: "400", marginTop: -2 },
   modalCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
   signupDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   signupDiscoveryCopy: { flex: 1, minWidth: 0 },
