@@ -682,10 +682,10 @@ export async function sendEncryptedChatMessage(conversationId: string, envelopes
   });
 }
 
-export async function sendEncryptedChatAttachment(conversationId: string, ciphertextBase64: string, envelopes: Array<Record<string, unknown>>) {
+export async function sendEncryptedChatAttachment(conversationId: string, ciphertextBase64: string, envelopes: Array<Record<string, unknown>>, silent = false) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, ciphertextBase64, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+    body: JSON.stringify({ conversationId, ciphertextBase64, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent })
   });
 }
 
@@ -770,11 +770,11 @@ export async function voteChatPoll(messageId: number, optionIndex: number) {
   });
 }
 
-export async function editChatMessage(conversationId: string, messageId: number, message: string) {
+export async function editChatMessage(conversationId: string, messageId: number, envelopes: Array<Record<string, unknown>>) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages/edit", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ conversation_id: conversationId, message_id: String(messageId), message })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, messageId, envelopes })
   });
 }
 
@@ -818,11 +818,19 @@ export async function blockChatUser(conversationId: string, targetUserId: number
   });
 }
 
-export async function createChatCommunity(name: string, kind: "GROUP" | "COMMUNITY", description: string, area: string) {
+export async function createChatCommunity(name: string, kind: "GROUP" | "COMMUNITY", description: string, area: string, photo = "") {
   return request<{ ok: boolean; community: Community }>("/api/chat/communities", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ name, kind, description, area })
+    body: formBody({ name, kind, description, area, photo })
+  });
+}
+
+export async function updateChatGroupPhoto(communityId: string, photo: string) {
+  return request<{ ok: boolean; community: Community }>("/api/chat/groups/photo", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, photo })
   });
 }
 

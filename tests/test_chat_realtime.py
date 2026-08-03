@@ -209,6 +209,64 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_sender_can_replace_encrypted_message_envelopes_without_exposing_plaintext(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'sender-device', 'sender-public-key')",
+                (self.sender_id,),
+            )
+            con.execute(
+                "INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'recipient-device', 'recipient-public-key')",
+                (self.recipient_id,),
+            )
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            original_envelopes = [
+                {"recipientUserId": self.sender_id, "recipientDeviceId": "sender-device", "senderPublicKey": "sender-public-key", "nonce": "old-a", "ciphertext": "old-sender"},
+                {"recipientUserId": self.recipient_id, "recipientDeviceId": "recipient-device", "senderPublicKey": "sender-public-key", "nonce": "old-b", "ciphertext": "old-recipient"},
+            ]
+            message, error = app.save_encrypted_chat_message(con, con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone(), sender, original_envelopes, "editable-1")
+            self.assertEqual(error, "")
+            message_id = int(message["id"])
+
+        replacement_envelopes = [
+            {"recipientUserId": self.sender_id, "recipientDeviceId": "sender-device", "senderPublicKey": "sender-public-key", "nonce": "new-a", "ciphertext": "new-sender"},
+            {"recipientUserId": self.recipient_id, "recipientDeviceId": "recipient-device", "senderPublicKey": "sender-public-key", "nonce": "new-b", "ciphertext": "new-recipient"},
+        ]
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/messages/edit",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "messageId": message_id, "envelopes": replacement_envelopes}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(payload["message"]["editedAt"])
+            self.assertTrue(payload["message"]["canEdit"])
+
+            with app.db() as con:
+                stored = con.execute("SELECT message_text, edited_at FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
+                envelopes = con.execute("SELECT nonce, ciphertext FROM chat_message_envelopes WHERE message_id = ? ORDER BY recipient_user_id", (message_id,)).fetchall()
+            self.assertEqual(stored["message_text"], "🔒 End-to-end encrypted message")
+            self.assertTrue(stored["edited_at"])
+            self.assertEqual({(row["nonce"], row["ciphertext"]) for row in envelopes}, {("new-a", "new-sender"), ("new-b", "new-recipient")})
+            self.assertNotIn("replacement", json.dumps(payload).lower())
+
+            recipient_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/messages/edit",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "messageId": message_id, "envelopes": replacement_envelopes}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer recipient-token", "Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(recipient_request, timeout=3)
+            self.assertEqual(error.exception.code, 403)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_concurrent_sends_preserve_order_and_deduplicate_client_ids(self):
         def send(index):
             with app.db() as con:

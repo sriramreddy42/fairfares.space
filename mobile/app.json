@@ -4,6 +4,7 @@
     "slug": "fairfares-mobile",
     "scheme": "fairfares",
     "version": "0.1.4",
+    "icon": "./assets/app-icon.png",
     "orientation": "portrait",
     "platforms": [
       "ios",
@@ -12,9 +13,19 @@
     ],
     "userInterfaceStyle": "dark",
     "ios": {
+      "appleTeamId": "9RVTF77D2S",
+      "buildNumber": "2",
       "bundleIdentifier": "com.fairfares.mobile",
+      "icon": "./assets/app-icon.png",
       "supportsTablet": true,
+      "entitlements": {
+        "com.apple.developer.siri": true,
+        "com.apple.developer.usernotifications.communication": true
+      },
       "infoPlist": {
+        "NSUserActivityTypes": [
+          "INSendMessageIntent"
+        ],
         "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
         "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in FChat.",
         "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in FChat."
@@ -25,20 +36,21 @@
       "versionCode": 5,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "CAMERA",
-        "BLUETOOTH_ADVERTISE",
-        "BLUETOOTH_CONNECT",
-        "BLUETOOTH_SCAN",
-        "NEARBY_WIFI_DEVICES",
-        "POST_NOTIFICATIONS",
-        "READ_CONTACTS"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.NEARBY_WIFI_DEVICES",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_CONTACTS"
       ],
       "blockedPermissions": [
         "android.permission.WRITE_CONTACTS"
       ],
       "adaptiveIcon": {
+        "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#101010"
       }
     },
@@ -67,7 +79,8 @@
         {
           "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in FChat. Your address book is not uploaded."
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ],
     "extra": {
       "apiUrl": "https://fairfares.onrender.com",

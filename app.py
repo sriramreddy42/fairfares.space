@@ -4485,6 +4485,7 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 area_label TEXT NOT NULL DEFAULT '',
+                photo_url TEXT NOT NULL DEFAULT '',
                 created_by_user_id INTEGER,
                 visibility TEXT NOT NULL DEFAULT 'PUBLIC',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -5459,6 +5460,7 @@ def init_db() -> None:
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "area_label", "area_label TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_communities", "photo_url", "photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "created_by_user_id", "created_by_user_id INTEGER")
         ensure_column(con, "chat_communities", "visibility", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
         ensure_column(con, "chat_communities", "updated_at", "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -14485,6 +14487,7 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
             "name": row_value(row, "name"),
             "description": row_value(row, "description"),
             "area": row_value(row, "area_label"),
+            "photoUrl": row_value(row, "photo_url") or "",
             "memberCount": int(row_value(row, "member_count") or 0),
             "joined": int(row_value(row, "joined") or 0) > 0,
             "createdByUserId": int(row_value(row, "created_by_user_id") or 0),
@@ -14502,21 +14505,25 @@ def create_chat_community(
     kind: str = "GROUP",
     description: str = "",
     area_label: str = "",
+    photo_url: str = "",
 ) -> tuple[dict[str, object] | None, str]:
     name = " ".join((name or "").split())[:80]
     description = " ".join((description or "").split())[:220]
     area_label = " ".join((area_label or "").split())[:80]
     kind = "COMMUNITY" if kind == "COMMUNITY" else "GROUP"
+    photo_url = (photo_url or "").strip()
+    if photo_url and (not photo_url.startswith("data:image/") or ";base64," not in photo_url or len(photo_url) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH):
+        return None, "Use a smaller JPG, PNG, or WebP group image."
     if len(name) < 3:
         return None, "Group name is required."
     public_id = chat_group_public_id(kind)
     with db() as con:
         con.execute(
             """
-            INSERT INTO chat_communities (public_id, kind, name, description, area_label, created_by_user_id, visibility)
-            VALUES (?, ?, ?, ?, ?, ?, 'PRIVATE')
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label, photo_url, created_by_user_id, visibility)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'PRIVATE')
             """,
-            (public_id, kind, name, description, area_label, creator_id),
+            (public_id, kind, name, description, area_label, photo_url, creator_id),
         )
         community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
         con.execute(
@@ -15077,7 +15084,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "rideRoute": ride_route,
         "otherName": community_name or row_value(row, "other_name") or "FairFares member",
         "otherUserId": int(row_value(row, "other_user_id") or 0),
-        "otherPhotoUrl": "" if community_public_id else row_value(row, "other_photo_url"),
+        "otherPhotoUrl": row_value(row, "community_photo_url") if community_public_id else row_value(row, "other_photo_url"),
         "otherOnline": other_online if not community_public_id else False,
         "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
         "lastMessage": row_value(row, "last_message"),
@@ -15103,6 +15110,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                communities.public_id AS community_public_id,
                communities.name AS community_name,
                communities.kind AS community_kind,
+               communities.photo_url AS community_photo_url,
                participant.last_read_message_id,
                participant.muted_at,
                participant.blocked_at,
@@ -15142,6 +15150,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                communities.public_id AS community_public_id,
                communities.name AS community_name,
                communities.kind AS community_kind,
+               communities.photo_url AS community_photo_url,
                participant.last_read_message_id,
                participant.muted_at,
                participant.blocked_at,
@@ -15625,6 +15634,18 @@ def chat_listing_context(
     return {}
 
 
+def chat_notification_avatar_signature(user_id: int, expires_at: int) -> str:
+    value = f"fchat-avatar:{int(user_id)}:{int(expires_at)}".encode("utf-8")
+    return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
+
+
+def chat_notification_avatar_url(origin: str, user_id: int, lifetime_seconds: int = 15 * 60) -> str:
+    expires_at = int(time.time()) + max(60, min(int(lifetime_seconds or 0), 60 * 60))
+    signature = chat_notification_avatar_signature(user_id, expires_at)
+    query = urllib.parse.urlencode({"user": int(user_id), "expires": expires_at, "signature": signature})
+    return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
+
+
 def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> None:
     valid_tokens = [token for token in dict.fromkeys(tokens) if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")]
     if not valid_tokens:
@@ -15642,6 +15663,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "body": body[:240],
                 "data": notification_data,
                 "channelId": channel_id,
+                **({"mutableContent": True, "categoryId": "FCHAT_MESSAGE"} if notification_type == "FCHAT_MESSAGE" else {}),
             }
             for token in token_batch
         ]
@@ -15747,6 +15769,7 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
                    communities.public_id AS community_public_id,
                    communities.name AS community_name,
                    communities.kind AS community_kind,
+                   communities.photo_url AS community_photo_url,
                    participant.last_read_message_id,
                    participant.muted_at,
                    participant.blocked_at,
@@ -17528,6 +17551,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/events":
             self.api_chat_events(parsed)
             return
+        if parsed.path == "/api/chat/notification-avatar":
+            self.api_chat_notification_avatar(parsed)
+            return
         if parsed.path.startswith("/api/chat/attachments/"):
             self.api_chat_attachment(parsed.path.rsplit("/", 1)[-1])
             return
@@ -17646,6 +17672,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/xp": self.api_explorer_xp,
             "/api/chat/conversations": self.api_create_chat_conversation,
             "/api/chat/communities": self.api_create_chat_community,
+            "/api/chat/groups/photo": self.api_update_chat_group_photo,
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/groups/invites": self.api_create_chat_group_invite,
             "/api/chat/groups/invites/revoke": self.api_revoke_chat_group_invites,
@@ -18925,6 +18952,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
         push_tokens: list[str] = []
         email_jobs: list[tuple[str, str, str, str, str, str]] = []
+        stored_preview = str(row_value(message, "message_text") or "").strip()
+        if row_value(message, "attachment_url"):
+            notification_preview = "Sent you a secure attachment"
+        elif "end-to-end encrypted message" in stored_preview.lower():
+            notification_preview = "Sent you a secure message"
+        else:
+            notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
             recipient_id = int(row_value(recipient, "id") or 0)
             if not row_value(recipient, "chat_muted_at") and recipient_id:
@@ -18942,7 +18976,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     str(row_value(recipient, "name") or ""),
                     str(row_value(sender, "name") or "FairFares member"),
                     str(post_title),
-                    str(row_value(message, "message_text") or ("Sent an attachment" if row_value(message, "attachment_url") else "Sent you a message")),
+                    notification_preview,
                     conversation_url,
                 )
             )
@@ -18960,16 +18994,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 name="fairfares-fchat-email",
             ).start()
         if push_tokens:
+            sender_id = int(row_value(sender, "id") or 0)
+            is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
+            conversation_name = str(row_value(conversation, "subject") or "FChat group") if is_group else ""
             threading.Thread(
                 target=send_expo_push,
                 args=(
                     push_tokens,
                     row_value(sender, "name") or "New FChat message",
-                    row_value(message, "message_text") or "Sent you a message",
+                    notification_preview,
                     {
                         "type": "FCHAT_MESSAGE",
                         "conversationId": row_value(conversation, "public_id"),
                         "messageId": int(row_value(message, "id") or 0),
+                        "senderId": sender_id,
+                        "senderName": row_value(sender, "name") or "FairFares member",
+                        "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
+                        "conversationName": conversation_name,
+                        "isGroup": is_group,
                     },
                 ),
                 daemon=True,
@@ -19072,6 +19114,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             form.get("kind", "GROUP"),
             form.get("description", ""),
             form.get("area", ""),
+            form.get("photo", ""),
         )
         if not community:
             self.send_json({"ok": False, "message": error or "Could not create this group."}, 400)
@@ -19082,6 +19125,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         community["joinUrl"] = self.community_invite_url(token)
         self.send_json({"ok": True, "community": community})
+
+    def api_update_chat_group_photo(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to update this group."}, 401)
+            return
+        form = self.read_form()
+        public_id = (form.get("community_id") or "").strip()
+        photo = (form.get("photo") or "").strip()
+        if not photo.startswith("data:image/") or ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
+            self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP group image."}, 400)
+            return
+        with db() as con:
+            community = con.execute("SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1", (public_id,)).fetchone()
+            if not community:
+                self.send_json({"ok": False, "message": "Group not found."}, 404)
+                return
+            if chat_group_member_role(con, int(community["id"]), int(user["id"])) not in {"OWNER", "ADMIN"}:
+                self.send_json({"ok": False, "message": "Only group owners and admins can change the group image."}, 403)
+                return
+            con.execute("UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (photo, int(community["id"])))
+        updated = next((item for item in get_chat_communities_for_user(int(user["id"])) if item.get("id") == public_id), None)
+        self.send_json({"ok": True, "community": updated})
 
     def api_join_chat_community(self) -> None:
         user = self.current_user()
@@ -19340,7 +19406,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (attachment_url, json.dumps({"encrypted": True, "size": len(ciphertext)}), int(message["id"])),
             )
             message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
-            self.notify_chat_recipients(con, conversation, user, message)
+            if not bool(payload.get("silent")):
+                self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
 
     def api_save_chat_e2ee_backup(self) -> None:
@@ -19605,6 +19672,59 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (message_id,)).fetchone()
         self.send_json({"ok": True, "message": chat_message_payload(row, current_user_id)})
 
+    def api_chat_notification_avatar(self, parsed: urllib.parse.ParseResult) -> None:
+        query = urllib.parse.parse_qs(parsed.query)
+        try:
+            user_id = int((query.get("user") or ["0"])[0])
+            expires_at = int((query.get("expires") or ["0"])[0])
+        except (TypeError, ValueError):
+            self.send_error(404)
+            return
+        signature = str((query.get("signature") or [""])[0]).strip().lower()
+        now = int(time.time())
+        expected = chat_notification_avatar_signature(user_id, expires_at) if user_id > 0 and expires_at > 0 else ""
+        if (
+            not expected
+            or not signature
+            or expires_at < now
+            or expires_at > now + 60 * 60
+            or not hmac.compare_digest(signature, expected)
+        ):
+            self.send_error(404)
+            return
+        with db() as con:
+            user = con.execute("SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1", (user_id,)).fetchone()
+        photo = str(row_value(user, "profile_photo_url") or "").strip() if user else ""
+        upload = data_url_upload_parts(
+            photo,
+            f"fchat-avatar-{user_id}",
+            allowed_mime_types=ALLOWED_CHAT_IMAGE_MIME_TYPES,
+            max_bytes=2_000_000,
+        )
+        if upload:
+            _, mime_type, payload = upload
+            self.send_response(200)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "private, max-age=600")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if photo.startswith("https://"):
+            self.send_response(302)
+            self.send_header("Location", photo)
+            self.send_header("Cache-Control", "private, no-store")
+            self.end_headers()
+            return
+        if photo.startswith("/"):
+            self.send_response(302)
+            self.send_header("Location", f"{self.public_origin().rstrip('/')}{photo}")
+            self.send_header("Cache-Control", "private, no-store")
+            self.end_headers()
+            return
+        self.send_error(404)
+
     def api_chat_attachment(self, message_id_value: str) -> None:
         user = self.current_user()
         if not user:
@@ -19647,15 +19767,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to edit messages."}, 401)
             return
-        form = self.read_form()
-        conversation_public_id = (form.get("conversation_id") or "").strip()
-        message_id = int_from_form(form, "message_id", 0)
-        message_text = (form.get("message") or "").strip()
-        if not conversation_public_id or not message_id or not message_text:
-            self.send_json({"ok": False, "message": "Conversation, message, and replacement text are required."}, 400)
-            return
-        if len(message_text) > 2000:
-            self.send_json({"ok": False, "message": "Message is too long."}, 400)
+        form = self.read_json_body()
+        conversation_public_id = clean_text_value(form.get("conversationId"), 80)
+        message_id = int(float_from_value(form.get("messageId")) or 0)
+        envelopes = form.get("envelopes") if isinstance(form.get("envelopes"), list) else []
+        if not conversation_public_id or not message_id or not envelopes:
+            self.send_json({"ok": False, "message": "Conversation, message, and encrypted replacement are required."}, 400)
             return
         current_user_id = int(user["id"])
         with db() as con:
@@ -19680,13 +19797,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not allowed:
                 self.send_json({"ok": False, "message": error}, 403)
                 return
+            if str(row_value(message, "message_type") or "TEXT") != "TEXT":
+                self.send_json({"ok": False, "message": "Only text messages can be edited."}, 400)
+                return
+            existing_envelope = con.execute("SELECT 1 FROM chat_message_envelopes WHERE message_id = ? LIMIT 1", (message_id,)).fetchone()
+            if not existing_envelope:
+                self.send_json({"ok": False, "message": "This message does not support secure editing."}, 400)
+                return
+            participant_ids = {int(row["user_id"]) for row in con.execute("SELECT user_id FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchall()}
+            active_keys = {(int(row["user_id"]), str(row["device_id"])): str(row["public_key"]) for row in con.execute(
+                "SELECT user_id, device_id, public_key FROM chat_device_keys WHERE revoked_at IS NULL AND user_id IN (%s)" % ",".join("?" * len(participant_ids)), tuple(participant_ids)
+            ).fetchall()} if participant_ids else {}
+            supplied = {(int(item.get("recipientUserId") or 0), str(item.get("recipientDeviceId") or "")) for item in envelopes if isinstance(item, dict)}
+            if not active_keys or set(active_keys) != supplied or len(supplied) != len(envelopes):
+                self.send_json({"ok": False, "message": "Encryption keys changed. Refresh the chat and try again."}, 409)
+                return
+            sender_public_keys = {public_key for (key_user_id, _), public_key in active_keys.items() if key_user_id == current_user_id}
+            for item in envelopes:
+                if not isinstance(item, dict) or str(item.get("senderPublicKey") or "") not in sender_public_keys:
+                    self.send_json({"ok": False, "message": "The edited message encryption key is invalid."}, 400)
+                    return
+                if len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000:
+                    self.send_json({"ok": False, "message": "The encrypted replacement is invalid."}, 400)
+                    return
+            con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (message_id,))
+            for item in envelopes:
+                con.execute(
+                    """INSERT INTO chat_message_envelopes
+                       (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (message_id, int(item.get("recipientUserId") or 0), str(item.get("recipientDeviceId") or ""), str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or "")),
+                )
             con.execute(
                 """
                 UPDATE chat_messages
                 SET message_text = ?, edited_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (message_text, message_id),
+                ("🔒 End-to-end encrypted message", message_id),
             )
             updated = con.execute(
                 """
@@ -27249,8 +27397,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        notifications.responded_at AS dispatch_responded_at,
                        driver_posts.public_id AS matched_ride_public_id,
                        driver_posts.title AS matched_route_title,
-                       driver_posts.origin AS matched_route_origin,
-                       driver_posts.destination AS matched_route_destination,
+                       driver_posts.origin_label AS matched_route_origin,
+                       driver_posts.destination_label AS matched_route_destination,
                        driver_posts.contribution_per_seat AS matched_contribution_per_seat
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -10,6 +10,7 @@ import { DateTimeField } from "../components/DateTimeField";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
+import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -453,6 +454,7 @@ export function HousingScreen({
   rideOwnerOpenTarget = "workspace",
   onRideOwnerClosed
 }: Props) {
+  const safeAreaInsets = useSafeAreaInsets();
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
@@ -1250,14 +1252,13 @@ export function HousingScreen({
 
   function openPostMap(post: HousingPost) {
     const query = post.lat && post.lng ? `${post.lat},${post.lng}` : `${post.title} ${post.location} ${post.area}`.trim();
-    void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`);
+    void Linking.openURL(mapSearchUrl(query));
   }
 
   function openRideGoogleMaps() {
     const origin = rideForm.origin || selectedLocationText || rideForm.city || "Denver, CO";
     const destination = rideForm.destination || rideForm.city || "Denver, CO";
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
-    void Linking.openURL(url);
+    void Linking.openURL(mapDirectionsUrl(origin, destination));
   }
 
   function renderRideOwnerTracker() {
@@ -1271,8 +1272,20 @@ export function HousingScreen({
     const trackerTitle = rideOwnerOpenTarget === "listings" ? "Your listings" : rideOwnerOpenTarget === "requests" ? "Rider requests" : "Request tracker";
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
-        <SafeAreaView style={styles.rideOwnerScreen} edges={["top", "right", "bottom", "left"]}>
-          <ScrollView ref={rideOwnerScrollRef} contentContainerStyle={styles.rideOwnerContent} showsVerticalScrollIndicator={false}>
+        <SafeAreaView style={styles.rideOwnerScreen} edges={["right", "bottom", "left"]}>
+          <ScrollView
+            ref={rideOwnerScrollRef}
+            contentContainerStyle={[
+              styles.rideOwnerContent,
+              {
+                paddingTop: Math.max(
+                  safeAreaInsets.top,
+                  Platform.OS === "ios" ? 47 : 32
+                ) + 12
+              }
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
             <View style={styles.rideOwnerHeader}>
               <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRideOwnerTracker}>
                 <Text style={styles.ridePlannerBackText}>‹</Text>
@@ -2315,7 +2328,7 @@ export function HousingScreen({
                   <Text style={styles.rideMapBackText}>‹</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.rideMapOpenButton} onPress={openRideGoogleMaps}>
-                  <Text style={styles.rideMapOpenButtonText}>Open Google Maps</Text>
+                  <Text style={styles.rideMapOpenButtonText}>Open {nativeMapProviderName}</Text>
                 </TouchableOpacity>
               </View>
               <ScrollView style={styles.rideChoiceSheet} contentContainerStyle={styles.rideChoiceSheetContent} showsVerticalScrollIndicator={false}>
@@ -3944,7 +3957,7 @@ const styles = StyleSheet.create({
   rideOwnerOfferTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "700" },
   rideOwnerOfferSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "500", marginTop: 2 },
   rideOwnerScreen: { flex: 1, backgroundColor: "#101010" },
-  rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingTop: Platform.OS === "android" ? 44 : 18, paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
+  rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
   rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 1 },

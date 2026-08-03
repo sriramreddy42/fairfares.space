@@ -8,6 +8,7 @@ export type HousingPost = {
   categoryLabel: string;
   location: string;
   area: string;
+  photoUrl?: string;
   workLocation: string;
   moveIn: string;
   rent: string;
@@ -112,6 +113,9 @@ export type ChatMessage = {
     decryptedDataUrl?: string;
     encryptedKeyPayload?: string;
     caption?: string;
+    mediaGroupId?: string;
+    mediaGroupIndex?: number;
+    mediaGroupCount?: number;
     latitude?: number;
     longitude?: number;
     accuracy?: number;
@@ -141,6 +145,7 @@ export type Community = {
   name: string;
   description: string;
   area: string;
+  photoUrl?: string;
   memberCount: number;
   joined: boolean;
   joinUrl?: string;

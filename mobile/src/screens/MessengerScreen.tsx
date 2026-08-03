@@ -5,7 +5,9 @@ import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
+import { BlurView } from "expo-blur";
 import { Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
   addChatGroupMember,
@@ -41,6 +43,7 @@ import {
   sendEncryptedChatMessage,
   sendEncryptedChatAttachment,
   transferChatGroupOwnership,
+  updateChatGroupPhoto,
   updateChatGroupMemberRole,
   updateChatTyping,
   voteChatPoll
@@ -49,7 +52,7 @@ import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
-import { pickChatImage, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
+import { pickChatImages, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
@@ -71,6 +74,7 @@ type Props = {
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
 
 const blankGroup = { name: "" };
+type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#080d18", accent: "#163a6b" },
@@ -217,7 +221,14 @@ function chatPhotoUrl(value?: string) {
   return value ? absoluteAssetUrl(value) : "";
 }
 
-function AuthenticatedChatImage({ attachmentUrl }: { attachmentUrl: string }) {
+function chatFileBadge(name?: string, mimeType?: string) {
+  const extension = String(name || "").split(".").pop()?.trim().toUpperCase() || "";
+  if (extension && extension.length <= 4) return extension;
+  if (String(mimeType || "").includes("pdf")) return "PDF";
+  return "FILE";
+}
+
+function AuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
   const [previewSource, setPreviewSource] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
 
@@ -238,15 +249,15 @@ function AuthenticatedChatImage({ attachmentUrl }: { attachmentUrl: string }) {
   }, [attachmentUrl]);
 
   if (previewFailed) {
-    return <View style={[styles.messageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Photo preview unavailable</Text></View>;
+    return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Photo preview unavailable</Text></View>;
   }
   if (!previewSource) {
-    return <View style={[styles.messageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Loading photo…</Text></View>;
+    return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Loading photo…</Text></View>;
   }
-  return <Image source={{ uri: previewSource }} style={styles.messageImage} resizeMode="cover" onError={() => setPreviewFailed(true)} />;
+  return <Image source={{ uri: previewSource }} style={[styles.messageImage, compact && styles.collageImage]} resizeMode="cover" onError={() => setPreviewFailed(true)} />;
 }
 
-function EncryptedChatImage({ attachmentUrl, keyPayload }: { attachmentUrl: string; keyPayload: string }) {
+function EncryptedChatImage({ attachmentUrl, keyPayload, compact = false }: { attachmentUrl: string; keyPayload: string; compact?: boolean }) {
   const [uri, setUri] = useState("");
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -270,15 +281,25 @@ function EncryptedChatImage({ attachmentUrl, keyPayload }: { attachmentUrl: stri
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [attachmentUrl, keyPayload]);
-  if (failed) return <View style={[styles.messageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Encrypted preview unavailable</Text></View>;
-  if (!uri) return <View style={[styles.messageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Decrypting photo…</Text></View>;
-  return <Image source={{ uri }} style={styles.messageImage} resizeMode="cover" />;
+  if (failed) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Encrypted preview unavailable</Text></View>;
+  if (!uri) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Decrypting photo…</Text></View>;
+  return <Image source={{ uri }} style={[styles.messageImage, compact && styles.collageImage]} resizeMode="cover" />;
 }
 
-function PendingPhotoPreview({ uri }: { uri: string }) {
+function PendingPhotoPreview({ uri, compact = false }: { uri: string; compact?: boolean }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return <View style={[styles.pendingAttachmentImage, styles.pendingPreviewFallback]}><Text style={styles.pendingPreviewFallbackText}>No preview</Text></View>;
-  return <Image source={{ uri }} style={styles.pendingAttachmentImage} resizeMode="cover" onError={() => setFailed(true)} />;
+  if (failed) return <View style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, styles.pendingPreviewFallback]}><Text style={styles.pendingPreviewFallbackText}>No preview</Text></View>;
+  return <Image source={{ uri }} style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage]} resizeMode="cover" onError={() => setFailed(true)} />;
+}
+
+function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
+  if (message.metadata?.decryptedDataUrl) {
+    return <Image source={{ uri: message.metadata.decryptedDataUrl }} style={[styles.messageImage, compact && styles.collageImage]} resizeMode="cover" />;
+  }
+  if (message.metadata?.encryptedKeyPayload) {
+    return <EncryptedChatImage attachmentUrl={message.attachmentUrl} keyPayload={message.metadata.encryptedKeyPayload} compact={compact} />;
+  }
+  return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
 export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
@@ -313,7 +334,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [richComposer, setRichComposer] = useState<"POLL" | "EVENT" | "CONTACT" | "">("");
   const [richDraft, setRichDraft] = useState({ primary: "", secondary: "", tertiary: "", fourth: "" });
   const [attachmentStatus, setAttachmentStatus] = useState("");
-  const [pendingAttachment, setPendingAttachment] = useState<{ kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number } | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
+  const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
@@ -337,6 +360,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [selectedGroupPeople, setSelectedGroupPeople] = useState<number[]>([]);
   const [addPeopleCommunityId, setAddPeopleCommunityId] = useState("");
   const [groupDraft, setGroupDraft] = useState(blankGroup);
+  const [groupPhoto, setGroupPhoto] = useState("");
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
 
@@ -467,7 +491,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             setMessages((current) => {
               const withoutServerDuplicate = current.filter((message) => message.id !== response.message.id || message.localClientMessageId === item.clientMessageId);
               const hasLocal = withoutServerDuplicate.some((message) => message.localClientMessageId === item.clientMessageId);
-              const sentMessage = { ...response.message, text: clearText, canEdit: false, metadata: { ...response.message.metadata, encrypted: true } };
+              const sentMessage = { ...response.message, text: clearText, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } };
               return hasLocal
                 ? withoutServerDuplicate.map((message) => message.localClientMessageId === item.clientMessageId ? sentMessage : message)
                 : [...withoutServerDuplicate, sentMessage];
@@ -503,19 +527,19 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           : message;
         const clearText = decryptEnvelope(envelope, identity);
         if (message.type === "ENCRYPTED_ATTACHMENT" && message.attachmentUrl && clearText) {
-          const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string };
+          const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number };
           return {
             ...message,
             type: attachmentInfo.kind,
             text: attachmentInfo.caption || "",
-            metadata: { ...message.metadata, encrypted: true, kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption }
+            metadata: { ...message.metadata, encrypted: true, kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
           };
         }
         if (clearText.startsWith("FFRICH:")) {
           const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
           return { ...message, type: rich.type, text: "", canEdit: false, metadata: { ...rich.metadata, encrypted: true } };
         }
-        return { ...message, text: clearText || "Unable to decrypt this message on this device.", canEdit: false, metadata: { ...message.metadata, encrypted: true } };
+        return { ...message, text: clearText || "Unable to decrypt this message on this device.", canEdit: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
       }));
     } catch {
       setEncryptionReady(false);
@@ -850,46 +874,55 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       onRequireLogin();
       return;
     }
-    if (pendingAttachment) {
+    const attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
+    if (attachments.length) {
       if (!activeConversationId) {
         Alert.alert("Opening FChat", "Wait a moment while FairFares verifies the conversation.");
         return;
       }
       setThreadLoading(true);
-      setAttachmentStatus(pendingAttachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${pendingAttachment.name}…`);
+      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : `Sending ${attachments[0].name}…`);
       try {
-        let response: { message: ChatMessage };
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getChatDeviceKeys(activeConversationId);
         if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
         setEncryptionReady(true);
-        const fileBase64 = Platform.OS === "web"
-          ? await new Promise<string>(async (resolve, reject) => {
-              try {
-                let blob = pendingAttachment.blob;
-                if (!blob) blob = await fetch(pendingAttachment.uri).then((item) => item.blob());
-                const reader = new FileReader();
-                reader.onerror = () => reject(new Error("Could not read this attachment."));
-                reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-                reader.readAsDataURL(blob as Blob);
-              } catch (error) { reject(error); }
-            })
-          : await FileSystem.readAsStringAsync(pendingAttachment.uri, { encoding: FileSystem.EncodingType.Base64 });
-        const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, caption: cleanMessage, kind: pendingAttachment.kind }, identity, keyPayload.keys);
-        response = await sendEncryptedChatAttachment(activeConversationId, encrypted.ciphertextBase64, encrypted.envelopes);
-        response.message = { ...response.message, type: pendingAttachment.kind, text: cleanMessage, metadata: { ...response.message.metadata, encrypted: true, kind: pendingAttachment.kind, fileName: pendingAttachment.name, mimeType: pendingAttachment.mimeType, decryptedDataUrl: `data:${pendingAttachment.mimeType};base64,${fileBase64}` } };
-        setMessages((current) => [...current.filter((item) => item.id !== response.message.id), response.message].sort((a, b) => a.id - b.id));
-        const sentKind = pendingAttachment.kind;
+        const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
+        const sentMessages: ChatMessage[] = [];
+        for (let index = 0; index < attachments.length; index += 1) {
+          const attachment = attachments[index];
+          const fileBase64 = Platform.OS === "web"
+            ? await new Promise<string>(async (resolve, reject) => {
+                try {
+                  let blob = attachment.blob;
+                  if (!blob) blob = await fetch(attachment.uri).then((item) => item.blob());
+                  const reader = new FileReader();
+                  reader.onerror = () => reject(new Error("Could not read this attachment."));
+                  reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+                  reader.readAsDataURL(blob as Blob);
+                } catch (error) { reject(error); }
+              })
+            : await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
+          const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+          const caption = index === 0 ? cleanMessage : "";
+          const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata }, identity, keyPayload.keys);
+          const response = await sendEncryptedChatAttachment(activeConversationId, encrypted.ciphertextBase64, encrypted.envelopes, index + 1 < attachments.length);
+          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: `data:${attachment.mimeType};base64,${fileBase64}`, ...mediaMetadata } });
+          setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
+        }
+        setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
+        const sentKind = attachments[0].kind;
         setPendingAttachment(null);
+        setPendingImages([]);
         setMessageText("");
-        setAttachmentStatus(sentKind === "IMAGE" ? "Photo sent" : "File sent");
+        setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : "File sent");
         setTimeout(() => setAttachmentStatus(""), 1600);
         onClearPendingPost?.();
         onClearPendingRide?.();
         await refreshMessenger();
       } catch (error) {
         setAttachmentStatus("");
-        Alert.alert(pendingAttachment.kind === "IMAGE" ? "Image failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
+        Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
       } finally {
         setThreadLoading(false);
       }
@@ -906,8 +939,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setThreadLoading(true);
     try {
       if (activeConversationId && editingMessageId) {
-        const response = await editChatMessage(activeConversationId, editingMessageId, cleanMessage);
-        setMessages((current) => current.map((item) => (item.id === editingMessageId ? response.message : item)));
+        const identity = await ensureChatDeviceIdentity();
+        const keyPayload = await getEncryptionKeysForSend(activeConversationId);
+        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+        const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
+        const response = await editChatMessage(activeConversationId, editingMessageId, envelopes);
+        setMessages((current) => current.map((item) => (item.id === editingMessageId
+          ? { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }
+          : item)));
         setEditingMessageId(null);
       } else if (activeConversationId) {
         const identity = await ensureChatDeviceIdentity();
@@ -918,7 +957,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         const clientMessageId = createOutboxClientMessageId(identity.deviceId);
         try {
           const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId);
-          setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: false, metadata: { ...response.message.metadata, encrypted: true } }]);
+          setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }]);
         } catch (error) {
           if (!isRetryableChatNetworkError(error)) throw error;
           const createdAt = new Date().toISOString();
@@ -974,10 +1013,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
     setLoading(true);
     try {
-      const response = await createChatCommunity(name, "GROUP", "", "");
+      const response = await createChatCommunity(name, "GROUP", "", "", groupPhoto);
       await Promise.all(selectedGroupPeople.map((personId) => addChatGroupMember(response.community.id, personId)));
       setCommunities((current) => [response.community, ...current.filter((community) => community.id !== response.community.id)]);
       setGroupDraft(blankGroup);
+      setGroupPhoto("");
       setSelectedGroupPeople([]);
       setCreatingGroup(false);
       await openCommunityThread({ ...response.community, joined: true });
@@ -985,6 +1025,32 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       Alert.alert("Group failed", error instanceof Error ? error.message : "Could not create this group.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function chooseGroupPhoto() {
+    try {
+      const images = await pickCompressedImages(1, 720, 0.7);
+      if (images[0]) setGroupPhoto(images[0]);
+    } catch (error) {
+      Alert.alert("Group image not added", error instanceof Error ? error.message : "Could not use this image.");
+    }
+  }
+
+  async function changeActiveGroupPhoto() {
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) return;
+    setChatOptionsOpen(false);
+    try {
+      const images = await pickCompressedImages(1, 720, 0.7);
+      if (!images[0]) return;
+      const response = await updateChatGroupPhoto(communityId, images[0]);
+      setCommunities((current) => current.map((item) => item.id === communityId ? response.community : item));
+      setActiveConversation((current) => current ? { ...current, otherPhotoUrl: response.community.photoUrl || "" } : current);
+      setConversations((current) => current.map((item) => item.communityId === communityId ? { ...item, otherPhotoUrl: response.community.photoUrl || "" } : item));
+      Alert.alert("Group image updated", "Everyone in the group will now see this image.");
+    } catch (error) {
+      Alert.alert("Group image not updated", error instanceof Error ? error.message : "Try again.");
     }
   }
 
@@ -1171,6 +1237,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         kind: "GROUP",
         subject: response.conversation.subject || joinedCommunity.name,
         otherName: joinedCommunity.name,
+        otherPhotoUrl: joinedCommunity.photoUrl || "",
         lastMessage: "",
         lastMessageAt: "",
         unread: 0
@@ -1322,9 +1389,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       return;
     }
     try {
-      const image = await pickChatImage(1600, 0.76);
-      if (!image) return;
-      setPendingAttachment({ ...image, kind: image.kind });
+      const images = await pickChatImages(4, 1600, 0.76);
+      if (!images.length) return;
+      setPendingAttachment(null);
+      setPendingImages(images);
     } catch (error) {
       setAttachmentStatus("");
       Alert.alert("Image failed", error instanceof Error ? error.message : "Could not send this image.");
@@ -1344,6 +1412,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       const photo = await takeChatPhoto(1600, 0.82);
       if (!photo) return;
+      setPendingImages([]);
       setPendingAttachment({ ...photo, kind: "IMAGE" });
     } catch (error) {
       Alert.alert("Camera unavailable", error instanceof Error ? error.message : "Could not take this photo.");
@@ -1388,6 +1457,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       const file = await pickChatFile();
       if (!file) return;
+      setPendingImages([]);
       setPendingAttachment({ kind: "FILE", ...file });
     } catch (error) {
       setAttachmentStatus("");
@@ -1600,6 +1670,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   function editMessage(message: ChatMessage) {
     if (!message.canEdit) return;
+    setSelectedMessageIds([]);
     setEditingMessageId(message.id);
     setMessageText(message.text);
   }
@@ -1739,6 +1810,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setGroupMembers([]);
     setAttachmentStatus("");
     setPendingAttachment(null);
+    setPendingImages([]);
     setAttachmentPreview(null);
     setShareContactPickerOpen(false);
     setShareableContacts([]);
@@ -1761,7 +1833,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#163a6b" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#163a6b" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  F  ·  ◇  ·  ⌁  ·  F  ·  ◇</Text></> : null}
           <View style={styles.wallpaperShade} />
         </View>
-        <View style={styles.threadHeader}>
+        <BlurView intensity={48} tint="dark" style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
@@ -1786,12 +1858,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
-        </View>
+        </BlurView>
 
         {selectedMessageIds.length ? (
           <View style={styles.messageSelectionBar}>
             <TouchableOpacity style={styles.messageSelectionCancel} onPress={() => setSelectedMessageIds([])} accessibilityLabel="Cancel message selection"><Text style={styles.messageSelectionCancelText}>×</Text></TouchableOpacity>
             <Text style={styles.messageSelectionTitle}>{selectedMessageIds.length} selected</Text>
+            {selectedMessages().length === 1 && selectedMessages()[0].mine && selectedMessages()[0].canEdit ? (
+              <TouchableOpacity style={styles.messageSelectionAction} onPress={() => editMessage(selectedMessages()[0])} accessibilityRole="button" accessibilityLabel="Edit selected message"><Text style={styles.messageSelectionActionIcon}>✎</Text><Text style={styles.messageSelectionActionText}>Edit</Text></TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={styles.messageSelectionAction} onPress={openForwardPicker} accessibilityRole="button" accessibilityLabel="Forward selected messages"><Text style={styles.messageSelectionActionIcon}>↗</Text><Text style={styles.messageSelectionActionText}>Forward</Text></TouchableOpacity>
             <TouchableOpacity style={styles.messageSelectionAction} onPress={() => void shareSelectedMessages()} accessibilityRole="button" accessibilityLabel="Share selected messages"><Text style={styles.messageSelectionActionIcon}>⇧</Text><Text style={styles.messageSelectionActionText}>Share</Text></TouchableOpacity>
           </View>
@@ -1803,6 +1878,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>♙</Text><Text style={styles.chatOptionText}>Group members</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
+            {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group && (group.visibility === "PUBLIC" || group.canManageMembers)); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
             {Platform.OS === "android" ? <View style={styles.nearbyOptionRow}><View style={styles.nearbyOptionCopy}><Text style={styles.nearbyOptionTitle}>Nearby offline relay</Text><Text style={styles.nearbyOptionMeta}>{nearbyRelayStatus.state === "error" ? nearbyRelayStatus.detail : nearbyRelayEnabled ? `${nearbyRelayStatus.peers} nearby device${nearbyRelayStatus.peers === 1 ? "" : "s"}` : "Off · encrypted text only"}</Text></View><Switch value={nearbyRelayEnabled} onValueChange={(value) => void toggleNearbyRelay(value)} trackColor={{ false: "#aaa", true: "#5a83f3" }} /></View> : null}
@@ -1839,11 +1915,18 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               <Text style={styles.emptyThreadCopy}>Send a message to start the conversation.</Text>
             </View>
           ) : null}
-          {visibleMessages.map((message, index) => (
+          {visibleMessages.map((message, index) => {
+            const mediaGroupId = String(message.metadata?.mediaGroupId || "");
+            if (mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId) return null;
+            const mediaGroup = mediaGroupId
+              ? visibleMessages.filter((candidate) => candidate.type === "IMAGE" && candidate.metadata?.mediaGroupId === mediaGroupId).sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0))
+              : [];
+            const messageRunEnds = mediaGroup.length > 1 || endsMessageRun(visibleMessages, index);
+            return (
             <React.Fragment key={message.id}>
             {index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt) ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
-            <View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, endsMessageRun(visibleMessages, index) && styles.threadMessageRunEnd]}>
-              {!message.mine && Boolean(activeConversation?.communityId) && endsMessageRun(visibleMessages, index) ? (
+            <View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
+              {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
                   {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(message.senderPhotoUrl) }} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
                 </View>
@@ -1856,7 +1939,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 style={[styles.bubble, message.mine ? styles.myBubble : styles.theirBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
-                {endsMessageRun(visibleMessages, index) ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
+                {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!selectedMessageIds.length && (!message.mine || message.canEdit) && !["pending", "relayed", "failed"].includes(message.status) ? (
                   <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
                     <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
@@ -1880,9 +1963,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                   </View>
                 ) : null}
                 {message.attachmentUrl ? (
-                  message.type === "IMAGE" ? <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo">{message.metadata?.decryptedDataUrl ? <Image source={{ uri: message.metadata.decryptedDataUrl }} style={styles.messageImage} resizeMode="cover" /> : message.metadata?.encryptedKeyPayload ? <EncryptedChatImage attachmentUrl={message.attachmentUrl} keyPayload={message.metadata.encryptedKeyPayload} /> : <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} />}</TouchableOpacity> : (
+                  message.type === "IMAGE" ? mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openAttachment(photo)} accessibilityLabel={`Preview photo ${photoIndex + 1} of ${mediaGroup.length}`}><ChatMessagePhoto message={photo} compact />{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity> : (
                     <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "FChat file")}`}>
-                      <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>
+                      <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.fileCardBadge}>{chatFileBadge(String(message.metadata?.fileName || ""), String(message.metadata?.mimeType || ""))}</Text></View>
                       <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "FChat file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB · Tap to open or save</Text></View>
                     </TouchableOpacity>
                   )
@@ -1905,7 +1988,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                     <View style={styles.locationCopy}>
                       <Text style={styles.locationTitle}>{message.metadata?.stopped ? "Live location ended" : "Live location"}</Text>
                       <Text style={styles.locationMeta}>{message.metadata?.stopped ? "Sharing was stopped" : message.metadata?.expiresAt ? `Shared until ${chatClock(message.metadata.expiresAt)}` : "Encrypted location"}</Text>
-                      {typeof message.metadata?.latitude === "number" && typeof message.metadata?.longitude === "number" ? <TouchableOpacity onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${message.metadata?.latitude},${message.metadata?.longitude}`)} accessibilityRole="link" accessibilityLabel="Open shared location in Google Maps"><Text style={styles.richLink}>Open map</Text></TouchableOpacity> : null}
+                      {typeof message.metadata?.latitude === "number" && typeof message.metadata?.longitude === "number" ? <TouchableOpacity onPress={() => Linking.openURL(mapCoordinatesUrl(message.metadata!.latitude as number, message.metadata!.longitude as number))} accessibilityRole="link" accessibilityLabel={`Open shared location in ${nativeMapProviderName}`}><Text style={styles.richLink}>Open in {nativeMapProviderName}</Text></TouchableOpacity> : null}
                     </View>
                   </View>
                 ) : null}
@@ -1918,7 +2001,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               </TouchableOpacity>
             </View>
             </React.Fragment>
-          ))}
+            );
+          })}
         </ScrollView>
 
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
@@ -1991,7 +2075,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               </TouchableOpacity>
               <TouchableOpacity style={styles.attachmentTile} onPress={() => void chooseAndSendImage()} accessibilityRole="button" accessibilityLabel="Choose photos or videos">
                 <View style={[styles.attachmentIcon, styles.photoIcon]}><Text style={styles.attachmentIconText}>▧</Text></View>
-              <Text style={styles.attachmentLabel}>Photos & videos</Text>
+              <Text style={styles.attachmentLabel}>Photos</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.attachmentTile} onPress={() => void takeAndSendPhoto()} accessibilityRole="button" accessibilityLabel="Take a photo">
                 <View style={[styles.attachmentIcon, styles.cameraIcon]}><Text style={styles.attachmentIconText}>◉</Text></View>
@@ -2042,7 +2126,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
         {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text></View> : null}
 
-        {pendingAttachment ? (
+        {pendingImages.length ? (
+          <View style={styles.pendingAttachmentCard}>
+            <View style={styles.pendingCollagePreview}>
+              {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}><PendingPhotoPreview uri={image.uri} compact />{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
+            </View>
+            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} photos selected</Text><Text style={styles.pendingAttachmentMeta}>Collage ready to send</Text></View>
+            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => setPendingImages([])} accessibilityLabel="Remove selected photos"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
+          </View>
+        ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
             {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text></View>
@@ -2068,13 +2160,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
         ) : null}
 
-        {!pendingAttachment && !editingMessageId && !emojiPickerOpen ? (
+        {!pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
             {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setMessageText(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
         ) : null}
 
-        <View style={styles.composer}>
+        <BlurView intensity={52} tint="dark" style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
@@ -2083,12 +2175,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             style={styles.composerInput}
             value={messageText}
             onChangeText={handleMessageTextChange}
+            onFocus={() => { setComposerFocused(true); setTimeout(() => messagesScrollRef.current?.scrollToEnd({ animated: true }), 120); }}
+            onBlur={() => setComposerFocused(false)}
             multiline
           />
-          <TouchableOpacity accessibilityLabel={pendingAttachment ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
+          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
-        </View>
+        </BlurView>
         {editingMessageId ? (
           <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
             <Text style={styles.cancelEditText}>Cancel edit</Text>
@@ -2200,6 +2294,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       {creatingGroup ? (
         <View style={styles.groupComposer}>
           <Text style={styles.sectionTitle}>Create a group</Text>
+          <TouchableOpacity style={styles.groupPhotoPicker} onPress={() => void chooseGroupPhoto()} accessibilityLabel="Choose group image">
+            {groupPhoto ? <Image source={{ uri: groupPhoto }} style={styles.groupPhotoImage} /> : <View style={styles.groupPhotoPlaceholder}><Text style={styles.groupPhotoPlaceholderText}>#</Text></View>}
+            <View style={styles.groupPhotoCopy}><Text style={styles.groupPeoplePickerTitle}>{groupPhoto ? "Group image selected" : "Add group image"}</Text><Text style={styles.groupPeoplePickerMeta}>Choose a photo that members will recognize</Text></View>
+            <Text style={styles.groupPeoplePickerArrow}>›</Text>
+          </TouchableOpacity>
           <TextInput
             placeholder="Group name, e.g. Denver roommates"
             placeholderTextColor={theme.colors.muted}
@@ -2249,7 +2348,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
           <TouchableOpacity key={community.id} style={styles.chatRow} onPress={() => openCommunityThread(community)}>
-            <View style={[styles.avatar, styles.groupAvatar]}><Text style={styles.avatarText}>#</Text></View>
+            <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>#</Text>}</View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{community.name}</Text>
               <Text style={styles.chatLast}>{community.description || community.area || "FairFares community"}</Text>
@@ -2314,8 +2413,8 @@ function SendIcon() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md },
   screenAndroid: { paddingTop: 10 },
-  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: 8, paddingBottom: 18, position: "relative", overflow: "hidden" },
-  threadScreenAndroid: { paddingBottom: 4 },
+  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
+  threadScreenAndroid: { paddingBottom: 0 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
   wallpaperImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   wallpaperShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.43)" },
@@ -2367,6 +2466,11 @@ const styles = StyleSheet.create({
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
   loginButtonText: { color: theme.colors.text, fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
+  groupPhotoPicker: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: 10 },
+  groupPhotoImage: { width: 56, height: 56, borderRadius: 28 },
+  groupPhotoPlaceholder: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#17386c", borderWidth: 1, borderColor: theme.colors.blue },
+  groupPhotoPlaceholderText: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
+  groupPhotoCopy: { flex: 1, gap: 2 },
   groupPeoplePicker: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 10 },
   groupPeoplePickerIcon: { color: theme.colors.blue, fontSize: 26, fontWeight: "600" },
   groupPeoplePickerCopy: { flex: 1, gap: 2 },
@@ -2380,19 +2484,19 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   disabledButton: { opacity: 0.45 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
-  threadHeader: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(8,15,27,0.74)", overflow: "hidden" },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
   backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: theme.colors.blue, left: 2 },
   backLineTop: { transform: [{ rotate: "-45deg" }], top: 6 },
   backLineBottom: { transform: [{ rotate: "45deg" }], bottom: 5 },
-  threadAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  threadAvatar: { width: 43, height: 43, borderRadius: 22, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   threadAvatarImage: { width: "100%", height: "100%" },
   threadAvatarText: { color: "#0f172a", fontWeight: "700", fontSize: 15 },
   activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.green, borderWidth: 2, borderColor: theme.colors.bg },
   threadHeaderCopy: { flex: 1 },
-  threadHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
-  threadHeaderMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "500", marginTop: 1 },
+  threadHeaderTitle: { color: theme.colors.text, fontSize: 16.5, fontWeight: "600" },
+  threadHeaderMeta: { color: "#c1c7d0", fontSize: 11.5, fontWeight: "400", marginTop: 2 },
   headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   messageSelectionBar: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, backgroundColor: "rgba(9,18,33,0.98)", zIndex: 12 },
   messageSelectionCancel: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
@@ -2412,13 +2516,13 @@ const styles = StyleSheet.create({
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.blue },
   threadMessages: { flex: 1 },
-  threadMessagesContent: { paddingVertical: 12, paddingHorizontal: 2, gap: 3, flexGrow: 1, justifyContent: "flex-end" },
+  threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2, flexGrow: 1, justifyContent: "flex-end" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
   threadMessageRowMine: { justifyContent: "flex-end" },
-  threadMessageRunEnd: { marginBottom: 5 },
-  dateDivider: { flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 10 },
-  dateDividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.22)" },
-  dateDividerText: { color: "rgba(255,255,255,0.72)", fontSize: 10, fontWeight: "600", letterSpacing: 1.4 },
+  threadMessageRunEnd: { marginBottom: 7 },
+  dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(9,17,29,0.88)" },
+  dateDividerLine: { display: "none" },
+  dateDividerText: { color: "rgba(255,255,255,0.80)", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
   smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
@@ -2426,10 +2530,10 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingTop: 10, paddingBottom: 4, borderTopWidth: 1, borderTopColor: theme.colors.line },
-  composerIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(12,18,27,0.78)", overflow: "hidden" },
+  composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
   paperclipIcon: { color: theme.colors.text, fontSize: 24 },
-  composerEmoji: { width: 32, height: 38, alignItems: "center", justifyContent: "center" },
+  composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
   composerEmojiText: { color: theme.colors.text, fontSize: 25, lineHeight: 28 },
   emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
@@ -2448,7 +2552,7 @@ const styles = StyleSheet.create({
   emojiCategoryActive: { backgroundColor: "#e5e5e5" },
   emojiCategoryText: { color: "#777", fontSize: 20 },
   emojiCategoryTextActive: { color: "#222" },
-  quickReplies: { flexGrow: 0, marginTop: 8 },
+  quickReplies: { flexGrow: 0, marginTop: 5 },
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
   quickReply: { borderWidth: 1.5, borderColor: "#5f8fff", backgroundColor: "rgba(9,20,38,0.86)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
   quickReplyText: { color: "#8db0ff", fontSize: 14, fontWeight: "600" },
@@ -2517,8 +2621,13 @@ const styles = StyleSheet.create({
   forwardPickerSubmitText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   contactShareArrow: { color: "#8fb5ff", fontSize: 28, fontWeight: "400" },
   contactSharePrivacy: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingTop: 12 },
-  pendingAttachmentCard: { minHeight: 68, borderRadius: 16, backgroundColor: "rgba(247,249,253,0.97)", borderWidth: 1, borderColor: "#d6dce7", padding: 8, marginTop: 8, flexDirection: "row", alignItems: "center", gap: 10 },
+  pendingAttachmentCard: { minHeight: 68, borderRadius: 16, backgroundColor: "rgba(247,249,253,0.97)", borderWidth: 1, borderColor: "#d6dce7", padding: 8, marginTop: 6, marginHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 10 },
   pendingAttachmentImage: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#dde3ec" },
+  pendingCollagePreview: { width: 76, height: 76, flexDirection: "row", flexWrap: "wrap", gap: 2, overflow: "hidden", borderRadius: 12, backgroundColor: "#d7dde7" },
+  pendingCollageCell: { width: 37, height: 37, overflow: "hidden", position: "relative" },
+  pendingCollageImage: { width: "100%", height: "100%", borderRadius: 0 },
+  pendingCollageMore: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)", alignItems: "center", justifyContent: "center" },
+  pendingCollageMoreText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   pendingPreviewFallback: { alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
   pendingPreviewFallbackText: { color: "#667085", fontSize: 9, fontWeight: "700", textAlign: "center" },
   pendingAttachmentFileIcon: { width: 48, height: 48, borderRadius: 12, marginBottom: 0 },
@@ -2532,11 +2641,12 @@ const styles = StyleSheet.create({
   richMultiline: { minHeight: 82, paddingTop: 12, textAlignVertical: "top" },
   richSubmit: { backgroundColor: theme.colors.blue, borderRadius: 14, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 2 },
   richSubmitText: { color: "#fff", fontWeight: "900", fontSize: 15 },
-  fileCard: { flexDirection: "row", alignItems: "center", gap: 10, minWidth: 220, maxWidth: 280, borderRadius: 14, padding: 10, backgroundColor: "rgba(255,255,255,0.90)", marginBottom: 6 },
-  fileCardIcon: { width: 44, height: 44, borderRadius: 12, marginBottom: 0 },
+  fileCard: { flexDirection: "row", alignItems: "center", gap: 10, minWidth: 220, maxWidth: 280, borderRadius: 10, padding: 10, backgroundColor: "rgba(18,24,31,0.92)", marginBottom: 5 },
+  fileCardIcon: { width: 42, height: 46, borderRadius: 7, marginBottom: 0, backgroundColor: "#d9164b" },
+  fileCardBadge: { color: "#fff", fontSize: 10, fontWeight: "800" },
   fileCardCopy: { flex: 1 },
-  fileCardName: { color: "#17202d", fontSize: 13, lineHeight: 17, fontWeight: "600" },
-  fileCardMeta: { color: "#667085", fontSize: 10, marginTop: 3, fontWeight: "700" },
+  fileCardName: { color: "#f5f7fa", fontSize: 13, lineHeight: 17, fontWeight: "500" },
+  fileCardMeta: { color: "#aeb5c0", fontSize: 10, marginTop: 3, fontWeight: "500" },
   richCard: { minWidth: 230, maxWidth: 290, borderRadius: 14, padding: 12, backgroundColor: "rgba(255,255,255,0.90)", marginBottom: 4, gap: 6 },
   locationCard: { minWidth: 220, maxWidth: 290, borderRadius: 14, padding: 12, backgroundColor: "rgba(255,255,255,0.92)", marginBottom: 4, flexDirection: "row", alignItems: "center", gap: 11 },
   locationIcon: { width: 40, height: 40, borderRadius: 20, overflow: "hidden", textAlign: "center", textAlignVertical: "center", backgroundColor: "#d8f6e8", color: "#087f55", fontSize: 24, lineHeight: 40 },
@@ -2552,8 +2662,8 @@ const styles = StyleSheet.create({
   pollOptionText: { color: "#263244", fontSize: 12, fontWeight: "800", flex: 1 },
   pollOptionTextSelected: { color: "#fff" },
   pollCount: { color: "#667085", fontSize: 11, fontWeight: "900", marginLeft: 8 },
-  composerInput: { flex: 1, color: "#101828", backgroundColor: "#f5f7fb", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9, minHeight: 38, maxHeight: 110, fontSize: 16 },
-  composerSend: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  composerInput: { flex: 1, color: "#101828", backgroundColor: "rgba(248,249,252,0.96)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
+  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
   composerSendText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },
   sendWingTop: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "32deg" }], top: 5 },
@@ -2567,12 +2677,12 @@ const styles = StyleSheet.create({
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
-  bubble: { maxWidth: "88%", minWidth: 74, borderRadius: 12, paddingLeft: 10, paddingRight: 10, paddingTop: 7, paddingBottom: 5, position: "relative", shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 9, paddingRight: 9, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   messageSelectionCheck: { position: "absolute", top: -9, right: -9, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 5 },
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  myBubble: { backgroundColor: "#d9fdd3", alignSelf: "flex-end", borderBottomRightRadius: 3 },
-  theirBubble: { backgroundColor: "#ffffff", alignSelf: "flex-start", borderBottomLeftRadius: 3 },
+  myBubble: { backgroundColor: "#d9fdd3", alignSelf: "flex-end", borderBottomRightRadius: 2 },
+  theirBubble: { backgroundColor: "#ffffff", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
   myBubbleTail: { right: -5, backgroundColor: "#d9fdd3" },
   theirBubbleTail: { left: -5, backgroundColor: "#ffffff" },
@@ -2596,7 +2706,12 @@ const styles = StyleSheet.create({
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
-  messageImage: { width: 230, height: 210, borderRadius: 14, marginBottom: 6, backgroundColor: theme.colors.panel2 },
+  messageImage: { width: 244, height: 230, borderRadius: 9, marginBottom: 4, backgroundColor: theme.colors.panel2 },
+  messageCollage: { width: 246, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", marginBottom: 6 },
+  collageCell: { width: 121.5, height: 121.5, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },
+  collageImage: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },
+  collageMore: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.58)", alignItems: "center", justifyContent: "center" },
+  collageMoreText: { color: "#fff", fontSize: 24, fontWeight: "700" },
   messageImageLoading: { alignItems: "center", justifyContent: "center" },
   messageImageLoadingText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
   myBubbleText: { color: "#111827" },

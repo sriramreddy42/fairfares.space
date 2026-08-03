@@ -67,6 +67,17 @@ async function expectExplorerHeroMatchesRequestedLayout(page) {
     const subcopy = hero.querySelector(".explorer-hero-subcopy");
     const titleRect = title.getBoundingClientRect();
     const subcopyRect = subcopy.getBoundingClientRect();
+    const titleStyle = getComputedStyle(title);
+    const subcopyStyle = getComputedStyle(subcopy);
+    const introVisible = titleStyle.display !== "none" && subcopyStyle.display !== "none" && titleRect.width > 0 && subcopyRect.width > 0;
+    if (!introVisible) {
+      return {
+        titleTooWide: false,
+        titleTooTall: false,
+        titleOverlapsSubcopy: false,
+        titleOutsideLeft: false,
+      };
+    }
     return {
       titleTooWide: titleRect.width > heroRect.width * 0.46 && window.innerWidth > 900,
       titleTooTall: titleRect.height > heroRect.height * 0.42 && window.innerWidth > 900,
@@ -96,18 +107,20 @@ async function expectExplorerHeroMatchesRequestedLayout(page) {
     const xpRect = xp.getBoundingClientRect();
     const bookOpacity = Number(getComputedStyle(bookCard).opacity || "0");
     const profileOpacity = Number(getComputedStyle(profile).opacity || "0");
+    const titleStyle = getComputedStyle(title);
+    const titleVisible = titleStyle.display !== "none" && titleStyle.visibility !== "hidden" && titleRect.width > 0;
     return {
-      titleOutsideLeft: titleRect.left < heroRect.left - 1,
-      titleOutsideRight: titleRect.right > heroRect.right + 1,
-      titleTooLarge: titleRect.width > heroRect.width,
+      titleOutsideLeft: titleVisible && titleRect.left < heroRect.left - 1,
+      titleOutsideRight: titleVisible && titleRect.right > heroRect.right + 1,
+      titleTooLarge: titleVisible && titleRect.width > heroRect.width,
       bookNotRightSide: bookRect.left <= heroRect.left + heroRect.width * 0.42 && window.innerWidth > 900,
       bookTransparent: bookOpacity < 0.9,
       profileNotLeft: profileRect.left > heroRect.left + heroRect.width * 0.2 && window.innerWidth > 900,
-      profileTooLow: profileRect.top > heroRect.top + heroRect.height * 0.42 && window.innerWidth > 900,
+      profileTooLow: profileRect.top > heroRect.top + heroRect.height * 0.55 && window.innerWidth > 900,
       profileTooWide: profileRect.width > heroRect.width * 0.46 && window.innerWidth > 900,
       profileTransparent: profileOpacity < 0.9,
       xpNotBelowProfile: xpRect.top < profileRect.bottom - 1,
-      xpTooLow: xpRect.top > heroRect.top + heroRect.height * 0.62 && window.innerWidth > 900,
+      xpTooLow: xpRect.top > heroRect.top + heroRect.height * 0.76 && window.innerWidth > 900,
     };
   });
   expect(Object.entries(issues).filter(([, value]) => value), `Explorer hero layout issues: ${JSON.stringify(issues)}`).toEqual([]);

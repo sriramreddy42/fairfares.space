@@ -517,6 +517,12 @@ class BookingHoldTest(unittest.TestCase):
 
     def test_future_booking_does_not_block_earlier_available_window(self):
         car = app.get_cars()[0]
+        earlier_pickup = date.today() + timedelta(days=10)
+        earlier_return = earlier_pickup + timedelta(days=4)
+        future_pickup = date.today() + timedelta(days=20)
+        future_return = future_pickup + timedelta(days=10)
+        overlap_pickup = future_pickup + timedelta(days=2)
+        overlap_return = future_pickup + timedelta(days=4)
         with app.db() as con:
             con.execute(
                 """
@@ -538,16 +544,16 @@ class BookingHoldTest(unittest.TestCase):
         future_booking = app.create_booking_for_user(
             self.user_id,
             car["id"],
-            pickup_date="2026-08-10",
-            return_date="2026-08-20",
+            pickup_date=future_pickup.isoformat(),
+            return_date=future_return.isoformat(),
             pickup_time="10:00 AM",
             return_time="10:00 AM",
         )
         earlier_booking = app.create_booking_for_user(
             earlier_user_id,
             car["id"],
-            pickup_date="2026-08-01",
-            return_date="2026-08-05",
+            pickup_date=earlier_pickup.isoformat(),
+            return_date=earlier_return.isoformat(),
             pickup_time="10:00 AM",
             return_time="10:00 AM",
         )
@@ -558,8 +564,8 @@ class BookingHoldTest(unittest.TestCase):
             app.create_booking_for_user(
                 overlap_user_id,
                 car["id"],
-                pickup_date="2026-08-12",
-                return_date="2026-08-14",
+                pickup_date=overlap_pickup.isoformat(),
+                return_date=overlap_return.isoformat(),
                 pickup_time="10:00 AM",
                 return_time="10:00 AM",
             )

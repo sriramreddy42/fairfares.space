@@ -260,8 +260,8 @@ function FairFaresApp() {
     pushTokenRef.current = "";
   }
 
-  async function load() {
-    setLoading(true);
+  async function load(showLoader = true) {
+    if (showLoader) setLoading(true);
     try {
       const payload = await getBootstrap(city);
       setData(payload);
@@ -272,7 +272,7 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }
 
@@ -899,16 +899,22 @@ function FairFaresApp() {
     setAuthMessage("Signing in...");
     try {
       const payload = await mobileLogin(identifier, password);
-      await syncChatIdentityRecovery(Number(payload.user?.id || 0), password).catch(() => undefined);
+      const authenticatedPassword = password;
+      setData((current) => current ? { ...current, user: payload.user } : current);
       setAuthMessage("Login successful.");
       setLoginOpen(false);
       setIdentifier("");
       setPassword("");
-      await load();
       if (pendingListingAfterLogin) {
         setPendingListingAfterLogin(false);
         openListingFormForUser(payload.user, selectedNeed || "need_place");
       }
+      // Authentication is complete at this point. Refreshing the dashboard and
+      // preparing FChat encryption must not keep the login modal blocked.
+      void Promise.allSettled([
+        syncChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword),
+        load(false)
+      ]);
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
     } finally {
@@ -942,21 +948,27 @@ function FairFaresApp() {
     setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(cleanName, cleanEmail, signupPhone.trim(), password, signupPhoneDiscoverable);
-      if (!payload.activationRequired && payload.token && payload.user) {
-        await syncChatIdentityRecovery(Number(payload.user.id || 0), password).catch(() => undefined);
-      }
+      const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
       setSignupPhone("");
       setIdentifier("");
       setPassword("");
       if (!payload.activationRequired && payload.token) {
+        if (payload.user) {
+          setData((current) => current ? { ...current, user: payload.user || null } : current);
+        }
         setLoginOpen(false);
-        await load();
         if (pendingListingAfterLogin) {
           setPendingListingAfterLogin(false);
           openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
         }
+        void Promise.allSettled([
+          payload.user
+            ? syncChatIdentityRecovery(Number(payload.user.id || 0), authenticatedPassword)
+            : Promise.resolve(),
+          load(false)
+        ]);
       }
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Signup failed. Please try again.");

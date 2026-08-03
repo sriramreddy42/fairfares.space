@@ -37,55 +37,45 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   return images;
 }
 
-export async function pickChatImage(maxWidth = 1600, quality = 0.76) {
+export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76) {
+  const selectionLimit = Math.max(1, Math.min(limit, 4));
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error("Allow photo access to upload pictures.");
   const result = await ImagePicker.launchImageLibraryAsync({
-    allowsMultipleSelection: false,
+    allowsMultipleSelection: selectionLimit > 1,
     base64: false,
-    mediaTypes: ["images", "videos"],
+    mediaTypes: ["images"],
     quality,
-    selectionLimit: 1
+    selectionLimit
   });
-  if (result.canceled || !result.assets.length) return null;
-  const asset = result.assets[0];
-  const isVideo = asset.type === "video" || String(asset.mimeType || "").startsWith("video/");
-  if (isVideo && Number(asset.fileSize || 0) > 15_000_000) throw new Error("Choose a video smaller than 15 MB.");
-  if (Platform.OS === "web") {
-    const webFile = (asset as typeof asset & { file?: Blob }).file;
+  if (result.canceled || !result.assets.length) return [];
+  return await Promise.all(result.assets.slice(0, selectionLimit).map(async (asset, index) => {
+    if (Platform.OS === "web") {
+      const webFile = (asset as typeof asset & { file?: Blob }).file;
+      return {
+        uri: asset.uri,
+        blob: webFile,
+        name: asset.fileName || `fchat-${Date.now()}-${index + 1}.jpg`,
+        mimeType: asset.mimeType || webFile?.type || "image/jpeg",
+        size: Number(asset.fileSize || webFile?.size || 0),
+        kind: "IMAGE" as const
+      };
+    }
+    const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
+    const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+      base64: false,
+      compress: quality,
+      format: ImageManipulator.SaveFormat.JPEG
+    });
+    const info = await FileSystem.getInfoAsync(compressed.uri);
     return {
-      uri: asset.uri,
-      blob: webFile,
-      name: asset.fileName || `fchat-${Date.now()}.jpg`,
-      mimeType: asset.mimeType || webFile?.type || "image/jpeg",
-      size: Number(asset.fileSize || webFile?.size || 0),
-      kind: isVideo ? "VIDEO" as const : "IMAGE" as const
+      uri: compressed.uri,
+      name: `fchat-${Date.now()}-${index + 1}.jpg`,
+      mimeType: "image/jpeg",
+      size: info.exists && "size" in info ? Number(info.size || 0) : 0,
+      kind: "IMAGE" as const
     };
-  }
-  if (isVideo) {
-    const info = await FileSystem.getInfoAsync(asset.uri);
-    return {
-      uri: asset.uri,
-      name: asset.fileName || `fchat-${Date.now()}.mp4`,
-      mimeType: asset.mimeType || "video/mp4",
-      size: info.exists && "size" in info ? Number(info.size || 0) : Number(asset.fileSize || 0),
-      kind: "VIDEO" as const
-    };
-  }
-  const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
-  const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-    base64: false,
-    compress: quality,
-    format: ImageManipulator.SaveFormat.JPEG
-  });
-  const info = await FileSystem.getInfoAsync(compressed.uri);
-  return {
-    uri: compressed.uri,
-    name: `fchat-${Date.now()}.jpg`,
-    mimeType: "image/jpeg",
-    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
-    kind: "IMAGE" as const
-  };
+  }));
 }
 
 export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {

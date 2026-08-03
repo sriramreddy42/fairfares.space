@@ -107,6 +107,36 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_fresh_database_authenticated_ride_activity_is_available(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO users (name, email, password_hash, is_verified)
+                VALUES (?, ?, ?, 1)
+                """,
+                ("Fresh Rider", "fresh-rider@example.com", app.hash_password("FreshRiderPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            login_status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "fresh-rider@example.com",
+                "password": "FreshRiderPassword123!",
+            })
+            self.assertEqual(login_status, 200)
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/rides/activity",
+                headers={"Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(response.status, 200)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["rides"], [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_preserves_guest_profile_and_rejects_member_phone_reuse(self):
         with app.db() as con:
             con.execute(

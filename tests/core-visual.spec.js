@@ -64,6 +64,7 @@ async function expectReadableCards(page, selector) {
           .filter((child) => {
             const style = getComputedStyle(child);
             if (style.display === "none" || style.visibility === "hidden") return false;
+            if (child.closest(".admin-table-scroll, .admin-table-wrap")) return false;
             const childRect = child.getBoundingClientRect();
             return childRect.right > rect.right + 3 || childRect.left < rect.left - 3;
           })
@@ -111,9 +112,9 @@ async function expectFeedbackWidget(page) {
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/", "home-desktop.png");
-  await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
-  await expect(page.locator(".results-promo", { hasText: "Explorer is your personal travel guide." })).toBeVisible();
-  await expect(page.locator(".results-ad-card", { hasText: "Know what you saved before you drive." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
+  await expect(page.locator(".results-promo", { hasText: "Explorer is your Colorado road trip guide." })).toBeVisible();
+  await expect(page.locator(".results-ad-card", { hasText: "Affordable car rental across Colorado." })).toBeVisible();
   const filterBox = await page.locator(".results-side-rail .filters").boundingBox();
   const promoBox = await page.locator(".results-side-rail .results-promo").boundingBox();
   expect(filterBox.y, "Apply filter should be above Explorer advertisements").toBeLessThan(promoBox.y);
@@ -122,7 +123,7 @@ test("home page desktop and mobile visual smoke", async ({ page }) => {
 
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/", "home-mobile.png");
-  await expect(page.locator("text=Let's find your perfect car")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
   await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel");
 });

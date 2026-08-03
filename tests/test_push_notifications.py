@@ -120,6 +120,21 @@ class PushNotificationTest(unittest.TestCase):
             app.send_expo_push([token], "New message", "Hello", {"type": "FCHAT_MESSAGE"})
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(messages[0]["channelId"], "fchat")
+        self.assertTrue(messages[0]["mutableContent"])
+        self.assertEqual(messages[0]["categoryId"], "FCHAT_MESSAGE")
+
+    def test_fchat_avatar_urls_are_short_lived_and_tamper_evident(self):
+        with patch.object(app.time, "time", return_value=2_000_000_000):
+            url = app.chat_notification_avatar_url("https://www.fairfare.space", self.user_id)
+        parsed = app.urllib.parse.urlparse(url)
+        query = app.urllib.parse.parse_qs(parsed.query)
+        expires_at = int(query["expires"][0])
+        signature = query["signature"][0]
+        self.assertEqual(parsed.path, "/api/chat/notification-avatar")
+        self.assertEqual(int(query["user"][0]), self.user_id)
+        self.assertEqual(expires_at, 2_000_000_900)
+        self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id, expires_at)))
+        self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id + 1, expires_at)))
 
     def test_rental_payload_uses_rental_channel_and_booking_context(self):
         token = "ExpoPushToken[rental-device]"
@@ -134,6 +149,7 @@ class PushNotificationTest(unittest.TestCase):
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(messages[0]["channelId"], "rentals")
         self.assertEqual(messages[0]["data"]["bookingId"], "FF-100")
+        self.assertNotIn("mutableContent", messages[0])
 
     def test_rental_helper_targets_booking_owner(self):
         booking = {

@@ -374,7 +374,7 @@ export function ServicesScreen({
   const estimatedPrice = selectedUpgrade?.estimatedTotalLabel || selectedBooking?.totalLabel || "";
   const fairFaresTiles: ServiceTile[] = [
     { label: "Housing", icon: appAssets.bed, badge: "Posts", badgeTone: "green", onPress: onOpenHousing },
-    { label: "Ride", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
+    { label: "Carpool", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
     { label: "Rental Cars", icon: appAssets.carFallback, badge: "Bookings", onPress: openRentalTools },
     { label: "FChat", icon: appAssets.fchat, onPress: onOpenMessenger },
     { label: "Exports & Imports", emoji: "📦", badge: "Coming soon", badgeTone: "green", onPress: () => setExportsInfoOpen(true) }
