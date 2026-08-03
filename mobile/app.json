@@ -14,7 +14,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "3",
+      "buildNumber": "5",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -35,7 +35,7 @@
     },
     "android": {
       "package": "com.fairfares.mobile",
-      "versionCode": 5,
+      "versionCode": 7,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -67,7 +67,14 @@
           "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in FChat."
         }
       ],
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2F6BFF",
+          "defaultChannel": "fchat"
+        }
+      ],
       "expo-secure-store",
       [
         "expo-image-picker",

@@ -77,6 +77,7 @@ export type ChatConversation = {
   otherPhotoUrl?: string;
   otherOnline?: boolean;
   otherLastSeenAt?: string;
+  lastMessageId?: number;
   lastMessage: string;
   lastMessageAt: string;
   mutedAt?: string;

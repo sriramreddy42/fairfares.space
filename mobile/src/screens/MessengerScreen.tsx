@@ -6,7 +6,8 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
-import { Alert, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, Keyboard, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
@@ -186,6 +187,73 @@ function shareableMessageText(message: ChatMessage) {
   return `${prefix}${message.text}`.trim();
 }
 
+function isEncryptedPlaceholder(value: string) {
+  return /end-to-end encrypted message|sent you a secure message|new fchat message/i.test(value || "");
+}
+
+function encryptedOverviewPreview(clearText: string) {
+  if (!clearText) return "New message";
+  if (clearText.startsWith("FFRICH:")) {
+    try {
+      const rich = JSON.parse(clearText.slice(7)) as { type?: string; metadata?: Record<string, unknown> };
+      if (rich.type === "POLL") return `Poll: ${String(rich.metadata?.question || "New poll")}`;
+      if (rich.type === "EVENT") return `Event: ${String(rich.metadata?.title || "New event")}`;
+      if (rich.type === "CONTACT") return `Contact: ${String(rich.metadata?.name || "Shared contact")}`;
+      if (rich.type === "LOCATION") return "Shared a location";
+      return "New message";
+    } catch {
+      return "New message";
+    }
+  }
+  if (clearText.startsWith("{")) {
+    try {
+      const attachment = JSON.parse(clearText) as { kind?: string; caption?: string; fileName?: string };
+      if (attachment.kind === "IMAGE") return attachment.caption || "📷 Photo";
+      if (attachment.kind === "VIDEO") return attachment.caption || "🎥 Video";
+      if (attachment.kind === "FILE") return `📎 ${attachment.fileName || "File"}`;
+    } catch {
+      // A normal text message may begin with a brace.
+    }
+  }
+  return clearText;
+}
+
+function safeConversationPreview(conversation: ChatConversation) {
+  return isEncryptedPlaceholder(conversation.lastMessage)
+    ? "New encrypted message"
+    : conversation.lastMessage || conversation.rideRoute || conversation.subject || "No messages yet.";
+}
+
+function discoveredMessageParts(value: string) {
+  return value.split(/((?:https?:\/\/|www\.)[^\s<>]+)/gi).filter(Boolean).map((part) => {
+    if (!/^(?:https?:\/\/|www\.)/i.test(part)) return { text: part, url: "", trailing: "" };
+    const trailing = part.match(/[),.!?;:]+$/)?.[0] || "";
+    const text = trailing ? part.slice(0, -trailing.length) : part;
+    return { text, url: /^www\./i.test(text) ? `https://${text}` : text, trailing };
+  });
+}
+
+function DiscoveredMessageText({ message, mine }: { message: string; mine: boolean }) {
+  const textStyle = [styles.bubbleText, mine ? styles.myBubbleText : styles.theirBubbleText];
+  return (
+    <Text style={textStyle}>
+      {discoveredMessageParts(message).map((part, index) => part.url ? (
+        <React.Fragment key={`${part.url}-${index}`}>
+          <Text
+            style={[styles.discoveredLink, mine ? styles.myDiscoveredLink : styles.theirDiscoveredLink]}
+            onPress={() => void Linking.openURL(part.url)}
+            accessibilityRole="link"
+            accessibilityLabel={`Open link ${part.text}`}
+          >
+            {part.text}
+          </Text>
+          {part.trailing || ""}
+        </React.Fragment>
+      ) : <React.Fragment key={`text-${index}`}>{part.text}</React.Fragment>)}
+    </Text>
+  );
+}
+
 function presenceLabel(conversation: ChatConversation | null) {
   if (!conversation) return "New conversation";
   if (conversation.communityId) return "Group chat";
@@ -303,6 +371,7 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
 }
 
 export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
+  const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
   const outboxFlushRunning = useRef(false);
@@ -338,6 +407,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
@@ -373,11 +443,16 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSubscription = Keyboard.addListener(showEvent, () => {
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
       setKeyboardVisible(true);
+      setKeyboardHeight(Math.max(0, event.endCoordinates?.height || 0));
       requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: true }));
+      setTimeout(() => messagesScrollRef.current?.scrollToEnd({ animated: true }), 180);
     });
-    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
@@ -562,6 +637,31 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
+  async function decryptConversationPreviews(nextConversations: ChatConversation[]) {
+    const encrypted = nextConversations.filter((conversation) => isEncryptedPlaceholder(conversation.lastMessage) && Number(conversation.lastMessageId || 0) > 0);
+    if (!encrypted.length) return nextConversations;
+    try {
+      const identity = await ensureChatDeviceIdentity();
+      const resolved = await Promise.all(encrypted.map(async (conversation) => {
+        try {
+          const payload = await getChatEncryptedEnvelopes(conversation.id, identity.deviceId);
+          const envelope = payload.envelopes.find((item) => Number(item.messageId) === Number(conversation.lastMessageId));
+          if (!envelope) return [conversation.id, "New encrypted message"] as const;
+          return [conversation.id, encryptedOverviewPreview(decryptEnvelope(envelope, identity))] as const;
+        } catch {
+          return [conversation.id, "New encrypted message"] as const;
+        }
+      }));
+      const previewByConversation = new Map(resolved);
+      return nextConversations.map((conversation) => ({
+        ...conversation,
+        lastMessage: previewByConversation.get(conversation.id) || safeConversationPreview(conversation)
+      }));
+    } catch {
+      return nextConversations.map((conversation) => ({ ...conversation, lastMessage: safeConversationPreview(conversation) }));
+    }
+  }
+
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
     if (!userId || !activeConversationId || !deviceIdentity) return;
@@ -693,7 +793,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           });
           if ((payload.messages || []).some((message) => !message.mine)) {
             await markChatRead(activeConversationId, String(cursor));
-            const nextConversations = await getChatConversations();
+            const nextConversations = await decryptConversationPreviews(await getChatConversations());
             if (cancelled) return;
             setConversations(nextConversations);
             onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
@@ -831,7 +931,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     if (!signedIn) return;
     setLoading(true);
     try {
-      const [nextConversations, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities()]);
+      const [conversationPayload, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities()]);
+      const nextConversations = await decryptConversationPreviews(conversationPayload);
       setConversations(nextConversations);
       setCommunities(nextCommunities);
       onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
@@ -1481,7 +1582,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   function openRichComposer(type: "POLL" | "EVENT" | "CONTACT") {
+    Keyboard.dismiss();
+    setComposerFocused(false);
     setAttachmentMenuOpen(false);
+    setEmojiPickerOpen(false);
     setRichDraft({ primary: "", secondary: "", tertiary: "", fourth: "" });
     setRichComposer(type);
   }
@@ -1662,14 +1766,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   function showComposerOptions() {
+    const willOpen = !attachmentMenuOpen;
+    Keyboard.dismiss();
+    setComposerFocused(false);
     setEmojiPickerOpen(false);
-    setAttachmentMenuOpen((current) => !current);
+    setRichComposer("");
+    setAttachmentMenuOpen(willOpen);
   }
 
   function toggleEmojiPicker() {
+    const willOpen = !emojiPickerOpen;
+    Keyboard.dismiss();
+    setComposerFocused(false);
     setAttachmentMenuOpen(false);
     setRichComposer("");
-    setEmojiPickerOpen((current) => !current);
+    setEmojiPickerOpen(willOpen);
   }
 
   function chooseEmoji(emoji: string) {
@@ -1838,10 +1949,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   if (inThread) {
     return (
-      <KeyboardAvoidingView
-        style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid]}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
+      <View
+        style={[
+          styles.threadScreen,
+          Platform.OS === "android" && styles.threadScreenAndroid,
+          Platform.OS === "ios" && keyboardHeight > 0
+            ? { paddingBottom: Math.max(0, keyboardHeight - safeAreaInsets.bottom) }
+            : null
+        ]}
       >
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
@@ -2009,7 +2124,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                     </View>
                   </View>
                 ) : null}
-                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <Text style={[styles.bubbleText, message.mine ? styles.myBubbleText : styles.theirBubbleText]}>{message.text}</Text> : null}
+                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} /> : null}
                 <View style={styles.bubbleMetaRow} accessibilityLabel={`${chatClock(message.createdAt)}${message.mine ? `, ${messageReceiptLabel(message.status)}` : ""}`}>
                   {message.editedAt ? <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>Edited · </Text> : null}
                   <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(message.createdAt)}</Text>
@@ -2205,7 +2320,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <Text style={styles.cancelEditText}>Cancel edit</Text>
           </TouchableOpacity>
         ) : null}
-      </KeyboardAvoidingView>
+      </View>
     );
   }
 
@@ -2354,7 +2469,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={styles.chatLast} numberOfLines={1}>{chat.lastMessage || chat.rideRoute || chat.subject || "No messages yet."}</Text>
+              <Text style={styles.chatLast} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
             </View>
             <View style={styles.chatMeta}>
               <Text style={styles.chatTime}>{relativeTime(chat.lastMessageAt)}</Text>
@@ -2724,6 +2839,9 @@ const styles = StyleSheet.create({
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
+  discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
+  myDiscoveredLink: { color: "#075985" },
+  theirDiscoveredLink: { color: "#1d4ed8" },
   messageImage: { width: 244, height: 230, borderRadius: 9, marginBottom: 4, backgroundColor: theme.colors.panel2 },
   messageCollage: { width: 246, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", marginBottom: 6 },
   collageCell: { width: 121.5, height: 121.5, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },

@@ -15099,6 +15099,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "otherPhotoUrl": row_value(row, "community_photo_url") if community_public_id else row_value(row, "other_photo_url"),
         "otherOnline": other_online if not community_public_id else False,
         "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
+        "lastMessageId": last_message_id,
         "lastMessage": row_value(row, "last_message"),
         "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
         "mutedAt": row_value(row, "muted_at"),
