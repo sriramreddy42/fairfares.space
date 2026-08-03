@@ -2454,7 +2454,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </ScrollView>
         ) : null}
 
-        <BlurView intensity={52} tint="dark" style={styles.composer}>
+        <View style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
@@ -2470,7 +2470,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
-        </BlurView>
+        </View>
         {editingMessageId ? (
           <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
             <Text style={styles.cancelEditText}>Cancel edit</Text>
