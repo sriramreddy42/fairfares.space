@@ -17,16 +17,52 @@ const notificationKeychainService = "fairfares-fchat-notification";
 const secureOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY } as const;
 const sharedSecureOptions = { ...secureOptions, accessGroup: notificationAccessGroup, keychainService: notificationKeychainService } as const;
 
+async function readSecureIdentity(userId: number) {
+  const name = keyName(userId);
+  if (Platform.OS === "ios") {
+    // Older FairFares builds stored this identity in the app's default
+    // Keychain group. New builds also mirror it into the notification
+    // extension's shared group. Read each independently because iOS throws
+    // errSecMissingEntitlement when a currently installed provisioning
+    // profile does not contain one of those groups.
+    const shared = await SecureStore.getItemAsync(name, sharedSecureOptions).catch(() => null);
+    if (shared) return shared;
+  }
+  return SecureStore.getItemAsync(name, secureOptions).catch(() => null);
+}
+
+async function writeSecureIdentity(userId: number, serialized: string) {
+  const name = keyName(userId);
+  let appStored = false;
+  let sharedStored = Platform.OS !== "ios";
+  try {
+    await SecureStore.setItemAsync(name, serialized, secureOptions);
+    appStored = true;
+  } catch {
+    // A shared-group write below can still safely persist the key on iOS.
+  }
+  if (Platform.OS === "ios") {
+    try {
+      await SecureStore.setItemAsync(name, serialized, sharedSecureOptions);
+      sharedStored = true;
+    } catch {
+      // Do not fall back to unencrypted AsyncStorage for private keys.
+    }
+  }
+  if (!appStored && !sharedStored) {
+    throw new Error("Secure FChat storage is unavailable. Install the latest FairFares build and try again.");
+  }
+}
+
 async function persistIdentity(userId: number, identity: DeviceIdentity) {
   if (Platform.OS === "web") return AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
-  await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), secureOptions);
-  if (Platform.OS === "ios") await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), sharedSecureOptions);
+  await writeSecureIdentity(userId, JSON.stringify(identity));
 }
 
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
-  const existing = Platform.OS === "web" ? await AsyncStorage.getItem(keyName(userId)) :
-    (Platform.OS === "ios" ? await SecureStore.getItemAsync(keyName(userId), sharedSecureOptions) : null)
-      || await SecureStore.getItemAsync(keyName(userId));
+  const existing = Platform.OS === "web"
+    ? await AsyncStorage.getItem(keyName(userId))
+    : await readSecureIdentity(userId);
   if (!existing) return null;
   const identity = JSON.parse(existing) as DeviceIdentity;
   if (identity.signingPublicKey && identity.signingSecretKey) {

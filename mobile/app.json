@@ -14,7 +14,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -25,7 +25,10 @@
       "entitlements": {
         "com.apple.developer.siri": true,
         "com.apple.developer.usernotifications.communication": true,
-        "keychain-access-groups": ["$(AppIdentifierPrefix)com.fairfares.mobile.shared"]
+        "keychain-access-groups": [
+          "$(AppIdentifierPrefix)com.fairfares.mobile",
+          "$(AppIdentifierPrefix)com.fairfares.mobile.shared"
+        ]
       },
       "infoPlist": {
         "NSUserActivityTypes": [
