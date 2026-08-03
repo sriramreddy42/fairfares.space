@@ -29,5 +29,15 @@ export const appAssets = {
   rentalPromo: require("../assets/rental-car-promo.png") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip.png") as ImageSourcePropType,
-  rideListCarpoolBanner: require("../assets/ride-list-carpool-banner.png") as ImageSourcePropType
+  rideListCarpoolBanner: require("../assets/ride-list-carpool-banner.png") as ImageSourcePropType,
+  festivals: {
+    diwali: require("../assets/festivals/diwali.jpg") as ImageSourcePropType,
+    holi: require("../assets/festivals/holi.jpg") as ImageSourcePropType,
+    makarSankranti: require("../assets/festivals/makar-sankranti.jpg") as ImageSourcePropType,
+    christmas: require("../assets/festivals/christmas.jpg") as ImageSourcePropType,
+    republicDay: require("../assets/festivals/republic-day.jpg") as ImageSourcePropType,
+    rakshaBandhan: require("../assets/festivals/raksha-bandhan.jpg") as ImageSourcePropType,
+    navratri: require("../assets/festivals/navratri.jpg") as ImageSourcePropType,
+    independenceDay: require("../assets/festivals/independence-day.jpg") as ImageSourcePropType
+  }
 };

@@ -11,6 +11,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
+import { activeFestivalCampaign } from "../utils/festivals";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -455,6 +456,7 @@ export function HousingScreen({
   onRideOwnerClosed
 }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
+  const [festivalCampaign, setFestivalCampaign] = useState(() => activeFestivalCampaign());
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
@@ -597,6 +599,23 @@ export function HousingScreen({
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
   const detailImageWidth = Math.max(260, Math.min(viewportWidth - theme.spacing.md * 4, 620));
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleMidnightRefresh = () => {
+      const now = new Date();
+      const nextDay = new Date(now);
+      nextDay.setHours(24, 0, 1, 0);
+      timer = setTimeout(() => {
+        setFestivalCampaign(activeFestivalCampaign());
+        scheduleMidnightRefresh();
+      }, Math.max(1000, nextDay.getTime() - now.getTime()));
+    };
+    scheduleMidnightRefresh();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1271,7 +1290,11 @@ export function HousingScreen({
   }
 
   function renderRideOwnerTracker() {
-    const incomingRequestRows = rideActivityRows.filter((ride) => ride.activityRole === "DRIVER_NOTIFICATION").slice(0, 8);
+    const incomingRequestRows = rideActivityRows.filter((ride) => {
+      if (ride.activityRole !== "DRIVER_NOTIFICATION" || ride.isExpired) return false;
+      const status = String(ride.dispatchStatus || ride.status || "PENDING").toUpperCase();
+      return ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
+    }).slice(0, 8);
     const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER").slice(0, 4);
     const requestRows = rideOwnerOpenTarget === "listings"
       ? listedRouteRows
@@ -1444,7 +1467,7 @@ export function HousingScreen({
                 requestRows.map((ride) => {
                   const status = String(ride.isExpired ? "EXPIRED" : ride.dispatchStatus || (ride.activityRole === "DRIVER_NOTIFICATION" ? "PENDING" : "LISTED")).toUpperCase();
                   const isIncoming = ride.activityRole === "DRIVER_NOTIFICATION";
-                  const canAccept = isIncoming && status === "PENDING";
+                  const canAccept = isIncoming && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
                   const canAdvance = isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
                   const nextAction = status === "ACCEPTED" ? "EN_ROUTE" : status === "EN_ROUTE" ? "ARRIVED" : status === "ARRIVED" ? "COMPLETED" : null;
                   const nextLabel = status === "ACCEPTED" ? "Mark en route" : status === "EN_ROUTE" ? "Mark arrived" : status === "ARRIVED" ? "Complete ride" : "";
@@ -1471,7 +1494,7 @@ export function HousingScreen({
                       ) : null}
                       <Text style={styles.rideOwnerRequestMeta}>
                         {isIncoming
-                          ? status === "PENDING"
+                          ? ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status)
                             ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. FChat is available now; accept to confirm the seat and unlock the pickup PIN.`
                             : "FChat is ready for ETA, pickup notes, route changes, and arrival updates."
                           : ride.isExpired
@@ -2755,6 +2778,16 @@ export function HousingScreen({
       onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
     >
         <View style={styles.brandHeader}>
+          {festivalCampaign ? (
+            <View style={styles.festivalHero} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
+              <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="cover" />
+              <View style={styles.festivalPosterActions}>
+                <TouchableOpacity accessibilityLabel="Open Housing" style={styles.festivalPosterAction} onPress={() => setMode("housing")} />
+                <TouchableOpacity accessibilityLabel="Open Explorer" style={styles.festivalPosterAction} onPress={() => onTopAction("Explorer")} />
+                <TouchableOpacity accessibilityLabel="Open Deals" style={styles.festivalPosterAction} onPress={() => onTopAction("Deals")} />
+              </View>
+            </View>
+          ) : <>
           <View style={styles.freeServicesHero}>
             <View style={styles.freeServicesCopy}>
               <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
@@ -2794,6 +2827,7 @@ export function HousingScreen({
               );
             })}
           </View>
+          </>}
         </View>
 
         <View style={[styles.stickySearch, searchIsScrolled && styles.stickySearchRaised]}>
@@ -3086,6 +3120,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(46,255,188,0.24)",
     backgroundColor: "#09bf78"
   },
+  festivalHero: { width: "100%", aspectRatio: 2, backgroundColor: "#00472d", position: "relative" },
+  festivalPoster: { width: "100%", height: "100%" },
+  festivalPosterActions: { position: "absolute", left: 0, right: 0, bottom: 0, height: "20%", flexDirection: "row" },
+  festivalPosterAction: { flex: 1 },
   freeServicesHero: {
     width: "100%",
     minHeight: 116,

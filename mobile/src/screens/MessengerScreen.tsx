@@ -225,12 +225,56 @@ function safeConversationPreview(conversation: ChatConversation) {
 }
 
 function discoveredMessageParts(value: string) {
-  return value.split(/((?:https?:\/\/|www\.)[^\s<>]+)/gi).filter(Boolean).map((part) => {
-    if (!/^(?:https?:\/\/|www\.)/i.test(part)) return { text: part, url: "", trailing: "" };
+  return value.split(/((?:(?:https?|fairfares):\/\/|www\.)[^\s<>]+)/gi).filter(Boolean).map((part) => {
+    if (!/^(?:(?:https?|fairfares):\/\/|www\.)/i.test(part)) return { text: part, url: "", trailing: "" };
     const trailing = part.match(/[),.!?;:]+$/)?.[0] || "";
     const text = trailing ? part.slice(0, -trailing.length) : part;
     return { text, url: /^www\./i.test(text) ? `https://${text}` : text, trailing };
   });
+}
+
+function firstDiscoveredUrl(value: string) {
+  return discoveredMessageParts(value).find((part) => part.url)?.url || "";
+}
+
+function websiteCardDetails(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "fairfares:") {
+      return { host: "FairFares", label: "Private FChat group invitation", detail: "Open securely in the FairFares app" };
+    }
+    const host = parsed.hostname.replace(/^www\./i, "");
+    if (/fairfare\.space$/i.test(host) && /^\/fchat\/(?:invite|group)/i.test(parsed.pathname)) {
+      return { host: "FairFares", label: "FChat group invitation", detail: "Open and confirm inside the app" };
+    }
+    const path = decodeURIComponent(parsed.pathname).replace(/\/$/, "");
+    return {
+      host: host || "Website",
+      label: host || "Open website",
+      detail: path && path !== "/" ? path : "Tap to visit this website"
+    };
+  } catch {
+    return { host: "Website", label: "Open website", detail: value };
+  }
+}
+
+function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
+  const details = websiteCardDetails(url);
+  return (
+    <TouchableOpacity
+      style={[styles.websitePreviewCard, mine ? styles.myWebsitePreviewCard : styles.theirWebsitePreviewCard]}
+      onPress={onOpen}
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${details.label}`}
+    >
+      <View style={styles.websitePreviewIcon}><Text style={styles.websitePreviewIconText}>↗</Text></View>
+      <View style={styles.websitePreviewCopy}>
+        <Text style={[styles.websitePreviewHost, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{details.host}</Text>
+        <Text style={[styles.websitePreviewTitle, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{details.label}</Text>
+        <Text style={[styles.websitePreviewDetail, mine && styles.myWebsitePreviewDetail]} numberOfLines={1}>{details.detail}</Text>
+      </View>
+    </TouchableOpacity>
+  );
 }
 
 function DiscoveredMessageText({ message, mine }: { message: string; mine: boolean }) {
@@ -375,6 +419,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
   const outboxFlushRunning = useRef(false);
+  const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
+  const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
+  const messengerRefreshVersion = useRef(0);
+  const messengerLoaderVersion = useRef(0);
+  const messageCache = useRef(new Map<string, ChatMessage[]>());
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingLastSentAt = useRef(0);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
@@ -436,6 +485,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
 
   useEffect(() => {
+    if (activeConversationId) messageCache.current.set(activeConversationId, messages);
+  }, [activeConversationId, messages]);
+
+  useEffect(() => {
     setConversations(data?.chat.conversations || []);
     setCommunities(data?.communities || []);
   }, [data?.chat.conversations, data?.communities]);
@@ -486,7 +539,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         if (cancelled) return;
         // Preserve the device key even if the network registration must retry.
         setDeviceIdentity(identity);
-        await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+        await ensureDeviceRegistration(identity);
         if (activeConversationId) {
           const keyPayload = await getChatDeviceKeys(activeConversationId);
           if (!cancelled) setEncryptionReady(Boolean(keyPayload.ready));
@@ -502,13 +555,33 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     };
   }, [data?.user?.id]);
 
+  async function ensureDeviceRegistration(identity: DeviceIdentity) {
+    const registrationKey = `${Number(data?.user?.id || 0)}:${identity.deviceId}:${identity.publicKey}:${identity.signingPublicKey}`;
+    const cached = deviceRegistration.current;
+    if (cached?.key === registrationKey && Date.now() - cached.registeredAt < 5 * 60_000) return;
+    if (deviceRegistrationPromise.current) {
+      await deviceRegistrationPromise.current;
+      const completed = deviceRegistration.current;
+      if (completed?.key === registrationKey && Date.now() - completed.registeredAt < 5 * 60_000) return;
+    }
+    const pending = registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey)
+      .then(() => {
+        deviceRegistration.current = { key: registrationKey, registeredAt: Date.now() };
+      })
+      .finally(() => {
+        if (deviceRegistrationPromise.current === pending) deviceRegistrationPromise.current = null;
+      });
+    deviceRegistrationPromise.current = pending;
+    await pending;
+  }
+
   async function ensureChatDeviceIdentity() {
     const userId = Number(data?.user?.id || 0);
     if (!userId) throw new Error("Sign in to use encrypted FChat.");
     const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
     setDeviceIdentity(identity);
     try {
-      await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+      await ensureDeviceRegistration(identity);
     } catch (error) {
       if (!isRetryableChatNetworkError(error)) throw error;
     }
@@ -602,12 +675,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
-  async function decryptMessages(conversationId: string, nextMessages: ChatMessage[]) {
+  async function prepareMessageDecryption(conversationId: string) {
+    const identity = await ensureChatDeviceIdentity();
+    const [envelopePayload, keyPayload] = await Promise.all([
+      getChatEncryptedEnvelopes(conversationId, identity.deviceId), getChatDeviceKeys(conversationId)
+    ]);
+    return { identity, envelopePayload, keyPayload };
+  }
+
+  async function decryptMessages(
+    conversationId: string,
+    nextMessages: ChatMessage[],
+    preparedContext?: ReturnType<typeof prepareMessageDecryption>
+  ) {
     try {
-      const identity = await ensureChatDeviceIdentity();
-      const [envelopePayload, keyPayload] = await Promise.all([
-        getChatEncryptedEnvelopes(conversationId, identity.deviceId), getChatDeviceKeys(conversationId)
-      ]);
+      const { identity, envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
       setEncryptionReady(Boolean(keyPayload.ready));
       const byMessage = new Map(envelopePayload.envelopes.map((item) => [item.messageId, item]));
       return await Promise.all(nextMessages.map(async (message) => {
@@ -927,19 +1009,39 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     });
   }, [communities, personConversations, search, tab]);
 
-  async function refreshMessenger() {
+  async function refreshMessenger(options: { showLoader?: boolean; showError?: boolean } = {}) {
     if (!signedIn) return;
-    setLoading(true);
+    const { showLoader = true, showError = true } = options;
+    const refreshVersion = messengerRefreshVersion.current + 1;
+    const loaderVersion = showLoader ? messengerLoaderVersion.current + 1 : messengerLoaderVersion.current;
+    messengerRefreshVersion.current = refreshVersion;
+    if (showLoader) {
+      messengerLoaderVersion.current = loaderVersion;
+      setLoading(true);
+    }
     try {
       const [conversationPayload, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities()]);
-      const nextConversations = await decryptConversationPreviews(conversationPayload);
-      setConversations(nextConversations);
+      const immediateConversations = conversationPayload.map((conversation) => ({
+        ...conversation,
+        lastMessage: safeConversationPreview(conversation)
+      }));
+      setConversations(immediateConversations);
       setCommunities(nextCommunities);
-      onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
+      onUnreadCountChange?.(immediateConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
+      // Encrypted preview decryption can require one envelope request per thread.
+      // Do that after the list is visible so a large inbox never blocks FChat opening.
+      void decryptConversationPreviews(conversationPayload).then((decrypted) => {
+        if (messengerRefreshVersion.current !== refreshVersion) return;
+        const previewById = new Map(decrypted.map((conversation) => [conversation.id, conversation.lastMessage]));
+        setConversations((current) => current.map((conversation) => ({
+          ...conversation,
+          lastMessage: previewById.get(conversation.id) || conversation.lastMessage
+        })));
+      });
     } catch (error) {
-      Alert.alert("Messenger failed", error instanceof Error ? error.message : "Could not load chats.");
+      if (showError) Alert.alert("Messenger failed", error instanceof Error ? error.message : "Could not load chats.");
     } finally {
-      setLoading(false);
+      if (showLoader && messengerLoaderVersion.current === loaderVersion) setLoading(false);
     }
   }
 
@@ -952,9 +1054,18 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setActiveConversationId(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
-    setThreadLoading(true);
+    const cachedMessages = messageCache.current.get(conversation.id);
+    setMessages(cachedMessages || []);
+    setThreadLoading(!cachedMessages);
     try {
-      const payload = await getChatMessages(conversation.id);
+      // Message metadata and encrypted envelopes are independent requests. Running
+      // them together removes a full network round trip from normal thread opens.
+      const [payload, preparedDecryption] = await Promise.all([
+        getChatMessages(conversation.id),
+        prepareMessageDecryption(conversation.id)
+          .then((context) => ({ context }))
+          .catch(() => ({ context: null }))
+      ]);
       setActiveSubject(payload.conversation.subject || conversation.subject);
       setActiveConversation({
         ...conversation,
@@ -969,12 +1080,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         mutedAt: payload.conversation.mutedAt || conversation.mutedAt,
         blockedAt: payload.conversation.blockedAt || conversation.blockedAt
       });
-      setMessages(await decryptMessages(conversation.id, payload.messages || []));
+      const decryptedMessages = preparedDecryption.context
+        ? await decryptMessages(conversation.id, payload.messages || [], Promise.resolve(preparedDecryption.context))
+        : payload.messages || [];
+      if (!preparedDecryption.context) setEncryptionReady(false);
+      messageCache.current.set(conversation.id, decryptedMessages);
+      setMessages(decryptedMessages);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
-        await markChatRead(conversation.id, String(lastMessage.id));
+        setConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, unread: 0 } : item));
+        void markChatRead(conversation.id, String(lastMessage.id))
+          .then(() => refreshMessenger({ showLoader: false, showError: false }))
+          .catch(() => undefined);
+      } else {
+        void refreshMessenger({ showLoader: false, showError: false });
       }
-      await refreshMessenger();
     } catch (error) {
       Alert.alert("Chat failed", error instanceof Error ? error.message : "Could not open this chat.");
     } finally {
@@ -1035,7 +1155,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         setTimeout(() => setAttachmentStatus(""), 1600);
         onClearPendingPost?.();
         onClearPendingRide?.();
-        await refreshMessenger();
+        void refreshMessenger({ showLoader: false, showError: false });
       } catch (error) {
         setAttachmentStatus("");
         Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
@@ -1101,7 +1221,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       setMessageText("");
       if (!queuedOffline) {
         try {
-          await refreshMessenger();
+          void refreshMessenger({ showLoader: false, showError: false });
         } catch {
           // Sending succeeded; the conversation list can refresh on the next poll.
         }
@@ -1171,6 +1291,20 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   async function confirmGroupInvitation(invitation: string) {
+    if (invitation.startsWith("community:")) {
+      const communityId = invitation.slice("community:".length).trim();
+      const community = communities.find((item) => item.id === communityId);
+      onClearPendingGroupInvite?.();
+      if (!community) {
+        Alert.alert("Group unavailable", "Refresh FChat and try this group link again.");
+        return;
+      }
+      Alert.alert(community.name, community.joined ? "Open this FairFares group?" : "Would you like to join this FairFares group?", [
+        { text: "Not now", style: "cancel" },
+        { text: community.joined ? "Open group" : "Join group", onPress: () => void openCommunityThread(community) }
+      ]);
+      return;
+    }
     setLoading(true);
     try {
       const preview = await previewChatGroupInvite(invitation);
@@ -1327,8 +1461,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   function handleMessengerSearchSubmit() {
     const value = search.trim();
     if (!value) return;
-    if (value.includes("group_invite=")) {
-      void confirmGroupInvitation(value);
+    if (value.includes("group_invite=") || value.includes("community_id=")) {
+      if (value.includes("community_id=")) {
+        try { void confirmGroupInvitation(`community:${new URL(value).searchParams.get("community_id") || ""}`); } catch { void confirmGroupInvitation(value); }
+      } else void confirmGroupInvitation(value);
       return;
     }
     if (value.replace(/\D/g, "").length >= 10) void startPhoneChat(value);
@@ -1364,9 +1500,12 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
-        await markChatRead(response.conversation.id, String(lastMessage.id));
+        void markChatRead(response.conversation.id, String(lastMessage.id))
+          .then(() => refreshMessenger({ showLoader: false, showError: false }))
+          .catch(() => undefined);
+      } else {
+        void refreshMessenger({ showLoader: false, showError: false });
       }
-      await refreshMessenger();
     } catch (error) {
       Alert.alert("Group chat failed", error instanceof Error ? error.message : "Could not open this group chat.");
     } finally {
@@ -2052,6 +2191,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             const mediaGroup = mediaGroupId
               ? visibleMessages.filter((candidate) => candidate.type === "IMAGE" && candidate.metadata?.mediaGroupId === mediaGroupId).sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0))
               : [];
+            const discoveredUrl = message.text ? firstDiscoveredUrl(message.text) : "";
             const messageRunEnds = mediaGroup.length > 1 || endsMessageRun(visibleMessages, index);
             return (
             <React.Fragment key={message.id}>
@@ -2126,6 +2266,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                   </View>
                 ) : null}
                 {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} /> : null}
+                {discoveredUrl ? (
+                  <WebsitePreviewCard
+                    url={discoveredUrl}
+                    mine={message.mine}
+                    onOpen={() => {
+                      if (/community_id=|\/fchat\/group/i.test(discoveredUrl)) {
+                        try { void confirmGroupInvitation(`community:${new URL(discoveredUrl).searchParams.get("community_id") || ""}`); } catch { void Linking.openURL(discoveredUrl); }
+                      } else if (/group_invite=|\/fchat\/invite\//i.test(discoveredUrl) || discoveredUrl.startsWith("fairfares://")) {
+                        void confirmGroupInvitation(discoveredUrl);
+                      } else {
+                        void Linking.openURL(discoveredUrl);
+                      }
+                    }}
+                  />
+                ) : null}
                 <View style={styles.bubbleMetaRow} accessibilityLabel={`${chatClock(message.createdAt)}${message.mine ? `, ${messageReceiptLabel(message.status)}` : ""}`}>
                   {message.editedAt ? <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>Edited · </Text> : null}
                   <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(message.createdAt)}</Text>
@@ -2360,8 +2515,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         </TouchableOpacity>
       </View>
 
-      {search.trim().includes("group_invite=") ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Open group invitation</Text></TouchableOpacity> : null}
-      {search.replace(/\D/g, "").length >= 10 && !search.includes("group_invite=") ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Message this FairFares member</Text></TouchableOpacity> : null}
+      {/(?:group_invite|community_id)=/.test(search.trim()) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Open group invitation</Text></TouchableOpacity> : null}
+      {search.replace(/\D/g, "").length >= 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Message this FairFares member</Text></TouchableOpacity> : null}
 
       <View style={styles.tabs}>
         {(["All", "Unread", "Groups", "Communities"] as MessengerTab[]).map((item) => (
@@ -2843,6 +2998,17 @@ const styles = StyleSheet.create({
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#075985" },
   theirDiscoveredLink: { color: "#1d4ed8" },
+  websitePreviewCard: { minWidth: 210, maxWidth: 290, marginTop: 7, marginBottom: 3, borderRadius: 11, borderWidth: 1, padding: 9, flexDirection: "row", alignItems: "center", gap: 9 },
+  myWebsitePreviewCard: { backgroundColor: "rgba(255,255,255,0.48)", borderColor: "rgba(17,24,39,0.16)" },
+  theirWebsitePreviewCard: { backgroundColor: "#f2f5f8", borderColor: "#d7dee7" },
+  websitePreviewIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: "#1769e0", alignItems: "center", justifyContent: "center" },
+  websitePreviewIconText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  websitePreviewCopy: { flex: 1, minWidth: 0 },
+  websitePreviewHost: { color: "#526074", fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4 },
+  websitePreviewTitle: { color: "#17202d", fontSize: 13, lineHeight: 17, fontWeight: "700", marginTop: 1 },
+  websitePreviewDetail: { color: "#667085", fontSize: 10.5, lineHeight: 14, marginTop: 1 },
+  myWebsitePreviewText: { color: "#16334a" },
+  myWebsitePreviewDetail: { color: "#526474" },
   messageImage: { width: 244, height: 230, borderRadius: 9, marginBottom: 4, backgroundColor: theme.colors.panel2 },
   messageCollage: { width: 246, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", marginBottom: 6 },
   collageCell: { width: 121.5, height: 121.5, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },

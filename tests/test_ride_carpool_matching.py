@@ -62,7 +62,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         )
         return int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
-    def insert_ride(self, con, user_id, ride_type, origin, destination, *, max_detour=35, pickup_distance=20, seats=3, pickup_date="2026-08-02"):
+    def insert_ride(self, con, user_id, ride_type, origin, destination, *, max_detour=35, pickup_distance=20, seats=3, pickup_date="2099-08-02"):
         public_id = app.ride_public_id()
         origin_point = POINTS[origin]
         destination_point = POINTS[destination]

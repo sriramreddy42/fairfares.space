@@ -16,6 +16,7 @@ import {
   createRentalSupportTicket,
   emailRentalDocuments,
   getRentalBookings,
+  isAuthenticationRejection,
   requestRentalCancellation,
   requestRentalModification,
   setAuthToken,
@@ -136,8 +137,8 @@ export function ServicesScreen({
       setSelectedBookingId((current) => current || rows[0]?.id || "");
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Could not load rental bookings.";
-      if (/login is required|401|unauthorized|not authorized/i.test(message)) {
-        setAuthToken("");
+      if (isAuthenticationRejection(loadError)) {
+        await setAuthToken("");
         setBookings([]);
         setSelectedBookingId("");
         setError("Login again to view and manage your rental bookings.");

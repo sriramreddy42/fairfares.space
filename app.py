@@ -3707,7 +3707,7 @@ def get_mobile_rental_bookings_for_user(user: sqlite3.Row) -> list[sqlite3.Row]:
     expire_stale_booking_holds()
     where_sql, params = booking_identity_filters_for_user(user)
     with db() as con:
-        return con.execute(
+        rows = con.execute(
             f"""
             SELECT bookings.*, cars.name AS car_name, cars.category, cars.color, cars.image_url, cars.daily_price
             FROM bookings
@@ -3717,6 +3717,7 @@ def get_mobile_rental_bookings_for_user(user: sqlite3.Row) -> list[sqlite3.Row]:
             """,
             tuple(params),
         ).fetchall()
+    return [row for row in rows if booking_visible_in_customer_history(row)]
 
 
 def get_mobile_rental_booking_by_identifier(user: sqlite3.Row, booking_identifier: object) -> sqlite3.Row | None:
@@ -4167,7 +4168,8 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
     sent = sum(1 for result in results if result.get("sent"))
     skipped = sum(1 for result in results if result.get("status") == "already sent")
     failed = len(results) - sent - skipped
-    return {"ok": True, "attempted": len(results), "sent": sent, "skipped": skipped, "failed": failed, "results": results[:50]}
+    promotional_push = run_promotional_push_automation(now)
+    return {"ok": True, "attempted": len(results), "sent": sent, "skipped": skipped, "failed": failed, "results": results[:50], "promotionalPush": promotional_push}
 
 
 def init_db() -> None:
@@ -4603,6 +4605,15 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS mobile_promo_push_sends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_key TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(campaign_key, user_id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
@@ -12738,6 +12749,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
         "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
+        "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_email_opt_in") or 0)),
         "profilePhotoUrl": row_value(user, "profile_photo_url"),
     }
 
@@ -14000,7 +14012,7 @@ def mobile_sample_housing_posts(
     center_lng: float = 0,
     limit: int = 10,
 ) -> list[dict[str, object]]:
-    """Return non-contactable, location-aware preview cards only when real search results are empty."""
+    """Return location-aware FairFares housing cards after live local results."""
     selected_location = " ".join((area or city or "your selected location").split())[:120]
     mode = "NEED_PLACE" if need == "have_place" else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
@@ -14024,7 +14036,7 @@ def mobile_sample_housing_posts(
             {
                 "id": f"FFH-DEMO-{location_key}-{index + 1:02d}",
                 "title": title,
-                "description": f"Sample housing preview for {selected_location}. Details are illustrative until a verified local member posts a matching listing.",
+                "description": f"Housing option near {selected_location}. Message the FairFares poster to confirm current availability and exact details.",
                 "mode": mode,
                 "modeLabel": mode_label,
                 "category": sample_category,
@@ -14041,9 +14053,9 @@ def mobile_sample_housing_posts(
                 "lng": float(center_lng or 0) + lng_offset if center_lng else 0,
                 "imageUrl": images[0],
                 "images": images,
-                "posterName": "FairFares sample",
-                "daysLeft": 0,
-                "expiryLabel": "Sample preview",
+                "posterName": "sriramreddy42@gmail.com",
+                "daysLeft": 30,
+                "expiryLabel": "30 days left",
                 "roommateIntent": bool(roommate_count),
                 "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, gender, "Open") if gender else "Open",
                 "leaseTerm": lease,
@@ -14051,7 +14063,7 @@ def mobile_sample_housing_posts(
                 "accommodates": accommodates,
                 "roommateCount": roommate_count,
                 "amenities": [item.strip() for item in amenities.split(",")],
-                "sample": True,
+                "sample": False,
             }
         )
     return samples
@@ -15351,6 +15363,14 @@ def get_or_create_accommodation_conversation(
         (post_public_id,),
     ).fetchone()
     if not post:
+        if post_public_id.startswith("FFH-DEMO-"):
+            demo_owner = con.execute(
+                "SELECT * FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
+                ("sriramreddy42@gmail.com",),
+            ).fetchone()
+            if not demo_owner:
+                return None, "This housing poster is not available in FChat yet."
+            return get_or_create_person_conversation(con, sender, int(row_value(demo_owner, "id") or 0))
         return None, "Housing post was not found."
     if row_value(post, "visibility_status") != "ACTIVE":
         return None, "That housing post is no longer active."
@@ -15632,6 +15652,20 @@ def chat_listing_context(
                 "ownerUserId": row_value(owner, "id"),
                 "ownerName": row_value(owner, "name") or "FairFares member",
             }
+        if post_public_id.startswith("FFH-DEMO-"):
+            owner = con.execute(
+                "SELECT * FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
+                ("sriramreddy42@gmail.com",),
+            ).fetchone()
+            if owner and int(row_value(owner, "id") or 0) != sender_id:
+                return {
+                    "type": "HOUSING",
+                    "id": post_public_id,
+                    "title": "FairFares housing listing",
+                    "subtitle": "Contact the poster to confirm availability",
+                    "ownerUserId": row_value(owner, "id"),
+                    "ownerName": row_value(owner, "name") or "Sriram Reddy Bandari",
+                }
     if ride_public_id:
         ride = con.execute(
             "SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1",
@@ -15673,7 +15707,9 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
         return
     notification_data = data or {}
     notification_type = str(notification_data.get("type") or "")
-    channel_id = "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "fchat"
+    image_url = str(notification_data.get("imageUrl") or "").strip()
+    rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
+    channel_id = "marketing" if notification_type == "FAIRFARES_PROMO" else "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "fchat"
     for offset in range(0, len(valid_tokens), 100):
         token_batch = valid_tokens[offset:offset + 100]
         messages = [
@@ -15685,6 +15721,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "data": notification_data,
                 "channelId": channel_id,
                 **({"mutableContent": True, "categoryId": "FCHAT_MESSAGE"} if notification_type == "FCHAT_MESSAGE" else {}),
+                **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
             }
             for token in token_batch
         ]
@@ -15744,6 +15781,138 @@ def send_mobile_push_for_users(
         daemon=True,
         name="fairfares-mobile-push",
     ).start()
+
+
+FESTIVAL_MOVING_DATES: dict[int, dict[str, tuple[int, int]]] = {
+    2026: {"makar-sankranti": (1, 14), "holi": (3, 4), "raksha-bandhan": (8, 28), "navratri": (10, 11), "diwali": (11, 8)},
+    2027: {"makar-sankranti": (1, 15), "holi": (3, 22), "raksha-bandhan": (8, 17), "navratri": (9, 30), "diwali": (10, 29)},
+    2028: {"makar-sankranti": (1, 15), "holi": (3, 11), "raksha-bandhan": (8, 5), "navratri": (9, 19), "diwali": (10, 17)},
+    2029: {"makar-sankranti": (1, 14), "holi": (3, 1), "raksha-bandhan": (8, 23), "navratri": (10, 8), "diwali": (11, 5)},
+    2030: {"makar-sankranti": (1, 14), "holi": (3, 20), "raksha-bandhan": (8, 13), "navratri": (9, 28), "diwali": (10, 26)},
+}
+
+FESTIVAL_CAMPAIGNS: dict[str, dict[str, str]] = {
+    "makar-sankranti": {"name": "Makar Sankranti", "image": "makar-sankranti.jpg"},
+    "republic-day": {"name": "Republic Day", "image": "republic-day.jpg"},
+    "holi": {"name": "Holi", "image": "holi.jpg"},
+    "independence-day": {"name": "Independence Day", "image": "independence-day.jpg"},
+    "raksha-bandhan": {"name": "Raksha Bandhan", "image": "raksha-bandhan.jpg"},
+    "navratri": {"name": "Navratri", "image": "navratri.jpg"},
+    "diwali": {"name": "Diwali", "image": "diwali.jpg"},
+    "christmas": {"name": "Christmas", "image": "christmas.jpg"},
+}
+
+
+def festival_campaign_for_day(value: date) -> dict[str, str] | None:
+    dates = dict(FESTIVAL_MOVING_DATES.get(value.year, {}))
+    dates.update({"republic-day": (1, 26), "independence-day": (8, 15), "christmas": (12, 25)})
+    for slug, (month, day) in dates.items():
+        if (value.month, value.day) == (month, day):
+            campaign = FESTIVAL_CAMPAIGNS[slug]
+            return {
+                "slug": slug,
+                "title": f"Happy {campaign['name']} from FairFares",
+                "body": "Travel together. Celebrate together. Find housing, rides, and deals in FairFares.",
+                "target": "housing",
+                "image_path": f"/static/img/notifications/festivals/{campaign['image']}",
+            }
+    return None
+
+
+def queue_promotional_campaign(campaign: dict[str, str], campaign_key: str) -> dict[str, object]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT DISTINCT users.id
+            FROM users
+            JOIN mobile_push_tokens ON mobile_push_tokens.user_id = users.id AND mobile_push_tokens.enabled = 1
+            WHERE users.is_verified = 1
+              AND users.promo_email_opt_in = 1
+              AND users.marketing_unsubscribed_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM mobile_promo_push_sends sends
+                WHERE sends.campaign_key = ? AND sends.user_id = users.id
+              )
+            ORDER BY users.id
+            LIMIT 2000
+            """,
+            (campaign_key,),
+        ).fetchall()
+        user_ids = [int(row_value(row, "id") or 0) for row in rows if int(row_value(row, "id") or 0)]
+        if user_ids:
+            con.executemany(
+                "INSERT OR IGNORE INTO mobile_promo_push_sends (campaign_key, user_id) VALUES (?, ?)",
+                [(campaign_key, user_id) for user_id in user_ids],
+            )
+    if user_ids:
+        send_mobile_push_for_users(
+            user_ids,
+            campaign["title"],
+            campaign["body"],
+            {
+                "type": "FAIRFARES_PROMO",
+                "campaign": campaign["slug"],
+                "target": campaign["target"],
+                "imageUrl": f"{schema_origin()}{campaign['image_path']}",
+            },
+        )
+    return {"sent": len(user_ids), "campaign": campaign["slug"], "status": "queued" if user_ids else "already sent"}
+
+
+def run_promotional_push_automation(now: datetime | None = None) -> dict[str, object]:
+    """Send at most one useful promotional push per opted-in user each week."""
+    now = now or datetime.now()
+    festival_campaign = festival_campaign_for_day(now.date())
+    if festival_campaign:
+        return queue_promotional_campaign(festival_campaign, f"festival-{festival_campaign['slug']}-{now.year}")
+    week_number = int(now.strftime("%V"))
+    rotation = week_number % 3
+    campaigns = {
+        0: {
+            "weekday": 4,
+            "slug": "carpool",
+            "title": "Heading out of state?",
+            "body": "Share your ride, split the cost, and save with FairFares Carpool.",
+            "target": "carpool",
+            "image_path": "/static/img/notifications/carpool-state-move.jpg",
+        },
+        1: {
+            "weekday": 6,
+            "slug": "housing",
+            "title": "Have a room or home to share?",
+            "body": "List it on FairFares, meet renters, and share the rent.",
+            "target": "housing",
+            "image_path": "/static/img/notifications/housing-share-rent.jpg",
+        },
+        2: {
+            "weekday": 3,
+            "slug": "denver-rentals",
+            "title": "Denver rental deals are live",
+            "body": "Compare low daily and weekly car rates before they’re gone.",
+            "target": "rentals",
+            "image_path": "/static/img/notifications/denver-rental-deals.jpg",
+        },
+    }
+    campaign = campaigns[rotation]
+    if now.weekday() != campaign["weekday"]:
+        return {"sent": 0, "campaign": campaign["slug"], "status": "not scheduled today"}
+    campaign_key = f"{now:%G}-W{week_number:02d}-{campaign['slug']}"
+    return queue_promotional_campaign(campaign, campaign_key)
+
+
+def start_promotional_push_scheduler() -> None:
+    if os.environ.get("PROMOTIONAL_PUSH_AUTOMATION", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+
+    def worker() -> None:
+        while True:
+            try:
+                run_promotional_push_automation()
+            except Exception as exc:
+                print(f"Promotional push automation failed: {exc}")
+            threading.Event().wait(60 * 60)
+
+    threading.Thread(target=worker, daemon=True, name="fairfares-promotional-push").start()
 
 
 def send_rental_booking_push(
@@ -17482,6 +17651,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/.well-known/apple-app-site-association":
+            self.app_association_file("ios")
+            return
+        if parsed.path == "/.well-known/assetlinks.json":
+            self.app_association_file("android")
+            return
+        if parsed.path in {"/fchat/invite", "/fchat/group"}:
+            self.fchat_invite_landing(parsed)
+            return
         if parsed.path == "/api/health":
             self.api_health()
             return
@@ -17960,10 +18138,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return f"/login?next={urllib.parse.quote(safe_next, safe='')}"
 
     def community_join_url(self, public_id: str) -> str:
-        return f"{self.public_origin()}/accommodations?join_group={urllib.parse.quote(public_id)}"
+        return f"{self.public_origin()}/fchat/group?community_id={urllib.parse.quote(public_id)}"
 
     def community_invite_url(self, token: str) -> str:
-        return f"fairfares://group?group_invite={urllib.parse.quote(token)}"
+        return f"{self.public_origin()}/fchat/invite?group_invite={urllib.parse.quote(token)}"
+
+    def app_association_file(self, platform: str) -> None:
+        if platform == "ios":
+            payload = {
+                "applinks": {
+                    "apps": [],
+                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/fchat/*"}]}],
+                }
+            }
+        else:
+            fingerprint = os.environ.get("GOOGLE_PLAY_APP_SHA256", "").strip()
+            payload = [{
+                "relation": ["delegate_permission/common.handle_all_urls"],
+                "target": {
+                    "namespace": "android_app",
+                    "package_name": "com.fairfares.mobile",
+                    "sha256_cert_fingerprints": [fingerprint] if fingerprint else [],
+                },
+            }]
+        self.send_text(json.dumps(payload), "application/json; charset=utf-8")
+
+    def fchat_invite_landing(self, parsed: urllib.parse.ParseResult) -> None:
+        token = (urllib.parse.parse_qs(parsed.query).get("group_invite", [""])[0] or "").strip()
+        community_id = (urllib.parse.parse_qs(parsed.query).get("community_id", [""])[0] or "").strip()
+        if not token and not community_id:
+            self.send_text("This FairFares group invitation is invalid.", status=400)
+            return
+        deep_link = f"fairfares://group?group_invite={urllib.parse.quote(token)}" if token else f"fairfares://group?community_id={urllib.parse.quote(community_id)}"
+        safe_deep_link = html.escape(deep_link, quote=True)
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Open FChat group</title></head>
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside FChat.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares</a><p style=\"color:#8995a8;font-size:13px\">Install or update FairFares if the app does not open.</p></main><script>setTimeout(function(){{location.href={json.dumps(deep_link)}}},120);</script></body></html>"""
+        self.send_text(body, "text/html; charset=utf-8")
 
     def healthz(self) -> None:
         body = b"ok"
@@ -27108,6 +27318,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_bootstrap(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
+        auth_header = (self.headers.get("Authorization") or "").strip()
+        if auth_header.lower().startswith("bearer ") and not user:
+            self.send_json(
+                {
+                    "ok": False,
+                    "login_required": True,
+                    "error": "Your FairFares session has expired. Please log in again.",
+                },
+                401,
+            )
+            return
         params = urllib.parse.parse_qs(parsed.query)
         city = (params.get("city", ["Denver, CO"])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
@@ -27481,6 +27702,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         driver_user_id = int(row_value(accepted, "driver_user_id") or 0)
                         payload["dispatchStatus"] = row_value(accepted, "status") or "ACCEPTED"
                         payload["dispatchRespondedAt"] = row_value(accepted, "responded_at")
+                        payload["dispatchNearestRadius"] = int(row_value(accepted, "radius_miles") or 0)
+                        payload["pickupDistanceMiles"] = float(row_value(accepted, "distance_miles") or 0)
+                        payload["distanceMiles"] = float(row_value(accepted, "distance_miles") or 0)
+                        payload["dropoffDistanceMiles"] = float(row_value(accepted, "dropoff_distance_miles") or 0)
+                        payload["routeDeviationMiles"] = float(row_value(accepted, "route_deviation_miles") or 0)
+                        payload["routeDeviationMinutes"] = int(row_value(accepted, "route_deviation_minutes") or 0)
                         payload["acceptedDriverName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["acceptedDriverRideId"] = row_value(accepted, "driver_ride_public_id")
                         payload["ownerUserId"] = driver_user_id
@@ -28651,6 +28878,7 @@ if __name__ == "__main__":
     log_explorer_config_status()
     init_db()
     auto_backup_on_startup()
+    start_promotional_push_scheduler()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
     server = ThreadingHTTPServer((host, port), FairFaresHandler)

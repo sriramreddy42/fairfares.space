@@ -1,7 +1,7 @@
 {
   "scripts": {
-    "start": "python app.py",
-    "test": "python scripts/run_tests.py",
+    "start": "python3 app.py",
+    "test": "python3 scripts/run_tests.py",
     "test:e2e": "playwright test",
     "cap:sync": "cap sync",
     "cap:open:ios": "cap open ios",

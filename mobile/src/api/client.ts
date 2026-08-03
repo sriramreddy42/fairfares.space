@@ -1,5 +1,6 @@
 import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
+import * as SecureStore from "expo-secure-store";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -84,15 +85,39 @@ function currentApiBase() {
   return activeApiBase || API_URL;
 }
 
-export function setAuthToken(token: string) {
+export async function setAuthToken(token: string) {
   authToken = token;
   const storage = browserStorage();
-  if (!storage) return;
-  if (token) {
-    storage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  } else {
-    storage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  if (storage) {
+    if (token) {
+      storage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    } else {
+      storage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    }
   }
+  if (Platform.OS !== "web") {
+    if (token) {
+      await SecureStore.setItemAsync(AUTH_TOKEN_STORAGE_KEY, token);
+    } else {
+      await SecureStore.deleteItemAsync(AUTH_TOKEN_STORAGE_KEY);
+    }
+  }
+}
+
+export async function hydrateAuthToken() {
+  if (authToken || Platform.OS === "web") return authToken;
+  const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_STORAGE_KEY).catch(() => null);
+  authToken = storedToken || "";
+  return authToken;
+}
+
+export function isAuthenticationRejection(error: unknown) {
+  const status = Number((error as Error & { fairFaresHttpStatus?: number })?.fairFaresHttpStatus || 0);
+  // A 403 means the signed-in member is authenticated but is not allowed to
+  // use a particular staff/owner feature. Clearing SecureStore for that case
+  // made the whole app appear logged out after a restart. Only a 401 is an
+  // authentication rejection.
+  return status === 401;
 }
 
 export function hasAuthToken() {
@@ -536,7 +561,8 @@ export async function startRentalSecurityDeposit(bookingId: string) {
 
 export async function getRentalBookings() {
   const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
-  return payload.bookings || [];
+  const visiblePaymentStatuses = new Set(["HOLD_PAID", "PAID", "REFUND_REVIEW", "REFUNDED"]);
+  return (payload.bookings || []).filter((booking) => visiblePaymentStatuses.has(String(booking.paymentStatus || "").toUpperCase()));
 }
 
 export async function requestRentalCancellation(
@@ -849,17 +875,29 @@ export async function createChatGroupInvite(communityId: string) {
   });
 }
 
+function groupInviteToken(value: string) {
+  const raw = value.trim();
+  try {
+    const parsed = new URL(raw);
+    const fromQuery = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token");
+    if (fromQuery) return fromQuery;
+    const match = parsed.pathname.match(/\/fchat\/invite\/([^/]+)/i);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  } catch {
+    // A raw invitation token is also accepted.
+  }
+  return raw;
+}
+
 export async function joinChatGroupInvite(value: string) {
-  let token = value.trim();
-  try { token = new URL(token).searchParams.get("group_invite") || token; } catch {}
+  const token = groupInviteToken(value);
   return request<{ ok: boolean; community: Community }>("/api/chat/groups/join-invite", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ token })
   });
 }
 
 export async function previewChatGroupInvite(value: string) {
-  let token = value.trim();
-  try { token = new URL(token).searchParams.get("group_invite") || token; } catch {}
+  const token = groupInviteToken(value);
   return request<{ ok: boolean; group: { id: string; name: string; description: string; area: string; memberCount: number; alreadyMember: boolean } }>(
     `/api/chat/groups/invite-preview?token=${encodeURIComponent(token)}`
   );
@@ -941,7 +979,7 @@ export async function mobileLogin(identifier: string, password: string) {
       body: JSON.stringify({ identifier, password })
     }
   );
-  setAuthToken(payload.token);
+  await setAuthToken(payload.token);
   return payload;
 }
 
@@ -955,7 +993,7 @@ export async function mobileSignup(name: string, email: string, phone: string, p
     }
   );
   if (payload.token) {
-    setAuthToken(payload.token);
+    await setAuthToken(payload.token);
   }
   return payload;
 }
@@ -1019,7 +1057,7 @@ export async function mobileLogout() {
   } catch {
     // Local logout should still clear the device session if the network is down.
   } finally {
-    setAuthToken("");
+    await setAuthToken("");
   }
 }
 

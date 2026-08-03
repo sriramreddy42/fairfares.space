@@ -143,6 +143,23 @@ class SecurityHardeningTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_mobile_bootstrap_rejects_an_invalid_bearer_instead_of_logging_user_out_as_guest(self):
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/bootstrap",
+                headers={"Authorization": "Bearer expired-or-invalid-token"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=3)
+            self.assertEqual(error.exception.code, 401)
+            payload = json.loads(error.exception.read())
+            self.assertTrue(payload["login_required"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_health_endpoint_checks_database_availability(self):
         server, thread = self.start_server()
         try:

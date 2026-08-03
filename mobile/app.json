@@ -18,6 +18,10 @@
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
+      "associatedDomains": [
+        "applinks:fairfare.space",
+        "applinks:www.fairfare.space"
+      ],
       "entitlements": {
         "com.apple.developer.siri": true,
         "com.apple.developer.usernotifications.communication": true,
@@ -56,7 +60,18 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#101010"
-      }
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "fairfare.space", "pathPrefix": "/fchat/" },
+            { "scheme": "https", "host": "www.fairfare.space", "pathPrefix": "/fchat/" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro"

@@ -41,6 +41,7 @@ export type FairFaresUser = {
   isAdmin: boolean;
   isVerified: boolean;
   chatPhoneDiscoverable?: boolean;
+  promotionalNotificationsEnabled?: boolean;
   profilePhotoUrl?: string;
 };
 

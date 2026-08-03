@@ -70,7 +70,8 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(results[0]["id"], "NEAR-DAYTON")
         self.assertFalse(results[0].get("sample", False))
         self.assertEqual(len(results), 11)
-        self.assertTrue(all(item.get("sample") is True for item in results[1:]))
+        self.assertTrue(all(item.get("sample") is False for item in results[1:]))
+        self.assertTrue(all(item.get("posterName") == "sriramreddy42@gmail.com" for item in results[1:]))
         self.assertLessEqual(results[0]["distanceMiles"], 10)
 
     @patch.object(
@@ -78,7 +79,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         "accommodation_location_point",
         return_value={"label": "Madison, WI", "lat": 43.0731, "lng": -89.4012, "source": "test"},
     )
-    def test_empty_location_returns_ten_local_non_contactable_samples(self, _mock_point):
+    def test_empty_location_returns_ten_local_contactable_seeded_posts(self, _mock_point):
         results = app.mobile_housing_posts(
             city="Madison, WI",
             area="University of Wisconsin–Madison",
@@ -88,7 +89,8 @@ class HousingLocationSearchTest(unittest.TestCase):
         )
 
         self.assertEqual(len(results), 10)
-        self.assertTrue(all(item["sample"] is True for item in results))
+        self.assertTrue(all(item["sample"] is False for item in results))
+        self.assertTrue(all(item["posterName"] == "sriramreddy42@gmail.com" for item in results))
         self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
         self.assertTrue(all(float(item["distanceMiles"]) <= 5 for item in results))

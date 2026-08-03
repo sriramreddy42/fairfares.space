@@ -33,6 +33,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel }: Props) {
         </View>
         <Text style={styles.meta}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
         <Text style={styles.meta}>{post.moveIn || "Date open"}</Text>
+        {post.posterName ? <Text style={styles.poster} numberOfLines={1}>Posted by {post.posterName}</Text> : null}
         <View style={styles.pillRow}>
           {post.distanceMiles !== null ? (
             <Text style={styles.distance}>
@@ -76,6 +77,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#202a25"
   },
+  poster: { color: theme.colors.soft, fontSize: 11, fontWeight: "500", marginTop: 2 },
   badge: {
     position: "absolute",
     top: 12,

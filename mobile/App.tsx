@@ -2,12 +2,13 @@ import { StatusBar } from "expo-status-bar";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, startRentalCheckout } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -88,6 +89,16 @@ const signupCallingCodes = [
   { label: "United Arab Emirates", flag: "🇦🇪", code: "+971" },
   { label: "Singapore", flag: "🇸🇬", code: "+65" }
 ] as const;
+
+const PENDING_RENTAL_CHECKOUT_KEY = "fairfares.mobile.pendingRentalCheckout";
+const RENTAL_CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
+
+type PendingRentalCheckout = {
+  url: string;
+  bookingId: string;
+  paymentOption: "hold" | "full";
+  expiresAt: number;
+};
 
 const listingCategories: Array<[string, string]> = [
   ["single_room", "Single"],
@@ -242,6 +253,12 @@ function FairFaresApp() {
             importance: Notifications.AndroidImportance.HIGH,
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#f59e0b"
+          }),
+          Notifications.setNotificationChannelAsync("marketing", {
+            name: "FairFares ideas and deals",
+            importance: Notifications.AndroidImportance.DEFAULT,
+            vibrationPattern: [0, 180],
+            lightColor: "#4f7cff"
           })
         ]);
       }
@@ -285,6 +302,10 @@ function FairFaresApp() {
       setCars(carResult.status === "fulfilled" ? carResult.value : []);
       setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
     } catch (error) {
+      if (isAuthenticationRejection(error)) {
+        await setAuthToken("");
+        setData((current) => current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [] } } : current);
+      }
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
       if (showLoader) setLoading(false);
@@ -292,7 +313,30 @@ function FairFaresApp() {
   }
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    async function restoreSessionAndCheckout() {
+      await hydrateAuthToken();
+      if (cancelled) return;
+      await load();
+      if (Platform.OS === "web" || cancelled) return;
+      const saved = await SecureStore.getItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => null);
+      if (!saved || cancelled) return;
+      try {
+        const pending = JSON.parse(saved) as PendingRentalCheckout;
+        if (pending.url && Number(pending.expiresAt) > Date.now()) {
+          setPaymentUrl(pending.url);
+          setPaymentMessage("Your Stripe payment window is still active. Continue securely before the timer expires.");
+        } else {
+          await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
+        }
+      } catch {
+        await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
+      }
+    }
+    void restoreSessionAndCheckout();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -343,6 +387,19 @@ function FairFaresApp() {
         setPendingRide(null);
         setSelectedService("cars");
         setActiveTab("services");
+      } else if (type === "FAIRFARES_PROMO") {
+        const target = String(response?.notification.request.content.data?.target || "");
+        setPendingPost(null);
+        setPendingRide(null);
+        if (target === "rentals") {
+          setSelectedService("cars");
+          setActiveTab("services");
+        } else if (target === "carpool") {
+          setActiveTab("activity");
+        } else {
+          setActiveTab("home");
+          setHousingWelcomeFocusKey((current) => current + 1);
+        }
       }
     };
     const responseSubscription = Notifications.addNotificationResponseReceivedListener(navigateFromNotification);
@@ -433,7 +490,9 @@ function FairFaresApp() {
       if (!url) return;
       try {
         const parsed = new URL(url);
-        const groupInvite = parsed.searchParams.get("group_invite") || "";
+        const invitePathMatch = parsed.pathname.match(/\/fchat\/invite\/([^/]+)/i);
+        const groupCommunity = parsed.searchParams.get("community_id") || "";
+        const groupInvite = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token") || (invitePathMatch?.[1] ? decodeURIComponent(invitePathMatch[1]) : "") || (groupCommunity ? `community:${groupCommunity}` : "");
         if (groupInvite) {
           setPendingPost(null);
           setPendingRide(null);
@@ -446,6 +505,7 @@ function FairFaresApp() {
       }
       if (url.includes("payment/success")) {
         setPaymentUrl("");
+        void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
         setPaymentStatus({
           title: "Payment completed",
           body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
@@ -458,7 +518,7 @@ function FairFaresApp() {
         setPaymentStatus({
           title: "Payment not completed",
           body: "Stripe checkout was cancelled. Your payment window remains active until the timer expires.",
-          action: "Return to checkout"
+          action: "Continue payment"
         });
       }
     }
@@ -517,6 +577,15 @@ function FairFaresApp() {
       const payload = await startRentalCheckout(paymentOption, bookingId, returnUrls);
       if (payload.url) {
         setPaymentUrl(payload.url);
+        if (Platform.OS !== "web") {
+          const pending: PendingRentalCheckout = {
+            url: payload.url,
+            bookingId,
+            paymentOption,
+            expiresAt: Date.now() + RENTAL_CHECKOUT_WINDOW_MS
+          };
+          await SecureStore.setItemAsync(PENDING_RENTAL_CHECKOUT_KEY, JSON.stringify(pending));
+        }
         setPaymentMessage("Opening secure Stripe checkout. If it does not open automatically, tap Open payment.");
         if (Platform.OS === "web" && typeof window !== "undefined") {
           window.location.href = payload.url;
@@ -536,6 +605,27 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("Payment unavailable", error instanceof Error ? error.message : "Unable to open Stripe checkout.");
       return false;
+    }
+  }
+
+  async function resumePendingRentalCheckout() {
+    const saved = await SecureStore.getItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => null);
+    if (!saved) {
+      Alert.alert("Payment window unavailable", "This checkout window has expired. Start payment again from the rental car checkout.");
+      return;
+    }
+    try {
+      const pending = JSON.parse(saved) as PendingRentalCheckout;
+      if (!pending.url || Number(pending.expiresAt) <= Date.now()) {
+        await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
+        Alert.alert("Payment window expired", "Start payment again from the rental car checkout.");
+        return;
+      }
+      setPaymentUrl(pending.url);
+      setPaymentMessage("Your Stripe payment window is still active. Continue securely before the timer expires.");
+      await Linking.openURL(pending.url);
+    } catch {
+      Alert.alert("Payment unavailable", "The saved Stripe checkout could not be reopened. Start payment again.");
     }
   }
 
@@ -1438,8 +1528,14 @@ function FairFaresApp() {
             <TouchableOpacity
               style={styles.primaryButton}
               onPress={() => {
+                const shouldResumePayment = paymentStatus?.action === "Continue payment";
                 setPaymentStatus(null);
-                setActiveTab("activity");
+                if (shouldResumePayment) {
+                  void resumePendingRentalCheckout();
+                } else {
+                  setSelectedService("cars");
+                  setActiveTab("services");
+                }
               }}
             >
               <Text style={styles.primaryButtonText}>{paymentStatus?.action || "Continue"}</Text>

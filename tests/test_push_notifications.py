@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -123,6 +124,22 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(messages[0]["mutableContent"])
         self.assertEqual(messages[0]["categoryId"], "FCHAT_MESSAGE")
 
+    def test_promotional_payload_includes_rich_image_for_android_and_ios(self):
+        token = "ExpoPushToken[promo-rich-device]"
+        image_url = "https://www.fairfare.space/static/img/notifications/denver-rental-deals.jpg"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-promo"}]})
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push(
+                [token],
+                "Denver rental deals are live",
+                "Compare low daily and weekly car rates.",
+                {"type": "FAIRFARES_PROMO", "target": "rentals", "imageUrl": image_url},
+            )
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["channelId"], "marketing")
+        self.assertTrue(message["mutableContent"])
+        self.assertEqual(message["richContent"], {"image": image_url})
+
     def test_fchat_avatar_urls_are_short_lived_and_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
             url = app.chat_notification_avatar_url("https://www.fairfare.space", self.user_id)
@@ -185,6 +202,52 @@ class PushNotificationTest(unittest.TestCase):
         with patch.object(app, "reserve_and_send_automation", return_value={"event": "pickup_24h", "sent": False, "status": "already sent"}), patch.object(app, "send_rental_booking_push") as duplicate_push:
             app.automated_booking_email("pickup_24h", booking, "https://fairfare.space", "Reminder", "Pickup", "Body")
         duplicate_push.assert_not_called()
+
+    def test_promotional_push_rotates_weekly_and_requires_opt_in(self):
+        self.add_token("ExpoPushToken[promo-device]")
+        scheduled = datetime(2026, 8, 6, 11, 0)  # Thursday, ISO week 32: Denver rentals rotation.
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            result = app.run_promotional_push_automation(scheduled)
+        self.assertEqual(result["sent"], 0)
+        send_push.assert_not_called()
+
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_email_opt_in = 1 WHERE id = ?", (self.user_id,))
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            result = app.run_promotional_push_automation(scheduled)
+            duplicate = app.run_promotional_push_automation(scheduled)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(duplicate["sent"], 0)
+        send_push.assert_called_once()
+        self.assertEqual(send_push.call_args.args[3]["type"], "FAIRFARES_PROMO")
+        self.assertEqual(send_push.call_args.args[3]["target"], "rentals")
+        self.assertEqual(
+            send_push.call_args.args[3]["imageUrl"],
+            f"{app.schema_origin()}/static/img/notifications/denver-rental-deals.jpg",
+        )
+
+    def test_festival_push_uses_poster_and_sends_only_once(self):
+        self.add_token("ExpoPushToken[festival-device]")
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_email_opt_in = 1 WHERE id = ?", (self.user_id,))
+        scheduled = datetime(2026, 11, 8, 10, 0)
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            result = app.run_promotional_push_automation(scheduled)
+            duplicate = app.run_promotional_push_automation(scheduled)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["campaign"], "diwali")
+        self.assertEqual(duplicate["sent"], 0)
+        send_push.assert_called_once()
+        self.assertEqual(send_push.call_args.args[1], "Happy Diwali from FairFares")
+        self.assertEqual(
+            send_push.call_args.args[3]["imageUrl"],
+            f"{app.schema_origin()}/static/img/notifications/festivals/diwali.jpg",
+        )
+
+    def test_fixed_festival_dates_repeat_each_year(self):
+        self.assertEqual(app.festival_campaign_for_day(date(2034, 8, 15))["slug"], "independence-day")
+        self.assertEqual(app.festival_campaign_for_day(date(2034, 12, 25))["slug"], "christmas")
+        self.assertIsNone(app.festival_campaign_for_day(date(2034, 8, 16)))
 
 
 if __name__ == "__main__":

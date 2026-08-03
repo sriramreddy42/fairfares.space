@@ -20,6 +20,13 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         let payload = notificationData(from: request.content.userInfo)
+        if stringValue(payload["type"]) == "FAIRFARES_PROMO" {
+            attachPromotionalImage(
+                to: content,
+                from: URL(string: stringValue(payload["imageUrl"]))
+            )
+            return
+        }
         guard stringValue(payload["type"]) == "FCHAT_MESSAGE" else {
             deliver(content)
             return
@@ -137,6 +144,45 @@ final class NotificationService: UNNotificationServiceExtension {
                 return
             }
             completion(pngData)
+        }.resume()
+    }
+
+    private func attachPromotionalImage(to content: UNMutableNotificationContent, from url: URL?) {
+        guard let url, url.scheme == "https" else {
+            deliver(content)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        URLSession.shared.downloadTask(with: request) { [weak self] temporaryUrl, response, _ in
+            guard let self else { return }
+            let http = response as? HTTPURLResponse
+            guard let temporaryUrl,
+                  let status = http?.statusCode,
+                  (200 ... 299).contains(status) else {
+                self.deliver(content)
+                return
+            }
+            do {
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true,
+                    attributes: nil
+                )
+                let fileExtension = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
+                let localUrl = directory.appendingPathComponent("fairfares-promo.\(fileExtension)")
+                try FileManager.default.copyItem(at: temporaryUrl, to: localUrl)
+                let attachment = try UNNotificationAttachment(
+                    identifier: "fairfares-promotional-image",
+                    url: localUrl
+                )
+                content.attachments = [attachment]
+            } catch {
+                // Keep the useful title and body when iOS cannot attach media.
+            }
+            self.deliver(content)
         }.resume()
     }
 
