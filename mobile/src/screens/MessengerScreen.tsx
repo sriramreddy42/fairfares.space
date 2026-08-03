@@ -6,7 +6,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
-import { Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
@@ -337,6 +337,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
@@ -368,6 +369,20 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setConversations(data?.chat.conversations || []);
     setCommunities(data?.communities || []);
   }, [data?.chat.conversations, data?.communities]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem("fairfares.fchat.recent-emojis")
@@ -1941,9 +1956,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!selectedMessageIds.length && (!message.mine || message.canEdit) && !["pending", "relayed", "failed"].includes(message.status) ? (
-                  <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
-                    <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
-                  </TouchableOpacity>
+                  <View style={styles.messageMenuRow}>
+                    <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
+                      <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.senderLine}><Text style={styles.senderName}>{message.senderName}</Text><Text style={styles.senderTime}>· {chatClock(message.createdAt)}</Text></View> : null}
                 {message.contextTitle ? (
@@ -2160,7 +2177,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
         ) : null}
 
-        {!pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused ? (
+        {!pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused && !keyboardVisible ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
             {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setMessageText(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
@@ -2689,7 +2706,8 @@ const styles = StyleSheet.create({
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   senderName: { color: "#17202d", fontSize: 12, fontWeight: "600" },
   senderTime: { color: "#667085", fontSize: 11, fontWeight: "700" },
-  messageMenuButton: { position: "absolute", top: 3, right: 7, minWidth: 24, minHeight: 24, alignItems: "center", justifyContent: "center", zIndex: 2 },
+  messageMenuRow: { height: 17, alignSelf: "stretch", alignItems: "flex-end", justifyContent: "center", marginTop: -3, marginBottom: 1 },
+  messageMenuButton: { width: 30, height: 22, alignItems: "center", justifyContent: "center" },
   messageMenuText: { fontSize: 12, letterSpacing: 1, fontWeight: "700" },
   myMessageMenuText: { color: "#718075" },
   theirMessageMenuText: { color: "#7a8494" },

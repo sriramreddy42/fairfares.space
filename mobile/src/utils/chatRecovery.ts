@@ -14,14 +14,16 @@ export async function syncChatIdentityRecovery(userId: number, password: string)
   if (Platform.OS === "web" || !userId || !password) return;
   const wrappingPassphrase = accountRecoveryPassphrase(password);
   const localIdentity = await getStoredDeviceIdentity(userId);
-  let identity = localIdentity;
-  if (!identity) {
-    const backup = await getChatKeyBackup();
-    identity = backup.encryptedPayload
-      ? await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, wrappingPassphrase)
-      : await getOrCreateDeviceIdentity(userId);
-  }
+  const backup = await getChatKeyBackup();
+  const identity = localIdentity || (backup.encryptedPayload
+    ? await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, wrappingPassphrase)
+    : await getOrCreateDeviceIdentity(userId));
   await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
-  const encryptedPayload = await createEncryptedIdentityBackup(identity, wrappingPassphrase);
-  await saveChatKeyBackup(encryptedPayload);
+  // PBKDF2 is deliberately expensive and runs on the JavaScript thread. Do
+  // not repeat it on every login when this account already has a recoverable
+  // key backup; that previously made the newly authenticated UI appear hung.
+  if (!backup.encryptedPayload) {
+    const encryptedPayload = await createEncryptedIdentityBackup(identity, wrappingPassphrase);
+    await saveChatKeyBackup(encryptedPayload);
+  }
 }

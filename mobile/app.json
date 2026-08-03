@@ -14,7 +14,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -24,11 +24,13 @@
       },
       "infoPlist": {
         "NSUserActivityTypes": [
+          "INSendMessageIntent",
           "INSendMessageIntent"
         ],
         "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
         "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in FChat.",
-        "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in FChat."
+        "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in FChat.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -44,7 +46,8 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.NEARBY_WIFI_DEVICES",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.READ_CONTACTS"
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
       ],
       "blockedPermissions": [
         "android.permission.WRITE_CONTACTS"
@@ -85,7 +88,19 @@
     "extra": {
       "apiUrl": "https://fairfares.onrender.com",
       "eas": {
-        "projectId": "e5c86839-49a9-4c8f-9477-37c971df2344"
+        "projectId": "e5c86839-49a9-4c8f-9477-37c971df2344",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "bundleIdentifier": "com.fairfares.mobile.fchat-notification-service",
+                  "targetName": "FChatNotificationService"
+                }
+              ]
+            }
+          }
+        }
       }
     }
   }

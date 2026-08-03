@@ -17,6 +17,12 @@ class QuietHandler(app.FairFaresHandler):
 
 
 class MobileAuthTest(unittest.TestCase):
+    def test_country_code_and_national_number_are_canonicalized_to_e164(self):
+        self.assertEqual(app.canonical_e164_phone("937-555-0199", "+1"), "+19375550199")
+        self.assertEqual(app.canonical_e164_phone("09876543210", "+91"), "+919876543210")
+        self.assertEqual(app.canonical_e164_phone("+44 7700 900123", "+1"), "+447700900123")
+        self.assertEqual(app.canonical_e164_phone("555", "+1"), "")
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")
@@ -63,7 +69,8 @@ class MobileAuthTest(unittest.TestCase):
                 status, signup = self.post_json(server, "/api/mobile/signup", {
                     "name": "  Mobile   Member  ",
                     "email": " MOBILE@example.com ",
-                    "phone": "+1 (937) 555-0199",
+                    "phone": "(937) 555-0199",
+                    "countryCode": "+1",
                     "password": "CorrectHorse123!",
                     "phoneDiscoverable": False,
                 })
@@ -77,6 +84,7 @@ class MobileAuthTest(unittest.TestCase):
                     (int(user["id"]),),
                 ).fetchone()
             self.assertEqual(user["name"], "Mobile Member")
+            self.assertEqual(user["phone"], "+19375550199")
             self.assertEqual(int(user["chat_phone_discoverable"]), 0)
 
             with mock.patch.object(app, "send_activation_email", return_value=(Path(self.temp_dir.name) / "resent.txt", "sent through test provider")):

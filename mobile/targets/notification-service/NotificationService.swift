@@ -1,4 +1,5 @@
 import Intents
+import UIKit
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
@@ -33,6 +34,14 @@ final class NotificationService: UNNotificationServiceExtension {
         let isGroup = boolValue(payload["isGroup"])
         let avatarUrl = URL(string: stringValue(payload["senderAvatarUrl"]))
 
+        // The encrypted database placeholder is an internal implementation
+        // detail and must never be rendered on the lock screen. The service
+        // extension cannot decrypt the FChat envelope without the recipient's
+        // device key, so use a truthful privacy-safe preview for now.
+        if isEncryptedPlaceholder(content.body) {
+            content.body = "New FChat message"
+        }
+
         loadAvatar(from: avatarUrl) { [weak self] avatarData in
             guard let self else { return }
             self.deliverCommunicationNotification(
@@ -63,7 +72,8 @@ final class NotificationService: UNNotificationServiceExtension {
         avatarData: Data?
     ) {
         let senderHandle = INPersonHandle(value: senderId, type: .unknown)
-        let senderImage = avatarData.map(INImage.init(imageData:))
+        let normalizedAvatarData = avatarData ?? initialsAvatarData(for: senderName)
+        let senderImage = normalizedAvatarData.map(INImage.init(imageData:))
         let sender = INPerson(
             personHandle: senderHandle,
             nameComponents: nil,
@@ -115,8 +125,50 @@ final class NotificationService: UNNotificationServiceExtension {
                 completion(nil)
                 return
             }
-            completion(data)
+            // INImage can silently produce a blank communication avatar when
+            // it receives WebP, HTML, SVG, or otherwise malformed image data.
+            // Decode it with UIKit and hand Intents a normalized PNG instead.
+            guard let image = UIImage(data: data),
+                  image.size.width > 0,
+                  image.size.height > 0,
+                  let pngData = image.pngData(),
+                  pngData.count <= 2_000_000 else {
+                completion(nil)
+                return
+            }
+            completion(pngData)
         }.resume()
+    }
+
+    private func isEncryptedPlaceholder(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+        return normalized.contains("end-to-end encrypted message")
+            || normalized.contains("sent you a secure message")
+            || normalized == "encrypted message"
+    }
+
+    private func initialsAvatarData(for name: String) -> Data? {
+        let words = name.split(whereSeparator: { $0.isWhitespace })
+        let initials = words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        guard !initials.isEmpty else { return nil }
+
+        let size = CGSize(width: 192, height: 192)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(red: 0.10, green: 0.25, blue: 0.55, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: size))
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 70, weight: .semibold),
+                .foregroundColor: UIColor.white
+            ]
+            let text = NSString(string: initials)
+            let bounds = text.size(withAttributes: attributes)
+            text.draw(
+                at: CGPoint(x: (size.width - bounds.width) / 2, y: (size.height - bounds.height) / 2),
+                withAttributes: attributes
+            )
+        }
+        return image.pngData()
     }
 
     private func deliver(_ content: UNNotificationContent) {

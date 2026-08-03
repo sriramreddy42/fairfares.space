@@ -945,13 +945,13 @@ export async function mobileLogin(identifier: string, password: string) {
   return payload;
 }
 
-export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true) {
+export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true, countryCode = "") {
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, phone, password, phoneDiscoverable })
+      body: JSON.stringify({ name, email, phone, countryCode, password, phoneDiscoverable })
     }
   );
   if (payload.token) {

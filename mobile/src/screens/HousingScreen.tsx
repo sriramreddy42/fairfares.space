@@ -469,6 +469,7 @@ export function HousingScreen({
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
   const [rentalSearched, setRentalSearched] = useState(false);
+  const [rentalResultsY, setRentalResultsY] = useState(0);
   const [selectedRentalCar, setSelectedRentalCar] = useState<Car | null>(null);
   const [rentalQuote, setRentalQuote] = useState<RentalQuote | null>(null);
   const [rentalCheckoutInfo, setRentalCheckoutInfo] = useState({ firstName: "", lastName: "", email: "", phone: "" });
@@ -625,6 +626,14 @@ export function HousingScreen({
     setRentalCars(cars);
     setRentalSearched(false);
   }, [cars]);
+
+  useEffect(() => {
+    if (!rentalSearched || !rentalResultsY) return;
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(rentalResultsY - 92, 0), animated: true });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [rentalResultsY, rentalSearched]);
 
   useEffect(() => {
     setRideForm((current) => ({
@@ -1961,7 +1970,7 @@ export function HousingScreen({
           </TouchableOpacity>
         </View>
         {rentalRows.length ? (
-          <View style={styles.carList}>
+          <View style={styles.carList} onLayout={(event) => setRentalResultsY(event.nativeEvent.layout.y)}>
             <Modal visible={Boolean(rentalQuote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setRentalQuote(null)}>
               <View style={styles.checkoutScreen}>
                 <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>

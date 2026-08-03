@@ -3,7 +3,7 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
@@ -79,6 +79,15 @@ const listingModes: Array<[MobileHousingPostInput["postMode"], string]> = [
   ["NEED_PLACE", "I need a place"]
 ];
 
+const signupCallingCodes = [
+  { label: "United States / Canada", flag: "🇺🇸", code: "+1" },
+  { label: "India", flag: "🇮🇳", code: "+91" },
+  { label: "United Kingdom", flag: "🇬🇧", code: "+44" },
+  { label: "Australia", flag: "🇦🇺", code: "+61" },
+  { label: "United Arab Emirates", flag: "🇦🇪", code: "+971" },
+  { label: "Singapore", flag: "🇸🇬", code: "+65" }
+] as const;
+
 const listingCategories: Array<[string, string]> = [
   ["single_room", "Single"],
   ["shared_room", "Shared"],
@@ -152,6 +161,8 @@ function FairFaresApp() {
   const [identifier, setIdentifier] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupPhone, setSignupPhone] = useState("");
+  const [signupCallingCode, setSignupCallingCode] = useState("+1");
+  const [signupCountryOpen, setSignupCountryOpen] = useState(false);
   const [signupPhoneDiscoverable, setSignupPhoneDiscoverable] = useState(true);
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
@@ -888,6 +899,18 @@ function FairFaresApp() {
       .slice(0, 6);
   }
 
+  function runPostLoginTasks(userId: number, authenticatedPassword: string) {
+    // Let the modal close and the authenticated screen paint before any key
+    // recovery work. InteractionManager also prevents the transition itself
+    // from competing with crypto and bootstrap network updates.
+    InteractionManager.runAfterInteractions(() => {
+      setTimeout(() => {
+        void load(false);
+        void syncChatIdentityRecovery(userId, authenticatedPassword).catch(() => undefined);
+      }, 250);
+    });
+  }
+
   async function submitLogin() {
     if (authBusy) return;
     setAuthMessage("");
@@ -911,10 +934,7 @@ function FairFaresApp() {
       }
       // Authentication is complete at this point. Refreshing the dashboard and
       // preparing FChat encryption must not keep the login modal blocked.
-      void Promise.allSettled([
-        syncChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword),
-        load(false)
-      ]);
+      runPostLoginTasks(Number(payload.user?.id || 0), authenticatedPassword);
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
     } finally {
@@ -927,7 +947,9 @@ function FairFaresApp() {
     setAuthMessage("");
     const cleanName = signupName.trim().replace(/\s+/g, " ");
     const cleanEmail = identifier.trim().toLowerCase();
-    const phoneDigits = signupPhone.replace(/\D/g, "");
+    const nationalPhone = signupPhone.replace(/\D/g, "").replace(/^0+/, "");
+    const callingCodeDigits = signupCallingCode.replace(/\D/g, "");
+    const e164Phone = `+${callingCodeDigits}${nationalPhone}`;
     if (cleanName.length < 2) {
       setAuthMessage("Enter your full name.");
       return;
@@ -936,8 +958,8 @@ function FairFaresApp() {
       setAuthMessage("Enter a valid email address.");
       return;
     }
-    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-      setAuthMessage("Enter a valid phone number, including country code when applicable.");
+    if (!/^\+[1-9]\d{7,14}$/.test(e164Phone)) {
+      setAuthMessage("Choose your country code and enter a valid mobile number.");
       return;
     }
     if (password.length < 8) {
@@ -947,7 +969,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(cleanName, cleanEmail, signupPhone.trim(), password, signupPhoneDiscoverable);
+      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupPhoneDiscoverable, signupCallingCode);
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
@@ -963,12 +985,7 @@ function FairFaresApp() {
           setPendingListingAfterLogin(false);
           openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
         }
-        void Promise.allSettled([
-          payload.user
-            ? syncChatIdentityRecovery(Number(payload.user.id || 0), authenticatedPassword)
-            : Promise.resolve(),
-          load(false)
-        ]);
+        runPostLoginTasks(Number(payload.user?.id || 0), authenticatedPassword);
       }
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Signup failed. Please try again.");
@@ -1292,16 +1309,28 @@ function FairFaresApp() {
             />
             {authMode === "signup" ? (
               <>
-                <TextInput
-                  value={signupPhone}
-                  onChangeText={setSignupPhone}
-                  placeholder="Phone number"
-                  placeholderTextColor={theme.colors.muted}
-                  keyboardType="phone-pad"
-                  autoComplete="tel"
-                  accessibilityLabel="Phone number"
-                  style={styles.input}
-                />
+                <View style={styles.signupPhoneRow}>
+                  <TouchableOpacity
+                    style={styles.signupCallingCode}
+                    onPress={() => setSignupCountryOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Country calling code ${signupCallingCode}`}
+                  >
+                    <Text style={styles.signupCallingCodeText}>{signupCallingCode}</Text>
+                    <Text style={styles.signupCallingCodeChevron}>⌄</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    value={signupPhone}
+                    onChangeText={setSignupPhone}
+                    placeholder="Mobile number"
+                    placeholderTextColor={theme.colors.muted}
+                    keyboardType="phone-pad"
+                    autoComplete="tel-national"
+                    accessibilityLabel="Mobile number without country code"
+                    style={[styles.input, styles.signupPhoneInput]}
+                  />
+                </View>
+                <Text style={styles.authHint}>Saved securely as {signupCallingCode} followed by your mobile number so FChat can match contacts across countries.</Text>
                 <View style={styles.signupDiscoveryRow}>
                   <View style={styles.signupDiscoveryCopy}>
                     <Text style={styles.signupDiscoveryTitle}>Let contacts find me</Text>
@@ -1353,6 +1382,28 @@ function FairFaresApp() {
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+      <Modal visible={signupCountryOpen} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={() => setSignupCountryOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.countryPickerCard}>
+            <Text style={styles.modalTitle}>Choose country code</Text>
+            <Text style={styles.modalCopy}>This makes your phone number unambiguous for login and private FChat contact matching.</Text>
+            {signupCallingCodes.map((country) => (
+              <TouchableOpacity
+                key={`${country.label}-${country.code}`}
+                style={[styles.countryPickerOption, signupCallingCode === country.code && styles.countryPickerOptionActive]}
+                onPress={() => { setSignupCallingCode(country.code); setSignupCountryOpen(false); }}
+              >
+                <Text style={styles.countryPickerFlag}>{country.flag}</Text>
+                <Text style={styles.countryPickerLabel}>{country.label}</Text>
+                <Text style={styles.countryPickerCode}>{country.code}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setSignupCountryOpen(false)}>
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
       <Modal visible={Boolean(paymentUrl)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentUrl("")}>
         <View style={styles.modalBackdrop}>
@@ -1697,6 +1748,17 @@ const styles = StyleSheet.create({
   signupDiscoveryCopy: { flex: 1, minWidth: 0 },
   signupDiscoveryTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   signupDiscoveryText: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  signupPhoneRow: { flexDirection: "row", alignItems: "stretch", gap: 8 },
+  signupCallingCode: { minWidth: 86, minHeight: 49, paddingHorizontal: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: theme.colors.line },
+  signupCallingCodeText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
+  signupCallingCodeChevron: { color: theme.colors.muted, fontSize: 16 },
+  signupPhoneInput: { flex: 1, minWidth: 0 },
+  countryPickerCard: { width: "100%", maxWidth: 520, maxHeight: "86%", alignSelf: "center", backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 9, borderWidth: 1, borderColor: theme.colors.line },
+  countryPickerOption: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  countryPickerOptionActive: { borderColor: theme.colors.blue, backgroundColor: "rgba(70,118,255,0.15)" },
+  countryPickerFlag: { fontSize: 22 },
+  countryPickerLabel: { flex: 1, color: theme.colors.text, fontSize: 14 },
+  countryPickerCode: { color: theme.colors.soft, fontSize: 14, fontWeight: "700" },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
   validatedInput: { borderWidth: 1, borderColor: "#22c55e" },
   addressStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },

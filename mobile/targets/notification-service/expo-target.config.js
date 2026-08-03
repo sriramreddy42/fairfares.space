@@ -5,5 +5,5 @@ module.exports = config => ({
   displayName: "FChat Notification Service",
   bundleIdentifier: ".fchat-notification-service",
   deploymentTarget: "15.1",
-  frameworks: ["Intents", "UserNotifications"],
+  frameworks: ["Intents", "UIKit", "UserNotifications"],
 });

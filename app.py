@@ -1683,6 +1683,18 @@ def normalize_phone(value: object) -> str:
     return re.sub(r"\D+", "", str(value or ""))
 
 
+def canonical_e164_phone(value: object, country_code: object = "") -> str:
+    raw_phone = str(value or "").strip()
+    phone_digits = normalize_phone(raw_phone)
+    if raw_phone.startswith("+"):
+        candidate = f"+{phone_digits}"
+    else:
+        calling_digits = normalize_phone(country_code)
+        national_digits = phone_digits.lstrip("0")
+        candidate = f"+{calling_digits}{national_digits}" if calling_digits else ""
+    return candidate if re.fullmatch(r"\+[1-9]\d{7,14}", candidate) else ""
+
+
 def normalized_email_sql(column: str = "email") -> str:
     return f"LOWER(REPLACE(REPLACE(REPLACE(REPLACE({column}, ' ', ''), char(9), ''), char(10), ''), char(13), ''))"
 
@@ -18956,7 +18968,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if row_value(message, "attachment_url"):
             notification_preview = "Sent you a secure attachment"
         elif "end-to-end encrypted message" in stored_preview.lower():
-            notification_preview = "Sent you a secure message"
+            # Never expose the encrypted-at-rest database placeholder in a
+            # system notification. A plaintext preview is intentionally not
+            # available to the relay server for an E2EE message.
+            notification_preview = "New FChat message"
         else:
             notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
@@ -26866,11 +26881,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         name = " ".join(str(payload.get("name") or "").split())[:120]
         email = normalize_email(payload.get("email") or payload.get("identifier") or "")
-        phone = str(payload.get("phone") or "").strip()
-        clean_phone = normalize_phone(phone)
+        submitted_phone = str(payload.get("phone") or "").strip()
+        country_code = str(payload.get("countryCode") or "").strip()
+        phone = canonical_e164_phone(submitted_phone, country_code)
+        # Keep older released clients working while all new builds send an
+        # explicit countryCode and persist a canonical E.164 number.
+        clean_phone = normalize_phone(phone or submitted_phone)
         password = str(payload.get("password") or "")
         phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
-        if len(name) < 2 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or not 7 <= len(clean_phone) <= 15 or len(password) < 8:
+        if len(name) < 2 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or not 7 <= len(clean_phone) <= 15 or len(password) < 8 or (country_code and not phone):
             self.send_json(
                 {
                     "ok": False,
@@ -26885,7 +26904,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if existing_email_user and not int(row_value(existing_email_user, "guest_account") or 0):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
                     return
-                phone_owner = find_user_by_login_identifier(con, phone)
+                stored_phone = phone or submitted_phone
+                phone_owner = find_user_by_login_identifier(con, stored_phone)
                 if phone_owner and (not existing_email_user or int(phone_owner["id"]) != int(existing_email_user["id"])) and not int(row_value(phone_owner, "guest_account") or 0):
                     self.send_json({"ok": False, "error": "An account with that phone number already exists. Log in or recover that account."}, 409)
                     return
@@ -26896,13 +26916,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                            SET name = ?, email = ?, phone = ?, password_hash = ?, is_verified = 0,
                                guest_account = 0, chat_phone_discoverable = ?
                            WHERE id = ?""",
-                        (name, email, phone, hash_password(password), 1 if phone_discoverable else 0, int(guest["id"])),
+                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, int(guest["id"])),
                     )
                     user_id = int(guest["id"])
                 else:
                     con.execute(
                         "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, ?, 0, ?)",
-                        (name, email, phone, hash_password(password), 1 if phone_discoverable else 0),
+                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0),
                     )
                     user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
