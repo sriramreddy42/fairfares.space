@@ -6,23 +6,38 @@ import nacl from "tweetnacl";
 import * as util from "tweetnacl-util";
 import { pbkdf2 } from "@noble/hashes/pbkdf2";
 import { sha256 } from "@noble/hashes/sha256";
+import { chacha20poly1305 } from "@noble/ciphers/chacha";
 
 export type DeviceIdentity = { deviceId: string; publicKey: string; secretKey: string; signingPublicKey: string; signingSecretKey: string };
 export type ConversationDeviceKey = { userId: number; deviceId: string; publicKey: string };
 
 const keyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
+const notificationAccessGroup = "9RVTF77D2S.com.fairfares.mobile.shared";
+const notificationKeychainService = "fairfares-fchat-notification";
+const secureOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY } as const;
+const sharedSecureOptions = { ...secureOptions, accessGroup: notificationAccessGroup, keychainService: notificationKeychainService } as const;
+
+async function persistIdentity(userId: number, identity: DeviceIdentity) {
+  if (Platform.OS === "web") return AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
+  await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), secureOptions);
+  if (Platform.OS === "ios") await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), sharedSecureOptions);
+}
 
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
-  const existing = Platform.OS === "web"
-    ? await AsyncStorage.getItem(keyName(userId))
-    : await SecureStore.getItemAsync(keyName(userId));
+  const existing = Platform.OS === "web" ? await AsyncStorage.getItem(keyName(userId)) :
+    (Platform.OS === "ios" ? await SecureStore.getItemAsync(keyName(userId), sharedSecureOptions) : null)
+      || await SecureStore.getItemAsync(keyName(userId));
   if (!existing) return null;
   const identity = JSON.parse(existing) as DeviceIdentity;
-  if (identity.signingPublicKey && identity.signingSecretKey) return identity;
+  if (identity.signingPublicKey && identity.signingSecretKey) {
+    // Migrates identities created by older builds into the notification
+    // extension's shared Keychain group on first launch after upgrading.
+    await persistIdentity(userId, identity);
+    return identity;
+  }
   const signingPair = nacl.sign.keyPair();
   const upgraded = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
-  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(upgraded));
-  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(upgraded), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+  await persistIdentity(userId, upgraded);
   return upgraded;
 }
 
@@ -51,8 +66,7 @@ export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceI
     signingPublicKey: util.encodeBase64(signingPair.publicKey),
     signingSecretKey: util.encodeBase64(signingPair.secretKey)
   };
-  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
-  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+  await persistIdentity(userId, identity);
   return identity;
 }
 
@@ -77,8 +91,7 @@ export async function restoreEncryptedIdentityBackup(userId: number, encryptedPa
     const signingPair = nacl.sign.keyPair();
     identity = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
   }
-  if (Platform.OS === "web") await AsyncStorage.setItem(keyName(userId), JSON.stringify(identity));
-  else await SecureStore.setItemAsync(keyName(userId), JSON.stringify(identity), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+  await persistIdentity(userId, identity);
   return identity;
 }
 
@@ -88,17 +101,25 @@ export function encryptionFingerprint(keys: ConversationDeviceKey[]) {
   return Array.from(digest.slice(0, 15)).map((byte) => byte.toString(16).padStart(2, "0")).join("").match(/.{1,5}/g)?.join(" ") || "";
 }
 
-export function encryptForDevices(text: string, identity: DeviceIdentity, keys: ConversationDeviceKey[]) {
+export function encryptForDevices(text: string, identity: DeviceIdentity, keys: ConversationDeviceKey[], notificationText = text) {
   const secretKey = util.decodeBase64(identity.secretKey);
   return keys.map((key) => {
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
     const ciphertext = nacl.box(util.decodeUTF8(text), nonce, util.decodeBase64(key.publicKey), secretKey);
+    const previewNonce = nacl.randomBytes(12);
+    // Use raw X25519 here (not nacl.box.before, which additionally applies
+    // HSalsa20) so Apple's CryptoKit extension derives the identical secret.
+    const shared = nacl.scalarMult(secretKey, util.decodeBase64(key.publicKey));
+    const previewKey = sha256(new Uint8Array([...util.decodeUTF8("FairFares FChat notification preview v1"), ...shared]));
+    const previewCiphertext = chacha20poly1305(previewKey, previewNonce).encrypt(util.decodeUTF8(notificationText.slice(0, 240)));
     return {
       recipientUserId: key.userId,
       recipientDeviceId: key.deviceId,
       senderPublicKey: identity.publicKey,
       nonce: util.encodeBase64(nonce),
-      ciphertext: util.encodeBase64(ciphertext)
+      ciphertext: util.encodeBase64(ciphertext),
+      previewNonce: util.encodeBase64(previewNonce),
+      previewCiphertext: util.encodeBase64(previewCiphertext)
     };
   });
 }
@@ -123,7 +144,8 @@ export function encryptAttachmentForDevices(
   const keyPayload = JSON.stringify({
     v: 1, type: "ATTACHMENT", key: util.encodeBase64(fileKey), nonce: util.encodeBase64(fileNonce), ...metadata
   });
-  return { ciphertextBase64: util.encodeBase64(ciphertext), envelopes: encryptForDevices(keyPayload, identity, keys) };
+  const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
+  return { ciphertextBase64: util.encodeBase64(ciphertext), envelopes: encryptForDevices(keyPayload, identity, keys, preview) };
 }
 
 export function decryptAttachmentBase64(ciphertextBase64: string, keyPayload: string) {

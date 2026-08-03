@@ -636,11 +636,11 @@ export async function getChatConversations() {
   return payload.conversations || [];
 }
 
-export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true) {
+export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "") {
   return request<{ ok: boolean; enabled: boolean }>("/api/mobile/push-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, platform, deviceLabel, enabled })
+    body: JSON.stringify({ token, platform, deviceLabel, enabled, deviceId })
   });
 }
 

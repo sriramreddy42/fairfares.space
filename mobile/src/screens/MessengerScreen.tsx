@@ -1596,7 +1596,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
     if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
     setEncryptionReady(true);
-    const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys);
+    const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New FChat message";
+    const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
     const message = { ...response.message, type, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } } as ChatMessage;
     setMessages((current) => [...current.filter((item) => item.id !== message.id), message].sort((a, b) => a.id - b.id));

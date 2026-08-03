@@ -6,4 +6,7 @@ module.exports = config => ({
   bundleIdentifier: ".fchat-notification-service",
   deploymentTarget: "15.1",
   frameworks: ["Intents", "UIKit", "UserNotifications"],
+  entitlements: {
+    "keychain-access-groups": ["$(AppIdentifierPrefix)com.fairfares.mobile.shared"]
+  },
 });

@@ -14,13 +14,14 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
       "entitlements": {
         "com.apple.developer.siri": true,
-        "com.apple.developer.usernotifications.communication": true
+        "com.apple.developer.usernotifications.communication": true,
+        "keychain-access-groups": ["$(AppIdentifierPrefix)com.fairfares.mobile.shared"]
       },
       "infoPlist": {
         "NSUserActivityTypes": [

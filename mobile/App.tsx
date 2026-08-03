@@ -19,6 +19,7 @@ import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
+import { getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -253,7 +254,9 @@ function FairFaresApp() {
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
       if (!token.data) throw new Error("A push token could not be created.");
-      await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true);
+      const userId = Number(data?.user?.id || 0);
+      const deviceId = userId ? (await getOrCreateDeviceIdentity(userId)).deviceId : "";
+      await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true, deviceId);
       pushTokenRef.current = token.data;
       return true;
     } catch {
@@ -264,7 +267,8 @@ function FairFaresApp() {
   async function unregisterNotificationsForLogout() {
     if (!pushTokenRef.current || !data?.user) return;
     try {
-      await registerMobilePushToken(pushTokenRef.current, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", false);
+      const deviceId = (await getOrCreateDeviceIdentity(Number(data.user.id))).deviceId;
+      await registerMobilePushToken(pushTokenRef.current, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", false, deviceId);
     } catch {
       // Logout must still succeed if the device is temporarily offline.
     }

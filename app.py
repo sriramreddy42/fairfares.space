@@ -4552,6 +4552,8 @@ def init_db() -> None:
                 sender_public_key TEXT NOT NULL,
                 nonce TEXT NOT NULL,
                 ciphertext TEXT NOT NULL,
+                preview_nonce TEXT NOT NULL DEFAULT '',
+                preview_ciphertext TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(message_id, recipient_user_id, recipient_device_id),
                 FOREIGN KEY(message_id) REFERENCES chat_messages(id),
@@ -5468,6 +5470,9 @@ def init_db() -> None:
         ensure_column(con, "chat_messages", "edited_at", "edited_at TEXT")
         ensure_column(con, "chat_messages", "deleted_at", "deleted_at TEXT")
         ensure_column(con, "chat_device_keys", "signing_public_key", "signing_public_key TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_message_envelopes", "preview_nonce", "preview_nonce TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_message_envelopes", "preview_ciphertext", "preview_ciphertext TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "mobile_push_tokens", "device_id", "device_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -14876,7 +14881,8 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
     for item in envelopes:
         if str(item.get("senderPublicKey") or "") not in sender_public_keys:
             return None, "The sender encryption key is not registered to this device."
-        if len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000:
+        if (len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000
+                or len(str(item.get("previewNonce") or "")) > 100 or len(str(item.get("previewCiphertext") or "")) > 1000):
             return None, "Encrypted message is invalid."
     message = save_chat_message(con, int(conversation["id"]), sender, "🔒 End-to-end encrypted message", client_message_id)
     for item in envelopes:
@@ -14884,9 +14890,9 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
         recipient_device_id = str(item.get("recipientDeviceId") or "")
         con.execute(
             """INSERT OR IGNORE INTO chat_message_envelopes
-               (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (int(message["id"]), recipient_user_id, recipient_device_id, str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or "")),
+               (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext, preview_nonce, preview_ciphertext)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (int(message["id"]), recipient_user_id, recipient_device_id, str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or ""), str(item.get("previewNonce") or ""), str(item.get("previewCiphertext") or "")),
         )
     return message, ""
 
@@ -14900,6 +14906,8 @@ def chat_relay_signature_payload(bundle: dict[str, object]) -> bytes:
             "senderPublicKey": str(item.get("senderPublicKey") or ""),
             "nonce": str(item.get("nonce") or ""),
             "ciphertext": str(item.get("ciphertext") or ""),
+            "previewNonce": str(item.get("previewNonce") or ""),
+            "previewCiphertext": str(item.get("previewCiphertext") or ""),
         }
         for item in envelopes if isinstance(item, dict)
     ]
@@ -18963,7 +18971,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
             post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
-        push_tokens: list[str] = []
+        push_jobs: list[tuple[str, dict[str, object]]] = []
         email_jobs: list[tuple[str, str, str, str, str, str]] = []
         stored_preview = str(row_value(message, "message_text") or "").strip()
         if row_value(message, "attachment_url"):
@@ -18979,10 +18987,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             recipient_id = int(row_value(recipient, "id") or 0)
             if not row_value(recipient, "chat_muted_at") and recipient_id:
                 token_rows = con.execute(
-                    "SELECT token FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
+                    "SELECT token, device_id FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
                     (recipient_id,),
                 ).fetchall()
-                push_tokens.extend(row_value(token_row, "token") for token_row in token_rows)
+                for token_row in token_rows:
+                    device_id = str(row_value(token_row, "device_id") or "")
+                    envelope = con.execute(
+                        "SELECT sender_public_key, preview_nonce, preview_ciphertext FROM chat_message_envelopes WHERE message_id = ? AND recipient_user_id = ? AND recipient_device_id = ? LIMIT 1",
+                        (int(row_value(message, "id") or 0), recipient_id, device_id),
+                    ).fetchone() if device_id else None
+                    push_jobs.append((str(row_value(token_row, "token") or ""), {
+                        "recipientUserId": recipient_id,
+                        "recipientDeviceId": device_id,
+                        "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",
+                        "previewNonce": str(row_value(envelope, "preview_nonce") or "") if envelope else "",
+                        "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
+                    }))
             email = normalize_email(row_value(recipient, "email"))
             if not email:
                 continue
@@ -19009,27 +19029,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 daemon=True,
                 name="fairfares-fchat-email",
             ).start()
-        if push_tokens:
+        if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
             conversation_name = str(row_value(conversation, "subject") or "FChat group") if is_group else ""
-            threading.Thread(
-                target=send_expo_push,
-                args=(
-                    push_tokens,
+            def deliver_chat_pushes() -> None:
+                common_data = {
+                    "type": "FCHAT_MESSAGE",
+                    "conversationId": row_value(conversation, "public_id"),
+                    "messageId": int(row_value(message, "id") or 0),
+                    "senderId": sender_id,
+                    "senderName": row_value(sender, "name") or "FairFares member",
+                    "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
+                    "conversationName": conversation_name,
+                    "isGroup": is_group,
+                }
+                for token, encrypted_preview in push_jobs:
+                    send_expo_push(
+                    [token],
                     row_value(sender, "name") or "New FChat message",
                     notification_preview,
-                    {
-                        "type": "FCHAT_MESSAGE",
-                        "conversationId": row_value(conversation, "public_id"),
-                        "messageId": int(row_value(message, "id") or 0),
-                        "senderId": sender_id,
-                        "senderName": row_value(sender, "name") or "FairFares member",
-                        "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
-                        "conversationName": conversation_name,
-                        "isGroup": is_group,
-                    },
-                ),
+                    {**common_data, **encrypted_preview},
+                )
+            threading.Thread(
+                target=deliver_chat_pushes,
                 daemon=True,
                 name="fairfares-fchat-push",
             ).start()
@@ -19840,9 +19863,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for item in envelopes:
                 con.execute(
                     """INSERT INTO chat_message_envelopes
-                       (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (message_id, int(item.get("recipientUserId") or 0), str(item.get("recipientDeviceId") or ""), str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or "")),
+                       (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext, preview_nonce, preview_ciphertext)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (message_id, int(item.get("recipientUserId") or 0), str(item.get("recipientDeviceId") or ""), str(item.get("senderPublicKey") or "")[:100], str(item.get("nonce") or ""), str(item.get("ciphertext") or ""), str(item.get("previewNonce") or ""), str(item.get("previewCiphertext") or "")),
                 )
             con.execute(
                 """
@@ -26967,6 +26990,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         token = clean_text_value(payload.get("token"), 300)
         platform = clean_text_value(payload.get("platform"), 30).lower()
         device_label = clean_text_value(payload.get("deviceLabel") or payload.get("device_label"), 120)
+        device_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(payload.get("deviceId") or payload.get("device_id"), 100))
         enabled = str(payload.get("enabled", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
             self.send_json({"ok": False, "error": "A valid Expo push token is required."}, 400)
@@ -26974,17 +26998,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute(
                 """
-                INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, enabled)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, device_id, enabled)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(token) DO UPDATE SET
                     user_id = excluded.user_id,
                     platform = excluded.platform,
                     device_label = excluded.device_label,
+                    device_id = excluded.device_id,
                     enabled = excluded.enabled,
                     updated_at = CURRENT_TIMESTAMP,
                     last_seen_at = CURRENT_TIMESTAMP
                 """,
-                (int(user["id"]), token, platform, device_label, 1 if enabled else 0),
+                (int(user["id"]), token, platform, device_label, device_id, 1 if enabled else 0),
             )
         self.send_json({"ok": True, "enabled": enabled})
 
