@@ -32,7 +32,6 @@
       },
       "infoPlist": {
         "NSUserActivityTypes": [
-          "INSendMessageIntent",
           "INSendMessageIntent"
         ],
         "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
@@ -54,8 +53,7 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.NEARBY_WIFI_DEVICES",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.READ_CONTACTS",
-        "android.permission.WRITE_CONTACTS"
+        "android.permission.READ_CONTACTS"
       ],
       "blockedPermissions": [
         "android.permission.WRITE_CONTACTS"

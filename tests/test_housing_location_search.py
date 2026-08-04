@@ -18,6 +18,11 @@ class HousingLocationSearchTest(unittest.TestCase):
         app.init_db()
         with app.db() as con:
             con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                (app.SAMPLE_HOUSING_OWNER_NAME, app.SAMPLE_HOUSING_OWNER_EMAIL, app.hash_password("Password123!")),
+            )
+            self.sample_owner_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
                 "INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Poster', 'poster@example.com', ?, 1)",
                 (app.hash_password("Password123!"),),
             )
@@ -71,7 +76,9 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertFalse(results[0].get("sample", False))
         self.assertEqual(len(results), 11)
         self.assertTrue(all(item.get("sample") is False for item in results[1:]))
-        self.assertTrue(all(item.get("posterName") == "sriramreddy42@gmail.com" for item in results[1:]))
+        self.assertTrue(all(item.get("posterName") == app.SAMPLE_HOUSING_OWNER_NAME for item in results[1:]))
+        self.assertTrue(all(item.get("posterEmail") == app.SAMPLE_HOUSING_OWNER_EMAIL for item in results[1:]))
+        self.assertTrue(all(item.get("posterUserId") == self.sample_owner_id for item in results[1:]))
         self.assertLessEqual(results[0]["distanceMiles"], 10)
 
     @patch.object(
@@ -90,7 +97,9 @@ class HousingLocationSearchTest(unittest.TestCase):
 
         self.assertEqual(len(results), 10)
         self.assertTrue(all(item["sample"] is False for item in results))
-        self.assertTrue(all(item["posterName"] == "sriramreddy42@gmail.com" for item in results))
+        self.assertTrue(all(item["posterName"] == app.SAMPLE_HOUSING_OWNER_NAME for item in results))
+        self.assertTrue(all(item["posterEmail"] == app.SAMPLE_HOUSING_OWNER_EMAIL for item in results))
+        self.assertTrue(all(item["posterUserId"] == self.sample_owner_id for item in results))
         self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
         self.assertTrue(all(float(item["distanceMiles"]) <= 5 for item in results))

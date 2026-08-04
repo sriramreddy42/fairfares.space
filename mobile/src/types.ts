@@ -20,6 +20,8 @@ export type HousingPost = {
   imageUrl: string;
   images: string[];
   posterName?: string;
+  posterEmail?: string;
+  posterUserId?: number;
   daysLeft: number;
   expiryLabel: string;
   roommateIntent: boolean;

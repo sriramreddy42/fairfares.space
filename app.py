@@ -12801,6 +12801,8 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "imageUrl": preview_image,
         "images": images,
         "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
+        "posterEmail": normalize_email(row_value(row, "contact_email")),
+        "posterUserId": int(row_value(row, "user_id") or 0),
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -13986,6 +13988,10 @@ SAMPLE_HOUSING_IMAGES = (
 )
 
 
+SAMPLE_HOUSING_OWNER_EMAIL = "sriramreddy42@gmail.com"
+SAMPLE_HOUSING_OWNER_NAME = "Sriram Reddy Bandari"
+
+
 SAMPLE_HOUSING_VARIANTS = (
     ("Private furnished room", "single_room", 850, "Private Bath", "Flexible", 1, 0, "Furnished, WiFi, Laundry, Utilities included"),
     ("Shared room near transit", "shared_room", 575, "Shared Bath", "3-6 months", 2, 1, "Transit nearby, WiFi, Laundry"),
@@ -14013,6 +14019,17 @@ def mobile_sample_housing_posts(
     limit: int = 10,
 ) -> list[dict[str, object]]:
     """Return location-aware FairFares housing cards after live local results."""
+    with db() as con:
+        sample_owner = con.execute(
+            "SELECT id, name FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
+            (SAMPLE_HOUSING_OWNER_EMAIL,),
+        ).fetchone()
+    sample_owner_id = int(row_value(sample_owner, "id") or 0) if sample_owner else 0
+    sample_owner_name = (
+        row_value(sample_owner, "name") or SAMPLE_HOUSING_OWNER_NAME
+        if sample_owner
+        else SAMPLE_HOUSING_OWNER_NAME
+    )
     selected_location = " ".join((area or city or "your selected location").split())[:120]
     mode = "NEED_PLACE" if need == "have_place" else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
@@ -14053,7 +14070,9 @@ def mobile_sample_housing_posts(
                 "lng": float(center_lng or 0) + lng_offset if center_lng else 0,
                 "imageUrl": images[0],
                 "images": images,
-                "posterName": "sriramreddy42@gmail.com",
+                "posterName": sample_owner_name,
+                "posterEmail": SAMPLE_HOUSING_OWNER_EMAIL,
+                "posterUserId": sample_owner_id,
                 "daysLeft": 30,
                 "expiryLabel": "30 days left",
                 "roommateIntent": bool(roommate_count),
@@ -15366,7 +15385,7 @@ def get_or_create_accommodation_conversation(
         if post_public_id.startswith("FFH-DEMO-"):
             demo_owner = con.execute(
                 "SELECT * FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
-                ("sriramreddy42@gmail.com",),
+                (SAMPLE_HOUSING_OWNER_EMAIL,),
             ).fetchone()
             if not demo_owner:
                 return None, "This housing poster is not available in FChat yet."
@@ -15655,7 +15674,7 @@ def chat_listing_context(
         if post_public_id.startswith("FFH-DEMO-"):
             owner = con.execute(
                 "SELECT * FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
-                ("sriramreddy42@gmail.com",),
+                (SAMPLE_HOUSING_OWNER_EMAIL,),
             ).fetchone()
             if owner and int(row_value(owner, "id") or 0) != sender_id:
                 return {
@@ -15664,7 +15683,7 @@ def chat_listing_context(
                     "title": "FairFares housing listing",
                     "subtitle": "Contact the poster to confirm availability",
                     "ownerUserId": row_value(owner, "id"),
-                    "ownerName": row_value(owner, "name") or "Sriram Reddy Bandari",
+                    "ownerName": row_value(owner, "name") or SAMPLE_HOUSING_OWNER_NAME,
                 }
     if ride_public_id:
         ride = con.execute(

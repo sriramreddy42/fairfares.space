@@ -17,7 +17,17 @@ const notificationKeychainService = "fairfares-fchat-notification";
 const secureOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY } as const;
 const sharedSecureOptions = { ...secureOptions, accessGroup: notificationAccessGroup, keychainService: notificationKeychainService } as const;
 
-async function readSecureIdentity(userId: number) {
+type SecureReadResult = { value: string | null; error: unknown };
+
+async function tryReadSecureIdentity(name: string, options: typeof secureOptions | typeof sharedSecureOptions): Promise<SecureReadResult> {
+  try {
+    return { value: await SecureStore.getItemAsync(name, options), error: null };
+  } catch (error) {
+    return { value: null, error };
+  }
+}
+
+async function readSecureIdentity(userId: number): Promise<string | null> {
   const name = keyName(userId);
   if (Platform.OS === "ios") {
     // Older FairFares builds stored this identity in the app's default
@@ -25,16 +35,25 @@ async function readSecureIdentity(userId: number) {
     // extension's shared group. Read each independently because iOS throws
     // errSecMissingEntitlement when a currently installed provisioning
     // profile does not contain one of those groups.
-    const shared = await SecureStore.getItemAsync(name, sharedSecureOptions).catch(() => null);
-    if (shared) return shared;
+    const shared = await tryReadSecureIdentity(name, sharedSecureOptions);
+    if (shared.value) return shared.value;
+
+    const app = await tryReadSecureIdentity(name, secureOptions);
+    if (app.value) return app.value;
+    if (shared.error && app.error) {
+      throw new Error("Secure FChat storage is unavailable. Install the latest FairFares build and try again.");
+    }
+    return null;
   }
-  return SecureStore.getItemAsync(name, secureOptions).catch(() => null);
+  const app = await tryReadSecureIdentity(name, secureOptions);
+  if (app.error) throw app.error;
+  return app.value;
 }
 
-async function writeSecureIdentity(userId: number, serialized: string) {
+async function writeSecureIdentity(userId: number, serialized: string): Promise<void> {
   const name = keyName(userId);
   let appStored = false;
-  let sharedStored = Platform.OS !== "ios";
+  let sharedStored = false;
   try {
     await SecureStore.setItemAsync(name, serialized, secureOptions);
     appStored = true;
@@ -49,7 +68,7 @@ async function writeSecureIdentity(userId: number, serialized: string) {
       // Do not fall back to unencrypted AsyncStorage for private keys.
     }
   }
-  if (!appStored && !sharedStored) {
+  if (!appStored && !(Platform.OS === "ios" && sharedStored)) {
     throw new Error("Secure FChat storage is unavailable. Install the latest FairFares build and try again.");
   }
 }
@@ -59,12 +78,26 @@ async function persistIdentity(userId: number, identity: DeviceIdentity) {
   await writeSecureIdentity(userId, JSON.stringify(identity));
 }
 
+function isDeviceIdentity(value: unknown): value is DeviceIdentity {
+  if (!value || typeof value !== "object") return false;
+  const identity = value as Partial<DeviceIdentity>;
+  return [identity.deviceId, identity.publicKey, identity.secretKey]
+    .every((part) => typeof part === "string" && part.length > 0);
+}
+
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
   const existing = Platform.OS === "web"
     ? await AsyncStorage.getItem(keyName(userId))
     : await readSecureIdentity(userId);
   if (!existing) return null;
-  const identity = JSON.parse(existing) as DeviceIdentity;
+  let identity: DeviceIdentity;
+  try {
+    const parsed: unknown = JSON.parse(existing);
+    if (!isDeviceIdentity(parsed)) throw new Error("invalid identity shape");
+    identity = parsed;
+  } catch {
+    throw new Error("The secure FChat identity on this device is invalid. Recover your key backup before sending messages.");
+  }
   if (identity.signingPublicKey && identity.signingSecretKey) {
     // Migrates identities created by older builds into the notification
     // extension's shared Keychain group on first launch after upgrading.

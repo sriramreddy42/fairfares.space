@@ -285,6 +285,29 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(len(inbox), 2)
         self.assertEqual({row["otherName"] for row in inbox}, {"First Poster", "Second Poster"})
 
+    def test_generated_housing_card_binds_to_sriram_profile(self):
+        with app.db() as con:
+            sender_id = self.insert_user(con, "Message Sender", "generated-message-sender@example.com")
+            owner_id = self.insert_user(con, app.SAMPLE_HOUSING_OWNER_NAME, app.SAMPLE_HOUSING_OWNER_EMAIL)
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (sender_id,)).fetchone()
+
+            conversation, error = app.get_or_create_accommodation_conversation(
+                con,
+                "FFH-DEMO-LOCATION-01",
+                sender,
+            )
+            context = app.chat_listing_context(con, sender_id, "FFH-DEMO-LOCATION-01", "")
+
+            self.assertFalse(error)
+            self.assertIsNotNone(conversation)
+            self.assertEqual(int(context["ownerUserId"]), owner_id)
+            self.assertEqual(context["ownerName"], app.SAMPLE_HOUSING_OWNER_NAME)
+            participant = con.execute(
+                "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ?",
+                (conversation["id"], owner_id),
+            ).fetchone()
+            self.assertIsNotNone(participant)
+
 
 if __name__ == "__main__":
     unittest.main()
