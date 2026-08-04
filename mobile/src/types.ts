@@ -185,7 +185,11 @@ export type RidePost = {
   ownerName?: string;
   title: string;
   origin: string;
+  originLat?: number | null;
+  originLng?: number | null;
   destination: string;
+  destinationLat?: number | null;
+  destinationLng?: number | null;
   city: string;
   pickupDate: string;
   pickupTime: string;

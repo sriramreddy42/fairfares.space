@@ -2438,13 +2438,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
         {typingPeople.length ? (
           <View style={styles.chittiTypingIndicator} accessibilityLiveRegion="polite">
+            <View style={styles.chittiTypingMascotWrap}>
+              <Image source={appAssets.chittiMascot} style={styles.chittiTypingMascot} resizeMode="contain" />
+            </View>
             <Text style={styles.chittiTypingText} numberOfLines={1}>
               {typingPeople.map((person) => person.name.split(" ")[0]).join(", ")} {typingPeople.length === 1 ? "is" : "are"} typing
               <Text style={styles.chittiTypingDots}> …</Text>
             </Text>
-            <View style={styles.chittiTypingMascotWrap}>
-              <Image source={appAssets.chittiMascot} style={styles.chittiTypingMascot} resizeMode="contain" />
-            </View>
           </View>
         ) : null}
 
@@ -2510,7 +2510,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           {(data?.chat.unreadCount || 0) > 0 ? <Text style={styles.chittiHeaderBadge}>{data?.chat.unreadCount}</Text> : null}
         </View>
         <View style={styles.chatBrandWrap}>
-          <Image source={appAssets.chitthiLetterBanner} style={styles.chittiBrandPaper} resizeMode="cover" />
+          <Image source={appAssets.chittiLettersGold} style={styles.chittiBrandPaper} resizeMode="contain" />
         </View>
         <View style={styles.headerIcons}>
           <TouchableOpacity style={styles.headerIcon} accessibilityLabel="Chitthi options"><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
@@ -2754,12 +2754,12 @@ const styles = StyleSheet.create({
   header: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 6 },
   eyebrow: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 24, fontWeight: "700" },
-  chatBrandWrap: { flex: 1, minWidth: 0, height: 56, borderRadius: 13, overflow: "hidden", borderWidth: 1, borderColor: "rgba(239,189,104,0.50)", backgroundColor: "#eee2c8", shadowColor: "#000", shadowOpacity: 0.20, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  chatBrandWrap: { flex: 1, minWidth: 0, height: 62, alignItems: "flex-start", justifyContent: "center", overflow: "hidden" },
   chatBrand: { width: 132, height: 42 },
-  chittiHeaderMascotWrap: { width: 50, height: 50, borderRadius: 16, borderWidth: 1, borderColor: "#d9a34d", backgroundColor: "rgba(5,31,26,0.90)", alignItems: "center", justifyContent: "center" },
-  chittiHeaderMascot: { width: 46, height: 48 },
-  chittiHeaderBadge: { position: "absolute", top: -6, right: -6, minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, overflow: "hidden", backgroundColor: "#3cad50", color: "#fff", textAlign: "center", lineHeight: 22, fontSize: 11, fontWeight: "700" },
-  chittiBrandPaper: { width: "100%", height: "100%" },
+  chittiHeaderMascotWrap: { width: 48, height: 54, alignItems: "center", justifyContent: "center" },
+  chittiHeaderMascot: { width: 44, height: 52 },
+  chittiHeaderBadge: { position: "absolute", top: 0, right: -2, minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, overflow: "hidden", backgroundColor: "#3cad50", color: "#fff", textAlign: "center", lineHeight: 22, fontSize: 11, fontWeight: "700" },
+  chittiBrandPaper: { width: "100%", height: 58 },
   headerIcons: { flexDirection: "row", gap: 6, marginLeft: "auto" },
   headerIcon: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,189,104,0.65)", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(14,32,29,0.92)" },
   headerIconText: { color: "#efbd68", fontSize: 16, fontWeight: "700", letterSpacing: 1 },
@@ -2889,10 +2889,10 @@ const styles = StyleSheet.create({
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
   quickReply: { borderWidth: 1.5, borderColor: "#b88a3b", backgroundColor: "rgba(3,43,31,0.92)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
   quickReplyText: { color: "#f1d18d", fontSize: 14, fontWeight: "600" },
-  chittiTypingIndicator: { minHeight: 38, marginRight: 14, marginTop: 4, marginBottom: -5, paddingLeft: 13, paddingRight: 4, paddingVertical: 4, alignSelf: "flex-end", maxWidth: "76%", flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.58)", backgroundColor: "rgba(3,43,31,0.97)", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4, zIndex: 3 },
-  chittiTypingMascotWrap: { width: 38, height: 38, marginBottom: -11, borderRadius: 19, overflow: "hidden", backgroundColor: "#164d30", borderWidth: 1, borderColor: "rgba(239,189,104,0.72)" },
+  chittiTypingIndicator: { height: 28, marginLeft: 13, marginTop: 1, marginBottom: -2, alignSelf: "flex-start", maxWidth: "76%", flexDirection: "row", alignItems: "center", gap: 5, zIndex: 3 },
+  chittiTypingMascotWrap: { width: 31, height: 34, marginTop: 5, overflow: "hidden" },
   chittiTypingMascot: { width: "100%", height: "100%" },
-  chittiTypingText: { flexShrink: 1, color: "#f8e8be", fontSize: 13, fontWeight: "600" },
+  chittiTypingText: { flexShrink: 1, color: "#f8e8be", fontSize: 12, fontWeight: "500" },
   chittiTypingDots: { color: "#efbd68", letterSpacing: 2 },
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },

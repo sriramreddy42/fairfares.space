@@ -15,7 +15,7 @@ export const appAssets = {
   fchatWordmark: require("../assets/fchat-wordmark-white.png") as ImageSourcePropType,
   chittiMascot: require("../assets/chitti/chitti-mascot.png") as ImageSourcePropType,
   chittiPaperTexture: require("../assets/chitti/chitti-paper-texture.png") as ImageSourcePropType,
-  chitthiLetterBanner: require("../assets/chitti/chitthi-letter-banner.png") as ImageSourcePropType,
+  chittiLettersGold: require("../assets/chitti/chitti-letters-gold.png") as ImageSourcePropType,
   profile: require("../assets/account-nav.png") as ImageSourcePropType,
   serviceModify: require("../assets/service-modify.png") as ImageSourcePropType,
   serviceCancel: require("../assets/service-cancel.png") as ImageSourcePropType,

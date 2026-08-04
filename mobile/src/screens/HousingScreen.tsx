@@ -7,6 +7,7 @@ import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, ge
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
+import { EmbeddedRideMap, RideMapPoint } from "../components/RideMap";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
@@ -461,6 +462,7 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
+  const [welcomeCarpoolSlide, setWelcomeCarpoolSlide] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -627,6 +629,13 @@ export function HousingScreen({
     }, 1800);
     return () => clearTimeout(timer);
   }, [activeSearchPhrases.length, searchPhraseIndex]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setWelcomeCarpoolSlide((value) => (value + 1) % 2);
+    }, 2800);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     setSearchPhraseIndex(0);
@@ -2142,6 +2151,17 @@ export function HousingScreen({
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const mapRouteOrigin = selectedDriverOffer?.origin || rideForm.origin;
     const mapRouteDestination = selectedDriverOffer?.destination || rideForm.destination;
+    const mapOriginLat = selectedDriverOffer?.originLat ?? rideForm.originLat;
+    const mapOriginLng = selectedDriverOffer?.originLng ?? rideForm.originLng;
+    const mapDestinationLat = selectedDriverOffer?.destinationLat ?? rideForm.destinationLat;
+    const mapDestinationLng = selectedDriverOffer?.destinationLng ?? rideForm.destinationLng;
+    const nativeMapPoints = [mapOriginLat, mapOriginLng, mapDestinationLat, mapDestinationLng]
+      .every((value) => typeof value === "number" && Number.isFinite(value))
+      ? {
+          origin: { latitude: mapOriginLat as number, longitude: mapOriginLng as number },
+          destination: { latitude: mapDestinationLat as number, longitude: mapDestinationLng as number }
+        }
+      : null;
     const mapUri = ridePlanComplete()
       ? rideMapUrl(
           rideForm.city,
@@ -2359,7 +2379,11 @@ export function HousingScreen({
           ) : (
             <View style={styles.rideChoiceScreen}>
               <View style={styles.rideChoiceMap}>
-                {mapUri ? <Image source={{ uri: mapUri }} style={styles.rideChoiceMapImage} resizeMode="cover" /> : null}
+                {Platform.OS === "ios" && nativeMapPoints ? (
+                  <EmbeddedRideMap origin={nativeMapPoints.origin} destination={nativeMapPoints.destination} />
+                ) : mapUri ? (
+                  <Image source={{ uri: mapUri }} style={styles.rideChoiceMapImage} resizeMode="cover" />
+                ) : null}
                 <TouchableOpacity style={styles.rideMapBackButton} onPress={() => setRidePlannerStage("plan")}>
                   <Text style={styles.rideMapBackText}>‹</Text>
                 </TouchableOpacity>
@@ -2499,18 +2523,18 @@ export function HousingScreen({
         ? rideHomeSuggestions
         : [
             {
-              label: `Denver International Airport (DEN), 8500 Pena Blvd, ${rideDefaultCity}`,
-              main: "Denver International Airport (DEN)",
-              secondary: `8500 Pena Blvd, ${rideDefaultCity}`,
+              label: "Charlotte Douglas International Airport (CLT), 5501 Josh Birmingham Pkwy, Charlotte, NC",
+              main: "Charlotte Douglas International Airport (CLT)",
+              secondary: "5501 Josh Birmingham Pkwy, Charlotte, NC",
               distanceMiles: null,
               lat: 0,
               lng: 0,
               source: "fallback"
             },
             {
-              label: `Union Station, 1701 Wynkoop St, ${rideDefaultCity}`,
-              main: "Union Station",
-              secondary: `1701 Wynkoop St, ${rideDefaultCity}`,
+              label: "Los Angeles Union Station, 800 N Alameda St, Los Angeles, CA",
+              main: "Los Angeles Union Station",
+              secondary: "800 N Alameda St, Los Angeles, CA",
               distanceMiles: null,
               lat: 0,
               lng: 0,
@@ -2927,12 +2951,14 @@ export function HousingScreen({
       <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
         <View style={styles.welcomeCopy}>
           <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
-          <Text style={styles.welcomeMeta}>Check recent listings, messages, and dashboard activity here.</Text>
+          <Text style={styles.welcomeMeta}>Check recent listings and explore nearby housing or carpool options.</Text>
         </View>
         <View style={styles.statRow}>
           <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
-          <TouchableOpacity onPress={onOpenMessenger}>
-            <Text style={styles.stat}>{data?.chat.unreadCount || 0} Messages</Text>
+          <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
+            <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>
+              {welcomeCarpoolSlide === 0 ? "Carpool" : "List your ride & earn"}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -3457,6 +3483,7 @@ const styles = StyleSheet.create({
   welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
   statRow: { width: 132, gap: 7 },
   stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 11, textAlign: "center" },
+  carpoolCarouselStat: { color: "#8ff0c2", minHeight: 34, textAlignVertical: "center" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
   housingCardRow: { gap: 10, paddingRight: 2 },
