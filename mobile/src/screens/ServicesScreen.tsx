@@ -377,7 +377,7 @@ export function ServicesScreen({
     { label: "Housing", icon: appAssets.bed, badge: "Posts", badgeTone: "green", onPress: onOpenHousing },
     { label: "Carpool", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
     { label: "Rental Cars", icon: appAssets.carFallback, badge: "Bookings", onPress: openRentalTools },
-    { label: "FChat", icon: appAssets.fchat, onPress: onOpenMessenger },
+    { label: "Chitthi", icon: appAssets.chittiMascot, onPress: onOpenMessenger },
     { label: "Exports & Imports", emoji: "📦", badge: "Coming soon", badgeTone: "green", onPress: () => setExportsInfoOpen(true) }
   ];
   const supportTiles: ServiceTile[] = [

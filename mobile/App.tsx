@@ -237,7 +237,7 @@ function FairFaresApp() {
       if (Platform.OS === "android") {
         await Promise.all([
           Notifications.setNotificationChannelAsync("fchat", {
-            name: "FChat messages",
+            name: "Chitthi messages",
             importance: Notifications.AndroidImportance.HIGH,
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#4f7cff"
@@ -1424,11 +1424,11 @@ function FairFaresApp() {
                     style={[styles.input, styles.signupPhoneInput]}
                   />
                 </View>
-                <Text style={styles.authHint}>Saved securely as {signupCallingCode} followed by your mobile number so FChat can match contacts across countries.</Text>
+                <Text style={styles.authHint}>Saved securely as {signupCallingCode} followed by your mobile number so Chitthi can match contacts across countries.</Text>
                 <View style={styles.signupDiscoveryRow}>
                   <View style={styles.signupDiscoveryCopy}>
                     <Text style={styles.signupDiscoveryTitle}>Let contacts find me</Text>
-                    <Text style={styles.signupDiscoveryText}>People who already have your exact number can find you in FChat. Your number is never displayed.</Text>
+                    <Text style={styles.signupDiscoveryText}>People who already have your exact number can find you in Chitthi. Your number is never displayed.</Text>
                   </View>
                   <Switch value={signupPhoneDiscoverable} onValueChange={setSignupPhoneDiscoverable} accessibilityLabel="Let contacts find me by exact phone number" />
                 </View>
@@ -1481,7 +1481,7 @@ function FairFaresApp() {
         <View style={styles.modalBackdrop}>
           <View style={styles.countryPickerCard}>
             <Text style={styles.modalTitle}>Choose country code</Text>
-            <Text style={styles.modalCopy}>This makes your phone number unambiguous for login and private FChat contact matching.</Text>
+            <Text style={styles.modalCopy}>This makes your phone number unambiguous for login and private Chitthi contact matching.</Text>
             {signupCallingCodes.map((country) => (
               <TouchableOpacity
                 key={`${country.label}-${country.code}`}

@@ -9,45 +9,47 @@ type Props = {
   onMessage: (post: HousingPost) => void;
   onOpen?: (post: HousingPost) => void;
   distanceLabel?: string;
+  width?: number;
+  compact?: boolean;
 };
 
-export function HousingCard({ post, onMessage, onOpen, distanceLabel }: Props) {
+export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false }: Props) {
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
   const imageUrl = absoluteAssetUrl(postImages[0] || "");
   return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
-      <View style={styles.imageWrap}>
+    <TouchableOpacity style={[styles.card, width ? { width, marginRight: 0 } : null]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
+      <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
         {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.image} /> : <View style={styles.fallback} />}
-        <Text style={styles.badge}>{post.modeLabel}</Text>
+        <Text style={[styles.badge, compact && styles.badgeCompact]}>{post.modeLabel}</Text>
         {postImages.length > 1 ? <Text style={styles.imageCount}>1/{Math.min(postImages.length, 4)}</Text> : null}
       </View>
-      <View style={styles.body}>
-        <Text numberOfLines={2} style={styles.title}>
+      <View style={[styles.body, compact && styles.bodyCompact]}>
+        <Text numberOfLines={2} style={[styles.title, compact && styles.titleCompact]}>
           {post.title}
         </Text>
-        <Text style={styles.meta}>{post.location}</Text>
-        {post.area ? <Text style={styles.meta}>{post.area}</Text> : null}
+        <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.location}</Text>
+        {post.area ? <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.area}</Text> : null}
         <View style={styles.pillRow}>
-          <Text style={styles.infoPill}>{post.categoryLabel}</Text>
-          <Text style={styles.infoPill}>{post.genderPreference || "Open"}</Text>
+          <Text numberOfLines={1} style={[styles.infoPill, compact && styles.infoPillCompact]}>{post.categoryLabel}</Text>
+          <Text numberOfLines={1} style={[styles.infoPill, compact && styles.infoPillCompact]}>{post.genderPreference || "Open"}</Text>
         </View>
-        <Text style={styles.meta}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
-        <Text style={styles.meta}>{post.moveIn || "Date open"}</Text>
+        <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
+        <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.moveIn || "Date open"}</Text>
         {post.posterName ? <Text style={styles.poster} numberOfLines={1}>Posted by {post.posterName}</Text> : null}
         <View style={styles.pillRow}>
           {post.distanceMiles !== null ? (
-            <Text style={styles.distance}>
+            <Text numberOfLines={1} style={[styles.distance, compact && styles.distanceCompact]}>
               {post.distanceMiles} mi{distanceLabel ? ` from ${distanceLabel}` : " away"}
             </Text>
           ) : null}
         </View>
       </View>
-      <View style={styles.footer}>
+      <View style={[styles.footer, compact && styles.footerCompact]}>
         <View style={styles.priceBlock}>
-          <Text style={styles.rent}>{post.rent || "Rent open"}</Text>
+          <Text numberOfLines={2} style={[styles.rent, compact && styles.rentCompact]}>{post.rent || "Rent open"}</Text>
           <Text style={styles.expiry}>{post.expiryLabel}</Text>
         </View>
-        <TouchableOpacity style={[styles.respond, post.sample && styles.respondDisabled]} onPress={() => !post.sample && onMessage(post)} disabled={post.sample}>
+        <TouchableOpacity style={[styles.respond, compact && styles.respondCompact, post.sample && styles.respondDisabled]} onPress={() => !post.sample && onMessage(post)} disabled={post.sample}>
           <Text style={[styles.respondText, post.sample && styles.respondTextDisabled]}>{post.sample ? "Sample only" : "Message"}</Text>
         </TouchableOpacity>
       </View>
@@ -69,6 +71,7 @@ const styles = StyleSheet.create({
     height: 148,
     backgroundColor: theme.colors.panel2
   },
+  imageWrapCompact: { height: 116 },
   image: {
     width: "100%",
     height: "100%"
@@ -90,6 +93,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     fontWeight: "900"
   },
+  badgeCompact: { top: 9, left: 9, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11 },
   imageCount: {
     position: "absolute",
     right: 12,
@@ -106,16 +110,19 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     gap: 8
   },
+  bodyCompact: { padding: 11, gap: 5, minHeight: 214 },
   title: {
     color: theme.colors.text,
     fontSize: 19,
     fontWeight: "900"
   },
+  titleCompact: { fontSize: 15, lineHeight: 19 },
   meta: {
     color: theme.colors.muted,
     fontSize: 15,
     fontWeight: "700"
   },
+  metaCompact: { fontSize: 12, lineHeight: 16, fontWeight: "600" },
   pillRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -131,6 +138,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900"
   },
+  infoPillCompact: { paddingHorizontal: 7, paddingVertical: 4, fontSize: 10, maxWidth: "100%" },
   distance: {
     color: theme.colors.green,
     backgroundColor: "#173820",
@@ -141,6 +149,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900"
   },
+  distanceCompact: { paddingHorizontal: 7, paddingVertical: 4, fontSize: 11, maxWidth: "100%" },
   footer: {
     borderTopWidth: 1,
     borderTopColor: theme.colors.line,
@@ -149,6 +158,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between"
   },
+  footerCompact: { padding: 11, gap: 6 },
   priceBlock: {
     flex: 1
   },
@@ -158,6 +168,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     flex: 1
   },
+  rentCompact: { fontSize: 14, lineHeight: 18 },
   expiry: {
     color: theme.colors.muted,
     fontSize: 12,
@@ -171,6 +182,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 9
   },
+  respondCompact: { paddingHorizontal: 10, paddingVertical: 7 },
   respondText: {
     color: theme.colors.text,
     fontWeight: "900"

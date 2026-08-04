@@ -298,7 +298,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       const updated = await respondToRideDispatch(ride.id, action);
       setRides((current) => current.map((item) => item.id === ride.id ? { ...item, ...updated } : item));
       if (action === "ACCEPT") {
-        Alert.alert("Request accepted", `The seat is confirmed.${updated.pickupPin ? ` Pickup PIN: ${updated.pickupPin}.` : ""} You can continue in FChat.`);
+        Alert.alert("Request accepted", `The seat is confirmed.${updated.pickupPin ? ` Pickup PIN: ${updated.pickupPin}.` : ""} You can continue in Chitthi.`);
       } else if (action === "DECLINE") {
         Alert.alert("Request declined", "The rider request has been declined.");
       } else if (action === "EN_ROUTE") {
@@ -318,7 +318,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   function latestRideChatPreview(ride: RidePost) {
     const conversation = (data?.chat?.conversations || []).find((item) => item.rideId === ride.id || item.rideId === ride.acceptedDriverRideId || item.rideId === ride.matchedRideId);
     if (!conversation?.lastMessage) return "";
-    if (/end-to-end encrypted message/i.test(conversation.lastMessage)) return "New secure FChat message";
+    if (/end-to-end encrypted message/i.test(conversation.lastMessage)) return "New secure Chitthi message";
     return conversation.lastMessage;
   }
 
@@ -348,7 +348,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       {!data?.user ? (
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Login to see your trips</Text>
-          <Text style={styles.noticeCopy}>Ride requests, driver matches, rental bookings, housing posts, and FChat conversations show here after you sign in.</Text>
+          <Text style={styles.noticeCopy}>Ride requests, driver matches, rental bookings, housing posts, and Chitthi conversations show here after you sign in.</Text>
           <TouchableOpacity style={styles.primaryPill} onPress={onRequireLogin}>
             <Text style={styles.primaryPillText}>Login</Text>
           </TouchableOpacity>
@@ -375,7 +375,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <Text style={styles.metricPill}>{distanceCopy(ride)}</Text>
               <Text style={styles.metricPill}>{ride.typeLabel}</Text>
             </View>
-            {latestRideChatPreview(ride) ? <Text style={styles.latestChatPreview} numberOfLines={1}>FChat · {latestRideChatPreview(ride)}</Text> : null}
+            {latestRideChatPreview(ride) ? <Text style={styles.latestChatPreview} numberOfLines={1}>Chitthi · {latestRideChatPreview(ride)}</Text> : null}
             <View style={styles.actionRow}>
               {isIncomingRiderRequest(ride) && (ride.dispatchStatus || "").toUpperCase() === "ACCEPTED" ? (
                 <TouchableOpacity style={styles.acceptPill} onPress={() => handleRequestDecision(ride, "EN_ROUTE")} disabled={rideActionBusyId === ride.id}>
@@ -393,7 +393,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity style={styles.secondaryPill} onPress={() => handleRideChat(ride)}>
-                <Text style={styles.secondaryPillText}>FChat</Text>
+                <Text style={styles.secondaryPillText}>Chitthi</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.secondaryPill} onPress={() => void openRideRoute(ride)}>
                 <Text style={styles.secondaryPillText}>View route</Text>
@@ -473,7 +473,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                   {!ride.isExpired && isPendingRiderRequest(ride) ? (
                     <><TouchableOpacity style={styles.acceptPill} onPress={() => handleRequestDecision(ride, "ACCEPT")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>{rideActionBusyId === ride.id ? "Updating..." : "Accept"}</Text></TouchableOpacity><TouchableOpacity style={styles.declinePill} onPress={() => handleRequestDecision(ride, "DECLINE")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>Decline</Text></TouchableOpacity></>
                   ) : null}
-                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.fchat} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>FChat</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.detailsOutlinePill} onPress={() => Alert.alert("Request details", `${routeLabel(ride)}\n${detourCopy(ride)}\n${pickupDropCopy(ride)}\n${statusCopy(ride)}`)}><Text style={styles.secondaryPillText}>Details</Text></TouchableOpacity>
                 </View>
               </View>
@@ -482,7 +482,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         ) : (
           <View style={styles.carpoolEmpty}>
             <Text style={styles.emptyTitle}>No rider requests yet</Text>
-            <Text style={styles.emptyCopy}>When someone requests a seat on your route, the count and FChat action will show here.</Text>
+            <Text style={styles.emptyCopy}>When someone requests a seat on your route, the count and Chitthi action will show here.</Text>
           </View>
         )}
 
@@ -505,7 +505,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <View style={styles.requestSide}>
                 <View style={styles.requestDateRow}><ActivityIcon kind="calendar" color="#c2cada" /><Text style={styles.requestDateText}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text><Text style={styles.moreGlyph}>⋮</Text></View>
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.fchat} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>FChat</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.detailsOutlinePill} onPress={handleListRide}><Text style={styles.secondaryPillText}>List another</Text></TouchableOpacity>
                 </View>
               </View>

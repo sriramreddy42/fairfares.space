@@ -72,7 +72,7 @@ type Props = {
   onUnreadCountChange?: (count: number) => void;
 };
 
-type MessengerTab = "All" | "Unread" | "Groups" | "Communities";
+type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
@@ -220,7 +220,7 @@ function encryptedOverviewPreview(clearText: string) {
 
 function safeConversationPreview(conversation: ChatConversation) {
   return isEncryptedPlaceholder(conversation.lastMessage)
-    ? "New encrypted message"
+    ? "📨 New Letter"
     : conversation.lastMessage || conversation.rideRoute || conversation.subject || "No messages yet.";
 }
 
@@ -241,11 +241,11 @@ function websiteCardDetails(value: string) {
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "fairfares:") {
-      return { host: "FairFares", label: "Private FChat group invitation", detail: "Open securely in the FairFares app" };
+      return { host: "FairFares", label: "Private Chitthi group invitation", detail: "Open securely in the FairFares app" };
     }
     const host = parsed.hostname.replace(/^www\./i, "");
     if (/fairfare\.space$/i.test(host) && /^\/fchat\/(?:invite|group)/i.test(parsed.pathname)) {
-      return { host: "FairFares", label: "FChat group invitation", detail: "Open and confirm inside the app" };
+      return { host: "FairFares", label: "Chitthi group invitation", detail: "Open and confirm inside the app" };
     }
     const path = decodeURIComponent(parsed.pathname).replace(/\/$/, "");
     return {
@@ -577,7 +577,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   async function ensureChatDeviceIdentity() {
     const userId = Number(data?.user?.id || 0);
-    if (!userId) throw new Error("Sign in to use encrypted FChat.");
+    if (!userId) throw new Error("Sign in to use encrypted Chitthi.");
     const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
     setDeviceIdentity(identity);
     try {
@@ -799,7 +799,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           setMessages(await decryptMessages(conversation.id, payload.messages || []));
         })
         .catch((error) => {
-          if (!cancelled) Alert.alert("FChat unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
+          if (!cancelled) Alert.alert("Chitthi unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
         })
         .finally(() => {
           if (!cancelled) setThreadLoading(false);
@@ -833,7 +833,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         })
         .catch((error) => {
           if (!cancelled) {
-            Alert.alert("FChat unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
+            Alert.alert("Chitthi unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
           }
         })
         .finally(() => {
@@ -1009,6 +1009,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     });
   }, [communities, personConversations, search, tab]);
 
+  function communityGlyph(name: string) {
+    const value = name.toLowerCase();
+    if (value.includes("ride") || value.includes("carpool")) return "🚗";
+    if (value.includes("roommate")) return "👥";
+    if (value.includes("housing") || value.includes("room") || value.includes("home")) return "🏠";
+    return "✉️";
+  }
+
   async function refreshMessenger(options: { showLoader?: boolean; showError?: boolean } = {}) {
     if (!signedIn) return;
     const { showLoader = true, showError = true } = options;
@@ -1113,7 +1121,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     const attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
     if (attachments.length) {
       if (!activeConversationId) {
-        Alert.alert("Opening FChat", "Wait a moment while FairFares verifies the conversation.");
+        Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
         return;
       }
       setThreadLoading(true);
@@ -1169,7 +1177,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       return;
     }
     if ((pendingPost || pendingRide) && !activeConversationId) {
-      Alert.alert("Securing FChat", "Wait a moment while FairFares prepares the encrypted conversation.");
+      Alert.alert("Securing Chitthi", "Wait a moment while FairFares prepares the encrypted conversation.");
       return;
     }
     setThreadLoading(true);
@@ -1296,7 +1304,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       const community = communities.find((item) => item.id === communityId);
       onClearPendingGroupInvite?.();
       if (!community) {
-        Alert.alert("Group unavailable", "Refresh FChat and try this group link again.");
+        Alert.alert("Group unavailable", "Refresh Chitthi and try this group link again.");
         return;
       }
       Alert.alert(community.name, community.joined ? "Open this FairFares group?" : "Would you like to join this FairFares group?", [
@@ -1400,7 +1408,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       const permission = await Contacts.requestPermissionsAsync();
       if (permission.status !== "granted") {
-        Alert.alert("Contacts permission not enabled", "You can still find a member by entering their full phone number in FChat search.");
+        Alert.alert("Contacts permission not enabled", "You can still find a member by entering their full phone number in Chitthi search.");
         return;
       }
       const response = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers] });
@@ -1542,7 +1550,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   async function inviteToActiveGroup() {
     const community = communities.find((item) => item.id === activeConversation?.communityId);
     if (!community) {
-      Alert.alert("Group unavailable", "Refresh FChat and open the group again.");
+      Alert.alert("Group unavailable", "Refresh Chitthi and open the group again.");
       return;
     }
     setChatOptionsOpen(false);
@@ -1640,7 +1648,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       return;
     }
     if (!activeConversationId) {
-      Alert.alert("Opening FChat", "Wait a moment while FairFares verifies the conversation.");
+      Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
     try {
@@ -1661,7 +1669,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       return;
     }
     if (!activeConversationId) {
-      Alert.alert("Opening FChat", "Wait a moment while FairFares verifies the conversation.");
+      Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
     try {
@@ -1706,7 +1714,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   async function chooseAndSendFile() {
     setAttachmentMenuOpen(false);
     if (!activeConversationId) {
-      Alert.alert("Opening FChat", "Wait a moment while FairFares verifies the conversation.");
+      Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
     try {
@@ -1735,7 +1743,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
     if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
     setEncryptionReady(true);
-    const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New FChat message";
+    const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi message";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
     const message = { ...response.message, type, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } } as ChatMessage;
@@ -1783,7 +1791,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
-        Alert.alert("Location permission needed", "Enable location access to share your live position in this FChat.");
+        Alert.alert("Location permission needed", "Enable location access to share your live position in Chitthi.");
         return;
       }
       stopLiveLocation(false);
@@ -2002,7 +2010,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         Alert.alert("Nothing to share", "The selected messages do not contain shareable text.");
         return;
       }
-      await Share.share({ title: "FChat messages", message: transcript });
+      await Share.share({ title: "Chitthi messages", message: transcript });
     } catch (error) {
       Alert.alert("Share failed", error instanceof Error ? error.message : "Could not share these messages.");
     }
@@ -2100,7 +2108,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       >
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
-          {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#163a6b" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#163a6b" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  F  ·  ◇  ·  ⌁  ·  F  ·  ◇</Text></> : null}
+          {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
           <View style={styles.wallpaperShade} />
         </View>
         <BlurView intensity={48} tint="dark" style={styles.threadHeader}>
@@ -2119,12 +2127,10 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
           <View style={styles.threadHeaderCopy}>
             <Text style={styles.threadHeaderTitle} numberOfLines={1}>
-              {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "FairFares chat"}
+              {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {typingPeople.length
-                ? `${typingPeople.map((person) => person.name.split(" ")[0]).join(", ")} ${typingPeople.length === 1 ? "is" : "are"} typing…`
-                : `${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending"}`}
+              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending"}`}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
@@ -2237,9 +2243,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 ) : null}
                 {message.attachmentUrl ? (
                   message.type === "IMAGE" ? mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openAttachment(photo)} accessibilityLabel={`Preview photo ${photoIndex + 1} of ${mediaGroup.length}`}><ChatMessagePhoto message={photo} compact />{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity> : (
-                    <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "FChat file")}`}>
+                    <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "Chitthi file")}`}>
                       <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.fileCardBadge}>{chatFileBadge(String(message.metadata?.fileName || ""), String(message.metadata?.mimeType || ""))}</Text></View>
-                      <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "FChat file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB · Tap to open or save</Text></View>
+                      <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "Chitthi file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB · Tap to open or save</Text></View>
                     </TouchableOpacity>
                   )
                 ) : null}
@@ -2296,7 +2302,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
           <View style={styles.attachmentPreviewBackdrop}>
             <View style={styles.attachmentPreviewHeader}>
-              <Text style={styles.attachmentPreviewName} numberOfLines={1}>{attachmentPreview?.name || "FChat photo"}</Text>
+              <Text style={styles.attachmentPreviewName} numberOfLines={1}>{attachmentPreview?.name || "Chitthi photo"}</Text>
               <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Close photo preview"><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
             </View>
             {attachmentPreview ? <Image source={{ uri: attachmentPreview.uri }} style={styles.attachmentPreviewImage} resizeMode="contain" /> : null}
@@ -2308,7 +2314,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <View style={styles.forwardPickerBackdrop}>
             <View style={styles.forwardPickerCard}>
               <View style={styles.forwardPickerHeader}>
-                <View><Text style={styles.forwardPickerTitle}>Forward messages</Text><Text style={styles.forwardPickerSubtitle}>Choose one or more FChat conversations</Text></View>
+                <View><Text style={styles.forwardPickerTitle}>Forward messages</Text><Text style={styles.forwardPickerSubtitle}>Choose one or more Chitthi conversations</Text></View>
                 <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setForwardPickerOpen(false)}><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
               </View>
               <ScrollView style={styles.forwardPickerList}>
@@ -2316,7 +2322,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                   const selected = selectedForwardConversationIds.includes(conversation.id);
                   return <TouchableOpacity key={conversation.id} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
                     <View style={styles.forwardPickerAvatar}>{chatPhotoUrl(conversation.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(conversation.otherPhotoUrl) }} style={styles.forwardPickerAvatarImage} /> : <Text style={styles.forwardPickerAvatarText}>{initials(conversation.otherName || conversation.subject)}</Text>}</View>
-                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "FChat conversation"}</Text></View>
+                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "Chitthi conversation"}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
                   </TouchableOpacity>;
                 })}
@@ -2351,7 +2357,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         {attachmentMenuOpen ? (
           <View style={styles.attachmentPanel}>
             <View style={styles.attachmentPanelHeader}>
-              <Text style={styles.attachmentPanelTitle}>Add to FChat</Text>
+              <Text style={styles.attachmentPanelTitle}>Add to Chitthi</Text>
               <TouchableOpacity style={styles.attachmentClose} onPress={() => setAttachmentMenuOpen(false)} accessibilityLabel="Close attachments">
                 <Text style={styles.attachmentCloseText}>×</Text>
               </TouchableOpacity>
@@ -2430,6 +2436,18 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
         ) : null}
 
+        {typingPeople.length ? (
+          <View style={styles.chittiTypingIndicator} accessibilityLiveRegion="polite">
+            <Text style={styles.chittiTypingText} numberOfLines={1}>
+              {typingPeople.map((person) => person.name.split(" ")[0]).join(", ")} {typingPeople.length === 1 ? "is" : "are"} typing
+              <Text style={styles.chittiTypingDots}> …</Text>
+            </Text>
+            <View style={styles.chittiTypingMascotWrap}>
+              <Image source={appAssets.chittiMascot} style={styles.chittiTypingMascot} resizeMode="contain" />
+            </View>
+          </View>
+        ) : null}
+
         {emojiPickerOpen ? (
           <View style={styles.emojiPanel}>
             <View style={styles.emojiSearchRow}>
@@ -2448,7 +2466,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </View>
         ) : null}
 
-        {!pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused && !keyboardVisible ? (
+        {!messageText.trim() && !typingPeople.length && !pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused && !keyboardVisible ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
             {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setMessageText(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
@@ -2459,7 +2477,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
             placeholder={editingMessageId ? "Edit message" : "Write a message…"}
-            placeholderTextColor="#7c8493"
+            placeholderTextColor="#a7a08d"
             style={styles.composerInput}
             value={messageText}
             onChangeText={handleMessageTextChange}
@@ -2482,25 +2500,33 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   return (
     <View style={[styles.screen, Platform.OS === "android" && styles.screenAndroid]}>
+      <View pointerEvents="none" style={styles.chittiBackdrop}>
+        <View style={styles.chittiGlowTop} />
+        <View style={styles.chittiGlowBottom} />
+      </View>
       <View style={styles.header}>
+        <View style={styles.chittiHeaderMascotWrap}>
+          <Image source={appAssets.chittiMascot} style={styles.chittiHeaderMascot} resizeMode="contain" />
+          {(data?.chat.unreadCount || 0) > 0 ? <Text style={styles.chittiHeaderBadge}>{data?.chat.unreadCount}</Text> : null}
+        </View>
         <View style={styles.chatBrandWrap}>
-          <Image source={appAssets.fchatWordmark} style={styles.chatBrand} resizeMode="contain" />
+          <Image source={appAssets.chitthiLetterBanner} style={styles.chittiBrandPaper} resizeMode="cover" />
         </View>
         <View style={styles.headerIcons}>
-          <TouchableOpacity style={styles.headerIcon}><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon}><Text style={styles.headerIconText}>⛶</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.headerIcon} accessibilityLabel="Chitthi options"><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
         </View>
         <TouchableOpacity
           style={styles.iconButton}
           onPress={() => (signedIn ? setCreatingGroup((value) => !value) : onRequireLogin())}
+          accessibilityLabel="Create a Chitthi group"
         >
-          <Text style={styles.iconButtonText}>✎</Text>
+          <Text style={styles.iconButtonText}>✐</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.searchRow}>
         <TextInput
-          placeholder="Search name, phone, or invite link"
+          placeholder="Search people & groups"
           placeholderTextColor={theme.colors.muted}
           style={[styles.search, styles.searchInput]}
           value={search}
@@ -2509,18 +2535,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           returnKeyType="search"
           autoCapitalize="none"
         />
-        <TouchableOpacity style={styles.contactsButton} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading} accessibilityLabel="Find people from contacts">
-          <Text style={styles.contactsButtonIcon}>♙</Text>
-          <Text style={styles.contactsButtonText}>{contactsLoading ? "Checking" : "Contacts"}</Text>
-        </TouchableOpacity>
       </View>
 
       {/(?:group_invite|community_id)=/.test(search.trim()) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Open group invitation</Text></TouchableOpacity> : null}
       {search.replace(/\D/g, "").length >= 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Message this FairFares member</Text></TouchableOpacity> : null}
 
       <View style={styles.tabs}>
-        {(["All", "Unread", "Groups", "Communities"] as MessengerTab[]).map((item) => (
-          <TouchableOpacity key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.activeTab]}>
+        {(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => (
+          <TouchableOpacity key={item} onPress={() => { setTab(item); if (item === "Contacts") void findPeopleFromContacts(); }} style={[styles.tab, tab === item && styles.activeTab]}>
             <Text style={[styles.tabText, tab === item && styles.activeTabText]}>{item}</Text>
           </TouchableOpacity>
         ))}
@@ -2532,7 +2554,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <View style={styles.contactPickerHeader}>
               <View style={styles.contactPickerHeadingCopy}>
                 <Text style={styles.contactPickerTitle}>Contacts on FairFares</Text>
-                <Text style={styles.contactPickerSubtitle}>{contactPickerMode === "chat" ? "Select a member to open FChat" : "Select FairFares members to add"}</Text>
+                <Text style={styles.contactPickerSubtitle}>{contactPickerMode === "chat" ? "Select a member to open Chitthi" : "Select FairFares members to add"}</Text>
               </View>
               <TouchableOpacity style={styles.contactPickerClose} onPress={() => setContactPickerOpen(false)} accessibilityLabel="Close contacts">
                 <Text style={styles.contactPickerCloseText}>×</Text>
@@ -2614,30 +2636,42 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
       >
+        {tab === "Contacts" ? (
+          <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
+            <Text style={styles.letterEmptyIcon}>📇</Text>
+            <Text style={styles.letterEmptyTitle}>{contactsLoading ? "Checking your contacts…" : "Find your FairFares people"}</Text>
+            <Text style={styles.letterEmptyCopy}>Phone numbers stay private. Tap to find contacts who already use Chitthi.</Text>
+          </TouchableOpacity>
+        ) : null}
         {(tab === "All" || tab === "Unread" || tab === "Groups") && filteredConversations.map((chat) => (
-          <TouchableOpacity key={chat.id} style={styles.chatRow} onPress={() => openConversation(chat)}>
-            <View style={styles.avatar}>
+          <TouchableOpacity key={chat.id} style={[styles.chatRow, chat.unread > 0 && styles.chatRowUnread]} onPress={() => openConversation(chat)}>
+            <View style={styles.avatarWrap}>
+            <View style={[styles.avatar, chat.unread > 0 && styles.avatarUnread]}>
               {chatPhotoUrl(chat.otherPhotoUrl) ? (
                 <Image source={{ uri: chatPhotoUrl(chat.otherPhotoUrl) }} style={styles.avatarImage} />
               ) : (
                 <Text style={styles.avatarText}>{initials(chat.otherName || chat.subject || "Chat")}</Text>
               )}
             </View>
+            {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
+            </View>
             <View style={styles.chatCopy}>
+              <Text style={styles.chatKind}>{chat.communityId || chat.kind === "GROUP" ? "GROUP LETTER" : "DIRECT LETTER"}</Text>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={styles.chatLast} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
+              <Text style={[styles.chatLast, chat.unread > 0 && styles.chatLastUnread]} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
             </View>
             <View style={styles.chatMeta}>
-              <Text style={styles.chatTime}>{relativeTime(chat.lastMessageAt)}</Text>
+              <Text style={[styles.chatTime, chat.unread > 0 && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
               {chat.unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
             </View>
           </TouchableOpacity>
         ))}
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
-          <TouchableOpacity key={community.id} style={styles.chatRow} onPress={() => openCommunityThread(community)}>
-            <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>#</Text>}</View>
+          <TouchableOpacity key={community.id} style={[styles.chatRow, styles.communityRow]} onPress={() => openCommunityThread(community)}>
+            <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
             <View style={styles.chatCopy}>
+              <Text style={styles.chatKind}>COMMUNITY</Text>
               <Text style={styles.chatName}>{community.name}</Text>
               <Text style={styles.chatLast}>{community.description || community.area || "FairFares community"}</Text>
             </View>
@@ -2653,8 +2687,12 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </TouchableOpacity>
         ))}
 
-        {signedIn && !filteredConversations.length && !filteredCommunities.length ? (
-          <Text style={styles.emptyList}>No chats found. Message a listing poster or create a group.</Text>
+        {signedIn && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length ? (
+          <View style={styles.letterEmptyCard}>
+            <Text style={styles.letterEmptyIcon}>📬</Text>
+            <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
+            <Text style={styles.letterEmptyCopy}>{tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
+          </View>
         ) : null}
       </ScrollView>
     </View>
@@ -2699,8 +2737,11 @@ function SendIcon() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.colors.bg, paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md },
+  screen: { flex: 1, backgroundColor: "#03100f", paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md, position: "relative", overflow: "hidden" },
   screenAndroid: { paddingTop: 10 },
+  chittiBackdrop: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
+  chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
+  chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
   threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 0 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
@@ -2710,22 +2751,26 @@ const styles = StyleSheet.create({
   wallpaperGlowOne: { top: -90, right: -100 },
   wallpaperGlowTwo: { bottom: 90, left: -130 },
   wallpaperPattern: { position: "absolute", top: "47%", left: -20, color: "rgba(255,255,255,0.07)", fontSize: 25, letterSpacing: 13, transform: [{ rotate: "-12deg" }] },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
+  header: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 6 },
   eyebrow: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 24, fontWeight: "700" },
-  chatBrandWrap: { flex: 1, minWidth: 0, gap: 2 },
+  chatBrandWrap: { flex: 1, minWidth: 0, height: 56, borderRadius: 13, overflow: "hidden", borderWidth: 1, borderColor: "rgba(239,189,104,0.50)", backgroundColor: "#eee2c8", shadowColor: "#000", shadowOpacity: 0.20, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   chatBrand: { width: 132, height: 42 },
-  headerIcons: { flexDirection: "row", gap: 8, marginLeft: "auto", marginRight: 10 },
-  headerIcon: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
-  headerIconText: { color: theme.colors.muted, fontSize: 17, fontWeight: "900" },
-  iconButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  iconButtonText: { color: theme.colors.text, fontSize: 20, fontWeight: "800", marginTop: -2 },
-  search: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.pill, paddingHorizontal: 14, minHeight: 44, fontSize: 15 },
+  chittiHeaderMascotWrap: { width: 50, height: 50, borderRadius: 16, borderWidth: 1, borderColor: "#d9a34d", backgroundColor: "rgba(5,31,26,0.90)", alignItems: "center", justifyContent: "center" },
+  chittiHeaderMascot: { width: 46, height: 48 },
+  chittiHeaderBadge: { position: "absolute", top: -6, right: -6, minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, overflow: "hidden", backgroundColor: "#3cad50", color: "#fff", textAlign: "center", lineHeight: 22, fontSize: 11, fontWeight: "700" },
+  chittiBrandPaper: { width: "100%", height: "100%" },
+  headerIcons: { flexDirection: "row", gap: 6, marginLeft: "auto" },
+  headerIcon: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,189,104,0.65)", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(14,32,29,0.92)" },
+  headerIconText: { color: "#efbd68", fontSize: 16, fontWeight: "700", letterSpacing: 1 },
+  iconButton: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,189,104,0.65)", backgroundColor: "rgba(14,32,29,0.92)", alignItems: "center", justifyContent: "center" },
+  iconButtonText: { color: "#efbd68", fontSize: 20, fontWeight: "600", marginTop: -2 },
+  search: { backgroundColor: "rgba(15,29,28,0.94)", color: theme.colors.text, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(226,181,101,0.18)", paddingHorizontal: 13, minHeight: 41, fontSize: 13 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   searchInput: { flex: 1, minWidth: 0 },
-  contactsButton: { minHeight: 44, paddingHorizontal: 11, borderRadius: 18, backgroundColor: "#132849", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5 },
-  contactsButtonIcon: { color: "#8fc2ff", fontSize: 16 },
-  contactsButtonText: { color: "#d8e7ff", fontSize: 11, fontWeight: "600" },
+  contactsButton: { minHeight: 48, paddingHorizontal: 10, borderRadius: 22, borderWidth: 1, borderColor: "rgba(57,143,77,0.20)", backgroundColor: "rgba(18,71,40,0.70)", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5 },
+  contactsButtonIcon: { color: "#e9d7ad", fontSize: 17 },
+  contactsButtonText: { color: "#f3ead6", fontSize: 12, fontWeight: "600" },
   searchAction: { alignSelf: "flex-start", marginTop: 7, marginLeft: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: "#132849" },
   searchActionText: { color: "#8fc2ff", fontSize: 13, fontWeight: "600" },
   contactPickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: 18, justifyContent: "center" },
@@ -2743,11 +2788,11 @@ const styles = StyleSheet.create({
   contactPickerMessageButton: { backgroundColor: theme.colors.blue, borderRadius: 17, paddingHorizontal: 12, paddingVertical: 8, marginLeft: 8 },
   contactPickerMessageText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   contactPickerPrivacy: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingVertical: 12 },
-  tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: theme.spacing.md },
-  tab: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
-  activeTab: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
-  tabText: { color: theme.colors.text, fontWeight: "600" },
-  activeTabText: { color: theme.colors.bg },
+  tabs: { flexDirection: "row", gap: 4, marginVertical: 8, width: "100%" },
+  tab: { flex: 1, minWidth: 0, minHeight: 31, borderWidth: 1, borderColor: "rgba(226,181,101,0.22)", borderRadius: theme.radius.pill, paddingHorizontal: 2, paddingVertical: 6, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,18,17,0.50)" },
+  activeTab: { backgroundColor: "rgba(31,101,52,0.72)", borderColor: "rgba(68,153,78,0.44)" },
+  tabText: { color: "#e9e2d4", fontSize: 9.25, fontWeight: "500" },
+  activeTabText: { color: "#fff" },
   loginGate: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10 },
   loginTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   loginCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
@@ -2772,19 +2817,19 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   disabledButton: { opacity: 0.45 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
-  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(8,15,27,0.74)", overflow: "hidden" },
+  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(239,189,104,0.42)", backgroundColor: "rgba(2,28,22,0.92)", overflow: "hidden" },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
-  backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: theme.colors.blue, left: 2 },
+  backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: "#efbd68", left: 2 },
   backLineTop: { transform: [{ rotate: "-45deg" }], top: 6 },
   backLineBottom: { transform: [{ rotate: "45deg" }], bottom: 5 },
-  threadAvatar: { width: 43, height: 43, borderRadius: 22, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  threadAvatar: { width: 43, height: 43, borderRadius: 22, backgroundColor: "#173e2b", borderWidth: 1, borderColor: "rgba(239,189,104,0.55)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   threadAvatarImage: { width: "100%", height: "100%" },
-  threadAvatarText: { color: "#0f172a", fontWeight: "700", fontSize: 15 },
-  activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.green, borderWidth: 2, borderColor: theme.colors.bg },
+  threadAvatarText: { color: "#f6e0ae", fontWeight: "700", fontSize: 15 },
+  activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: "#43c866", borderWidth: 2, borderColor: "#021c16" },
   threadHeaderCopy: { flex: 1 },
-  threadHeaderTitle: { color: theme.colors.text, fontSize: 16.5, fontWeight: "600" },
-  threadHeaderMeta: { color: "#c1c7d0", fontSize: 11.5, fontWeight: "400", marginTop: 2 },
+  threadHeaderTitle: { color: "#fff8e8", fontSize: 16.5, fontWeight: "600" },
+  threadHeaderMeta: { color: "#c9b985", fontSize: 11.5, fontWeight: "400", marginTop: 2 },
   headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   messageSelectionBar: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, backgroundColor: "rgba(9,18,33,0.98)", zIndex: 12 },
   messageSelectionCancel: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
@@ -2802,15 +2847,15 @@ const styles = StyleSheet.create({
   nearbyOptionMeta: { color: "#6b7280", fontSize: 10, lineHeight: 14, marginTop: 2 },
   chatOptionText: { color: "#242424", fontSize: 14, fontWeight: "600" },
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
-  dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.blue },
+  dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#efbd68" },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2, flexGrow: 1, justifyContent: "flex-end" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
-  dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(9,17,29,0.88)" },
+  dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(3,43,31,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.45)" },
   dateDividerLine: { display: "none" },
-  dateDividerText: { color: "rgba(255,255,255,0.80)", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
+  dateDividerText: { color: "#ead8a6", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
   smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
@@ -2818,11 +2863,11 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(12,18,27,0.78)", overflow: "hidden" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(239,189,104,0.34)", backgroundColor: "rgba(2,28,22,0.94)", overflow: "hidden" },
   composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
-  paperclipIcon: { color: theme.colors.text, fontSize: 24 },
+  paperclipIcon: { color: "#efbd68", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
-  composerEmojiText: { color: theme.colors.text, fontSize: 25, lineHeight: 28 },
+  composerEmojiText: { color: "#efbd68", fontSize: 25, lineHeight: 28 },
   emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   emojiSearchIcon: { color: "#62676e", fontSize: 24 },
@@ -2842,8 +2887,13 @@ const styles = StyleSheet.create({
   emojiCategoryTextActive: { color: "#222" },
   quickReplies: { flexGrow: 0, marginTop: 5 },
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
-  quickReply: { borderWidth: 1.5, borderColor: "#5f8fff", backgroundColor: "rgba(9,20,38,0.86)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
-  quickReplyText: { color: "#8db0ff", fontSize: 14, fontWeight: "600" },
+  quickReply: { borderWidth: 1.5, borderColor: "#b88a3b", backgroundColor: "rgba(3,43,31,0.92)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
+  quickReplyText: { color: "#f1d18d", fontSize: 14, fontWeight: "600" },
+  chittiTypingIndicator: { minHeight: 38, marginRight: 14, marginTop: 4, marginBottom: -5, paddingLeft: 13, paddingRight: 4, paddingVertical: 4, alignSelf: "flex-end", maxWidth: "76%", flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.58)", backgroundColor: "rgba(3,43,31,0.97)", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4, zIndex: 3 },
+  chittiTypingMascotWrap: { width: 38, height: 38, marginBottom: -11, borderRadius: 19, overflow: "hidden", backgroundColor: "#164d30", borderWidth: 1, borderColor: "rgba(239,189,104,0.72)" },
+  chittiTypingMascot: { width: "100%", height: "100%" },
+  chittiTypingText: { flexShrink: 1, color: "#f8e8be", fontSize: 13, fontWeight: "600" },
+  chittiTypingDots: { color: "#efbd68", letterSpacing: 2 },
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },
   plusVertical: { position: "absolute", width: 5, height: 24, borderRadius: 3, backgroundColor: theme.colors.blue },
@@ -2950,8 +3000,8 @@ const styles = StyleSheet.create({
   pollOptionText: { color: "#263244", fontSize: 12, fontWeight: "800", flex: 1 },
   pollOptionTextSelected: { color: "#fff" },
   pollCount: { color: "#667085", fontSize: 11, fontWeight: "900", marginLeft: 8 },
-  composerInput: { flex: 1, color: "#101828", backgroundColor: "rgba(248,249,252,0.96)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
-  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  composerInput: { flex: 1, color: "#fff8e8", backgroundColor: "rgba(7,49,36,0.98)", borderWidth: 1, borderColor: "rgba(239,189,104,0.42)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
+  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2d8b46", borderWidth: 1, borderColor: "#efbd68", alignItems: "center", justifyContent: "center" },
   composerSendText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },
   sendWingTop: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "32deg" }], top: 5 },
@@ -2969,14 +3019,14 @@ const styles = StyleSheet.create({
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   messageSelectionCheck: { position: "absolute", top: -9, right: -9, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 5 },
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  myBubble: { backgroundColor: "#d9fdd3", alignSelf: "flex-end", borderBottomRightRadius: 2 },
-  theirBubble: { backgroundColor: "#ffffff", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
+  myBubble: { backgroundColor: "#185c38", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.48)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
+  theirBubble: { backgroundColor: "#0c3025", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.30)", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
-  myBubbleTail: { right: -5, backgroundColor: "#d9fdd3" },
-  theirBubbleTail: { left: -5, backgroundColor: "#ffffff" },
+  myBubbleTail: { right: -5, backgroundColor: "#185c38" },
+  theirBubbleTail: { left: -5, backgroundColor: "#0c3025" },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-  senderName: { color: "#17202d", fontSize: 12, fontWeight: "600" },
-  senderTime: { color: "#667085", fontSize: 11, fontWeight: "700" },
+  senderName: { color: "#f6dda3", fontSize: 12, fontWeight: "600" },
+  senderTime: { color: "#b8aa84", fontSize: 11, fontWeight: "700" },
   messageMenuRow: { height: 17, alignSelf: "stretch", alignItems: "flex-end", justifyContent: "center", marginTop: -3, marginBottom: 1 },
   messageMenuButton: { width: 30, height: 22, alignItems: "center", justifyContent: "center" },
   messageMenuText: { fontSize: 12, letterSpacing: 1, fontWeight: "700" },
@@ -3017,12 +3067,12 @@ const styles = StyleSheet.create({
   collageMoreText: { color: "#fff", fontSize: 24, fontWeight: "700" },
   messageImageLoading: { alignItems: "center", justifyContent: "center" },
   messageImageLoadingText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
-  myBubbleText: { color: "#111827" },
-  theirBubbleText: { color: "#111827" },
+  myBubbleText: { color: "#fffaf0" },
+  theirBubbleText: { color: "#fffaf0" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },
   bubbleMeta: { fontSize: 10.5, fontWeight: "400" },
-  myBubbleMeta: { color: "#66756a" },
-  theirBubbleMeta: { color: "#6b7280" },
+  myBubbleMeta: { color: "#d4c79f" },
+  theirBubbleMeta: { color: "#b8aa84" },
   receiptMark: { color: "#66756a", fontSize: 12, lineHeight: 14, fontWeight: "700", letterSpacing: -2 },
   receiptSeen: { color: "#1689d8" },
   receiptFailed: { color: "#dc2626", letterSpacing: 0 },
@@ -3035,18 +3085,27 @@ const styles = StyleSheet.create({
   cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
   list: { flex: 1 },
   listContent: { paddingBottom: 88 },
-  chatRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 12, marginBottom: 8, gap: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.035)", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
-  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  chatRow: { minHeight: 78, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, paddingVertical: 11, marginBottom: 9, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.16)", borderRadius: 22, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
+  chatRowUnread: { minHeight: 86, borderColor: "rgba(87,184,91,0.70)", backgroundColor: "rgba(5,42,28,0.84)" },
+  communityRow: { backgroundColor: "rgba(8,25,24,0.82)" },
+  avatarWrap: { position: "relative" },
+  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#123c27", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1.5, borderColor: "rgba(210,167,89,0.54)" },
+  avatarUnread: { borderColor: "rgba(86,190,100,0.88)" },
   avatarImage: { width: "100%", height: "100%" },
-  groupAvatar: { backgroundColor: "#172138" },
+  inboxOnlineDot: { position: "absolute", width: 11, height: 11, borderRadius: 6, right: 0, bottom: 1, backgroundColor: "#3dbb59", borderWidth: 2, borderColor: "#051b13" },
+  groupAvatar: { backgroundColor: "#123c27" },
   avatarText: { color: theme.colors.text, fontWeight: "700", fontSize: 16 },
-  chatCopy: { flex: 1 },
-  chatName: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
+  chatCopy: { flex: 1, minWidth: 0 },
+  chatKind: { color: "#8f713f", fontSize: 7.25, lineHeight: 9, fontWeight: "700", letterSpacing: 0.75, marginBottom: 1 },
+  chatName: { color: "#f5f3eb", fontSize: 16, fontWeight: "600" },
+  communityGlyph: { fontSize: 24 },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "500" },
-  chatLast: { color: theme.colors.muted, marginTop: 3 },
+  chatLast: { color: "#aaaead", marginTop: 4, fontSize: 13 },
+  chatLastUnread: { color: "#efbd68", fontWeight: "500" },
   chatMeta: { alignItems: "flex-end", minWidth: 34, gap: 6 },
-  chatTime: { color: theme.colors.muted, fontWeight: "500", fontSize: 12 },
-  unread: { backgroundColor: theme.colors.accent, color: theme.colors.text, borderRadius: 10, overflow: "hidden", paddingHorizontal: 8, fontWeight: "900" },
+  chatTime: { color: "#a9ada9", fontWeight: "500", fontSize: 12 },
+  chatTimeUnread: { color: "#4fc35e" },
+  unread: { minWidth: 24, height: 24, lineHeight: 24, textAlign: "center", backgroundColor: "#287d39", color: "#fff", borderRadius: 12, overflow: "hidden", paddingHorizontal: 6, fontWeight: "700", fontSize: 12 },
   memberCount: { color: theme.colors.muted, fontWeight: "600" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
   groupMembersPanel: { position: "absolute", top: 78, right: 10, width: 360, maxWidth: "94%", maxHeight: 430, zIndex: 30, backgroundColor: "#111827", borderWidth: 1, borderColor: theme.colors.line, borderRadius: 20, padding: 14, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18 },
@@ -3062,5 +3121,9 @@ const styles = StyleSheet.create({
   leaveGroupButton: { minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: "#843444", alignItems: "center", justifyContent: "center", marginTop: 12 },
   leaveGroupText: { color: "#ff8b99", fontSize: 13, fontWeight: "600" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
-  emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg }
+  emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg },
+  letterEmptyCard: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 24, borderRadius: 22, borderWidth: 1, borderColor: "rgba(219,180,107,0.24)", backgroundColor: "rgba(7,24,22,0.78)", alignItems: "center" },
+  letterEmptyIcon: { fontSize: 30, marginBottom: 8 },
+  letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
+  letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 }
 });

@@ -144,7 +144,7 @@ export function ProfileScreen({
     { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.serviceHome, onPress: onOpenHousing },
     { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenRide },
     { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },
-    { title: "FChat", copy: "Messages and communities", icon: appAssets.fchat, fullColor: true, onPress: onOpenMessenger },
+    { title: "Chitthi", copy: "Messages and communities", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
     { title: "Help & Support", copy: "Questions, account help, safety concerns, or technical problems", icon: appAssets.serviceSupport, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
     { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
@@ -277,7 +277,7 @@ export function ProfileScreen({
             <View style={styles.privacyRow}>
               <View style={styles.privacyCopy}>
                 <Text style={styles.label}>Find me by exact phone number</Text>
-                <Text style={styles.cardCopy}>Off by default. Your number is never displayed in FChat results.</Text>
+                <Text style={styles.cardCopy}>Off by default. Your number is never displayed in Chitthi results.</Text>
               </View>
               <Switch value={phoneDiscoverable} onValueChange={(value) => void changePhoneDiscovery(value)} />
             </View>
@@ -287,7 +287,7 @@ export function ProfileScreen({
 
       <View style={styles.activityCard}>
         <Text style={styles.cardTitle}>Your FairFares</Text>
-        <Text style={styles.cardCopy}>Track housing posts, carpool activity, rental bookings, and FChat conversations from one account.</Text>
+        <Text style={styles.cardCopy}>Track housing posts, carpool activity, rental bookings, and Chitthi conversations from one account.</Text>
         <View style={styles.metricRow}>
           <View style={styles.metric}><Text style={styles.metricValue}>{data?.dashboard.housingPosts || 0}</Text><Text style={styles.metricLabel}>Housing posts</Text></View>
           <View style={styles.metric}><Text style={styles.metricValue}>{data?.chat.unreadCount || 0}</Text><Text style={styles.metricLabel}>Unread messages</Text></View>
@@ -324,7 +324,7 @@ export function ProfileScreen({
               <Text style={styles.miniButtonText}>Activity</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.miniButton} onPress={onOpenMessenger}>
-              <Text style={styles.miniButtonText}>FChat</Text>
+              <Text style={styles.miniButtonText}>Chitthi</Text>
             </TouchableOpacity>
           </View>
         </View>

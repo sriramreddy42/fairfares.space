@@ -41,7 +41,7 @@ async function readSecureIdentity(userId: number): Promise<string | null> {
     const app = await tryReadSecureIdentity(name, secureOptions);
     if (app.value) return app.value;
     if (shared.error && app.error) {
-      throw new Error("Secure FChat storage is unavailable. Install the latest FairFares build and try again.");
+      throw new Error("Secure Chitthi storage is unavailable. Install the latest FairFares build and try again.");
     }
     return null;
   }
@@ -69,7 +69,7 @@ async function writeSecureIdentity(userId: number, serialized: string): Promise<
     }
   }
   if (!appStored && !(Platform.OS === "ios" && sharedStored)) {
-    throw new Error("Secure FChat storage is unavailable. Install the latest FairFares build and try again.");
+    throw new Error("Secure Chitthi storage is unavailable. Install the latest FairFares build and try again.");
   }
 }
 
@@ -96,7 +96,7 @@ export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIde
     if (!isDeviceIdentity(parsed)) throw new Error("invalid identity shape");
     identity = parsed;
   } catch {
-    throw new Error("The secure FChat identity on this device is invalid. Recover your key backup before sending messages.");
+    throw new Error("The secure Chitthi identity on this device is invalid. Recover your key backup before sending messages.");
   }
   if (identity.signingPublicKey && identity.signingSecretKey) {
     // Migrates identities created by older builds into the notification

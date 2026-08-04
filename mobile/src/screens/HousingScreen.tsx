@@ -143,7 +143,7 @@ const rideServicePosters: Array<{
     tint: "#8a5a00",
     glyph: "scheduled",
     register: "Enter pickup, destination, days, time, seats, and notes.",
-    works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and FChat for each accepted ride."],
+    works: ["Create the schedule.", "Matched drivers or riders respond.", "Use Activity and Chitthi for each accepted ride."],
     access: "Choose this when the same route repeats.",
     available: false
   },
@@ -157,7 +157,7 @@ const rideServicePosters: Array<{
     tint: "#243b73",
     glyph: "general",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
-    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use FChat before requesting or accepting to confirm details."],
+    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use Chitthi before requesting or accepting to confirm details."],
     access: "Choose this for one ride inside or near the city.",
     available: false
   },
@@ -171,7 +171,7 @@ const rideServicePosters: Array<{
     tint: "#0f5f4b",
     glyph: "carpool",
     register: "Enter route, date/time, seats, luggage, and contribution.",
-    works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in FChat."],
+    works: ["Drivers list open seats.", "Riders request seats on matching routes.", "Both sides confirm details in Chitthi."],
     access: "Choose this for city-to-city, long-distance, or shared-cost rides.",
     available: true
   }
@@ -218,14 +218,14 @@ const rideLifecycleStates = ["Requested", "Matching", "Accepted", "En route", "A
 const rideSafetyActions = [
   { label: "Share trip", icon: "↗", body: "Send route, driver, vehicle, and status to a trusted contact." },
   { label: "Pickup PIN", icon: "#", body: "Confirm the passenger and vehicle before the ride starts." },
-  { label: "FChat", icon: "💬", body: "Message the driver or rider about pickup, PIN, route changes, and arrival." },
+  { label: "Chitthi", icon: "💬", body: "Message the driver or rider about pickup, PIN, route changes, and arrival." },
   { label: "Report issue", icon: "!", body: "Flag safety, behavior, pickup, or route concerns." },
   { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
 ];
 const rideOwnerSteps = [
   "List the route, seats, timing, luggage space, and contribution.",
   "Review matching rider requests with pickup, destination, and distance.",
-  "Use FChat before accepting; acceptance unlocks the pickup PIN and ride-status updates."
+  "Use Chitthi before accepting; acceptance unlocks the pickup PIN and ride-status updates."
 ];
 const rideOwnerRequestStates = ["Listed", "Request", "Accepted", "Arriving", "Completed"];
 const rideDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -506,6 +506,10 @@ export function HousingScreen({
   const [rideDriverBusy, setRideDriverBusy] = useState(false);
   const [rideOwnerPrompt, setRideOwnerPrompt] = useState("");
   const { width: viewportWidth } = useWindowDimensions();
+  const compactHousingHome = viewportWidth < 560;
+  const housingCardWidth = compactHousingHome
+    ? Math.max(164, Math.min(212, (viewportWidth - 38) / 2))
+    : 286;
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -1165,10 +1169,10 @@ export function HousingScreen({
         setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
         setRideActivityRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
         setRidePosted(true);
-        setRideRequestStatus("Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in FChat.");
+        setRideRequestStatus("Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in Chitthi.");
         setRidePlannerOpen(false);
         setRideOwnerOpen(true);
-        setRideOwnerPrompt("Ride listed. Requests on the same corridor will appear in your Request tracker with route details, status, pickup PIN, and FChat.");
+        setRideOwnerPrompt("Ride listed. Requests on the same corridor will appear in your Request tracker with route details, status, pickup PIN, and Chitthi.");
         void refreshRideActivity();
         Alert.alert("Ride listed", "Rider requests that match this route will appear in your driver workspace.");
         return;
@@ -1231,14 +1235,14 @@ export function HousingScreen({
       void refreshRideActivity();
       setRideRequestStatus(
         notifiedCount
-          ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. You can FChat with a selected listing owner before acceptance; the pickup PIN appears after acceptance.`
-          : "Request saved. FairFares will keep checking nearby driver offers. Select a specific driver offer to FChat before acceptance."
+          ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. You can use Chitthi with a selected listing owner before acceptance; the pickup PIN appears after acceptance.`
+          : "Request saved. FairFares will keep checking nearby driver offers. Select a specific driver offer to message in Chitthi before acceptance."
       );
       Alert.alert("Ride request sent", selectedOffer
-        ? "You can FChat with this driver now. Acceptance confirms the seat and unlocks the pickup PIN."
-        : "When a driver accepts your general request, you can coordinate the pickup, ETA, and PIN in FChat.", [
+        ? "You can message this driver in Chitthi now. Acceptance confirms the seat and unlocks the pickup PIN."
+        : "When a driver accepts your general request, you can coordinate the pickup, ETA, and PIN in Chitthi.", [
         { text: "Stay here", style: "cancel" },
-        { text: "Open FChat", onPress: () => selectedOffer ? onRideMessage(selectedOffer) : onOpenMessenger() }
+        { text: "Open Chitthi", onPress: () => selectedOffer ? onRideMessage(selectedOffer) : onOpenMessenger() }
       ]);
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
@@ -1262,10 +1266,10 @@ export function HousingScreen({
       if (action === "ACCEPT") {
         Alert.alert(
           "Ride request accepted",
-          `Pickup PIN ${updated.pickupPin || "will appear after refresh"}. FChat is ready for pickup notes and ETA.`,
+          `Pickup PIN ${updated.pickupPin || "will appear after refresh"}. Chitthi is ready for pickup notes and ETA.`,
           [
             { text: "Stay here", style: "cancel" },
-            { text: "Open FChat", onPress: () => onRideMessage(updated) }
+            { text: "Open Chitthi", onPress: () => onRideMessage(updated) }
           ]
         );
       } else {
@@ -1333,7 +1337,7 @@ export function HousingScreen({
               <View style={styles.rideOwnerHeroCopy}>
                 <Text style={styles.rideOwnerHeroTitle}>List your route and available seats.</Text>
                 <Text style={styles.rideOwnerHeroText}>
-                  Add the route, timing, seats and contribution. Matching requests appear below with route fit and FChat.
+                  Add the route, timing, seats and contribution. Matching requests appear below with route fit and Chitthi.
                 </Text>
               </View>
             </View>
@@ -1495,11 +1499,11 @@ export function HousingScreen({
                       <Text style={styles.rideOwnerRequestMeta}>
                         {isIncoming
                           ? ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status)
-                            ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. FChat is available now; accept to confirm the seat and unlock the pickup PIN.`
-                            : "FChat is ready for ETA, pickup notes, route changes, and arrival updates."
+                            ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. Chitthi is available now; accept to confirm the seat and unlock the pickup PIN.`
+                            : "Chitthi is ready for ETA, pickup notes, route changes, and arrival updates."
                           : ride.isExpired
                             ? "This ride date has passed. It remains visible here as expired."
-                            : "Your route is listed. Matching rider requests will appear here with route distance, status, and FChat."}
+                            : "Your route is listed. Matching rider requests will appear here with route distance, status, and Chitthi."}
                       </Text>
                       <View style={styles.rideOwnerRequestActionRow}>
                         {canAccept ? (
@@ -1518,8 +1522,8 @@ export function HousingScreen({
                           </TouchableOpacity>
                         ) : null}
                         <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
-                          <Image source={appAssets.fchat} style={styles.rideOwnerChatIcon} resizeMode="contain" />
-                          <Text style={styles.rideOwnerChatText}>FChat</Text>
+                          <Image source={appAssets.chittiMascot} style={styles.rideOwnerChatIcon} resizeMode="contain" />
+                          <Text style={styles.rideOwnerChatText}>Chitthi</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -1532,8 +1536,8 @@ export function HousingScreen({
                     {rideOwnerOpenTarget === "listings"
                       ? "Use List your ride above to publish a route and available seats."
                       : rideOwnerOpenTarget === "requests"
-                        ? "New matching rider requests will appear here with route fit, status, and FChat."
-                        : "List a route first. When riders match or request your seats, this tracker shows route details, status, and FChat."}
+                        ? "New matching rider requests will appear here with route fit, status, and Chitthi."
+                        : "List a route first. When riders match or request your seats, this tracker shows route details, status, and Chitthi."}
                   </Text>
                 </View>
               )}
@@ -2368,7 +2372,7 @@ export function HousingScreen({
                 <Text style={styles.rideChoiceTitle}>Choose a ride</Text>
                 <Text style={styles.rideDriverNotify}>
                   {driverOffers.length
-                    ? "These driver offers match your route. You can FChat before requesting or accepting; acceptance confirms the seat and unlocks the pickup PIN."
+                    ? "These driver offers match your route. You can use Chitthi before requesting or accepting; acceptance confirms the seat and unlocks the pickup PIN."
                     : "No live driver offer is selected yet. Send the request and FairFares will notify nearby drivers first, then expand the radius if needed."}
                 </Text>
                 {driverOffers.length ? (
@@ -2423,8 +2427,8 @@ export function HousingScreen({
                               <Text style={styles.rideChoiceSmallButtonText}>View route</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={[styles.rideChoiceSmallButton, styles.rideChoiceChatButton]} onPress={() => onRideMessage(offer)}>
-                              <Image source={appAssets.fchat} style={styles.rideChoiceChatIcon} resizeMode="contain" />
-                              <Text style={styles.rideChoiceSmallButtonText}>FChat</Text>
+                              <Image source={appAssets.chittiMascot} style={styles.rideChoiceChatIcon} resizeMode="contain" />
+                              <Text style={styles.rideChoiceSmallButtonText}>Chitthi</Text>
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -2444,7 +2448,7 @@ export function HousingScreen({
                   <View style={styles.rideNoOffersCard}>
                     <Text style={styles.rideNoOffersTitle}>No driver offers yet</Text>
                     <Text style={styles.rideNoOffersCopy}>
-                      Send your request and nearby registered drivers can accept it. FChat needs a specific driver recipient; once a driver accepts, you will also see ETA and the pickup PIN.
+                      Send your request and nearby registered drivers can accept it. Chitthi needs a specific driver recipient; once a driver accepts, you will also see ETA and the pickup PIN.
                     </Text>
                   </View>
                 )}
@@ -2455,8 +2459,8 @@ export function HousingScreen({
                     <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments for this ride. Agree directly with the driver.</Text>
                   </View>
                   <TouchableOpacity style={styles.rideInlineChatButton} onPress={() => selectedDriverOffer ? onRideMessage(selectedDriverOffer) : onOpenMessenger()}>
-                    <Image source={appAssets.fchat} style={styles.rideInlineChatIcon} resizeMode="contain" />
-                    <Text style={styles.rideInlineChatText}>FChat</Text>
+                    <Image source={appAssets.chittiMascot} style={styles.rideInlineChatIcon} resizeMode="contain" />
+                    <Text style={styles.rideInlineChatText}>Chitthi</Text>
                   </TouchableOpacity>
                 </View>
                 <View style={styles.rideSafetyGrid}>
@@ -2888,13 +2892,22 @@ export function HousingScreen({
       {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
         <>
 
-      <SectionHeader title="Create a post" />
+      <View style={styles.homeSectionHeader}>
+        <Text style={styles.homeSectionTitle}>Create a post</Text>
+        <TouchableOpacity onPress={() => onPostNeed()}>
+          <Text style={styles.homeSectionAction}>View all ›</Text>
+        </TouchableOpacity>
+      </View>
       <View style={styles.postActionGrid}>
-        {postActions.map((action) => (
+        {postActions.map((action, index) => (
           <TouchableOpacity
             key={action.intent}
             activeOpacity={0.86}
-            style={[styles.postActionCard, { backgroundColor: action.bg }]}
+            style={[
+              styles.postActionCard,
+              index === 0 ? styles.postActionTiltLeft : index === 1 ? styles.postActionTiltCenter : styles.postActionTiltRight,
+              { backgroundColor: action.bg }
+            ]}
             onPress={() => onPostNeed(action.intent)}
           >
             <View style={styles.postActionIconTile}>
@@ -2904,10 +2917,6 @@ export function HousingScreen({
               <Text style={styles.postNeedTitle}>{action.label}</Text>
               <Text style={styles.postNeedMeta}>{action.sub}</Text>
             </View>
-            <View style={styles.postActionScene} pointerEvents="none">
-              <View style={[styles.postActionSceneCircle, { backgroundColor: action.tint }]} />
-              <Image source={action.icon} style={styles.postActionSceneIcon} resizeMode="contain" />
-            </View>
             <View style={[styles.postActionArrow, { backgroundColor: action.tint }]}>
               <Text style={styles.postActionArrowText}>›</Text>
             </View>
@@ -2916,8 +2925,10 @@ export function HousingScreen({
       </View>
 
       <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
-        <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
-        <Text style={styles.welcomeMeta}>Check recent listings, messages, and dashboard activity here.</Text>
+        <View style={styles.welcomeCopy}>
+          <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
+          <Text style={styles.welcomeMeta}>Check recent listings, messages, and dashboard activity here.</Text>
+        </View>
         <View style={styles.statRow}>
           <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
           <TouchableOpacity onPress={onOpenMessenger}>
@@ -2926,14 +2937,17 @@ export function HousingScreen({
         </View>
       </View>
 
-      <SectionHeader title={`Rooms for rent in ${data?.location.city || "Denver, CO"}`} />
-      <View style={styles.filterPanel}>
+      <View style={styles.listingSectionHeader}>
+        <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || "Denver, CO"}</Text>
         <TouchableOpacity style={styles.filterHeader} onPress={() => setFiltersOpen((value) => !value)}>
+          <Text style={styles.filterGlyph}>☷</Text>
           <Text style={styles.filterHeaderTitle}>Filters</Text>
-          <Text style={styles.filterHeaderMeta}>
-            {selectedCategory ? roomTypes.find((type) => type.category === selectedCategory)?.label : "Room type"} · {selectedGender || "Any"} · {selectedBudget ? `$${selectedBudget}` : "Any budget"}
-          </Text>
         </TouchableOpacity>
+      </View>
+      {filtersOpen ? <View style={styles.filterPanel}>
+        <Text style={styles.filterHeaderMeta}>
+          {selectedCategory ? roomTypes.find((type) => type.category === selectedCategory)?.label : "Room type"} · {selectedGender || "Any"} · {selectedBudget ? `$${selectedBudget}` : "Any budget"}
+        </Text>
         {filtersOpen ? (
           <>
             <Text style={styles.filterTitle}>Sort by</Text>
@@ -2979,10 +2993,10 @@ export function HousingScreen({
             </ScrollView>
           </>
         ) : null}
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      </View> : null}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.housingCardRow} snapToInterval={housingCardWidth + 10} decelerationRate="fast">
         {sortedPosts.length ? (
-          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} />)
+          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} />)
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
@@ -3373,23 +3387,30 @@ const styles = StyleSheet.create({
   exportsInfoFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
   exportsInfoDoneButton: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 2 },
   exportsInfoDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
-  postActionGrid: { gap: 9 },
+  homeSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
+  homeSectionTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },
+  homeSectionAction: { color: theme.colors.brand, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  postActionGrid: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingHorizontal: 2, paddingVertical: 5 },
   postActionCard: {
-    minHeight: 96,
+    flex: 1,
+    minWidth: 0,
+    minHeight: 184,
     borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 11,
+    alignItems: "flex-start",
+    gap: 8,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.72)"
   },
+  postActionTiltLeft: { transform: [{ rotate: "-1.2deg" }], marginTop: 4 },
+  postActionTiltCenter: { transform: [{ rotate: "0.7deg" }] },
+  postActionTiltRight: { transform: [{ rotate: "1.2deg" }], marginTop: 4 },
   postActionIconTile: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     backgroundColor: "rgba(255,255,255,0.72)",
     alignItems: "center",
     justifyContent: "center",
@@ -3398,10 +3419,10 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 }
   },
-  postActionIcon: { width: 34, height: 34 },
+  postActionIcon: { width: 27, height: 27 },
   postActionCopy: { flex: 1, minWidth: 0, zIndex: 2 },
-  postNeedTitle: { color: "#111827", fontSize: 16, lineHeight: 20, fontWeight: "700" },
-  postNeedMeta: { color: "#263143", marginTop: 3, fontSize: 13, lineHeight: 17, fontWeight: "500" },
+  postNeedTitle: { color: "#111827", fontSize: 14, lineHeight: 17, fontWeight: "700" },
+  postNeedMeta: { color: "#263143", marginTop: 3, fontSize: 11, lineHeight: 15, fontWeight: "500" },
   postActionScene: {
     position: "absolute",
     right: 42,
@@ -3421,25 +3442,31 @@ const styles = StyleSheet.create({
   },
   postActionSceneIcon: { width: 78, height: 78 },
   postActionArrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignSelf: "flex-end",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 2
   },
-  postActionArrowText: { color: theme.colors.text, fontSize: 32, lineHeight: 34, fontWeight: "600", marginTop: -2 },
-  welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#18241d", gap: 8 },
-  welcomeTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
-  welcomeMeta: { color: theme.colors.soft, fontSize: 14 },
-  statRow: { flexDirection: "row", gap: 10, marginTop: 4 },
-  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "700" },
+  postActionArrowText: { color: theme.colors.text, fontSize: 24, lineHeight: 26, fontWeight: "600", marginTop: -2 },
+  welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#10231c", gap: 12, flexDirection: "row", alignItems: "center" },
+  welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
+  welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
+  welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
+  statRow: { width: 132, gap: 7 },
+  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 11, textAlign: "center" },
+  listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
+  housingCardRow: { gap: 10, paddingRight: 2 },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
   filterPanel: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: 10, gap: 7 },
-  filterHeader: { gap: 2 },
-  filterHeaderTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "600" },
+  filterHeader: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.colors.panel },
+  filterGlyph: { color: "#8b5cff", fontSize: 17, lineHeight: 18, fontWeight: "800" },
+  filterHeaderTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "600" },
   filterHeaderMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "500" },
   filterTitle: { color: theme.colors.muted, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.8 },
   filterRow: { gap: 6, paddingRight: theme.spacing.md },
