@@ -216,13 +216,6 @@ const rideOfferSurfaces: Array<{
 ];
 const rideFlowSteps = ["List route", "Match nearby", "Request seat", "Ride together"];
 const rideLifecycleStates = ["Requested", "Matching", "Accepted", "En route", "Arrived", "In progress", "Completed"];
-const rideSafetyActions = [
-  { label: "Share trip", icon: "↗", body: "Send route, driver, vehicle, and status to a trusted contact." },
-  { label: "Pickup PIN", icon: "#", body: "Confirm the passenger and vehicle before the ride starts." },
-  { label: "Chitthi", icon: "💬", body: "Message the driver or rider about pickup, PIN, route changes, and arrival." },
-  { label: "Report issue", icon: "!", body: "Flag safety, behavior, pickup, or route concerns." },
-  { label: "Urgent support", icon: "☎", body: "Call or message FairFares support during an active ride." }
-];
 const rideOwnerSteps = [
   "List the route, seats, timing, luggage space, and contribution.",
   "Review matching rider requests with pickup, destination, and distance.",
@@ -493,8 +486,6 @@ export function HousingScreen({
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
   const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
-  const [rideHomeSuggestions, setRideHomeSuggestions] = useState<RidePlaceSuggestion[]>([]);
-  const [rideHomeSuggestionsBusy, setRideHomeSuggestionsBusy] = useState(false);
   const [currentRideLocation, setCurrentRideLocation] = useState<CurrentRideLocation | null>(null);
   const [currentRideLocationBusy, setCurrentRideLocationBusy] = useState(false);
   const [currentRideLocationError, setCurrentRideLocationError] = useState("");
@@ -683,15 +674,6 @@ export function HousingScreen({
       }));
     }
   }, [selectedNeed]);
-
-  useEffect(() => {
-    if (mode !== "ride") return;
-    setRideHomeSuggestionsBusy(true);
-    getRidePlaceSuggestions(rideDefaultCity, "")
-      .then((suggestions) => setRideHomeSuggestions(suggestions.slice(0, 4)))
-      .catch(() => setRideHomeSuggestions([]))
-      .finally(() => setRideHomeSuggestionsBusy(false));
-  }, [mode, rideDefaultCity]);
 
   useEffect(() => {
     if (!focusWelcomeKey) return;
@@ -1213,14 +1195,14 @@ export function HousingScreen({
     }
   }
 
-  async function requestPlannedRide() {
+  async function requestPlannedRide(offer?: RidePost) {
     if (!data?.user) {
       Alert.alert("Login required", "Please login before requesting a ride so drivers can message you.");
       return;
     }
-    const selectedOffer = selectedRideChoice.startsWith("offer:")
+    const selectedOffer = offer || (selectedRideChoice.startsWith("offer:")
       ? rideRows.find((ride) => `offer:${ride.id}` === selectedRideChoice)
-      : null;
+      : null);
     if (selectedOffer?.isExpired) {
       Alert.alert("Ride expired", "This ride date has passed. It remains visible for history, but cannot be requested.");
       return;
@@ -1258,6 +1240,18 @@ export function HousingScreen({
     } finally {
       setRideBusy(false);
     }
+  }
+
+  function reportRideIssue() {
+    const selectedOffer = selectedRideChoice.startsWith("offer:")
+      ? rideRows.find((ride) => `offer:${ride.id}` === selectedRideChoice)
+      : null;
+    const route = selectedOffer
+      ? `${selectedOffer.origin} to ${selectedOffer.destination}`
+      : `${rideForm.origin || "Pickup not selected"} to ${rideForm.destination || "Destination not selected"}`;
+    const subject = encodeURIComponent("FairFares carpool issue");
+    const body = encodeURIComponent(`Please describe the issue below.\n\nRide: ${route}\nRide ID: ${selectedOffer?.id || "Not assigned"}\n\nIssue details:\n`);
+    void Linking.openURL(`mailto:hello@fairfare.space?subject=${subject}&body=${body}`);
   }
 
   async function updateRideDispatch(ride: RidePost, action: "ACCEPT" | "DECLINE" | "EN_ROUTE" | "ARRIVED" | "COMPLETED") {
@@ -1508,8 +1502,8 @@ export function HousingScreen({
                       <Text style={styles.rideOwnerRequestMeta}>
                         {isIncoming
                           ? ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status)
-                            ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. Chitthi is available now; accept to confirm the seat and unlock the pickup PIN.`
-                            : "Chitthi is ready for ETA, pickup notes, route changes, and arrival updates."
+                            ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. Messaging is available now; accept to confirm the seat and unlock the pickup PIN.`
+                            : "Message the rider about ETA, pickup notes, route changes, and arrival updates."
                           : ride.isExpired
                             ? "This ride date has passed. It remains visible here as expired."
                             : "Your route is listed. Matching rider requests will appear here with route distance, status, and Chitthi."}
@@ -1531,8 +1525,7 @@ export function HousingScreen({
                           </TouchableOpacity>
                         ) : null}
                         <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
-                          <Image source={appAssets.chittiMascot} style={styles.rideOwnerChatIcon} resizeMode="contain" />
-                          <Text style={styles.rideOwnerChatText}>Chitthi</Text>
+                          <Text style={styles.rideOwnerChatText}>Message</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2436,16 +2429,18 @@ export function HousingScreen({
                           <Text style={styles.rideChoiceMeta} numberOfLines={2}>{matchFacts.join(" · ") || "Route fit will show after matching."}</Text>
                           <View style={styles.rideChoiceActionRow}>
                             <TouchableOpacity
-                              style={[styles.rideChoiceSmallButton, selected && styles.rideChoiceSmallButtonActive]}
+                              style={[styles.rideChoiceSmallButton, styles.rideChoiceRequestButton]}
+                              disabled={rideBusy || expired}
                               onPress={() => {
                                 if (expired) {
                                   Alert.alert("Ride expired", "This ride date has passed. It remains visible for history, but cannot be requested.");
                                   return;
                                 }
                                 setSelectedRideChoice(`offer:${offer.id}`);
+                                void requestPlannedRide(offer);
                               }}
                             >
-                              <Text style={[styles.rideChoiceSmallButtonText, selected && styles.rideChoiceSmallButtonTextActive]}>{selected ? "Selected" : "Request seat"}</Text>
+                              <Text style={styles.rideChoiceRequestButtonText}>{rideBusy && selected ? "Sending..." : expired ? "Expired" : "Send ride request"}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.rideChoiceSmallButton} onPress={openRideGoogleMaps}>
                               <Text style={styles.rideChoiceSmallButtonText}>View route</Text>
@@ -2480,34 +2475,31 @@ export function HousingScreen({
                   <Text style={styles.ridePaymentIcon}>✓</Text>
                   <View style={styles.rideChoiceCopy}>
                     <Text style={styles.rideChoiceName}>Direct agreement</Text>
-                    <Text style={styles.rideChoiceMeta}>FairFares does not collect ride payments for this ride. Agree directly with the driver.</Text>
+                    <Text style={styles.rideChoiceMeta}>Arrange any carpool contribution directly with the driver. FairFares does not collect or process this payment.</Text>
                   </View>
                   <TouchableOpacity style={styles.rideInlineChatButton} onPress={() => selectedDriverOffer ? onRideMessage(selectedDriverOffer) : onOpenMessenger()}>
                     <Image source={appAssets.chittiMascot} style={styles.rideInlineChatIcon} resizeMode="contain" />
                     <Text style={styles.rideInlineChatText}>Chitthi</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.rideSafetyGrid}>
-                  {rideSafetyActions.map((action) => (
-                    <View key={action.label} style={styles.rideSafetyChip}>
-                      <Text style={styles.rideSafetyIcon}>{action.icon}</Text>
-                      <Text style={styles.rideSafetyLabel}>{action.label}</Text>
-                    </View>
-                  ))}
-                </View>
+                <TouchableOpacity style={styles.rideIssueButton} onPress={reportRideIssue}>
+                  <Text style={styles.rideIssueIcon}>!</Text>
+                  <View style={styles.rideChoiceCopy}>
+                    <Text style={styles.rideIssueTitle}>Report a problem with this ride</Text>
+                    <Text style={styles.rideIssueCopy}>Send FairFares details about a safety, driver, pickup, route, or behavior concern.</Text>
+                  </View>
+                  <Text style={styles.rideIssueArrow}>›</Text>
+                </TouchableOpacity>
                 {rideRequestStatus ? (
                   <View style={styles.rideRequestStatus}>
                     <Text style={styles.rideRequestStatusText}>{rideRequestStatus}</Text>
                   </View>
                 ) : null}
-                <View style={styles.rideChoiceButtonRow}>
-                  <TouchableOpacity style={[styles.rideChoiceButton, selectedDriverOffer?.isExpired && styles.rideChoiceButtonDisabled]} onPress={requestPlannedRide} disabled={rideBusy || Boolean(selectedDriverOffer?.isExpired)}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Requesting..." : selectedDriverOffer?.isExpired ? "Expired offer" : selectedDriverOffer ? "Request offer" : "Send ride request"}</Text>
+                {!driverOffers.length ? (
+                  <TouchableOpacity style={styles.rideChoiceButton} onPress={() => void requestPlannedRide()} disabled={rideBusy}>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Sending..." : "Send ride request"}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.rideLaterButton}>
-                    <Text style={styles.rideLaterButtonText}>▣</Text>
-                  </TouchableOpacity>
-                </View>
+                ) : null}
               </ScrollView>
             </View>
           )}
@@ -2518,30 +2510,26 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const rideHomePlaces: RidePlaceSuggestion[] = (
-      rideHomeSuggestions.length
-        ? rideHomeSuggestions
-        : [
-            {
-              label: "Charlotte Douglas International Airport (CLT), 5501 Josh Birmingham Pkwy, Charlotte, NC",
-              main: "Charlotte Douglas International Airport (CLT)",
-              secondary: "5501 Josh Birmingham Pkwy, Charlotte, NC",
-              distanceMiles: null,
-              lat: 0,
-              lng: 0,
-              source: "fallback"
-            },
-            {
-              label: "Los Angeles Union Station, 800 N Alameda St, Los Angeles, CA",
-              main: "Los Angeles Union Station",
-              secondary: "800 N Alameda St, Los Angeles, CA",
-              distanceMiles: null,
-              lat: 0,
-              lng: 0,
-              source: "fallback"
-            }
-          ]
-    ).slice(0, 2);
+    const rideHomePlaces: RidePlaceSuggestion[] = [
+      {
+        label: "Charlotte Douglas International Airport (CLT), 5501 Josh Birmingham Pkwy, Charlotte, NC",
+        main: "Charlotte Douglas International Airport (CLT)",
+        secondary: "5501 Josh Birmingham Pkwy, Charlotte, NC",
+        distanceMiles: null,
+        lat: 35.2144,
+        lng: -80.9473,
+        source: "featured"
+      },
+      {
+        label: "Los Angeles Union Station, 800 N Alameda St, Los Angeles, CA",
+        main: "Los Angeles Union Station",
+        secondary: "800 N Alameda St, Los Angeles, CA",
+        distanceMiles: null,
+        lat: 34.0562,
+        lng: -118.2365,
+        source: "featured"
+      }
+    ];
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (
@@ -2578,7 +2566,6 @@ export function HousingScreen({
     return (
       <>
         <View style={styles.rideHomeSuggestionCard}>
-          {rideHomeSuggestionsBusy && !rideHomePlaces.length ? <Text style={styles.rideHomeSuggestionHelp}>Loading nearby ride places...</Text> : null}
           {rideHomePlaces.map((place) => {
             const lower = place.main.toLowerCase();
             const icon = lower.includes("airport") ? "✈" : lower.includes("station") ? "↪" : "⌖";
@@ -4424,9 +4411,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 5
   },
-  rideChoiceSmallButtonActive: { backgroundColor: theme.colors.blue, borderColor: theme.colors.blue },
   rideChoiceSmallButtonText: { color: theme.colors.text, fontSize: 10, fontWeight: "800" },
-  rideChoiceSmallButtonTextActive: { color: theme.colors.text },
+  rideChoiceRequestButton: { backgroundColor: theme.colors.text, borderColor: theme.colors.text, paddingHorizontal: 13 },
+  rideChoiceRequestButtonText: { color: theme.colors.bg, fontSize: 11, fontWeight: "900" },
   rideChoiceChatButton: { borderColor: "rgba(66,143,255,0.38)", backgroundColor: "rgba(26,78,169,0.18)" },
   rideChoiceChatIcon: { width: 18, height: 15 },
   rideChoiceContribution: { alignItems: "flex-end", gap: 1 },
@@ -4454,28 +4441,34 @@ const styles = StyleSheet.create({
   rideInlineChatButton: { minHeight: 38, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.08)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 9 },
   rideInlineChatIcon: { width: 20, height: 20 },
   rideInlineChatText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
-  rideSafetyGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  rideSafetyChip: {
-    width: "48%",
-    minHeight: 42,
+  rideIssueButton: {
+    minHeight: 64,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 11,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(255,255,255,0.05)",
-    paddingHorizontal: 10,
-    paddingVertical: 8
+    paddingHorizontal: 13,
+    paddingVertical: 11
   },
-  rideSafetyIcon: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  rideSafetyLabel: { flex: 1, color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
+  rideIssueIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    color: "#fca5a5",
+    backgroundColor: "rgba(239,68,68,0.14)",
+    textAlign: "center",
+    lineHeight: 28,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  rideIssueTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
+  rideIssueCopy: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  rideIssueArrow: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
   rideRequestStatus: { backgroundColor: "rgba(34,197,94,0.13)", borderWidth: 1, borderColor: "rgba(34,197,94,0.35)", borderRadius: 14, padding: 12 },
   rideRequestStatusText: { color: theme.colors.green, fontSize: 13, lineHeight: 18, fontWeight: "900" },
-  rideChoiceButtonRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
-  rideChoiceButtonDisabled: { opacity: 0.5 },
   rideChoiceButtonText: { color: theme.colors.bg, fontSize: 18, fontWeight: "900" },
-  rideLaterButton: { width: 50, height: 50, borderRadius: 11, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  rideLaterButtonText: { color: theme.colors.text, fontSize: 20 }
 });

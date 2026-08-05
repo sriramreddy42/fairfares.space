@@ -473,7 +473,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                   {!ride.isExpired && isPendingRiderRequest(ride) ? (
                     <><TouchableOpacity style={styles.acceptPill} onPress={() => handleRequestDecision(ride, "ACCEPT")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>{rideActionBusyId === ride.id ? "Updating..." : "Accept"}</Text></TouchableOpacity><TouchableOpacity style={styles.declinePill} onPress={() => handleRequestDecision(ride, "DECLINE")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>Decline</Text></TouchableOpacity></>
                   ) : null}
-                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Text style={styles.primarySmallPillText}>Message</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.detailsOutlinePill} onPress={() => Alert.alert("Request details", `${routeLabel(ride)}\n${detourCopy(ride)}\n${pickupDropCopy(ride)}\n${statusCopy(ride)}`)}><Text style={styles.secondaryPillText}>Details</Text></TouchableOpacity>
                 </View>
               </View>
@@ -482,7 +482,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         ) : (
           <View style={styles.carpoolEmpty}>
             <Text style={styles.emptyTitle}>No rider requests yet</Text>
-            <Text style={styles.emptyCopy}>When someone requests a seat on your route, the count and Chitthi action will show here.</Text>
+            <Text style={styles.emptyCopy}>When someone requests a seat on your route, the count and Message action will show here.</Text>
           </View>
         )}
 
