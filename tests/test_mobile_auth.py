@@ -186,6 +186,89 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_social_login_requires_verified_phone_before_issuing_session(self):
+        server, thread = self.start_server()
+        try:
+            claims = {
+                "sub": "google-member-123",
+                "email": "social@example.com",
+                "email_verified": True,
+                "name": "Social Member",
+            }
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                status, social = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "verified-google-token",
+                })
+            self.assertEqual(status, 200)
+            self.assertTrue(social["phoneVerificationRequired"])
+            self.assertFalse(social.get("token"))
+            continuation = social["continuationToken"]
+
+            with mock.patch.object(app, "twilio_verify_request", return_value={"status": "pending"}) as send_code:
+                send_status, sent = self.post_json(server, "/api/mobile/auth/phone/send", {
+                    "continuationToken": continuation,
+                    "countryCode": "+1",
+                    "phone": "937-555-0198",
+                })
+            self.assertEqual(send_status, 200)
+            self.assertTrue(sent["ok"])
+            send_code.assert_called_once_with("Verifications", {"To": "+19375550198", "Channel": "sms"})
+
+            with mock.patch.object(app, "twilio_verify_request", return_value={"status": "approved"}):
+                verify_status, verified = self.post_json(server, "/api/mobile/auth/phone/verify", {
+                    "continuationToken": continuation,
+                    "code": "123456",
+                })
+            self.assertEqual(verify_status, 200)
+            self.assertTrue(verified["token"])
+            self.assertEqual(verified["user"]["phone"], "+19375550198")
+            self.assertTrue(verified["user"]["phoneVerified"])
+
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "verified-google-token",
+                })
+            self.assertEqual(repeat_status, 200)
+            self.assertTrue(repeat["token"])
+            self.assertFalse(repeat.get("phoneVerificationRequired", False))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_social_phone_cannot_be_reused_by_another_account(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified, phone_verified_at) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)",
+                ("Existing Member", "phone-owner@example.com", "+19375550197", app.hash_password("ExistingPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            with mock.patch.object(app, "verify_google_identity_token", return_value={
+                "sub": "second-google-member",
+                "email": "second-social@example.com",
+                "email_verified": True,
+            }):
+                _status, social = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "another-google-token",
+                })
+            with self.assertRaises(urllib.error.HTTPError) as duplicate_phone:
+                self.post_json(server, "/api/mobile/auth/phone/send", {
+                    "continuationToken": social["continuationToken"],
+                    "countryCode": "+1",
+                    "phone": "937-555-0197",
+                })
+            self.assertEqual(duplicate_phone.exception.code, 409)
+            payload = json.loads(duplicate_phone.exception.read().decode("utf-8"))
+            self.assertIn("another FairFares account", payload["error"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()

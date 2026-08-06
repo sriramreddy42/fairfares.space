@@ -1032,6 +1032,42 @@ export async function mobileLogin(identifier: string, password: string) {
   return payload;
 }
 
+export type MobileSocialAuthPayload = {
+  ok: boolean;
+  token?: string;
+  user?: BootstrapPayload["user"];
+  phoneVerificationRequired?: boolean;
+  continuationToken?: string;
+};
+
+export async function mobileSocialLogin(provider: "google" | "apple", identityToken: string, name = "") {
+  const payload = await request<MobileSocialAuthPayload>("/api/mobile/auth/oauth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, identityToken, name })
+  });
+  if (payload.token) await setAuthToken(payload.token);
+  return payload;
+}
+
+export async function sendSocialPhoneCode(continuationToken: string, phone: string, countryCode: string) {
+  return request<{ ok: boolean; message: string }>("/api/mobile/auth/phone/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ continuationToken, phone, countryCode })
+  });
+}
+
+export async function verifySocialPhoneCode(continuationToken: string, code: string) {
+  const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>("/api/mobile/auth/phone/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ continuationToken, code })
+  });
+  await setAuthToken(payload.token);
+  return payload;
+}
+
 export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true, countryCode = "") {
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",

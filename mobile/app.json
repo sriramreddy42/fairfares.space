@@ -13,6 +13,7 @@
     ],
     "userInterfaceStyle": "dark",
     "ios": {
+      "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
       "buildNumber": "8",
       "bundleIdentifier": "com.fairfares.mobile",
@@ -67,10 +68,21 @@
           "action": "VIEW",
           "autoVerify": true,
           "data": [
-            { "scheme": "https", "host": "fairfare.space", "pathPrefix": "/fchat/" },
-            { "scheme": "https", "host": "www.fairfare.space", "pathPrefix": "/fchat/" }
+            {
+              "scheme": "https",
+              "host": "fairfare.space",
+              "pathPrefix": "/fchat/"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fairfare.space",
+              "pathPrefix": "/fchat/"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -93,6 +105,7 @@
         }
       ],
       "expo-secure-store",
+      "expo-apple-authentication",
       [
         "expo-image-picker",
         {
@@ -107,7 +120,8 @@
           "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in FChat. Your address book is not uploaded."
         }
       ],
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      "expo-web-browser"
     ],
     "extra": {
       "apiUrl": "https://fairfares.onrender.com",

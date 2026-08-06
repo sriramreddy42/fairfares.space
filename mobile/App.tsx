@@ -1,14 +1,17 @@
 import { StatusBar } from "expo-status-bar";
 import Constants from "expo-constants";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Google from "expo-auth-session/providers/google";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
+import * as WebBrowser from "expo-web-browser";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
+import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, sendSocialPhoneCode, setAuthToken, startRentalCheckout, verifySocialPhoneCode } from "./src/api/client";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
@@ -17,6 +20,25 @@ import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+
+declare const process: {
+  env: {
+    EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?: string;
+    EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID?: string;
+    EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?: string;
+  };
+};
+
+WebBrowser.maybeCompleteAuthSession();
+
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || "google-ios-client-not-configured";
+const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || "google-android-client-not-configured";
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || "google-web-client-not-configured";
+const GOOGLE_AUTH_CONFIGURED = Platform.select({
+  ios: !GOOGLE_IOS_CLIENT_ID.includes("not-configured"),
+  android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured"),
+  default: !GOOGLE_WEB_CLIENT_ID.includes("not-configured"),
+}) ?? false;
 
 const DashboardScreen = React.lazy(() => import("./src/screens/DashboardScreen").then((module) => ({ default: module.DashboardScreen })));
 const HousingScreen = React.lazy(() => import("./src/screens/HousingScreen").then((module) => ({ default: module.HousingScreen })));
@@ -184,6 +206,16 @@ function FairFaresApp() {
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [socialContinuation, setSocialContinuation] = useState("");
+  const [socialPhoneCode, setSocialPhoneCode] = useState("");
+  const [socialCodeSent, setSocialCodeSent] = useState(false);
+  const [, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest({
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    scopes: ["openid", "profile", "email"],
+    selectAccount: true
+  });
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
@@ -347,6 +379,20 @@ function FairFaresApp() {
   useEffect(() => {
     if (data?.user) void enableMobileNotifications(true);
   }, [data?.user?.id]);
+
+  useEffect(() => {
+    if (googleResponse?.type !== "success") return;
+    const response = googleResponse as typeof googleResponse & {
+      authentication?: { idToken?: string } | null;
+      params?: { id_token?: string };
+    };
+    const identityToken = response.authentication?.idToken || response.params?.id_token || "";
+    if (!identityToken) {
+      setAuthMessage("Google did not return a secure identity token. Please try again.");
+      return;
+    }
+    void finishSocialProvider("google", identityToken);
+  }, [googleResponse]);
 
   useEffect(() => {
     const userId = data?.user?.id;
@@ -998,16 +1044,130 @@ function FairFaresApp() {
       .slice(0, 6);
   }
 
-  function runPostLoginTasks(userId: number, authenticatedPassword: string) {
+  function runPostLoginTasks(userId: number, authenticatedPassword = "") {
     // Let the modal close and the authenticated screen paint before any key
     // recovery work. InteractionManager also prevents the transition itself
     // from competing with crypto and bootstrap network updates.
     InteractionManager.runAfterInteractions(() => {
       setTimeout(() => {
         void load(false);
-        void syncChatIdentityRecovery(userId, authenticatedPassword).catch(() => undefined);
+        if (authenticatedPassword) {
+          void syncChatIdentityRecovery(userId, authenticatedPassword).catch(() => undefined);
+        }
       }, 250);
     });
+  }
+
+  function completeSocialLogin(user: BootstrapPayload["user"]) {
+    if (!user) return;
+    setData((current) => current ? { ...current, user } : current);
+    setSocialContinuation("");
+    setSocialPhoneCode("");
+    setSocialCodeSent(false);
+    setLoginOpen(false);
+    setAuthMessage("");
+    if (pendingListingAfterLogin) {
+      setPendingListingAfterLogin(false);
+      openListingFormForUser(user, selectedNeed || "need_place");
+    }
+    runPostLoginTasks(Number(user.id || 0));
+  }
+
+  function acceptSocialAuth(payload: MobileSocialAuthPayload) {
+    if (payload.phoneVerificationRequired && payload.continuationToken) {
+      setSocialContinuation(payload.continuationToken);
+      setSocialPhoneCode("");
+      setSocialCodeSent(false);
+      setLoginOpen(false);
+      setAuthMessage("");
+      return;
+    }
+    if (payload.token && payload.user) {
+      completeSocialLogin(payload.user);
+      return;
+    }
+    throw new Error("Social sign-in could not be completed.");
+  }
+
+  async function finishSocialProvider(provider: "google" | "apple", identityToken: string, name = "") {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthMessage(`Signing in with ${provider === "google" ? "Google" : "Apple"}...`);
+    try {
+      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name));
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Social sign-in failed. Please try again.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function startGoogleSignIn() {
+    if (!GOOGLE_AUTH_CONFIGURED) {
+      setAuthMessage("Google sign-in is not configured for this build yet.");
+      return;
+    }
+    setAuthMessage("");
+    await promptGoogleSignIn();
+  }
+
+  async function startAppleSignIn() {
+    if (authBusy) return;
+    setAuthMessage("");
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL
+        ]
+      });
+      if (!credential.identityToken) throw new Error("Apple did not return a secure identity token.");
+      const name = [credential.fullName?.givenName, credential.fullName?.familyName].filter(Boolean).join(" ");
+      await finishSocialProvider("apple", credential.identityToken, name);
+    } catch (error) {
+      if ((error as { code?: string })?.code === "ERR_REQUEST_CANCELED") return;
+      setAuthMessage(error instanceof Error ? error.message : "Apple sign-in failed. Please try again.");
+    }
+  }
+
+  async function sendSocialOtp() {
+    if (authBusy || !socialContinuation) return;
+    const nationalPhone = signupPhone.replace(/\D/g, "").replace(/^0+/, "");
+    const e164Phone = `${signupCallingCode}${nationalPhone}`;
+    if (!/^\+[1-9]\d{7,14}$/.test(e164Phone)) {
+      setAuthMessage("Choose your country code and enter a valid mobile number.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage("Sending verification code...");
+    try {
+      const payload = await sendSocialPhoneCode(socialContinuation, nationalPhone, signupCallingCode);
+      setSocialCodeSent(true);
+      setAuthMessage(payload.message || "Verification code sent.");
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Could not send the verification code.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifySocialOtp() {
+    if (authBusy || !socialContinuation) return;
+    const cleanCode = socialPhoneCode.replace(/\D/g, "");
+    if (cleanCode.length < 4) {
+      setAuthMessage("Enter the verification code sent to your phone.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage("Verifying phone...");
+    try {
+      const payload = await verifySocialPhoneCode(socialContinuation, cleanCode);
+      completeSocialLogin(payload.user);
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Phone verification failed.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function submitLogin() {
@@ -1391,6 +1551,32 @@ function FairFaresApp() {
                 ? "Email/phone and password are required before messaging posters or joining groups."
                 : "Signup needs name, email, phone, and password. You will activate the account from email before login."}
             </Text>
+            <View style={styles.socialAuthStack}>
+              {Platform.OS === "ios" ? (
+                <AppleAuthentication.AppleAuthenticationButton
+                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE}
+                  cornerRadius={13}
+                  style={styles.appleAuthButton}
+                  onPress={() => void startAppleSignIn()}
+                />
+              ) : null}
+              <TouchableOpacity
+                style={[styles.googleAuthButton, authBusy && styles.disabledButton]}
+                onPress={() => void startGoogleSignIn()}
+                disabled={authBusy}
+                accessibilityRole="button"
+                accessibilityLabel="Continue with Google"
+              >
+                <View style={styles.googleMark}><Text style={styles.googleMarkText}>G</Text></View>
+                <Text style={styles.googleAuthButtonText}>Continue with Google</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.authDivider}>
+              <View style={styles.authDividerLine} />
+              <Text style={styles.authDividerText}>or use email and password</Text>
+              <View style={styles.authDividerLine} />
+            </View>
             {authMode === "signup" ? (
               <TextInput
                 value={signupName}
@@ -1489,6 +1675,87 @@ function FairFaresApp() {
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        visible={Boolean(socialContinuation)}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => {
+          setSocialContinuation("");
+          setSocialPhoneCode("");
+          setSocialCodeSent(false);
+          setAuthMessage("");
+        }}
+      >
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <View style={styles.socialPhoneCard}>
+            <Text style={styles.modalTitle}>Verify your mobile number</Text>
+            <Text style={styles.modalCopy}>Google or Apple verified your identity. FairFares also verifies a mobile number for secure account recovery and accurate Chitthi contact matching.</Text>
+            {!socialCodeSent ? (
+              <View style={styles.signupPhoneRow}>
+                <TouchableOpacity
+                  style={styles.signupCallingCode}
+                  onPress={() => setSignupCountryOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Country calling code ${signupCallingCode}`}
+                >
+                  <Text style={styles.signupCallingCodeText}>{signupCallingCode}</Text>
+                  <Text style={styles.signupCallingCodeChevron}>⌄</Text>
+                </TouchableOpacity>
+                <TextInput
+                  value={signupPhone}
+                  onChangeText={setSignupPhone}
+                  placeholder="Mobile number"
+                  placeholderTextColor={theme.colors.muted}
+                  keyboardType="phone-pad"
+                  autoComplete="tel-national"
+                  accessibilityLabel="Mobile number without country code"
+                  style={[styles.input, styles.signupPhoneInput]}
+                />
+              </View>
+            ) : (
+              <TextInput
+                value={socialPhoneCode}
+                onChangeText={(value) => setSocialPhoneCode(value.replace(/\D/g, "").slice(0, 10))}
+                placeholder="Verification code"
+                placeholderTextColor={theme.colors.muted}
+                keyboardType="number-pad"
+                autoComplete="one-time-code"
+                textContentType="oneTimeCode"
+                accessibilityLabel="Phone verification code"
+                style={styles.input}
+              />
+            )}
+            {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
+            <TouchableOpacity
+              style={[styles.primaryButton, authBusy && styles.disabledButton]}
+              onPress={socialCodeSent ? verifySocialOtp : sendSocialOtp}
+              disabled={authBusy}
+              accessibilityRole="button"
+            >
+              <Text style={styles.primaryButtonText}>{authBusy ? "Please wait..." : socialCodeSent ? "Verify and continue" : "Send verification code"}</Text>
+            </TouchableOpacity>
+            {socialCodeSent ? (
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => { setSocialCodeSent(false); setSocialPhoneCode(""); setAuthMessage(""); }}>
+                <Text style={styles.secondaryButtonText}>Change phone number</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => {
+                setSocialContinuation("");
+                setSocialPhoneCode("");
+                setSocialCodeSent(false);
+                setAuthMessage("");
+                setLoginOpen(true);
+              }}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel and return to login</Text>
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={signupCountryOpen} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={() => setSignupCountryOpen(false)}>
@@ -1864,6 +2131,16 @@ const styles = StyleSheet.create({
   modalBackButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },
   modalBackGlyph: { color: theme.colors.text, fontSize: 34, lineHeight: 36, fontWeight: "400", marginTop: -2 },
   modalCopy: { color: theme.colors.muted, fontSize: 15, lineHeight: 21 },
+  socialAuthStack: { gap: 10 },
+  appleAuthButton: { width: "100%", height: 50 },
+  googleAuthButton: { minHeight: 50, borderRadius: 13, borderWidth: 1, borderColor: "#747775", backgroundColor: "#ffffff", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 14 },
+  googleMark: { width: 24, height: 24, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "#ffffff" },
+  googleMarkText: { color: "#4285F4", fontSize: 19, lineHeight: 23, fontWeight: "800" },
+  googleAuthButtonText: { color: "#1f1f1f", fontSize: 15, fontWeight: "700" },
+  authDivider: { flexDirection: "row", alignItems: "center", gap: 10 },
+  authDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.line },
+  authDividerText: { color: theme.colors.muted, fontSize: 11, fontWeight: "600" },
+  socialPhoneCard: { width: "100%", maxWidth: 520, alignSelf: "center", backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line },
   signupDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   signupDiscoveryCopy: { flex: 1, minWidth: 0 },
   signupDiscoveryTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },

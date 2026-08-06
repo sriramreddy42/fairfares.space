@@ -32,9 +32,14 @@ from zoneinfo import ZoneInfo
 
 try:
     from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 except ImportError:  # Deployment startup remains readable while dependencies install.
     InvalidSignature = Exception
+    hashes = None
+    padding = None
+    rsa = None
     Ed25519PublicKey = None
 
 UTC = timezone.utc
@@ -83,6 +88,8 @@ PASSWORD_HASH_ITERATIONS = 600_000
 LOGIN_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_LOGIN_ATTEMPTS", 5)
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_LOGIN_WINDOW_SECONDS", 15 * 60)
 LOGIN_RATE_LIMIT_LOCK_SECONDS = positive_int_env("FAIRFARES_LOGIN_LOCK_SECONDS", 15 * 60)
+SOCIAL_AUTH_CONTINUATION_MINUTES = positive_int_env("FAIRFARES_SOCIAL_AUTH_CONTINUATION_MINUTES", 10)
+PHONE_OTP_COOLDOWN_SECONDS = positive_int_env("FAIRFARES_PHONE_OTP_COOLDOWN_SECONDS", 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
@@ -1702,6 +1709,104 @@ def canonical_e164_phone(value: object, country_code: object = "") -> str:
         national_digits = phone_digits.lstrip("0")
         candidate = f"+{calling_digits}{national_digits}" if calling_digits else ""
     return candidate if re.fullmatch(r"\+[1-9]\d{7,14}", candidate) else ""
+
+
+def auth_token_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def jwt_json_part(value: str) -> dict[str, object]:
+    padded = value + "=" * (-len(value) % 4)
+    decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+    result = json.loads(decoded.decode("utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError("Invalid identity token payload.")
+    return result
+
+
+def configured_google_client_ids() -> set[str]:
+    values: list[str] = []
+    for env_name in ("GOOGLE_OAUTH_CLIENT_IDS", "GOOGLE_IOS_CLIENT_ID", "GOOGLE_ANDROID_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID"):
+        values.extend(re.split(r"[\s,]+", os.environ.get(env_name, "").strip()))
+    return {value for value in values if value}
+
+
+def verify_google_identity_token(identity_token: str) -> dict[str, object]:
+    client_ids = configured_google_client_ids()
+    if not client_ids:
+        raise RuntimeError("Google sign-in is not configured.")
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2 import id_token
+        claims = id_token.verify_oauth2_token(identity_token, Request())
+    except Exception as exc:
+        raise ValueError("Google could not verify this sign-in.") from exc
+    if str(claims.get("aud") or "") not in client_ids:
+        raise ValueError("Google sign-in was issued for another app.")
+    if str(claims.get("iss") or "") not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise ValueError("Google sign-in issuer is invalid.")
+    if claims.get("email_verified") not in {True, "true", "True", 1}:
+        raise ValueError("Google email is not verified.")
+    return claims
+
+
+def verify_apple_identity_token(identity_token: str) -> dict[str, object]:
+    if rsa is None or padding is None or hashes is None:
+        raise RuntimeError("Apple sign-in verification dependencies are unavailable.")
+    pieces = identity_token.split(".")
+    if len(pieces) != 3:
+        raise ValueError("Apple identity token is invalid.")
+    header = jwt_json_part(pieces[0])
+    claims = jwt_json_part(pieces[1])
+    if header.get("alg") != "RS256" or not header.get("kid"):
+        raise ValueError("Apple identity token algorithm is invalid.")
+    try:
+        with urllib.request.urlopen("https://appleid.apple.com/auth/keys", timeout=10) as response:
+            key_set = json.loads(response.read().decode("utf-8"))
+        jwk = next(key for key in key_set.get("keys", []) if key.get("kid") == header.get("kid"))
+        modulus = int.from_bytes(base64.urlsafe_b64decode(str(jwk["n"]) + "=" * (-len(str(jwk["n"])) % 4)), "big")
+        exponent = int.from_bytes(base64.urlsafe_b64decode(str(jwk["e"]) + "=" * (-len(str(jwk["e"])) % 4)), "big")
+        public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+        signature = base64.urlsafe_b64decode(pieces[2] + "=" * (-len(pieces[2]) % 4))
+        public_key.verify(signature, f"{pieces[0]}.{pieces[1]}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    except (InvalidSignature, KeyError, StopIteration, ValueError, urllib.error.URLError) as exc:
+        raise ValueError("Apple could not verify this sign-in.") from exc
+    allowed = {value for value in re.split(r"[\s,]+", os.environ.get("APPLE_SIGN_IN_CLIENT_IDS", "com.fairfares.mobile").strip()) if value}
+    if claims.get("iss") != "https://appleid.apple.com" or str(claims.get("aud") or "") not in allowed:
+        raise ValueError("Apple sign-in was issued for another app.")
+    if int(claims.get("exp") or 0) <= int(time.time()):
+        raise ValueError("Apple sign-in has expired.")
+    if claims.get("email_verified") not in {True, "true", "True", 1, None}:
+        raise ValueError("Apple email is not verified.")
+    return claims
+
+
+def twilio_verify_request(path: str, values: dict[str, str]) -> dict[str, object]:
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    service_sid = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
+    if not account_sid or not auth_token or not service_sid:
+        raise RuntimeError("Phone verification is not configured.")
+    url = f"https://verify.twilio.com/v2/Services/{urllib.parse.quote(service_sid)}/{path}"
+    auth = base64.b64encode(f"{account_sid}:{auth_token}".encode("utf-8")).decode("ascii")
+    request = urllib.request.Request(
+        url,
+        data=urllib.parse.urlencode(values).encode("utf-8"),
+        headers={"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("message")
+        except Exception:
+            detail = "Phone verification provider rejected the request."
+        raise ValueError(str(detail)) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError("Phone verification is temporarily unavailable.") from exc
+    return result if isinstance(result, dict) else {}
 
 
 def normalized_email_sql(column: str = "email") -> str:
@@ -4290,6 +4395,32 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS auth_identities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                provider_subject TEXT NOT NULL,
+                provider_email TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(provider, provider_subject),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_phone_continuations (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                phone TEXT NOT NULL DEFAULT '',
+                send_count INTEGER NOT NULL DEFAULT 0,
+                verify_attempts INTEGER NOT NULL DEFAULT 0,
+                last_sent_at TEXT,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS staff_account_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -5300,6 +5431,7 @@ def init_db() -> None:
         ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "phone", "phone TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "admin_note", "admin_note TEXT NOT NULL DEFAULT ''")
@@ -12970,6 +13102,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "role": row_value(user, "role") or "CUSTOMER",
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
+        "phoneVerified": bool(row_value(user, "phone_verified_at")),
         "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
         "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_email_opt_in") or 0)),
         "profilePhotoUrl": row_value(user, "profile_photo_url"),
@@ -18304,6 +18437,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/block": self.api_block_chat_user,
             "/api/mobile/login": self.api_mobile_login,
             "/api/mobile/signup": self.api_mobile_signup,
+            "/api/mobile/auth/oauth": self.api_mobile_social_auth,
+            "/api/mobile/auth/phone/send": self.api_mobile_social_phone_send,
+            "/api/mobile/auth/phone/verify": self.api_mobile_social_phone_verify,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/push-token": self.api_mobile_push_token,
@@ -27510,6 +27646,186 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def api_mobile_social_auth(self) -> None:
+        payload = self.read_json_body()
+        provider = clean_text_value(payload.get("provider"), 20).lower()
+        identity_token = str(payload.get("identityToken") or "").strip()
+        submitted_name = " ".join(str(payload.get("name") or "").split())[:120]
+        if provider not in {"google", "apple"} or not identity_token:
+            self.send_json({"ok": False, "error": "A supported social sign-in token is required."}, 400)
+            return
+        try:
+            claims = verify_google_identity_token(identity_token) if provider == "google" else verify_apple_identity_token(identity_token)
+        except RuntimeError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 503)
+            return
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 401)
+            return
+        subject = clean_text_value(claims.get("sub"), 255)
+        email = normalize_email(claims.get("email") or "")
+        display_name = submitted_name or clean_text_value(claims.get("name"), 120) or (email.split("@", 1)[0] if email else "FairFares member")
+        if not subject:
+            self.send_json({"ok": False, "error": "The identity provider did not return an account identifier."}, 401)
+            return
+        try:
+            with db() as con:
+                con.execute("DELETE FROM auth_phone_continuations WHERE used_at IS NOT NULL OR datetime(expires_at) <= datetime('now')")
+                identity = con.execute(
+                    "SELECT user_id FROM auth_identities WHERE provider = ? AND provider_subject = ?",
+                    (provider, subject),
+                ).fetchone()
+                user = con.execute("SELECT * FROM users WHERE id = ?", (int(identity["user_id"]),)).fetchone() if identity else None
+                if not user:
+                    if not email:
+                        self.send_json({"ok": False, "error": "Share your email with the identity provider to create the account."}, 400)
+                        return
+                    existing = find_user_by_email(con, email)
+                    if existing:
+                        user_id = int(existing["id"])
+                        if int(row_value(existing, "guest_account") or 0):
+                            con.execute(
+                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (display_name, user_id),
+                            )
+                    else:
+                        con.execute(
+                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)",
+                            (display_name, email, hash_password(secrets.token_urlsafe(48))),
+                        )
+                        user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                    con.execute(
+                        "INSERT INTO auth_identities (user_id, provider, provider_subject, provider_email) VALUES (?, ?, ?, ?)",
+                        (user_id, provider, subject, email),
+                    )
+                    user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                else:
+                    user_id = int(user["id"])
+                    con.execute(
+                        "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = ? AND provider_subject = ?",
+                        (email, provider, subject),
+                    )
+                if row_value(user, "phone_verified_at") and canonical_e164_phone(row_value(user, "phone")):
+                    cleanup_expired_sessions(con)
+                    session_token = secrets.token_urlsafe(32)
+                    con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
+                    refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                    self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(refreshed)})
+                    return
+                continuation = secrets.token_urlsafe(32)
+                expires_at = (datetime.now(UTC) + timedelta(minutes=SOCIAL_AUTH_CONTINUATION_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                con.execute(
+                    "INSERT INTO auth_phone_continuations (token_hash, user_id, provider, expires_at) VALUES (?, ?, ?, ?)",
+                    (auth_token_hash(continuation), user_id, provider, expires_at),
+                )
+            self.send_json({
+                "ok": True,
+                "phoneVerificationRequired": True,
+                "continuationToken": continuation,
+                "user": mobile_user_payload(user),
+            })
+        except sqlite3.IntegrityError:
+            self.send_json({"ok": False, "error": "This social account is already linked to another FairFares account."}, 409)
+
+    def api_mobile_social_phone_send(self) -> None:
+        payload = self.read_json_body()
+        continuation = str(payload.get("continuationToken") or "").strip()
+        phone = canonical_e164_phone(payload.get("phone"), payload.get("countryCode"))
+        if not continuation or not phone:
+            self.send_json({"ok": False, "error": "Choose a country code and enter a valid mobile number."}, 400)
+            return
+        token_hash = auth_token_hash(continuation)
+        with db() as con:
+            row = con.execute(
+                "SELECT * FROM auth_phone_continuations WHERE token_hash = ? AND used_at IS NULL AND datetime(expires_at) > datetime('now')",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
+                return
+            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, int(row["user_id"]))).fetchone()
+            if owner:
+                self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
+                return
+            if int(row["send_count"] or 0) >= 5:
+                self.send_json({"ok": False, "error": "Too many codes were requested. Start sign-in again later."}, 429)
+                return
+            last_sent = row_value(row, "last_sent_at")
+            if last_sent:
+                try:
+                    elapsed = (datetime.now(UTC).replace(tzinfo=None) - datetime.fromisoformat(str(last_sent))).total_seconds()
+                except ValueError:
+                    elapsed = PHONE_OTP_COOLDOWN_SECONDS
+                if elapsed < PHONE_OTP_COOLDOWN_SECONDS:
+                    self.send_json({"ok": False, "error": f"Wait {max(1, int(PHONE_OTP_COOLDOWN_SECONDS - elapsed))} seconds before requesting another code."}, 429)
+                    return
+        try:
+            result = twilio_verify_request("Verifications", {"To": phone, "Channel": "sms"})
+        except RuntimeError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 503)
+            return
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if result.get("status") not in {"pending", "approved"}:
+            self.send_json({"ok": False, "error": "The verification code could not be sent."}, 502)
+            return
+        with db() as con:
+            con.execute(
+                "UPDATE auth_phone_continuations SET phone = ?, send_count = send_count + 1, last_sent_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
+                (phone, token_hash),
+            )
+        self.send_json({"ok": True, "message": "Verification code sent."})
+
+    def api_mobile_social_phone_verify(self) -> None:
+        payload = self.read_json_body()
+        continuation = str(payload.get("continuationToken") or "").strip()
+        code = re.sub(r"\D", "", str(payload.get("code") or ""))
+        token_hash = auth_token_hash(continuation) if continuation else ""
+        with db() as con:
+            row = con.execute(
+                "SELECT * FROM auth_phone_continuations WHERE token_hash = ? AND used_at IS NULL AND datetime(expires_at) > datetime('now')",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
+                return
+            if not row_value(row, "phone") or not re.fullmatch(r"\d{4,10}", code):
+                self.send_json({"ok": False, "error": "Enter the verification code sent to your phone."}, 400)
+                return
+            if int(row["verify_attempts"] or 0) >= 8:
+                self.send_json({"ok": False, "error": "Too many incorrect codes. Start sign-in again."}, 429)
+                return
+            con.execute("UPDATE auth_phone_continuations SET verify_attempts = verify_attempts + 1 WHERE token_hash = ?", (token_hash,))
+            phone = str(row["phone"])
+            user_id = int(row["user_id"])
+        try:
+            result = twilio_verify_request("VerificationCheck", {"To": phone, "Code": code})
+        except RuntimeError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 503)
+            return
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if result.get("status") != "approved":
+            self.send_json({"ok": False, "error": "That verification code is incorrect or expired."}, 400)
+            return
+        with db() as con:
+            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, user_id)).fetchone()
+            if owner:
+                self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
+                return
+            con.execute(
+                "UPDATE users SET phone = ?, phone_verified_at = CURRENT_TIMESTAMP, chat_phone_discoverable = 1, is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP) WHERE id = ?",
+                (phone, user_id),
+            )
+            con.execute("UPDATE auth_phone_continuations SET used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (token_hash,))
+            cleanup_expired_sessions(con)
+            session_token = secrets.token_urlsafe(32)
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
+            user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(user)})
 
     def api_mobile_login(self) -> None:
         payload = self.read_json_body()
