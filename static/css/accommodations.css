@@ -1872,6 +1872,15 @@ body.housing-detail-open {
   margin-right: 18px;
 }
 
+.housing-post-card .housing-post-media {
+  width: 100%;
+  height: 210px;
+  margin: 0;
+  display: block;
+  object-fit: cover;
+  background: #eef2f7;
+}
+
 .housing-post-card h3 {
   margin-top: 0;
   margin-bottom: 0;

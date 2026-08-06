@@ -126,6 +126,59 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in results))
         self.assertTrue(all(int(item["rentValue"]) <= 600 for item in results))
 
+    def test_full_address_and_uploaded_photo_feed_website_map_and_cards(self):
+        with app.db() as con:
+            cursor = con.execute(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description, street_address,
+                 city, zip_code, city_area_zip, lat, lng, rent_min, contact_name, contact_phone,
+                 contact_email, visibility_status)
+                VALUES ('PHOTO-PIN', ?, 'HAVE_PLACE', 'ROOM', 'Photo room', 'Room with photo',
+                        '1665 Logan St', 'Denver, CO', '80203', 'Denver, CO, 80203', 1, 2, 950,
+                        'Poster', '3035550100', 'poster@example.com', 'ACTIVE')
+                """,
+                (self.user_id,),
+            )
+            post_id = int(cursor.lastrowid)
+            con.execute(
+                """
+                INSERT INTO accommodation_post_images (post_id, image_url, sort_order)
+                VALUES (?, 'local://uploads/accommodations/room.webp', 1)
+                """,
+                (post_id,),
+            )
+            post = con.execute(
+                """
+                SELECT posts.*,
+                       (SELECT image_url FROM accommodation_post_images
+                        WHERE post_id = posts.id ORDER BY sort_order, id LIMIT 1) AS preview_image_url
+                FROM accommodation_posts posts WHERE posts.id = ?
+                """,
+                (post_id,),
+            ).fetchone()
+
+        self.assertEqual(
+            app.accommodation_form_location_query(
+                {"street_address": "1665 Logan St", "city": "Denver, CO", "zip_code": "80203"}
+            ),
+            "1665 Logan St, Denver, CO, 80203",
+        )
+        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test-key"}), patch.object(
+            app,
+            "accommodation_location_point",
+            return_value={"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903, "source": "test"},
+        ):
+            payload = app.accommodation_post_map_payload([post], "Denver, CO", "Denver Metro Area")
+
+        mapped = payload["posts"][0]
+        self.assertEqual(mapped["location"], "1665 Logan St, Denver, CO, 80203")
+        self.assertEqual(mapped["images"], ["/uploads/accommodations/room.webp"])
+        self.assertEqual((mapped["lat"], mapped["lng"]), (0, 0))
+        self.assertEqual(mapped["source"], "full_address_geocode")
+        self.assertIn('src="/uploads/accommodations/room.webp"', app.render_accommodation_posts([post]))
+        self.assertIn("background-image:url('/uploads/accommodations/room.webp')", app.render_mobile_accommodation_cards([post]))
+
 
 if __name__ == "__main__":
     unittest.main()

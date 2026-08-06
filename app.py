@@ -12812,6 +12812,50 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
     return {"label": query, "metro": search_metro, "lat": 0, "lng": 0, "source": "needs_geocode"}
 
 
+def accommodation_address_label(values: sqlite3.Row | dict[str, object], fallback: str = "") -> str:
+    """Return the most precise, browser-geocodable label available for a post."""
+    street = row_value(values, "street_address")
+    city = row_value(values, "city")
+    zip_code = row_value(values, "zip_code")
+    if street:
+        parts: list[str] = []
+        for value in (street, city, zip_code):
+            value = value.strip()
+            if value and value.lower() not in {part.lower() for part in parts}:
+                parts.append(value)
+        return ", ".join(parts)
+    return (
+        row_value(values, "city_area_zip")
+        or row_value(values, "area_or_apartment")
+        or row_value(values, "work_school_location")
+        or city
+        or zip_code
+        or fallback
+    ).strip()
+
+
+def accommodation_form_location_query(form: dict[str, str]) -> str:
+    """Build an unambiguous geocoding query instead of geocoding a street alone."""
+    street = (form.get("street_address") or "").strip()
+    if street:
+        return accommodation_address_label(
+            {
+                "street_address": street,
+                "city": (form.get("city") or "").strip(),
+                "zip_code": (form.get("zip_code") or "").strip(),
+            }
+        )
+    return (
+        (form.get("primary_neighborhood") or "").strip()
+        or (form.get("apartment_name") or "").strip()
+        or (form.get("city_area_zip") or "").strip()
+        or (form.get("area_or_apartment") or "").strip()
+        or (form.get("work_school_location") or "").strip()
+        or (form.get("city") or "").strip()
+        or (form.get("zip_code") or "").strip()
+    )
+
+
 def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: str, search_metro: str) -> dict[str, object]:
     center = accommodation_location_point(selected_location, search_metro)
     if not float(center.get("lat") or 0) or not float(center.get("lng") or 0):
@@ -12835,7 +12879,7 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
                     post_ids,
                 ).fetchall()
             for image_row in image_rows:
-                image_url = row_value(image_row, "image_url")
+                image_url = public_upload_url(row_value(image_row, "image_url"))
                 post_id = int(row_value(image_row, "post_id") or 0)
                 if image_url and post_id in images_by_post:
                     images_by_post[post_id].append(image_url)
@@ -12844,19 +12888,21 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
     for row in posts[:80]:
         post_id = int(row_value(row, "id") or 0)
         image_urls = images_by_post.get(post_id, [])
-        preview_image = row_value(row, "preview_image_url")
+        preview_image = public_upload_url(row_value(row, "preview_image_url"))
         if preview_image and preview_image not in image_urls:
             image_urls.insert(0, preview_image)
-        location_label = (
-            row_value(row, "city_area_zip")
-            or row_value(row, "area_or_apartment")
-            or row_value(row, "work_school_location")
-            or selected_location
-        )
+        location_label = accommodation_address_label(row, selected_location)
         lat = float(row_value(row, "lat") or 0)
         lng = float(row_value(row, "lng") or 0)
         point_source = "post"
-        if not lat or not lng:
+        # Older records may have been geocoded from only the street name. Let
+        # Google Maps resolve the full saved address in the browser so those
+        # pins are corrected without trusting potentially stale coordinates.
+        if row_value(row, "street_address") and os.environ.get("GOOGLE_MAPS_API_KEY", "").strip():
+            lat = 0
+            lng = 0
+            point_source = "full_address_geocode"
+        elif not lat or not lng:
             point = accommodation_location_point(location_label, search_metro, allow_refresh=False)
             lat = float(point.get("lat") or 0)
             lng = float(point.get("lng") or 0)
@@ -14546,9 +14592,16 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
                 chips.append(label)
         chips_html = "".join(f"<span>{escape(chip)}</span>" for chip in chips[:5])
         public_id = row_value(post, "public_id")
+        image_url = public_upload_url(row_value(post, "preview_image_url"))
+        media_html = (
+            f'<img class="housing-post-media" src="{escape(image_url)}" alt="{escape(row_value(post, "title") or "Housing listing")}" loading="lazy">'
+            if image_url
+            else ""
+        )
         cards.append(
             f"""
             <article class="housing-post-card">
+              {media_html}
               <div class="housing-post-top">
                 <span class="housing-mode-badge">{escape(mode_label)}</span>
                 <span>{escape(category)}</span>
@@ -14592,7 +14645,7 @@ def render_mobile_accommodation_cards(posts: list[sqlite3.Row]) -> str:
         category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
         city = row_value(post, "city") or row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Denver, CO"
         mode = "Room Offered" if row_value(post, "post_mode") == "HAVE_PLACE" else "Room Wanted"
-        image_url = row_value(post, "preview_image_url") or MOBILE_HOUSING_FALLBACK_IMAGE
+        image_url = public_upload_url(row_value(post, "preview_image_url")) or MOBILE_HOUSING_FALLBACK_IMAGE
         move_in = row_value(post, "move_in_date") or "Flexible"
         gender = option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(post, "gender_preference"), "Open")
         title = row_value(post, "title") or f"{category} near {city}"
@@ -19077,16 +19130,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         roommate_intent = 1 if (form.get("roommate_intent") or "").strip() == "1" else 0
         title = accommodation_title_from_form(form, mode, category_label, bool(roommate_intent))
         user_id = int(row_value(user, "id") or 0) if user else None
-        location_query = (
-            (form.get("street_address") or "").strip()
-            or (form.get("city") or "").strip()
-            or (form.get("zip_code") or "").strip()
-            or (form.get("primary_neighborhood") or "").strip()
-            or (form.get("apartment_name") or "").strip()
-            or (form.get("city_area_zip") or "").strip()
-            or (form.get("area_or_apartment") or "").strip()
-            or (form.get("work_school_location") or "").strip()
-        )
+        location_query = accommodation_form_location_query(form)
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
