@@ -14596,7 +14596,7 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
         media_html = (
             f'<img class="housing-post-media" src="{escape(image_url)}" alt="{escape(row_value(post, "title") or "Housing listing")}" loading="lazy">'
             if image_url
-            else ""
+            else '<div class="housing-post-media housing-post-media-empty" role="img" aria-label="No image found"><span>No image found</span></div>'
         )
         cards.append(
             f"""
@@ -14622,12 +14622,6 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
     return "\n".join(cards)
 
 
-MOBILE_HOUSING_FALLBACK_IMAGE = (
-    "https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/"
-    "partner-images/3a/08/cb9e317507fed19b25acedecad6955fbd2358374299065b18c1240d8a3b1.jpeg"
-)
-
-
 def render_mobile_accommodation_cards(posts: list[sqlite3.Row]) -> str:
     if not posts:
         return """
@@ -14645,14 +14639,18 @@ def render_mobile_accommodation_cards(posts: list[sqlite3.Row]) -> str:
         category = option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing")
         city = row_value(post, "city") or row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Denver, CO"
         mode = "Room Offered" if row_value(post, "post_mode") == "HAVE_PLACE" else "Room Wanted"
-        image_url = public_upload_url(row_value(post, "preview_image_url")) or MOBILE_HOUSING_FALLBACK_IMAGE
+        image_url = public_upload_url(row_value(post, "preview_image_url"))
+        image_style = f" style=\"background-image:url('{escape(image_url)}')\"" if image_url else ""
+        image_empty_class = "" if image_url else " housing-mobile-card-image-empty"
+        image_empty_label = "" if image_url else '<strong>No image found</strong>'
         move_in = row_value(post, "move_in_date") or "Flexible"
         gender = option_label(ACCOMMODATION_GENDER_OPTIONS, row_value(post, "gender_preference"), "Open")
         title = row_value(post, "title") or f"{category} near {city}"
         cards.append(
             f"""
             <article class="housing-mobile-listing-card">
-              <div class="housing-mobile-card-image" style="background-image:url('{escape(image_url)}')">
+              <div class="housing-mobile-card-image{image_empty_class}"{image_style}>
+                {image_empty_label}
                 <span>Elite Plus</span>
                 <button type="button" aria-label="Save listing">♡</button>
               </div>

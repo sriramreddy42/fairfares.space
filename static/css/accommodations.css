@@ -1881,6 +1881,18 @@ body.housing-detail-open {
   background: #eef2f7;
 }
 
+.housing-post-card .housing-post-media-empty {
+  align-items: center;
+  color: #7b8798;
+  display: flex;
+  justify-content: center;
+}
+
+.housing-post-media-empty span {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
 .housing-post-card h3 {
   margin-top: 0;
   margin-bottom: 0;
@@ -2714,11 +2726,21 @@ body.housing-detail-open {
   }
 
   .housing-mobile-card-image {
-    background:
-      linear-gradient(135deg, rgba(95, 108, 255, 0.12), rgba(20, 169, 137, 0.12)),
-      url("https://imgcy.trivago.com/c_limit,d_dummy.jpeg,f_auto,h_1020,q_auto,w_2000/partner-images/3a/08/cb9e317507fed19b25acedecad6955fbd2358374299065b18c1240d8a3b1.jpeg") center/cover;
+    background: #eef2f7 center/cover no-repeat;
     height: 142px;
     position: relative;
+  }
+
+  .housing-mobile-card-image-empty {
+    align-items: center;
+    color: #7b8798;
+    display: flex;
+    justify-content: center;
+  }
+
+  .housing-mobile-card-image-empty strong {
+    font-size: 0.9rem;
+    font-weight: 800;
   }
 
   .housing-mobile-card-image span {

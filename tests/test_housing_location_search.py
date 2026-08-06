@@ -179,6 +179,16 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertIn('src="/uploads/accommodations/room.webp"', app.render_accommodation_posts([post]))
         self.assertIn("background-image:url('/uploads/accommodations/room.webp')", app.render_mobile_accommodation_cards([post]))
 
+        post_without_image = dict(post)
+        post_without_image["preview_image_url"] = ""
+        desktop_without_image = app.render_accommodation_posts([post_without_image])
+        mobile_without_image = app.render_mobile_accommodation_cards([post_without_image])
+        self.assertIn("No image found", desktop_without_image)
+        self.assertIn("housing-post-media-empty", desktop_without_image)
+        self.assertIn("No image found", mobile_without_image)
+        self.assertIn("housing-mobile-card-image-empty", mobile_without_image)
+        self.assertNotIn("trivago.com", mobile_without_image)
+
 
 if __name__ == "__main__":
     unittest.main()
