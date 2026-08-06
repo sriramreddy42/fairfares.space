@@ -21355,6 +21355,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <div id="g_id_onload"
                data-client_id="{escape(client_id)}"
                data-login_uri="{escape(callback_url)}"
+               data-ux_mode="redirect"
                data-auto_prompt="false"></div>
           <div class="g_id_signin"
                data-type="standard"

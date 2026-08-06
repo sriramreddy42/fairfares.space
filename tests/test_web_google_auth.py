@@ -82,6 +82,7 @@ class WebGoogleAuthTest(unittest.TestCase):
             self.assertIn("https://accounts.google.com/gsi/client", body)
             self.assertIn("web-client.apps.googleusercontent.com", body)
             self.assertIn("https://www.fairfare.space/auth/google", body)
+            self.assertIn('data-ux_mode="redirect"', body)
             self.assertIn('class="g_id_signin"', body)
             self.assertNotIn("Continue with Apple", body)
             self.assertNotIn("Continue with Facebook", body)
