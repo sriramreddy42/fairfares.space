@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 import io
 import zipfile
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -86,6 +87,13 @@ _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
 _CHAT_TYPING_LOCK = threading.Lock()
+_DIAGNOSTIC_REPORTS: dict[str, list[float]] = {}
+_DIAGNOSTIC_REPORTS_LOCK = threading.Lock()
+DIAGNOSTIC_REPORT_LIMIT = positive_int_env("FAIRFARES_DIAGNOSTIC_REPORTS_PER_HOUR", 30)
+_OPERATIONAL_ALERTS: dict[str, float] = {}
+_OPERATIONAL_ALERTS_LOCK = threading.Lock()
+OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
+SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -436,6 +444,7 @@ ACCOMMODATION_MODES = (
     ("HAVE_PLACE", "I have a place"),
 )
 ACCOMMODATION_POST_LIFETIME_DAYS = 30
+ACCOMMODATION_POST_RECOVERY_DAYS = positive_int_env("FAIRFARES_HOUSING_RECOVERY_DAYS", 7)
 ACCOMMODATION_CATEGORIES = (
     ("single_room", "Single Room"),
     ("shared_room", "Shared Room"),
@@ -1978,6 +1987,7 @@ SLACK_WEBHOOK_ENV = {
     "vehicles": "SLACK_WEBHOOK_VEHICLES",
     "payments": "SLACK_WEBHOOK_PAYMENTS",
     "admin": "SLACK_WEBHOOK_ADMIN",
+    "alerts": "SLACK_WEBHOOK_ALERTS",
 }
 
 SLACK_CHANNEL_DEFAULTS = {
@@ -1990,6 +2000,8 @@ SLACK_CHANNEL_DEFAULTS = {
     "admin": "#admin",
     "ai": "#ai-agent",
     "general": "#general",
+    # Preserve delivery for existing installations until SLACK_CHANNEL_ALERTS is set.
+    "alerts": "#admin",
 }
 
 SLACK_CHANNEL_ENV = {
@@ -2002,6 +2014,7 @@ SLACK_CHANNEL_ENV = {
     "admin": "SLACK_CHANNEL_ADMIN",
     "ai": "SLACK_CHANNEL_AI",
     "general": "SLACK_CHANNEL_GENERAL",
+    "alerts": "SLACK_CHANNEL_ALERTS",
 }
 
 
@@ -2013,7 +2026,8 @@ def slack_bot_token() -> str:
 def slack_webhook_for(kind: str) -> str:
     load_env_file()
     env_name = SLACK_WEBHOOK_ENV.get(kind, "SLACK_WEBHOOK_ADMIN")
-    return os.environ.get(env_name) or os.environ.get("SLACK_WEBHOOK_URL", "")
+    alert_fallback = os.environ.get("SLACK_WEBHOOK_ADMIN", "") if kind == "alerts" else ""
+    return os.environ.get(env_name) or alert_fallback or os.environ.get("SLACK_WEBHOOK_URL", "")
 
 
 def slack_channel_for(kind: str) -> str:
@@ -2110,6 +2124,61 @@ def send_slack_notification(kind: str, text: str, blocks: list[dict[str, object]
         encoding="utf-8",
     )
     return status
+
+
+def slack_alerts_configured() -> bool:
+    """Return whether operational alerts have a real Slack delivery route."""
+    return bool(slack_bot_token() or slack_webhook_for("alerts"))
+
+
+def _deliver_operational_alert(severity: str, title: str, details: tuple[str, ...]) -> None:
+    lines = [f":rotating_light: FairFares {severity.upper()}: {title}"]
+    lines.extend(detail for detail in details if detail)
+    send_slack_notification("alerts", "\n".join(lines)[:3000])
+
+
+def sanitize_operational_alert_detail(value: object) -> str:
+    """Remove common secrets and personal identifiers before Slack delivery."""
+    text = str(value).replace("\x00", "")
+    text = re.sub(r"(?i)bearer\s+[a-z0-9._~+/-]+=*", "Bearer [REDACTED]", text)
+    text = re.sub(
+        r"(?i)\b[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+\b",
+        "[REDACTED_EMAIL]",
+        text,
+    )
+    text = re.sub(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)", "[REDACTED_PHONE]", text)
+    return text[:700]
+
+
+def send_operational_alert(
+    alert_key: str,
+    title: str,
+    *,
+    severity: str = "error",
+    details: list[str] | tuple[str, ...] = (),
+    now: float | None = None,
+) -> bool:
+    """Queue a throttled Slack alert without delaying the affected request."""
+    if not slack_alerts_configured():
+        return False
+    timestamp = time.time() if now is None else now
+    safe_key = re.sub(r"[^a-zA-Z0-9:._/-]+", "-", str(alert_key))[:180] or "unknown"
+    with _OPERATIONAL_ALERTS_LOCK:
+        previous = _OPERATIONAL_ALERTS.get(safe_key, 0.0)
+        if timestamp - previous < OPERATIONAL_ALERT_THROTTLE_SECONDS:
+            return False
+        _OPERATIONAL_ALERTS[safe_key] = timestamp
+        stale_before = timestamp - max(OPERATIONAL_ALERT_THROTTLE_SECONDS * 4, 3600)
+        for key, sent_at in list(_OPERATIONAL_ALERTS.items()):
+            if sent_at < stale_before:
+                _OPERATIONAL_ALERTS.pop(key, None)
+    safe_details = tuple(sanitize_operational_alert_detail(detail) for detail in details if detail)
+    threading.Thread(
+        target=_deliver_operational_alert,
+        args=(severity, str(title)[:240], safe_details),
+        daemon=True,
+    ).start()
+    return True
 
 
 PAYMENT_CONFIRMED_STATUSES = {"HOLD_PAID", "PAID"}
@@ -4173,6 +4242,7 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
 
 
 def init_db() -> None:
+    stale_accommodation_images: list[str] = []
     DATA_DIR.mkdir(exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
@@ -4325,6 +4395,16 @@ def init_db() -> None:
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(post_id) REFERENCES accommodation_posts(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS accommodation_deletion_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                listing_fingerprint TEXT NOT NULL UNIQUE,
+                post_mode TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '',
+                expired_at TEXT,
+                deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deletion_reason TEXT NOT NULL DEFAULT 'RETENTION_EXPIRED'
             );
 
             CREATE TABLE IF NOT EXISTS accommodation_interests (
@@ -5512,10 +5592,28 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_group_invites_community ON chat_group_invites(community_id, revoked_at, expires_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_user ON chat_device_keys(user_id, revoked_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_envelopes_recipient ON chat_message_envelopes(message_id, recipient_user_id, recipient_device_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_envelopes_device_message ON chat_message_envelopes(recipient_user_id, recipient_device_id, message_id)")
         con.execute("UPDATE chat_communities SET visibility = 'PRIVATE' WHERE created_by_user_id IS NOT NULL AND visibility = 'PUBLIC'")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
+        # High-traffic mobile lookup indexes. Keep these beside the schema
+        # migrations so existing installations receive them on the next start.
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_created ON accommodation_posts(visibility_status, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_expired_cleanup ON accommodation_posts(visibility_status, expired_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_user_created ON accommodation_posts(user_id, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_mode_category ON accommodation_posts(post_mode, category, visibility_status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_images_post_sort ON accommodation_post_images(post_id, sort_order, id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_status_type_created ON ride_posts(status, ride_type, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_user_status_created ON ride_posts(user_id, status, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_instances_post_date ON ride_instances(ride_post_id, instance_date, pickup_time)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_status ON ride_dispatch_notifications(driver_user_id, status, notified_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user_status_dates ON bookings(user_id, booking_status, pickup_date)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_car_status_dates ON bookings(car_id, booking_status, pickup_date, dropoff_date)")
         con.execute(
             """
             UPDATE chat_conversations
@@ -5538,6 +5636,7 @@ def init_db() -> None:
             (f"+{ACCOMMODATION_POST_LIFETIME_DAYS} days",),
         )
         expire_accommodation_posts_in_connection(con)
+        stale_accommodation_images.extend(purge_expired_accommodation_posts_in_connection(con))
         seed_sample_accommodation_posts(con)
 
         for badge in (
@@ -5871,6 +5970,7 @@ def init_db() -> None:
             """
         )
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
+    delete_local_accommodation_images(stale_accommodation_images)
 
 
 def get_content() -> dict[str, str]:
@@ -11880,7 +11980,7 @@ def expire_accommodation_posts_in_connection(con: sqlite3.Connection) -> None:
         """
         UPDATE accommodation_posts
         SET visibility_status = 'EXPIRED',
-            expired_at = COALESCE(expired_at, CURRENT_TIMESTAMP),
+            expired_at = COALESCE(expired_at, expires_at, CURRENT_TIMESTAMP),
             updated_at = CURRENT_TIMESTAMP
         WHERE visibility_status = 'ACTIVE'
           AND expires_at IS NOT NULL
@@ -11890,9 +11990,85 @@ def expire_accommodation_posts_in_connection(con: sqlite3.Connection) -> None:
     )
 
 
+def accommodation_deletion_fingerprint(public_id: object) -> str:
+    """Return a stable, non-displayable reference for deletion audit records."""
+    value = str(public_id or "").strip()
+    return hashlib.sha256(f"fairfares-accommodation:{value}".encode("utf-8")).hexdigest()
+
+
+def purge_expired_accommodation_posts_in_connection(con: sqlite3.Connection) -> list[str]:
+    """Permanently remove member listings after their recovery window.
+
+    Chitthi messages are intentionally retained. Their conversation is detached
+    from the deleted listing so a foreign-key-enabled deployment cannot cascade
+    or block the purge.
+    """
+    rows = con.execute(
+        """
+        SELECT id, public_id, post_mode, category, expired_at
+        FROM accommodation_posts
+        WHERE visibility_status = 'EXPIRED'
+          AND COALESCE(source_label, '') != 'SAMPLE_DATA'
+          AND expired_at IS NOT NULL
+          AND expired_at != ''
+          AND datetime(expired_at, ?) <= datetime('now')
+        """,
+        (f"+{ACCOMMODATION_POST_RECOVERY_DAYS} days",),
+    ).fetchall()
+    local_image_references: list[str] = []
+    for row in rows:
+        post_id = int(row_value(row, "id") or 0)
+        if post_id <= 0:
+            continue
+        image_rows = con.execute(
+            "SELECT image_url FROM accommodation_post_images WHERE post_id = ?",
+            (post_id,),
+        ).fetchall()
+        local_image_references.extend(
+            str(row_value(image, "image_url") or "")
+            for image in image_rows
+            if str(row_value(image, "image_url") or "").startswith("local://uploads/accommodations/")
+        )
+        con.execute(
+            """
+            INSERT OR IGNORE INTO accommodation_deletion_audit
+            (listing_fingerprint, post_mode, category, expired_at, deleted_at, deletion_reason)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'RETENTION_EXPIRED')
+            """,
+            (
+                accommodation_deletion_fingerprint(row_value(row, "public_id")),
+                str(row_value(row, "post_mode") or ""),
+                str(row_value(row, "category") or ""),
+                row_value(row, "expired_at"),
+            ),
+        )
+        con.execute(
+            "UPDATE chat_conversations SET accommodation_post_id = NULL WHERE accommodation_post_id = ?",
+            (post_id,),
+        )
+        con.execute("DELETE FROM accommodation_interests WHERE post_id = ?", (post_id,))
+        con.execute("DELETE FROM accommodation_post_images WHERE post_id = ?", (post_id,))
+        con.execute("DELETE FROM accommodation_posts WHERE id = ?", (post_id,))
+    return local_image_references
+
+
+def delete_local_accommodation_images(image_references: list[str]) -> None:
+    upload_root = (DB_PATH.parent / "uploads" / "accommodations").resolve()
+    for reference in image_references:
+        prefix = "local://uploads/accommodations/"
+        if not reference.startswith(prefix):
+            continue
+        relative = reference.removeprefix(prefix)
+        target = (upload_root / relative).resolve()
+        if target.is_relative_to(upload_root) and target.is_file():
+            target.unlink(missing_ok=True)
+
+
 def expire_accommodation_posts() -> None:
     with db() as con:
         expire_accommodation_posts_in_connection(con)
+        image_references = purge_expired_accommodation_posts_in_connection(con)
+    delete_local_accommodation_images(image_references)
 
 
 def seed_sample_accommodation_posts(con: sqlite3.Connection) -> None:
@@ -13299,6 +13475,7 @@ def mobile_ride_posts(
     origin_lng: float = 0,
     destination_lat: float = 0,
     destination_lng: float = 0,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
@@ -13346,9 +13523,9 @@ def mobile_ride_posts(
         LEFT JOIN users ON users.id = ride_posts.user_id
         WHERE {' AND '.join(clauses)}
         ORDER BY datetime(ride_posts.created_at) DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
     """
-    values.append(max(1, min(int(limit or 30), 80)))
+    values.extend([max(1, min(int(limit or 30), 50)), max(0, int(offset or 0))])
     with db() as con:
         rows = con.execute(sql, values).fetchall()
     payloads = [mobile_ride_payload(row, origin_point, destination_point) for row in rows]
@@ -13824,6 +14001,7 @@ def mobile_housing_posts(
     limit: int = 30,
     center_lat: float = 0,
     center_lng: float = 0,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     expire_accommodation_posts()
     clauses = [
@@ -13884,23 +14062,36 @@ def mobile_housing_posts(
             term_clauses.append("(" + " OR ".join(f"{field} LIKE ?" for field in search_fields) + ")")
             values.extend([pattern] * len(search_fields))
         clauses.append("(" + " OR ".join(term_clauses) + ")")
-    limit = max(1, min(int(limit or 30), 100))
-    sql_limit = 100 if area else limit
+    limit = max(1, min(int(limit or 30), 50))
+    offset = max(0, int(offset or 0))
+    # Area searches need a bounded candidate window for distance ranking. Plain
+    # city searches can page directly in SQLite.
+    sql_limit = min(100, offset + limit) if area else limit
+    sql_offset = 0 if area else offset
     where_sql = " AND ".join(clauses)
     with db() as con:
         rows = con.execute(
             f"""
+            WITH first_images AS (
+                SELECT post_id, image_url
+                FROM (
+                    SELECT post_id, image_url,
+                           ROW_NUMBER() OVER (PARTITION BY post_id ORDER BY sort_order ASC, id ASC) AS image_rank
+                    FROM accommodation_post_images
+                )
+                WHERE image_rank = 1
+            )
             SELECT accommodation_posts.*,
-                   (SELECT name FROM users WHERE users.id = accommodation_posts.user_id) AS owner_name,
-                   (SELECT image_url FROM accommodation_post_images
-                    WHERE accommodation_post_images.post_id = accommodation_posts.id
-                    ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
+                   users.name AS owner_name,
+                   first_images.image_url AS preview_image_url
             FROM accommodation_posts
+            LEFT JOIN users ON users.id = accommodation_posts.user_id
+            LEFT JOIN first_images ON first_images.post_id = accommodation_posts.id
             WHERE {where_sql}
-            ORDER BY datetime(created_at) DESC
-            LIMIT ?
+            ORDER BY datetime(accommodation_posts.created_at) DESC
+            LIMIT ? OFFSET ?
             """,
-            (*values, sql_limit),
+            (*values, sql_limit, sql_offset),
         ).fetchall()
     search_radius_miles = float_from_value(radius) or 0
     if search_radius_miles < 0:
@@ -13961,7 +14152,9 @@ def mobile_housing_posts(
             rank = 0
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
-    matched_posts = [item for _, _, item in ranked_payloads[:limit]]
+    ranked_page = ranked_payloads[offset:offset + limit] if area else ranked_payloads[:limit]
+    matched_posts = [item for _, _, item in ranked_page]
+    sample_limit = max(0, limit - len(matched_posts)) if offset == 0 else 0
     sample_posts = mobile_sample_housing_posts(
         city=city,
         area=area,
@@ -13972,7 +14165,7 @@ def mobile_housing_posts(
         radius=radius,
         center_lat=center_lat,
         center_lng=center_lng,
-        limit=limit,
+        limit=sample_limit,
     )
     return [*matched_posts, *sample_posts]
 
@@ -14023,6 +14216,8 @@ def mobile_sample_housing_posts(
     limit: int = 10,
 ) -> list[dict[str, object]]:
     """Return location-aware FairFares housing cards after live local results."""
+    if int(limit or 0) <= 0:
+        return []
     with db() as con:
         sample_owner = con.execute(
             "SELECT id, name FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
@@ -15965,7 +16160,9 @@ def send_rental_booking_push(
     )
 
 
-def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
+def get_chat_conversations_for_user(user_id: int, limit: int = 30, offset: int = 0) -> list[dict[str, object]]:
+    limit = max(1, min(int(limit or 30), 50))
+    offset = max(0, int(offset or 0))
     with db() as con:
         consolidate_person_conversations(con, user_id)
         rows = con.execute(
@@ -16026,9 +16223,9 @@ def get_chat_conversations_for_user(user_id: int) -> list[dict[str, object]]:
               )
             GROUP BY conversations.id
             ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
-            LIMIT 100
+            LIMIT ? OFFSET ?
             """,
-            (user_id, user_id, user_id, user_id),
+            (user_id, user_id, user_id, user_id, limit, offset),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
 
@@ -17610,6 +17807,74 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
     sys_version = ""
 
+    def handle_one_request(self) -> None:
+        self.request_started_at = time.perf_counter()
+        self.request_id = uuid.uuid4().hex[:12]
+        self.response_status = 0
+        try:
+            super().handle_one_request()
+        except Exception as exc:
+            print(json.dumps({
+                "event": "server_exception",
+                "request_id": self.request_id,
+                "method": str(getattr(self, "command", "")),
+                "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
+                "error_type": type(exc).__name__,
+            }, separators=(",", ":")), flush=True)
+            send_operational_alert(
+                f"server-exception:{type(exc).__name__}:{urllib.parse.urlparse(str(getattr(self, 'path', ''))).path}",
+                "Unhandled backend exception",
+                severity="critical",
+                details=[
+                    f"Request ID: {self.request_id}",
+                    f"Method: {str(getattr(self, 'command', ''))}",
+                    f"Path: {urllib.parse.urlparse(str(getattr(self, 'path', ''))).path[:300]}",
+                    f"Error type: {type(exc).__name__}",
+                ],
+            )
+            raise
+        finally:
+            status = int(getattr(self, "response_status", 0) or 0)
+            path = urllib.parse.urlparse(str(getattr(self, "path", ""))).path
+            if path and path != "/healthz":
+                duration_ms = round((time.perf_counter() - self.request_started_at) * 1000, 1)
+                method = str(getattr(self, "command", ""))
+                print(json.dumps({
+                    "event": "http_request",
+                    "request_id": self.request_id,
+                    "method": method,
+                    "path": path[:300],
+                    "status": status,
+                    "duration_ms": duration_ms,
+                }, separators=(",", ":")), flush=True)
+                if path != "/api/health" and status >= 500:
+                    send_operational_alert(
+                        f"http-5xx:{method}:{path}:{status}",
+                        "Backend request failed",
+                        details=[
+                            f"Request ID: {self.request_id}",
+                            f"{method} {path}",
+                            f"HTTP status: {status}",
+                            f"Duration: {duration_ms} ms",
+                        ],
+                    )
+                elif path != "/api/health" and duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+                    send_operational_alert(
+                        f"slow-request:{method}:{path}",
+                        "Slow backend request",
+                        severity="warning",
+                        details=[
+                            f"Request ID: {self.request_id}",
+                            f"{method} {path}",
+                            f"HTTP status: {status}",
+                            f"Duration: {duration_ms} ms (threshold {SLOW_REQUEST_THRESHOLD_MS} ms)",
+                        ],
+                    )
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self.response_status = code
+        super().send_response(code, message)
+
     def client_ip(self) -> str:
         # Forwarded headers are trusted only when the deployment explicitly opts in.
         if os.environ.get("FAIRFARES_TRUST_PROXY", "0") == "1":
@@ -17761,6 +18026,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/e2ee/envelopes":
             self.api_chat_e2ee_envelopes(parsed)
             return
+        if parsed.path == "/api/chat/e2ee/preview-envelopes":
+            self.api_chat_e2ee_preview_envelopes(parsed)
+            return
         if parsed.path == "/api/chat/e2ee/backup":
             self.api_get_chat_e2ee_backup()
             return
@@ -17857,13 +18125,73 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "service": "fairfares-api",
                 "time": datetime.now(UTC).isoformat(),
             })
-        except Exception:
+        except Exception as exc:
+            send_operational_alert(
+                "health:database-unavailable",
+                "Database health check failed",
+                severity="critical",
+                details=[f"Error type: {type(exc).__name__}"],
+            )
             self.send_json({
                 "ok": False,
                 "status": "unhealthy",
                 "database": "unavailable",
                 "service": "fairfares-api",
             }, 503)
+
+    def api_mobile_diagnostics(self) -> None:
+        """Accept a small, privacy-filtered diagnostic event from released apps."""
+        client = self.client_ip()
+        now = time.time()
+        cutoff = now - 3600
+        with _DIAGNOSTIC_REPORTS_LOCK:
+            recent = [stamp for stamp in _DIAGNOSTIC_REPORTS.get(client, []) if stamp >= cutoff]
+            if len(recent) >= DIAGNOSTIC_REPORT_LIMIT:
+                self.send_json({"ok": False, "message": "Diagnostic rate limit reached."}, 429)
+                return
+            recent.append(now)
+            _DIAGNOSTIC_REPORTS[client] = recent
+
+        payload = self.read_json_body()
+        allowed = {
+            "reference_id": 32,
+            "kind": 40,
+            "message": 500,
+            "stack": 3000,
+            "screen": 80,
+            "platform": 30,
+            "app_version": 40,
+            "build_version": 40,
+            "request_id": 40,
+        }
+        event: dict[str, object] = {"event": "mobile_diagnostic"}
+        for key, maximum in allowed.items():
+            value = payload.get(key)
+            if value is not None:
+                event[key] = str(value).replace("\x00", "")[:maximum]
+        event["reference_id"] = str(event.get("reference_id") or uuid.uuid4().hex[:12])
+        print(json.dumps(event, separators=(",", ":")), flush=True)
+        diagnostic_kind = str(event.get("kind") or "unknown")
+        diagnostic_severity = {
+            "render_crash": "critical",
+            "api_5xx": "error",
+            "network_failure": "warning",
+        }.get(diagnostic_kind, "warning")
+        send_operational_alert(
+            f"mobile:{diagnostic_kind}:{event.get('platform', 'unknown')}:{event.get('screen', 'unknown')}",
+            "Mobile diagnostic received",
+            severity=diagnostic_severity,
+            details=[
+                f"Reference: {event['reference_id']}",
+                f"Kind: {diagnostic_kind}",
+                f"Platform: {event.get('platform', 'unknown')}",
+                f"App/build: {event.get('app_version', 'unknown')} / {event.get('build_version', 'unknown')}",
+                f"Screen: {event.get('screen', 'unknown')}",
+                f"Request ID: {event.get('request_id', 'none')}",
+                f"Message: {event.get('message', 'none')}",
+            ],
+        )
+        self.send_json({"ok": True, "referenceId": event["reference_id"]}, 202)
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -17918,6 +18246,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/messages/edit": self.api_edit_chat_message,
             "/api/chat/messages/delete": self.api_delete_chat_message,
             "/api/chat/messages/report": self.api_report_chat_message,
+            "/api/mobile/diagnostics": self.api_mobile_diagnostics,
             "/api/chat/read": self.api_mark_chat_read,
             "/api/chat/typing": self.api_chat_typing,
             "/api/chat/mute": self.api_mute_chat_conversation,
@@ -18877,7 +19206,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
-        self.send_json({"ok": True, "conversations": get_chat_conversations_for_user(int(user["id"]))})
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
+            offset = max(0, int(params.get("offset", ["0"])[0] or 0))
+        except ValueError:
+            limit, offset = 30, 0
+        conversations = get_chat_conversations_for_user(int(user["id"]), limit=limit, offset=offset)
+        self.send_json({
+            "ok": True,
+            "conversations": conversations,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(conversations),
+                "hasMore": len(conversations) == limit,
+                "nextOffset": offset + len(conversations),
+            },
+        })
 
     def api_chat_communities(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
@@ -19589,6 +19935,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                    FROM chat_message_envelopes envelopes JOIN chat_messages messages ON messages.id = envelopes.message_id
                    WHERE messages.conversation_id = ? AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?""",
                 (int(conversation["id"]), int(user["id"]), device_id),
+            ).fetchall()
+        self.send_json({"ok": True, "envelopes": [{"messageId": int(row["message_id"]), "senderPublicKey": row["sender_public_key"], "nonce": row["nonce"], "ciphertext": row["ciphertext"]} for row in rows]})
+
+    def api_chat_e2ee_preview_envelopes(self, parsed: urllib.parse.ParseResult) -> None:
+        """Return the current device's conversation-preview envelopes in one query."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted FChat."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        device_id = (params.get("device_id") or [""])[0].strip()
+        raw_ids = (params.get("message_ids") or [""])[0].split(",")
+        message_ids: list[int] = []
+        for raw_id in raw_ids:
+            try:
+                message_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if message_id > 0 and message_id not in message_ids:
+                message_ids.append(message_id)
+            if len(message_ids) >= 50:
+                break
+        if not device_id or not message_ids:
+            self.send_json({"ok": True, "envelopes": []})
+            return
+        placeholders = ",".join("?" for _ in message_ids)
+        with db() as con:
+            rows = con.execute(
+                f"""SELECT envelopes.message_id, envelopes.sender_public_key, envelopes.nonce, envelopes.ciphertext
+                    FROM chat_message_envelopes envelopes
+                    JOIN chat_messages messages ON messages.id = envelopes.message_id
+                    JOIN chat_conversation_members members
+                      ON members.conversation_id = messages.conversation_id AND members.user_id = ?
+                    WHERE envelopes.recipient_user_id = ?
+                      AND envelopes.recipient_device_id = ?
+                      AND envelopes.message_id IN ({placeholders})""",
+                (int(user["id"]), int(user["id"]), device_id, *message_ids),
             ).fetchall()
         self.send_json({"ok": True, "envelopes": [{"messageId": int(row["message_id"]), "senderPublicKey": row["sender_public_key"], "nonce": row["nonce"], "ciphertext": row["ciphertext"]} for row in rows]})
 
@@ -27579,9 +27962,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         center_lat = float_from_value(params.get("lat", params.get("latitude", ["0"]))[0])
         center_lng = float_from_value(params.get("lng", params.get("longitude", ["0"]))[0])
         try:
-            limit = int(params.get("limit", ["30"])[0] or 30)
+            limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
+            offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
-            limit = 30
+            limit, offset = 30, 0
         posts = mobile_housing_posts(
             city=city,
             area=area,
@@ -27593,6 +27977,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             limit=limit,
             center_lat=center_lat,
             center_lng=center_lng,
+            offset=offset,
         )
         self.send_json(
             {
@@ -27605,6 +27990,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "budget": budget,
                 "radius": radius,
                 "posts": posts,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "returned": len(posts),
+                    "hasMore": len(posts) == limit,
+                    "nextOffset": offset + len(posts),
+                },
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
@@ -27621,9 +28013,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         raw_ride_type = params.get("type", params.get("rideType", [""]))[0] if params.get("type") or params.get("rideType") else ""
         ride_type = normalize_ride_type(raw_ride_type) if raw_ride_type else ""
         try:
-            limit = int(params.get("limit", ["30"])[0] or 30)
+            limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
+            offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
-            limit = 30
+            limit, offset = 30, 0
         rides = mobile_ride_posts(
             city=city,
             ride_type=ride_type,
@@ -27634,6 +28027,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             origin_lng=origin_lng,
             destination_lat=destination_lat,
             destination_lng=destination_lng,
+            offset=offset,
         )
         self.send_json(
             {
@@ -27643,6 +28037,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "destination": destination,
                 "type": ride_type,
                 "rides": rides,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "returned": len(rides),
+                    "hasMore": len(rides) == limit,
+                    "nextOffset": offset + len(rides),
+                },
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
@@ -28872,7 +29273,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_header("Vary", "Origin")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+                self.send_header("Access-Control-Expose-Headers", "X-Request-ID")
                 self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("X-Request-ID", str(getattr(self, "request_id", "") or uuid.uuid4().hex[:12]))
         if current_path.startswith("/static/"):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("X-Content-Type-Options", "nosniff")

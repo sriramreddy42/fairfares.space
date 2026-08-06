@@ -3,6 +3,44 @@ import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
 
+function preferredImageEncoding() {
+  const webp = Platform.OS !== "ios";
+  return {
+    format: webp ? ImageManipulator.SaveFormat.WEBP : ImageManipulator.SaveFormat.JPEG,
+    extension: webp ? "webp" : "jpg",
+    mimeType: webp ? "image/webp" : "image/jpeg"
+  };
+}
+
+async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: number, prefix: string, maxWidth: number, quality: number) {
+  const encoding = preferredImageEncoding();
+  const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
+  const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+    base64: false,
+    compress: quality,
+    format: encoding.format
+  });
+  if (Platform.OS === "web") {
+    const blob = await fetch(compressed.uri).then((response) => response.blob());
+    return {
+      uri: compressed.uri,
+      blob,
+      name: `${prefix}-${Date.now()}-${index + 1}.${encoding.extension}`,
+      mimeType: encoding.mimeType,
+      size: blob.size,
+      kind: "IMAGE" as const
+    };
+  }
+  const info = await FileSystem.getInfoAsync(compressed.uri);
+  return {
+    uri: compressed.uri,
+    name: `${prefix}-${Date.now()}-${index + 1}.${encoding.extension}`,
+    mimeType: encoding.mimeType,
+    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
+    kind: "IMAGE" as const
+  };
+}
+
 export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality = 0.72) {
   const remaining = Math.max(1, Math.min(limit, 4));
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -21,6 +59,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   }
   const images: string[] = [];
   for (const asset of result.assets.slice(0, remaining)) {
+    const encoding = preferredImageEncoding();
     const actions =
       asset.width && asset.width > maxWidth
         ? [{ resize: { width: maxWidth } }]
@@ -28,10 +67,10 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
     const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
       base64: true,
       compress: quality,
-      format: ImageManipulator.SaveFormat.JPEG
+      format: encoding.format
     });
     if (compressed.base64) {
-      images.push(`data:image/jpeg;base64,${compressed.base64}`);
+      images.push(`data:${encoding.mimeType};base64,${compressed.base64}`);
     }
   }
   return images;
@@ -49,33 +88,9 @@ export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76)
     selectionLimit
   });
   if (result.canceled || !result.assets.length) return [];
-  return await Promise.all(result.assets.slice(0, selectionLimit).map(async (asset, index) => {
-    if (Platform.OS === "web") {
-      const webFile = (asset as typeof asset & { file?: Blob }).file;
-      return {
-        uri: asset.uri,
-        blob: webFile,
-        name: asset.fileName || `fchat-${Date.now()}-${index + 1}.jpg`,
-        mimeType: asset.mimeType || webFile?.type || "image/jpeg",
-        size: Number(asset.fileSize || webFile?.size || 0),
-        kind: "IMAGE" as const
-      };
-    }
-    const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
-    const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-      base64: false,
-      compress: quality,
-      format: ImageManipulator.SaveFormat.JPEG
-    });
-    const info = await FileSystem.getInfoAsync(compressed.uri);
-    return {
-      uri: compressed.uri,
-      name: `fchat-${Date.now()}-${index + 1}.jpg`,
-      mimeType: "image/jpeg",
-      size: info.exists && "size" in info ? Number(info.size || 0) : 0,
-      kind: "IMAGE" as const
-    };
-  }));
+  return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
+    compressedUpload(asset, index, "fchat", maxWidth, quality)
+  ));
 }
 
 export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
@@ -89,29 +104,5 @@ export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
   });
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
-  if (Platform.OS === "web") {
-    const webFile = (asset as typeof asset & { file?: Blob }).file;
-    return {
-      uri: asset.uri,
-      blob: webFile,
-      name: asset.fileName || `fchat-camera-${Date.now()}.jpg`,
-      mimeType: asset.mimeType || webFile?.type || "image/jpeg",
-      size: Number(asset.fileSize || webFile?.size || 0),
-      kind: "IMAGE" as const
-    };
-  }
-  const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
-  const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-    base64: false,
-    compress: quality,
-    format: ImageManipulator.SaveFormat.JPEG
-  });
-  const info = await FileSystem.getInfoAsync(compressed.uri);
-  return {
-    uri: compressed.uri,
-    name: `fchat-camera-${Date.now()}.jpg`,
-    mimeType: "image/jpeg",
-    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
-    kind: "IMAGE" as const
-  };
+  return compressedUpload(asset, 0, "fchat-camera", maxWidth, quality);
 }

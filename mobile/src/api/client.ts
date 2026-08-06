@@ -81,6 +81,32 @@ function browserStorage() {
 let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
 let activeApiBase = API_URL;
 
+function diagnosticReference() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function reportApiDiagnostic(kind: "api_5xx" | "network_failure", message: string, requestId = "") {
+  const referenceId = requestId || diagnosticReference();
+  const cleanMessage = String(message || "")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]")
+    .slice(0, 500);
+  void fetch(`${API_URL}/api/mobile/diagnostics`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reference_id: referenceId,
+      kind,
+      message: cleanMessage,
+      request_id: requestId,
+      platform: Platform.OS,
+      app_version: String(Constants.expoConfig?.version || "unknown"),
+      build_version: String(Platform.OS === "ios" ? Constants.expoConfig?.ios?.buildNumber || "unknown" : Constants.expoConfig?.android?.versionCode || "unknown")
+    })
+  }).catch(() => undefined);
+  return referenceId;
+}
+
 function currentApiBase() {
   return activeApiBase || API_URL;
 }
@@ -174,13 +200,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         }
         if (!response.ok) {
           const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
-          (httpError as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus = response.status;
+          const requestId = response.headers.get("X-Request-ID") || "";
+          const enrichedError = httpError as Error & { fairFaresHttpStatus?: number; fairFaresRequestId?: string };
+          enrichedError.fairFaresHttpStatus = response.status;
+          enrichedError.fairFaresRequestId = requestId;
           if ([502, 503, 504].includes(response.status) && attempt + 1 < attempts) {
             lastError = httpError.message;
             await wait(500 * (attempt + 1));
             continue;
           }
-          throw httpError;
+          if (response.status >= 500) {
+            const referenceId = reportApiDiagnostic("api_5xx", `${method} ${path}: ${httpError.message}`, requestId);
+            enrichedError.message = `FairFares is temporarily unavailable. Please try again. Reference: ${referenceId}`;
+          }
+          throw enrichedError;
         }
         activeApiBase = baseUrl;
         return payload;
@@ -197,10 +230,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (isAttachmentUpload) {
     throw new Error(`The attachment upload did not finish. Check your connection and try again. ${lastError}`.trim());
   }
+  const referenceId = reportApiDiagnostic("network_failure", `${String(init.method || "GET").toUpperCase()} ${path}: ${lastError}`);
   if (EXPLICIT_API_URL) {
-    throw new Error("FairFares is temporarily unavailable. Check your internet connection and try again shortly.");
+    throw new Error(`FairFares is temporarily unavailable. Check your internet connection and try again shortly. Reference: ${referenceId}`);
   }
-  throw new Error(`Could not connect to the local FairFares API. Last error: ${lastError}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
+  throw new Error(`Could not connect to the local FairFares API. Reference: ${referenceId}. Last error: ${lastError}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
 function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
@@ -284,9 +318,10 @@ export async function getHousing(
   gender = "",
   budget = "",
   radius = "",
-  coordinates: { lat?: number | null; lng?: number | null } = {}
+  coordinates: { lat?: number | null; lng?: number | null } = {},
+  offset = 0
 ) {
-  const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "50" });
+  const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "24", offset: String(Math.max(0, offset)) });
   addFiniteParam(query, "lat", coordinates.lat);
   addFiniteParam(query, "lng", coordinates.lng);
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
@@ -306,8 +341,8 @@ function addFiniteParam(params: URLSearchParams, key: string, value: number | nu
   }
 }
 
-export async function getRides(city: string, origin = "", destination = "", rideType: RideType | "" = "", coordinates: RideSearchCoordinates = {}) {
-  const params = new URLSearchParams({ city, origin, destination, limit: "50" });
+export async function getRides(city: string, origin = "", destination = "", rideType: RideType | "" = "", coordinates: RideSearchCoordinates = {}, offset = 0) {
+  const params = new URLSearchParams({ city, origin, destination, limit: "30", offset: String(Math.max(0, offset)) });
   if (rideType) params.set("type", rideType);
   addFiniteParam(params, "originLat", coordinates.originLat);
   addFiniteParam(params, "originLng", coordinates.originLng);
@@ -617,8 +652,8 @@ export async function updateMobileStudentVerification(studentEmail: string, stud
   });
 }
 
-export async function createRentalSupportTicket(
-  bookingId: string,
+export async function createSupportTicket(
+  bookingId: string | null,
   topic: string,
   message: string,
   urgent = false
@@ -626,8 +661,12 @@ export async function createRentalSupportTicket(
   return request<{ ok: boolean; message: string; ticketId: string; priority: string; sla: string }>("/api/mobile/rentals/support-ticket", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId, topic, message, urgent, preferredContact: "FairFares app" })
+    body: JSON.stringify({ bookingId: bookingId || "", topic, message, urgent, preferredContact: "FairFares app" })
   });
+}
+
+export async function createRentalSupportTicket(bookingId: string, topic: string, message: string, urgent = false) {
+  return createSupportTicket(bookingId, topic, message, urgent);
 }
 
 export async function submitAppFeedback(rating: number, message: string, page = "mobile") {
@@ -657,8 +696,9 @@ function formBody(values: Record<string, string>) {
   return body.toString();
 }
 
-export async function getChatConversations() {
-  const payload = await request<{ ok: boolean; conversations: ChatConversation[] }>("/api/chat/conversations");
+export async function getChatConversations(offset = 0) {
+  const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, offset)) });
+  const payload = await request<{ ok: boolean; conversations: ChatConversation[] }>(`/api/chat/conversations?${params.toString()}`);
   return payload.conversations || [];
 }
 
@@ -699,6 +739,15 @@ export async function getChatDeviceKeys(conversationId: string) {
 
 export async function getChatEncryptedEnvelopes(conversationId: string, deviceId: string) {
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/envelopes?conversation_id=${encodeURIComponent(conversationId)}&device_id=${encodeURIComponent(deviceId)}`);
+}
+
+export async function getChatEncryptedPreviewEnvelopes(messageIds: number[], deviceId: string) {
+  const uniqueIds = [...new Set(messageIds.filter((messageId) => Number.isInteger(messageId) && messageId > 0))].slice(0, 50);
+  const params = new URLSearchParams({
+    message_ids: uniqueIds.join(","),
+    device_id: deviceId
+  });
+  return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/preview-envelopes?${params.toString()}`);
 }
 
 export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false) {

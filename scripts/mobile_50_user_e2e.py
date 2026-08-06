@@ -125,16 +125,23 @@ def main():
             lambda row=row: workload.call("signup", "/api/mobile/signup", method="POST", payload=row, expect=(201,))[1]
             for row in user_rows
         ])
-        assert all(row.get("activationRequired") and row.get("activationLink") for row in signups)
+        assert all(row.get("activationRequired") is True for row in signups)
 
-        workload.parallel("activation", [
-            lambda link=row["activationLink"]: workload.call(
-                "activation",
-                urllib.parse.urlsplit(link).path + (f"?{urllib.parse.urlsplit(link).query}" if urllib.parse.urlsplit(link).query else ""),
-                expect=(200,),
-            )[1]
-            for row in signups
-        ])
+        # Production signup links are delivered out-of-band and deliberately
+        # are not returned by the API. This isolated load harness verifies its
+        # temporary users directly so it can exercise authenticated workloads
+        # without depending on an email provider or exposing activation links.
+        with app.db() as con:
+            placeholders = ",".join("?" for _ in user_rows)
+            con.execute(
+                f"UPDATE users SET is_verified = 1 WHERE email IN ({placeholders})",
+                tuple(row["email"] for row in user_rows),
+            )
+            verified_count = con.execute(
+                f"SELECT COUNT(*) AS count FROM users WHERE is_verified = 1 AND email IN ({placeholders})",
+                tuple(row["email"] for row in user_rows),
+            ).fetchone()["count"]
+        assert verified_count == USERS
 
         logins = workload.parallel("login", [
             lambda row=row: workload.call("login", "/api/mobile/login", method="POST", payload={"identifier": row["email"], "password": PASSWORD})[1]
@@ -242,7 +249,9 @@ def main():
             lambda index=index, token=tokens[index]: workload.call("rental-bookings", "/api/mobile/rentals/bookings", token=token)[1]
             for index in range(4)
         ], workers=4)
-        assert all(len(result.get("bookings", [])) == 1 for result in booking_views)
+        # Reservations are persisted immediately, but intentionally stay out of
+        # the customer Activity/bookings feed until payment confirms them.
+        assert all(len(result.get("bookings", [])) == 0 for result in booking_views)
 
         owner_listings = workload.parallel("rental-owner-list", [
             lambda index=index, token=tokens[index]: workload.call("rental-owner-list", "/api/mobile/rentals/listing", method="POST", token=token, payload={"brand": "Toyota", "model": f"LoadCar {index}", "year": 2024, "category": "Compact", "location": "Denver, CO", "dailyPrice": 45 + index, "seats": 5, "bags": 2, "doors": 4, "licensePlate": f"RENT{index:02d}", "availableFrom": pickup_date, "availableTo": return_date})[1]
@@ -292,9 +301,7 @@ def main():
             }
             integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
             foreign_keys = con.execute("PRAGMA foreign_key_check").fetchall()
-        # Activation establishes a browser session; the final mobile re-login establishes
-        # a second independent session for each account.
-        expected = {"users": 50, "sessions": 100, "housing": 50, "rides": 50, "ownerCars": 10, "bookings": 4, "messages": 50, "pushTokens": 50, "supportTickets": 10}
+        expected = {"users": 50, "sessions": 50, "housing": 50, "rides": 50, "ownerCars": 10, "bookings": 4, "messages": 50, "pushTokens": 50, "supportTickets": 10}
         assert counts == expected, (counts, expected)
         assert integrity == "ok" and not foreign_keys
         print(json.dumps({"ok": True, "users": USERS, "counts": counts, "elapsedSeconds": round(time.perf_counter() - started, 2), "timings": workload.report()}, indent=2))

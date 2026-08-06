@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Image, ImageSourcePropType, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { absoluteAssetUrl, createSupportTicket, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
@@ -23,6 +23,7 @@ type Props = {
 };
 
 const DRIVER_VERIFICATION_DAYS = 30;
+const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
 
 function firstInitial(name = "") {
@@ -63,6 +64,11 @@ export function ProfileScreen({
   const [carpoolLoading, setCarpoolLoading] = useState(false);
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
   const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [supportTopic, setSupportTopic] = useState(SUPPORT_TOPICS[0]);
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportUrgent, setSupportUrgent] = useState(false);
+  const [supportSending, setSupportSending] = useState(false);
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -145,7 +151,7 @@ export function ProfileScreen({
     { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenRide },
     { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },
     { title: "Chitthi", copy: "Messages and communities", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
-    { title: "Help & Support", copy: "Questions, account help, safety concerns, or technical problems", icon: appAssets.serviceSupport, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") },
+    { title: "Report an issue", copy: "Send a tracked support or safety report", icon: appAssets.serviceSupport, onPress: () => user ? setSupportOpen(true) : onLogin() },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
     { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
   ];
@@ -208,6 +214,28 @@ export function ProfileScreen({
     } catch (error) {
       setPhoneDiscoverable(!enabled);
       Alert.alert("Chat privacy not changed", error instanceof Error ? error.message : "Could not update phone discovery.");
+    }
+  }
+
+  async function submitIssue() {
+    if (supportMessage.trim().length < 10) {
+      Alert.alert("Add more detail", "Please describe what happened in at least 10 characters.");
+      return;
+    }
+    setSupportSending(true);
+    try {
+      const result = await createSupportTicket(null, supportTopic, supportMessage.trim(), supportUrgent);
+      setSupportOpen(false);
+      setSupportMessage("");
+      setSupportUrgent(false);
+      Alert.alert("Issue reported", `${result.ticketId}\nPriority ${result.priority} · ${result.sla}`);
+    } catch (error) {
+      Alert.alert("Report not sent", error instanceof Error ? error.message : "Please try again.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Email support", onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20support%20request") }
+      ]);
+    } finally {
+      setSupportSending(false);
     }
   }
 
@@ -351,6 +379,51 @@ export function ProfileScreen({
           <Text style={styles.logoutText}>Log out of FairFares</Text>
         </TouchableOpacity>
       ) : null}
+      <Modal visible={supportOpen} transparent animationType="slide" onRequestClose={() => setSupportOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.supportSheet}>
+            <View style={styles.supportHeader}>
+              <View style={styles.supportHeaderCopy}>
+                <Text style={styles.cardTitle}>Report an issue</Text>
+                <Text style={styles.cardCopy}>Tell us what happened. You will receive a ticket number.</Text>
+              </View>
+              <TouchableOpacity style={styles.closeButton} onPress={() => setSupportOpen(false)} accessibilityLabel="Close issue form">
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.label}>What is this about?</Text>
+            <View style={styles.topicRow}>
+              {SUPPORT_TOPICS.map((topic) => (
+                <TouchableOpacity key={topic} style={[styles.topicChip, topic === supportTopic && styles.topicChipActive]} onPress={() => setSupportTopic(topic)}>
+                  <Text style={[styles.topicText, topic === supportTopic && styles.topicTextActive]}>{topic}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.label}>What happened?</Text>
+            <TextInput
+              style={styles.supportInput}
+              value={supportMessage}
+              onChangeText={setSupportMessage}
+              placeholder="Include the screen, action, error message, and what you expected."
+              placeholderTextColor={theme.colors.muted}
+              multiline
+              maxLength={1500}
+              textAlignVertical="top"
+            />
+            <Text style={styles.characterCount}>{supportMessage.length}/1500</Text>
+            <View style={styles.urgentRow}>
+              <View style={styles.privacyCopy}>
+                <Text style={styles.supportUrgentTitle}>Urgent safety concern</Text>
+                <Text style={styles.cardCopy}>Use only for an immediate safety or active-trip issue.</Text>
+              </View>
+              <Switch value={supportUrgent} onValueChange={setSupportUrgent} />
+            </View>
+            <TouchableOpacity style={[styles.primaryButton, (supportSending || supportMessage.trim().length < 10) && styles.disabled]} disabled={supportSending || supportMessage.trim().length < 10} onPress={() => void submitIssue()}>
+              <Text style={styles.primaryButtonText}>{supportSending ? "Sending…" : "Send issue report"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -414,4 +487,19 @@ const styles = StyleSheet.create({
   menuDangerTitle: { color: "#f87171" },
   menuCopy: { color: theme.colors.muted, fontSize: 12, fontWeight: "500", lineHeight: 16, marginTop: 2 },
   menuChevron: { color: theme.colors.soft, fontSize: 24, fontWeight: "500" },
+  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.68)" },
+  supportSheet: { backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 11, maxHeight: "90%" },
+  supportHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  supportHeaderCopy: { flex: 1 },
+  closeButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  closeButtonText: { color: theme.colors.text, fontSize: 27, lineHeight: 29 },
+  topicRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  topicChip: { borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 11, paddingVertical: 8 },
+  topicChipActive: { backgroundColor: theme.colors.blue, borderColor: theme.colors.blue },
+  topicText: { color: theme.colors.soft, fontSize: 12, fontWeight: "700" },
+  topicTextActive: { color: theme.colors.text },
+  supportInput: { minHeight: 128, maxHeight: 220, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, color: theme.colors.text, padding: 13, fontSize: 15, lineHeight: 21 },
+  characterCount: { color: theme.colors.muted, fontSize: 11, textAlign: "right", marginTop: -7 },
+  urgentRow: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(248,113,113,0.35)", backgroundColor: "rgba(127,29,29,0.10)", padding: 11 },
+  supportUrgentTitle: { color: "#fca5a5", fontSize: 13, fontWeight: "700" },
 });

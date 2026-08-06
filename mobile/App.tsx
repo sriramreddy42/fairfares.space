@@ -9,18 +9,21 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
 import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, MobileHousingPostInput, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
-import { DashboardScreen } from "./src/screens/DashboardScreen";
-import { HousingScreen } from "./src/screens/HousingScreen";
-import { MessengerScreen } from "./src/screens/MessengerScreen";
-import { ProfileScreen } from "./src/screens/ProfileScreen";
-import { StaffPickupScreen } from "./src/screens/StaffPickupScreen";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
-import { ServiceKey, ServicesScreen } from "./src/screens/ServicesScreen";
+import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
+import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+
+const DashboardScreen = React.lazy(() => import("./src/screens/DashboardScreen").then((module) => ({ default: module.DashboardScreen })));
+const HousingScreen = React.lazy(() => import("./src/screens/HousingScreen").then((module) => ({ default: module.HousingScreen })));
+const MessengerScreen = React.lazy(() => import("./src/screens/MessengerScreen").then((module) => ({ default: module.MessengerScreen })));
+const ProfileScreen = React.lazy(() => import("./src/screens/ProfileScreen").then((module) => ({ default: module.ProfileScreen })));
+const StaffPickupScreen = React.lazy(() => import("./src/screens/StaffPickupScreen").then((module) => ({ default: module.StaffPickupScreen })));
+const ServicesScreen = React.lazy(() => import("./src/screens/ServicesScreen").then((module) => ({ default: module.ServicesScreen })));
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -156,9 +159,11 @@ const amenityToggles: Array<[keyof MobileHousingPostInput, string]> = [
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <FairFaresApp />
-    </SafeAreaProvider>
+    <AppErrorBoundary>
+      <SafeAreaProvider>
+        <FairFaresApp />
+      </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }
 
@@ -1114,7 +1119,7 @@ function FairFaresApp() {
     setActiveTab(tab);
   }
 
-  const screen = staffPickupOpen ? (
+  const selectedScreen = staffPickupOpen ? (
       <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
     ) : activeTab === "messenger" ? (
       <MessengerScreen
@@ -1294,6 +1299,15 @@ function FairFaresApp() {
         }}
       />
     );
+  const screen = (
+    <React.Suspense fallback={(
+      <View style={styles.lazyScreenFallback}>
+        <ActivityIndicator size="large" color={theme.colors.brand} />
+      </View>
+    )}>
+      {selectedScreen}
+    </React.Suspense>
+  );
 
   return (
     <NearbyRelayProvider user={data?.user || null}>
@@ -1318,7 +1332,7 @@ function FairFaresApp() {
       {launchVisible ? (
         <Animated.View pointerEvents="none" style={[styles.launchOverlay, { opacity: launchOpacity }]}>
           <Image
-            source={require("./assets/launch-cityscape-v2.png")}
+            source={require("./assets/launch-cityscape-v2.jpg")}
             style={styles.launchBackdrop}
             resizeMode="cover"
           />
@@ -1809,6 +1823,12 @@ function FairFaresApp() {
 }
 
 const styles = StyleSheet.create({
+  lazyScreenFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.bg,
+  },
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   appContent: { flex: 1 },
   launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.bg, overflow: "hidden" },

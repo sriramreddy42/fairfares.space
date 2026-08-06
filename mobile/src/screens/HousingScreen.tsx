@@ -2807,9 +2807,12 @@ export function HousingScreen({
             <View style={styles.freeServicesCopy}>
               <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
               <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
-              <Text style={styles.freeServicesTitle}>
-                List, search, rent, and carpool <Text style={styles.freeServicesTitleAccent}>FREE.</Text>
-              </Text>
+              <Text style={styles.freeServicesTitle}>Your Official Relocation Partner</Text>
+              <View style={styles.freeServicesPoweredBy}>
+                <Text style={styles.freeServicesPoweredLabel}>Powered by</Text>
+                <Image source={appAssets.chittiMascot} style={styles.freeServicesMascot} resizeMode="contain" />
+                <Image source={appAssets.chittiLettersGold} style={styles.freeServicesChitthiLogo} resizeMode="contain" />
+              </View>
               <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
             </View>
             <View style={styles.freeServicesIconRail}>
@@ -3153,7 +3156,7 @@ const styles = StyleSheet.create({
   festivalPosterAction: { flex: 1 },
   freeServicesHero: {
     width: "100%",
-    minHeight: 116,
+    minHeight: 142,
     padding: 16,
     overflow: "hidden",
     flexDirection: "row",
@@ -3175,7 +3178,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0
   },
-  freeServicesTitle: { color: "#06130d", fontSize: 21, lineHeight: 25, fontWeight: "800", marginTop: 8 },
+  freeServicesTitle: { color: "#06130d", fontSize: 17, lineHeight: 21, fontWeight: "800", marginTop: 7, maxWidth: 210 },
   freeServicesTitleAccent: { color: theme.colors.blue, fontWeight: "900" },
   freeServicesMeta: { color: "rgba(6,19,13,0.72)", fontSize: 12, lineHeight: 16, fontWeight: "600", marginTop: 4 },
   freeServicesIconRail: {
@@ -3185,6 +3188,21 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8
   },
+  freeServicesPoweredBy: {
+    alignSelf: "flex-start",
+    height: 30,
+    marginTop: 6,
+    paddingLeft: 9,
+    paddingRight: 7,
+    borderRadius: 15,
+    backgroundColor: "rgba(3,49,30,0.88)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4
+  },
+  freeServicesPoweredLabel: { color: "rgba(255,255,255,0.82)", fontSize: 7.5, lineHeight: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.35 },
+  freeServicesMascot: { width: 18, height: 25 },
+  freeServicesChitthiLogo: { width: 62, height: 22 },
   freeServicesIconBubble: {
     width: 38,
     height: 38,
@@ -3194,7 +3212,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   freeServicesIcon: { width: 27, height: 27 },
-  freeServicesLogo: { width: 94, height: 30, marginBottom: 4, marginLeft: -2 },
+  freeServicesLogo: { width: 88, height: 29, marginBottom: 4, marginLeft: -2 },
   topTabs: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
   topTab: { flex: 1, paddingVertical: 11, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.text },

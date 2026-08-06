@@ -22,6 +22,7 @@ import {
   getChatCommunities,
   getChatDeviceKeys,
   getChatEncryptedEnvelopes,
+  getChatEncryptedPreviewEnvelopes,
   getChatGroupMembers,
   getChatConversations,
   getChatMessages,
@@ -78,11 +79,11 @@ const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const wallpaperChoices = [
-  { id: "midnight", label: "Midnight", color: "#080d18", accent: "#163a6b" },
-  { id: "ocean", label: "Ocean", color: "#071d2b", accent: "#0d6685" },
-  { id: "forest", label: "Forest", color: "#0b211a", accent: "#206b50" },
-  { id: "plum", label: "Plum", color: "#241329", accent: "#75487f" },
-  { id: "sand", label: "Sand", color: "#30271f", accent: "#8a6c48" },
+  { id: "midnight", label: "Midnight", color: "#061713", accent: "#176B4A" },
+  { id: "ocean", label: "Ocean", color: "#071E24", accent: "#147D78" },
+  { id: "forest", label: "Forest", color: "#082019", accent: "#23815B" },
+  { id: "plum", label: "Plum", color: "#211723", accent: "#7B546F" },
+  { id: "sand", label: "Sand", color: "#17231E", accent: "#B78B4B" },
 ] as const;
 
 const emojiGroups = [
@@ -433,6 +434,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
+  const [hasMoreConversations, setHasMoreConversations] = useState((data?.chat.conversations || []).length >= 30);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
@@ -490,6 +493,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   useEffect(() => {
     setConversations(data?.chat.conversations || []);
+    setHasMoreConversations((data?.chat.conversations || []).length >= 30);
     setCommunities(data?.communities || []);
   }, [data?.chat.conversations, data?.communities]);
 
@@ -724,16 +728,20 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     if (!encrypted.length) return nextConversations;
     try {
       const identity = await ensureChatDeviceIdentity();
-      const resolved = await Promise.all(encrypted.map(async (conversation) => {
+      const payload = await getChatEncryptedPreviewEnvelopes(
+        encrypted.map((conversation) => Number(conversation.lastMessageId)),
+        identity.deviceId
+      );
+      const envelopesByMessage = new Map(payload.envelopes.map((envelope) => [Number(envelope.messageId), envelope]));
+      const resolved = encrypted.map((conversation) => {
         try {
-          const payload = await getChatEncryptedEnvelopes(conversation.id, identity.deviceId);
-          const envelope = payload.envelopes.find((item) => Number(item.messageId) === Number(conversation.lastMessageId));
+          const envelope = envelopesByMessage.get(Number(conversation.lastMessageId));
           if (!envelope) return [conversation.id, "New encrypted message"] as const;
           return [conversation.id, encryptedOverviewPreview(decryptEnvelope(envelope, identity))] as const;
         } catch {
           return [conversation.id, "New encrypted message"] as const;
         }
-      }));
+      });
       const previewByConversation = new Map(resolved);
       return nextConversations.map((conversation) => ({
         ...conversation,
@@ -1034,6 +1042,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         lastMessage: safeConversationPreview(conversation)
       }));
       setConversations(immediateConversations);
+      setHasMoreConversations(conversationPayload.length >= 30);
       setCommunities(nextCommunities);
       onUnreadCountChange?.(immediateConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
       // Encrypted preview decryption can require one envelope request per thread.
@@ -1050,6 +1059,35 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       if (showError) Alert.alert("Messenger failed", error instanceof Error ? error.message : "Could not load chats.");
     } finally {
       if (showLoader && messengerLoaderVersion.current === loaderVersion) setLoading(false);
+    }
+  }
+
+  async function loadMoreConversations() {
+    if (!signedIn || loadingMoreConversations || !hasMoreConversations) return;
+    setLoadingMoreConversations(true);
+    try {
+      const page = await getChatConversations(conversations.length);
+      const immediatePage = page.map((conversation) => ({
+        ...conversation,
+        lastMessage: safeConversationPreview(conversation)
+      }));
+      setConversations((current) => {
+        const byId = new Map(current.map((conversation) => [conversation.id, conversation]));
+        immediatePage.forEach((conversation) => byId.set(conversation.id, conversation));
+        return [...byId.values()];
+      });
+      setHasMoreConversations(page.length >= 30);
+      void decryptConversationPreviews(page).then((decrypted) => {
+        const previewById = new Map(decrypted.map((conversation) => [conversation.id, conversation.lastMessage]));
+        setConversations((current) => current.map((conversation) => ({
+          ...conversation,
+          lastMessage: previewById.get(conversation.id) || conversation.lastMessage
+        })));
+      });
+    } catch (error) {
+      Alert.alert("Could not load more letters", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setLoadingMoreConversations(false);
     }
   }
 
@@ -2687,6 +2725,12 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           </TouchableOpacity>
         ))}
 
+        {(tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
+          <TouchableOpacity style={styles.loadMoreLetters} onPress={() => void loadMoreConversations()} disabled={loadingMoreConversations}>
+            <Text style={styles.loadMoreLettersText}>{loadingMoreConversations ? "Opening more letters…" : "Load more letters"}</Text>
+          </TouchableOpacity>
+        ) : null}
+
         {signedIn && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length ? (
           <View style={styles.letterEmptyCard}>
             <Text style={styles.letterEmptyIcon}>📬</Text>
@@ -2746,11 +2790,11 @@ const styles = StyleSheet.create({
   threadScreenAndroid: { paddingBottom: 0 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
   wallpaperImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
-  wallpaperShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.43)" },
-  wallpaperGlow: { position: "absolute", width: 280, height: 280, borderRadius: 140, opacity: 0.26 },
+  wallpaperShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,16,12,0.30)" },
+  wallpaperGlow: { position: "absolute", width: 280, height: 280, borderRadius: 140, opacity: 0.18 },
   wallpaperGlowOne: { top: -90, right: -100 },
   wallpaperGlowTwo: { bottom: 90, left: -130 },
-  wallpaperPattern: { position: "absolute", top: "47%", left: -20, color: "rgba(255,255,255,0.07)", fontSize: 25, letterSpacing: 13, transform: [{ rotate: "-12deg" }] },
+  wallpaperPattern: { position: "absolute", top: "47%", left: -20, color: "rgba(231,211,167,0.055)", fontSize: 25, letterSpacing: 13, transform: [{ rotate: "-12deg" }] },
   header: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 6 },
   eyebrow: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
   title: { color: theme.colors.text, fontSize: 24, fontWeight: "700" },
@@ -2817,19 +2861,19 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   disabledButton: { opacity: 0.45 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
-  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(239,189,104,0.42)", backgroundColor: "rgba(2,28,22,0.92)", overflow: "hidden" },
+  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(214,169,95,0.38)", backgroundColor: "rgba(5,31,25,0.96)", overflow: "hidden" },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
-  backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: "#efbd68", left: 2 },
+  backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: "#D6A95F", left: 2 },
   backLineTop: { transform: [{ rotate: "-45deg" }], top: 6 },
   backLineBottom: { transform: [{ rotate: "45deg" }], bottom: 5 },
-  threadAvatar: { width: 43, height: 43, borderRadius: 22, backgroundColor: "#173e2b", borderWidth: 1, borderColor: "rgba(239,189,104,0.55)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  threadAvatar: { width: 43, height: 43, borderRadius: 22, backgroundColor: "#173E2E", borderWidth: 1, borderColor: "rgba(214,169,95,0.62)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   threadAvatarImage: { width: "100%", height: "100%" },
   threadAvatarText: { color: "#f6e0ae", fontWeight: "700", fontSize: 15 },
   activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: "#43c866", borderWidth: 2, borderColor: "#021c16" },
   threadHeaderCopy: { flex: 1 },
   threadHeaderTitle: { color: "#fff8e8", fontSize: 16.5, fontWeight: "600" },
-  threadHeaderMeta: { color: "#c9b985", fontSize: 11.5, fontWeight: "400", marginTop: 2 },
+  threadHeaderMeta: { color: "#C9C3AE", fontSize: 11.5, fontWeight: "400", marginTop: 2 },
   headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   messageSelectionBar: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, backgroundColor: "rgba(9,18,33,0.98)", zIndex: 12 },
   messageSelectionCancel: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
@@ -2847,15 +2891,15 @@ const styles = StyleSheet.create({
   nearbyOptionMeta: { color: "#6b7280", fontSize: 10, lineHeight: 14, marginTop: 2 },
   chatOptionText: { color: "#242424", fontSize: 14, fontWeight: "600" },
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
-  dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#efbd68" },
+  dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#D6A95F" },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2, flexGrow: 1, justifyContent: "flex-end" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
-  dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(3,43,31,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.45)" },
+  dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
-  dateDividerText: { color: "#ead8a6", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
+  dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
   smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
@@ -2863,11 +2907,11 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(239,189,104,0.34)", backgroundColor: "rgba(2,28,22,0.94)", overflow: "hidden" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(5,31,25,0.97)", overflow: "hidden" },
   composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
-  paperclipIcon: { color: "#efbd68", fontSize: 24 },
+  paperclipIcon: { color: "#D6A95F", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
-  composerEmojiText: { color: "#efbd68", fontSize: 25, lineHeight: 28 },
+  composerEmojiText: { color: "#D6A95F", fontSize: 25, lineHeight: 28 },
   emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   emojiSearchIcon: { color: "#62676e", fontSize: 24 },
@@ -2887,8 +2931,8 @@ const styles = StyleSheet.create({
   emojiCategoryTextActive: { color: "#222" },
   quickReplies: { flexGrow: 0, marginTop: 5 },
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
-  quickReply: { borderWidth: 1.5, borderColor: "#b88a3b", backgroundColor: "rgba(3,43,31,0.92)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
-  quickReplyText: { color: "#f1d18d", fontSize: 14, fontWeight: "600" },
+  quickReply: { borderWidth: 1, borderColor: "rgba(214,169,95,0.70)", backgroundColor: "rgba(8,43,34,0.94)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
+  quickReplyText: { color: "#E8D3A6", fontSize: 14, fontWeight: "600" },
   chittiTypingIndicator: { height: 28, marginLeft: 13, marginTop: 1, marginBottom: -2, alignSelf: "flex-start", maxWidth: "76%", flexDirection: "row", alignItems: "center", gap: 5, zIndex: 3 },
   chittiTypingMascotWrap: { width: 31, height: 34, marginTop: 5, overflow: "hidden" },
   chittiTypingMascot: { width: "100%", height: "100%" },
@@ -3000,9 +3044,9 @@ const styles = StyleSheet.create({
   pollOptionText: { color: "#263244", fontSize: 12, fontWeight: "800", flex: 1 },
   pollOptionTextSelected: { color: "#fff" },
   pollCount: { color: "#667085", fontSize: 11, fontWeight: "900", marginLeft: 8 },
-  composerInput: { flex: 1, color: "#fff8e8", backgroundColor: "rgba(7,49,36,0.98)", borderWidth: 1, borderColor: "rgba(239,189,104,0.42)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
-  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2d8b46", borderWidth: 1, borderColor: "#efbd68", alignItems: "center", justifyContent: "center" },
-  composerSendText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  composerInput: { flex: 1, color: "#18342A", backgroundColor: "#F3E9D5", borderWidth: 1, borderColor: "rgba(214,169,95,0.62)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
+  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center" },
+  composerSendText: { color: "#FFF9ED", fontSize: 18, fontWeight: "900" },
   sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },
   sendWingTop: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "32deg" }], top: 5 },
   sendWingBottom: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "-32deg" }], bottom: 5 },
@@ -3019,25 +3063,25 @@ const styles = StyleSheet.create({
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   messageSelectionCheck: { position: "absolute", top: -9, right: -9, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 5 },
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  myBubble: { backgroundColor: "#185c38", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.48)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
-  theirBubble: { backgroundColor: "#0c3025", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(239,189,104,0.30)", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
+  myBubble: { backgroundColor: "#176B4A", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(80,174,126,0.65)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
+  theirBubble: { backgroundColor: "#F2E8D3", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(183,145,78,0.42)", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
-  myBubbleTail: { right: -5, backgroundColor: "#185c38" },
-  theirBubbleTail: { left: -5, backgroundColor: "#0c3025" },
+  myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
+  theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-  senderName: { color: "#f6dda3", fontSize: 12, fontWeight: "600" },
-  senderTime: { color: "#b8aa84", fontSize: 11, fontWeight: "700" },
+  senderName: { color: "#255744", fontSize: 12, fontWeight: "600" },
+  senderTime: { color: "#786F5C", fontSize: 11, fontWeight: "700" },
   messageMenuRow: { height: 17, alignSelf: "stretch", alignItems: "flex-end", justifyContent: "center", marginTop: -3, marginBottom: 1 },
   messageMenuButton: { width: 30, height: 22, alignItems: "center", justifyContent: "center" },
   messageMenuText: { fontSize: 12, letterSpacing: 1, fontWeight: "700" },
-  myMessageMenuText: { color: "#718075" },
-  theirMessageMenuText: { color: "#7a8494" },
+  myMessageMenuText: { color: "#BFD6C8" },
+  theirMessageMenuText: { color: "#7B715E" },
   messageContext: { borderLeftWidth: 4, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, minWidth: 190 },
-  myMessageContext: { borderLeftColor: "#1689d8", backgroundColor: "rgba(255,255,255,0.50)" },
-  theirMessageContext: { borderLeftColor: "#0f9f8f", backgroundColor: "rgba(8,122,109,0.10)" },
+  myMessageContext: { borderLeftColor: "#D6A95F", backgroundColor: "rgba(246,237,218,0.92)" },
+  theirMessageContext: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
   messageContextType: { fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3 },
-  myMessageContextType: { color: "#0879bb" },
-  theirMessageContextType: { color: "#087f72" },
+  myMessageContextType: { color: "#7A5622" },
+  theirMessageContextType: { color: "#237158" },
   messageContextTitle: { fontSize: 13, lineHeight: 17, fontWeight: "600" },
   myMessageContextTitle: { color: "#17202d" },
   theirMessageContextTitle: { color: "#17202d" },
@@ -3046,12 +3090,12 @@ const styles = StyleSheet.create({
   theirMessageContextSubtitle: { color: "#596273" },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
-  myDiscoveredLink: { color: "#075985" },
-  theirDiscoveredLink: { color: "#1d4ed8" },
+  myDiscoveredLink: { color: "#DDEFE6" },
+  theirDiscoveredLink: { color: "#176A55" },
   websitePreviewCard: { minWidth: 210, maxWidth: 290, marginTop: 7, marginBottom: 3, borderRadius: 11, borderWidth: 1, padding: 9, flexDirection: "row", alignItems: "center", gap: 9 },
-  myWebsitePreviewCard: { backgroundColor: "rgba(255,255,255,0.48)", borderColor: "rgba(17,24,39,0.16)" },
-  theirWebsitePreviewCard: { backgroundColor: "#f2f5f8", borderColor: "#d7dee7" },
-  websitePreviewIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: "#1769e0", alignItems: "center", justifyContent: "center" },
+  myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
+  theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
+  websitePreviewIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: "#237458", alignItems: "center", justifyContent: "center" },
   websitePreviewIconText: { color: "#fff", fontSize: 18, fontWeight: "700" },
   websitePreviewCopy: { flex: 1, minWidth: 0 },
   websitePreviewHost: { color: "#526074", fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4 },
@@ -3067,12 +3111,12 @@ const styles = StyleSheet.create({
   collageMoreText: { color: "#fff", fontSize: 24, fontWeight: "700" },
   messageImageLoading: { alignItems: "center", justifyContent: "center" },
   messageImageLoadingText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
-  myBubbleText: { color: "#fffaf0" },
-  theirBubbleText: { color: "#fffaf0" },
+  myBubbleText: { color: "#FFF9ED" },
+  theirBubbleText: { color: "#18342A" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },
   bubbleMeta: { fontSize: 10.5, fontWeight: "400" },
-  myBubbleMeta: { color: "#d4c79f" },
-  theirBubbleMeta: { color: "#b8aa84" },
+  myBubbleMeta: { color: "#CDE0D5" },
+  theirBubbleMeta: { color: "#776E5B" },
   receiptMark: { color: "#66756a", fontSize: 12, lineHeight: 14, fontWeight: "700", letterSpacing: -2 },
   receiptSeen: { color: "#1689d8" },
   receiptFailed: { color: "#dc2626", letterSpacing: 0 },
@@ -3085,6 +3129,8 @@ const styles = StyleSheet.create({
   cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
   list: { flex: 1 },
   listContent: { paddingBottom: 88 },
+  loadMoreLetters: { alignSelf: "center", borderWidth: 1, borderColor: theme.colors.warning, borderRadius: theme.radius.pill, paddingHorizontal: 22, paddingVertical: 11, marginTop: 8, marginBottom: 12 },
+  loadMoreLettersText: { color: theme.colors.warning, fontWeight: "800", fontSize: 14 },
   chatRow: { minHeight: 78, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, paddingVertical: 11, marginBottom: 9, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.16)", borderRadius: 22, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
   chatRowUnread: { minHeight: 86, borderColor: "rgba(87,184,91,0.70)", backgroundColor: "rgba(5,42,28,0.84)" },
   communityRow: { backgroundColor: "rgba(8,25,24,0.82)" },

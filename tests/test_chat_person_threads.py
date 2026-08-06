@@ -153,16 +153,23 @@ class ChatPersonThreadsTest(unittest.TestCase):
                     )
 
         started = time.monotonic()
-        inbox = app.get_chat_conversations_for_user(current_user_id)
+        inbox = []
+        offset = 0
+        while True:
+            page = app.get_chat_conversations_for_user(current_user_id, limit=30, offset=offset)
+            inbox.extend(page)
+            if len(page) < 30:
+                break
+            offset += len(page)
         first_duration = time.monotonic() - started
         started = time.monotonic()
-        repeated_results = [app.get_chat_conversations_for_user(current_user_id) for _ in range(10)]
+        repeated_results = [app.get_chat_conversations_for_user(current_user_id, limit=30) for _ in range(10)]
         repeated_duration = time.monotonic() - started
 
         person_rows = [row for row in inbox if row.get("otherUserId")]
         self.assertEqual(len(person_rows), people_count)
         self.assertEqual(len({row["otherUserId"] for row in person_rows}), people_count)
-        self.assertTrue(all(len(repeated_inbox) == people_count for repeated_inbox in repeated_results))
+        self.assertTrue(all(len(repeated_inbox) == 30 for repeated_inbox in repeated_results))
         self.assertLess(first_duration, 10.0)
         self.assertLess(repeated_duration, 10.0)
         with app.db() as con:
@@ -174,8 +181,8 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(merged_threads, people_count * (duplicates_per_person - 1))
 
         with ThreadPoolExecutor(max_workers=8) as executor:
-            concurrent_results = list(executor.map(lambda _: app.get_chat_conversations_for_user(current_user_id), range(24)))
-        self.assertTrue(all(len(concurrent_inbox) == people_count for concurrent_inbox in concurrent_results))
+            concurrent_results = list(executor.map(lambda _: app.get_chat_conversations_for_user(current_user_id, limit=30), range(24)))
+        self.assertTrue(all(len(concurrent_inbox) == 30 for concurrent_inbox in concurrent_results))
 
     def test_listing_context_is_stored_on_the_individual_message(self):
         with app.db() as con:

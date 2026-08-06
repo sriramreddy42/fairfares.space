@@ -3,6 +3,16 @@ const path = require("path");
 
 const config = getDefaultConfig(__dirname);
 
+// Keep the native bundle compatible with Metro while deferring module
+// evaluation until a screen actually needs it. Web builds additionally split
+// dynamic imports into separate chunks.
+config.transformer.getTransformOptions = async () => ({
+  transform: {
+    experimentalImportSupport: false,
+    inlineRequires: true,
+  },
+});
+
 // @noble/hashes 1.8 publishes the React Native-safe crypto shim through the
 // `./crypto` export, while Metro can normalize its internal import to
 // `./crypto.js`. Keep package exports enabled and redirect only that missing
