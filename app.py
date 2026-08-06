@@ -18382,6 +18382,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         routes = {
             "/login": self.login,
             "/signup": self.signup,
+            "/auth/google": self.web_google_auth,
             "/forgot-password": self.forgot_password,
             "/reset-password": self.reset_password,
             "/bookings/modify": self.update_user_booking,
@@ -18525,7 +18526,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.not_found()
 
     def allow_post_from_same_origin(self, path: str) -> bool:
-        if path == "/stripe/webhook":
+        if path in {"/stripe/webhook", "/auth/google"}:
             return True
         origin = (self.headers.get("Origin") or "").strip()
         if origin:
@@ -21339,8 +21340,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone",
                 password_autocomplete="current-password",
+                google_signin=self.google_web_signin_markup(),
             )
         )
+
+    def google_web_signin_markup(self) -> str:
+        client_id = os.environ.get("GOOGLE_WEB_CLIENT_ID", "").strip()
+        if not client_id:
+            return '<p class="google-signin-unavailable">Google sign-in is not configured yet.</p>'
+        callback_url = f"{self.public_origin().rstrip('/')}/auth/google"
+        return f"""
+        <div class="google-signin" aria-label="Continue with Google">
+          <script src="https://accounts.google.com/gsi/client" async defer></script>
+          <div id="g_id_onload"
+               data-client_id="{escape(client_id)}"
+               data-login_uri="{escape(callback_url)}"
+               data-auto_prompt="false"></div>
+          <div class="g_id_signin"
+               data-type="standard"
+               data-shape="rectangular"
+               data-theme="outline"
+               data-text="continue_with"
+               data-size="large"
+               data-logo_alignment="left"
+               data-width="320"></div>
+        </div>
+        """
 
     def signup_page(self, error: str = "") -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -21377,8 +21402,73 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="email",
                 identifier_placeholder="Enter your email",
                 password_autocomplete="new-password",
+                google_signin=self.google_web_signin_markup(),
             )
         )
+
+    def web_google_auth(self) -> None:
+        form = self.read_form()
+        credential = form.get("credential", "").strip()
+        submitted_csrf = form.get("g_csrf_token", "").strip()
+        cookie_jar = cookies.SimpleCookie()
+        try:
+            cookie_jar.load(self.headers.get("Cookie", ""))
+        except cookies.CookieError:
+            cookie_jar = cookies.SimpleCookie()
+        csrf_cookie = cookie_jar.get("g_csrf_token")
+        cookie_csrf = csrf_cookie.value if csrf_cookie else ""
+        if not credential or not submitted_csrf or not cookie_csrf or not secrets.compare_digest(submitted_csrf, cookie_csrf):
+            self.login_page("Google sign-in could not be validated. Please try again.")
+            return
+        try:
+            claims = verify_google_identity_token(credential)
+        except RuntimeError as exc:
+            self.login_page(str(exc))
+            return
+        except ValueError as exc:
+            self.login_page(str(exc))
+            return
+        subject = clean_text_value(claims.get("sub"), 255)
+        email = normalize_email(claims.get("email") or "")
+        display_name = clean_text_value(claims.get("name"), 120) or (email.split("@", 1)[0] if email else "FairFares member")
+        if not subject or not email:
+            self.login_page("Google did not provide the account information FairFares needs.")
+            return
+        try:
+            with db() as con:
+                identity = con.execute(
+                    "SELECT user_id FROM auth_identities WHERE provider = 'google' AND provider_subject = ?",
+                    (subject,),
+                ).fetchone()
+                user = con.execute("SELECT * FROM users WHERE id = ?", (int(identity["user_id"]),)).fetchone() if identity else None
+                if not user:
+                    existing = find_user_by_email(con, email)
+                    if existing:
+                        user_id = int(existing["id"])
+                        if int(row_value(existing, "guest_account") or 0):
+                            con.execute(
+                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                (display_name, user_id),
+                            )
+                    else:
+                        con.execute(
+                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)",
+                            (display_name, email, hash_password(secrets.token_urlsafe(48))),
+                        )
+                        user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                    con.execute(
+                        "INSERT INTO auth_identities (user_id, provider, provider_subject, provider_email) VALUES (?, 'google', ?, ?)",
+                        (user_id, subject, email),
+                    )
+                else:
+                    user_id = int(user["id"])
+                    con.execute(
+                        "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = 'google' AND provider_subject = ?",
+                        (email, subject),
+                    )
+            self.set_session(user_id)
+        except sqlite3.IntegrityError:
+            self.login_page("This Google account is already linked to another FairFares account.")
 
     def login(self) -> None:
         form = self.read_form()
@@ -21397,6 +21487,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 next_field="", name_field="", identifier_label="Email or Phone Number",
                 identifier_type="text", identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone", password_autocomplete="current-password",
+                google_signin=self.google_web_signin_markup(),
             )
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -29644,10 +29735,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "form-action 'self' https://checkout.stripe.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
+            "form-action 'self' https://checkout.stripe.com https://accounts.google.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://accounts.google.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
             "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "
-            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com"
+            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://accounts.google.com"
         )
         if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://"):
             self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

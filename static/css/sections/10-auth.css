@@ -92,6 +92,24 @@
   min-height: 48px;
   width: 100%;
 }
+.google-signin {
+  display: grid;
+  justify-items: center;
+  min-height: 48px;
+  width: 100%;
+}
+.google-signin .g_id_signin {
+  width: 100%;
+}
+.google-signin-unavailable {
+  background: #f4f6fa;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #596170;
+  margin: 0;
+  padding: 13px 16px;
+  text-align: center;
+}
 .signup-box {
   background: #f4f6fa;
   border-radius: 8px;
