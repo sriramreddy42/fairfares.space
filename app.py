@@ -18631,12 +18631,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("DELETE FROM sessions WHERE token = ?", (token,))
             return user
 
-    def send_html(self, body: bytes, status: int = 200) -> None:
+    def send_html(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -21323,6 +21325,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         next_path = self.safe_next_path(next_path or query.get("next", [""])[0])
         next_field = f'<input type="hidden" name="next" value="{escape(next_path)}">' if next_path else ""
+        google_csrf = secrets.token_urlsafe(32)
+        secure = "; Secure" if self.public_origin().startswith("https://") else ""
         self.send_html(
             render_template(
                 "auth.html",
@@ -21340,22 +21344,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone",
                 password_autocomplete="current-password",
-                google_signin=self.google_web_signin_markup(),
-            )
+                google_signin=self.google_web_signin_markup(google_csrf),
+            ),
+            headers={
+                "Set-Cookie": f"fairfares_google_csrf={google_csrf}; HttpOnly; SameSite=Lax; Path=/auth/google; Max-Age=600{secure}"
+            },
         )
 
-    def google_web_signin_markup(self) -> str:
+    def google_web_signin_markup(self, csrf_token: str = "") -> str:
         client_id = os.environ.get("GOOGLE_WEB_CLIENT_ID", "").strip()
         if not client_id:
             return '<p class="google-signin-unavailable">Google sign-in is not configured yet.</p>'
-        callback_url = f"{self.public_origin().rstrip('/')}/auth/google"
         return f"""
         <div class="google-signin" aria-label="Continue with Google">
+          <script>
+            function fairfaresGoogleSignIn(response) {{
+              if (!response || !response.credential) return;
+              const form = document.createElement("form");
+              form.method = "POST";
+              form.action = "/auth/google";
+              const fields = {{credential: response.credential, fairfares_google_csrf: "{escape(csrf_token)}"}};
+              Object.entries(fields).forEach(([name, value]) => {{
+                const input = document.createElement("input");
+                input.type = "hidden";
+                input.name = name;
+                input.value = value;
+                form.appendChild(input);
+              }});
+              document.body.appendChild(form);
+              form.submit();
+            }}
+          </script>
           <script src="https://accounts.google.com/gsi/client" async defer></script>
           <div id="g_id_onload"
                data-client_id="{escape(client_id)}"
-               data-login_uri="{escape(callback_url)}"
-               data-ux_mode="redirect"
+               data-callback="fairfaresGoogleSignIn"
+               data-ux_mode="popup"
                data-auto_prompt="false"></div>
           <div class="g_id_signin"
                data-type="standard"
@@ -21386,6 +21410,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <input name="referral_code" autocomplete="off" placeholder="Friend referral code" value="%s">
         </label>
         """ % escape(referral_prefill)
+        google_csrf = secrets.token_urlsafe(32)
+        secure = "; Secure" if self.public_origin().startswith("https://") else ""
         self.send_html(
             render_template(
                 "auth.html",
@@ -21403,14 +21429,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="email",
                 identifier_placeholder="Enter your email",
                 password_autocomplete="new-password",
-                google_signin=self.google_web_signin_markup(),
-            )
+                google_signin=self.google_web_signin_markup(google_csrf),
+            ),
+            headers={
+                "Set-Cookie": f"fairfares_google_csrf={google_csrf}; HttpOnly; SameSite=Lax; Path=/auth/google; Max-Age=600{secure}"
+            },
         )
 
     def web_google_auth(self) -> None:
         form = self.read_form()
         credential = form.get("credential", "").strip()
         submitted_csrf = form.get("g_csrf_token", "").strip()
+        submitted_fairfares_csrf = form.get("fairfares_google_csrf", "").strip()
         cookie_jar = cookies.SimpleCookie()
         try:
             cookie_jar.load(self.headers.get("Cookie", ""))
@@ -21418,7 +21448,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             cookie_jar = cookies.SimpleCookie()
         csrf_cookie = cookie_jar.get("g_csrf_token")
         cookie_csrf = csrf_cookie.value if csrf_cookie else ""
-        if not credential or not submitted_csrf or not cookie_csrf or not secrets.compare_digest(submitted_csrf, cookie_csrf):
+        fairfares_csrf_cookie = cookie_jar.get("fairfares_google_csrf")
+        cookie_fairfares_csrf = fairfares_csrf_cookie.value if fairfares_csrf_cookie else ""
+        google_csrf_valid = bool(
+            submitted_csrf
+            and cookie_csrf
+            and secrets.compare_digest(submitted_csrf, cookie_csrf)
+        )
+        fairfares_csrf_valid = bool(
+            submitted_fairfares_csrf
+            and cookie_fairfares_csrf
+            and secrets.compare_digest(submitted_fairfares_csrf, cookie_fairfares_csrf)
+        )
+        if not credential or not (google_csrf_valid or fairfares_csrf_valid):
             self.login_page("Google sign-in could not be validated. Please try again.")
             return
         try:
@@ -21478,6 +21520,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         rate_key = login_rate_limit_key(self.client_ip(), identifier)
         retry_after = login_retry_after(rate_key)
         if retry_after:
+            google_csrf = secrets.token_urlsafe(32)
+            secure = "; Secure" if self.public_origin().startswith("https://") else ""
             self.send_response(429)
             self.send_header("Retry-After", str(retry_after))
             body = render_template(
@@ -21488,7 +21532,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 next_field="", name_field="", identifier_label="Email or Phone Number",
                 identifier_type="text", identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone", password_autocomplete="current-password",
-                google_signin=self.google_web_signin_markup(),
+                google_signin=self.google_web_signin_markup(google_csrf),
+            )
+            self.send_header(
+                "Set-Cookie",
+                f"fairfares_google_csrf={google_csrf}; HttpOnly; SameSite=Lax; Path=/auth/google; Max-Age=600{secure}",
             )
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

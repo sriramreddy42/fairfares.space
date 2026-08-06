@@ -81,11 +81,30 @@ class WebGoogleAuthTest(unittest.TestCase):
                 body = response.read().decode("utf-8")
             self.assertIn("https://accounts.google.com/gsi/client", body)
             self.assertIn("web-client.apps.googleusercontent.com", body)
-            self.assertIn("https://www.fairfare.space/auth/google", body)
-            self.assertIn('data-ux_mode="redirect"', body)
+            self.assertIn('data-callback="fairfaresGoogleSignIn"', body)
+            self.assertIn('data-ux_mode="popup"', body)
+            self.assertNotIn("data-login_uri", body)
             self.assertIn('class="g_id_signin"', body)
+            self.assertIn("fairfares_google_csrf=", response.headers["Set-Cookie"])
             self.assertNotIn("Continue with Apple", body)
             self.assertNotIn("Continue with Facebook", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_signup_page_uses_same_origin_google_callback_and_csrf_cookie(self):
+        server, thread = self.start_server()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/signup", timeout=5
+            ) as response:
+                body = response.read().decode("utf-8")
+                set_cookie = response.headers["Set-Cookie"]
+            self.assertIn('data-callback="fairfaresGoogleSignIn"', body)
+            self.assertIn('data-ux_mode="popup"', body)
+            self.assertIn("fairfares_google_csrf=", set_cookie)
+            self.assertIn("Path=/auth/google", set_cookie)
         finally:
             server.shutdown()
             server.server_close()
@@ -134,6 +153,40 @@ class WebGoogleAuthTest(unittest.TestCase):
             with app.db() as con:
                 count = con.execute("SELECT COUNT(*) AS count FROM auth_identities").fetchone()["count"]
             self.assertEqual(int(count), 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_google_callback_accepts_same_origin_fairfares_csrf(self):
+        claims = {
+            "sub": "google-web-member-callback",
+            "email": "callback.member@example.com",
+            "email_verified": True,
+            "name": "Callback Member",
+        }
+        server, thread = self.start_server()
+        try:
+            payload = urllib.parse.urlencode(
+                {
+                    "credential": "verified-google-token",
+                    "fairfares_google_csrf": "fairfares-csrf",
+                }
+            ).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/auth/google",
+                data=payload,
+                method="POST",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Cookie": "fairfares_google_csrf=fairfares-csrf",
+                },
+            )
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                with self.assertRaises(urllib.error.HTTPError) as redirect:
+                    urllib.request.build_opener(NoRedirect()).open(request, timeout=5)
+            self.assertEqual(redirect.exception.code, 303)
+            self.assertEqual(redirect.exception.headers["Location"], "/dashboard")
         finally:
             server.shutdown()
             server.server_close()
