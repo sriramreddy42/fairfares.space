@@ -2688,7 +2688,7 @@ export function HousingScreen({
           onPress={startRideOfferListing}
           activeOpacity={0.86}
         >
-          <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="cover" />
+          <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
         </TouchableOpacity>
 
         <View style={styles.rideServiceDetail}>
@@ -4235,11 +4235,12 @@ const styles = StyleSheet.create({
   rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
   rideListBannerButton: {
-    height: 96,
+    height: 112,
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)"
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#f8f7f4"
   },
   rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
