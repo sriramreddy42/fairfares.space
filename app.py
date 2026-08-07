@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import io
+import gzip
 import zipfile
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -5826,6 +5827,11 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user_status_dates ON bookings(user_id, booking_status, pickup_date)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_car_status_dates ON bookings(car_id, booking_status, pickup_date, dropoff_date)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_feedback_page_created ON app_feedback(page, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_testimonials_status_city_published ON testimonials(status, city COLLATE NOCASE, published_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_posts_visibility_created ON workspace_posts(visibility, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_comments_post_created ON workspace_post_comments(post_id, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_reactions_post_user ON workspace_post_reactions(post_id, user_id, id DESC)")
         con.execute(
             """
             UPDATE chat_conversations
@@ -6125,10 +6131,10 @@ def init_db() -> None:
                 """,
                 DEFAULT_PUBLIC_CARS,
             )
-        con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-sedan-denver-rental.png' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png', '/static/img/toyota-corolla-denver-rental.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-sedan-denver-rental.png' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png', '/static/img/nissan-sentra-denver-rental.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/hyundai-kona-electric-suv-denver-rental.png' WHERE name = 'Hyundai Kona' AND image_url IN ('', '/static/img/car-hyundai-kona.png', '/static/img/hyundai-kona-denver-suv-rental.png')")
-        con.execute("UPDATE cars SET image_url = '/static/img/honda-civic-sedan-denver-rental.png' WHERE name = 'Honda Civic' AND image_url IN ('', '/static/img/car-honda-civic.png', '/static/img/honda-civic-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/toyota-corolla-sedan-denver-rental.webp' WHERE name = 'Toyota Corolla' AND image_url IN ('', '/static/img/car-toyota-corolla.png', '/static/img/toyota-corolla-denver-rental.png', '/static/img/toyota-corolla-sedan-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/nissan-sentra-sedan-denver-rental.webp' WHERE name = 'Nissan Sentra' AND image_url IN ('', '/static/img/car-nissan-sentra.png', '/static/img/nissan-sentra-denver-rental.png', '/static/img/nissan-sentra-sedan-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/hyundai-kona-electric-suv-denver-rental.webp' WHERE name = 'Hyundai Kona' AND image_url IN ('', '/static/img/car-hyundai-kona.png', '/static/img/hyundai-kona-denver-suv-rental.png', '/static/img/hyundai-kona-electric-suv-denver-rental.png')")
+        con.execute("UPDATE cars SET image_url = '/static/img/honda-civic-sedan-denver-rental.webp' WHERE name = 'Honda Civic' AND image_url IN ('', '/static/img/car-honda-civic.png', '/static/img/honda-civic-denver-rental.png', '/static/img/honda-civic-sedan-denver-rental.png')")
         con.executescript(
             """
             UPDATE cars SET brand = 'Toyota', model = 'Corolla', year = COALESCE(year, 2025), type = 'Sedan', fuel_type = 'Gasoline'
@@ -6250,10 +6256,10 @@ def get_services() -> list[sqlite3.Row]:
 
 
 DEFAULT_PUBLIC_CARS = [
-    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-sedan-denver-rental.png", "AVAILABLE", 1),
-    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-sedan-denver-rental.png", "AVAILABLE", 2),
-    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-sedan-denver-rental.png", "AVAILABLE", 3),
-    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-electric-suv-denver-rental.png", "AVAILABLE", 4),
+    ("Toyota Corolla", "Toyota", "Corolla", 2025, "Economy", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 29.99, 209.93, "Great Price", "white", "Free Cancellation|Unlimited Mileage|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/toyota-corolla-sedan-denver-rental.webp", "AVAILABLE", 1),
+    ("Nissan Sentra", "Nissan", "Sentra", 2025, "Compact", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 34.99, 244.93, "Student Deal", "charcoal", "Free Cancellation|Unlimited Mileage|Hybrid Option", "Denver International Airport (DEN)", "/static/img/nissan-sentra-sedan-denver-rental.webp", "AVAILABLE", 2),
+    ("Honda Civic", "Honda", "Civic", 2025, "Midsize", "Sedan", "Gasoline", 5, 2, 4, "Automatic", 39.99, 279.93, "Popular", "silver", "Unlimited Mileage|Safe & Reliable|Fuel Efficient", "Denver International Airport (DEN)", "/static/img/honda-civic-sedan-denver-rental.webp", "AVAILABLE", 3),
+    ("Hyundai Kona", "Hyundai", "Kona", 2025, "SUV", "SUV", "Electric", 5, 3, 4, "Automatic", 46.99, 328.93, "Low Deposit", "blue", "Free Cancellation|Electric Option|24/7 Support", "Denver International Airport (DEN)", "/static/img/hyundai-kona-electric-suv-denver-rental.webp", "AVAILABLE", 4),
 ]
 
 
@@ -9825,7 +9831,8 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def get_mobile_housing_testimonials(limit: int = 6) -> list[dict[str, object]]:
+def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict[str, object]]:
+    city_name = (city or "").split(",", 1)[0].strip()
     with db() as con:
         rows = con.execute(
             """
@@ -9836,11 +9843,15 @@ def get_mobile_housing_testimonials(limit: int = 6) -> list[dict[str, object]]:
             WHERE testimonials.status = 'PUBLISHED'
               AND testimonials.rating BETWEEN 4 AND 5
               AND LENGTH(TRIM(testimonials.message)) >= 8
-            ORDER BY COALESCE(testimonials.published_at, testimonials.created_at) DESC,
+            ORDER BY CASE
+                       WHEN ? != '' AND testimonials.city LIKE ? COLLATE NOCASE THEN 0
+                       ELSE 1
+                     END,
+                     COALESCE(testimonials.published_at, testimonials.created_at) DESC,
                      testimonials.id DESC
             LIMIT ?
             """,
-            (max(1, min(int(limit), 12)),),
+            (city_name, f"{city_name}%", max(1, min(int(limit), 12))),
         ).fetchall()
     testimonials: list[dict[str, object]] = []
     for row in rows:
@@ -17501,8 +17512,8 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = html_text.replace("$favicon_links", favicon_links)
     if favicon_links not in html_text:
         html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
-    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.js?v={ASSET_VERSION}")
-    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.js?v=explorer-{ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.min.js?v={ASSET_VERSION}")
+    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.min.js?v=explorer-{ASSET_VERSION}")
     html_text = inject_social_meta(html_text, template_name)
     html_text = inject_structured_data(html_text, template_name)
     if should_track_google_analytics(template_name):
@@ -28467,7 +28478,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
                     "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
-                "testimonials": get_mobile_housing_testimonials(),
+                "testimonials": get_mobile_housing_testimonials(city=city),
             }
         )
 
@@ -29949,21 +29960,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def serve_static(self, path: str) -> None:
         requested = (BASE_DIR / path.lstrip("/")).resolve()
-        if not requested.exists() and requested.name.endswith((".min.css", ".min.js")):
-            source_name = requested.name.replace(".min.css", ".css").replace(".min.js", ".js")
-            source = requested.with_name(source_name)
-            if source.is_relative_to(STATIC_DIR.resolve()) and source.exists():
-                raw = source.read_text(encoding="utf-8")
-                is_css = requested.name.endswith(".min.css")
-                body_text = minify_css(raw) if is_css else minify_js(raw)
-                body = body_text.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/css; charset=utf-8" if is_css else "application/javascript; charset=utf-8")
-                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
+        source_name = requested.name.replace(".min.css", ".css").replace(".min.js", ".js")
+        source = requested.with_name(source_name)
+        generated_minified_asset = (
+            requested.name.endswith((".min.css", ".min.js"))
+            and source.is_relative_to(STATIC_DIR.resolve())
+            and source.exists()
+            and (not requested.exists() or source.stat().st_mtime > requested.stat().st_mtime)
+        )
+        if generated_minified_asset:
+            raw = source.read_text(encoding="utf-8")
+            is_css = requested.name.endswith(".min.css")
+            body_text = minify_css(raw) if is_css else minify_js(raw)
+            body = body_text.encode("utf-8")
+            use_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+            if use_gzip:
+                body = gzip.compress(body, compresslevel=6)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/css; charset=utf-8" if is_css else "application/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("Vary", "Accept-Encoding")
+            if use_gzip:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not requested.is_relative_to(STATIC_DIR.resolve()) or not requested.exists():
             self.not_found()
             return
