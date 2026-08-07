@@ -11,7 +11,8 @@ import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, 
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
+import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
+import { appAssets } from "./src/assets";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
@@ -40,6 +41,15 @@ const GOOGLE_AUTH_CONFIGURED = Platform.select({
   android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured"),
   default: !GOOGLE_WEB_CLIENT_ID.includes("not-configured"),
 }) ?? false;
+
+const STATIC_IMAGE_SOURCES = [
+  ...Object.entries(appAssets)
+    .filter(([key]) => key !== "festivals")
+    .map(([, source]) => source),
+  ...Object.values(appAssets.festivals),
+  require("./assets/launch-cityscape-v2.jpg"),
+  require("./assets/launch-car-mobile.png")
+];
 
 const DashboardScreen = React.lazy(() => import("./src/screens/DashboardScreen").then((module) => ({ default: module.DashboardScreen })));
 const HousingScreen = React.lazy(() => import("./src/screens/HousingScreen").then((module) => ({ default: module.HousingScreen })));
@@ -376,6 +386,30 @@ function FairFaresApp() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      const metroAssetUris = STATIC_IMAGE_SOURCES
+        .map((source) => Image.resolveAssetSource(source)?.uri || "")
+        .filter((uri) => /^https?:\/\//i.test(uri));
+      void Promise.allSettled([...new Set(metroAssetUris)].map((uri) => Image.prefetch(uri)));
+    });
+    return () => task.cancel();
+  }, []);
+
+  useEffect(() => {
+    const firstVisibleImages = [
+      ...(data?.housing || []).slice(0, 12).flatMap((post) => post.images?.length ? post.images.slice(0, 2) : post.imageUrl ? [post.imageUrl] : []),
+      ...cars.slice(0, 12).map((car) => car.image_url)
+    ]
+      .map((value) => absoluteAssetUrl(String(value || "")))
+      .filter((uri) => /^https?:\/\//i.test(uri));
+    if (!firstVisibleImages.length) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void Promise.allSettled([...new Set(firstVisibleImages)].map((uri) => Image.prefetch(uri)));
+    });
+    return () => task.cancel();
+  }, [data?.housing, cars]);
 
   useEffect(() => {
     if (data?.user) void enableMobileNotifications(true);
