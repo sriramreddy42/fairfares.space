@@ -1731,6 +1731,19 @@ def configured_google_client_ids() -> set[str]:
     return {value for value in values if value}
 
 
+def configured_apple_client_ids() -> set[str]:
+    # FairFares has both an Expo native app and the older Capacitor shell.
+    # Keep those owned bundle IDs valid even when a deployment still carries a
+    # stale APPLE_SIGN_IN_CLIENT_IDS override from one of the two builds.
+    allowed = {"com.fairfares.mobile", "com.fairfares.app"}
+    allowed.update(
+        value
+        for value in re.split(r"[\s,]+", os.environ.get("APPLE_SIGN_IN_CLIENT_IDS", "").strip())
+        if value
+    )
+    return allowed
+
+
 def verify_google_identity_token(identity_token: str) -> dict[str, object]:
     client_ids = configured_google_client_ids()
     if not client_ids:
@@ -1771,7 +1784,7 @@ def verify_apple_identity_token(identity_token: str) -> dict[str, object]:
         public_key.verify(signature, f"{pieces[0]}.{pieces[1]}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
     except (InvalidSignature, KeyError, StopIteration, ValueError, urllib.error.URLError) as exc:
         raise ValueError("Apple could not verify this sign-in.") from exc
-    allowed = {value for value in re.split(r"[\s,]+", os.environ.get("APPLE_SIGN_IN_CLIENT_IDS", "com.fairfares.mobile").strip()) if value}
+    allowed = configured_apple_client_ids()
     if claims.get("iss") != "https://appleid.apple.com" or str(claims.get("aud") or "") not in allowed:
         raise ValueError("Apple sign-in was issued for another app.")
     if int(claims.get("exp") or 0) <= int(time.time()):

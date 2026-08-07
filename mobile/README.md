@@ -37,6 +37,13 @@ The backend must allow the same Google client IDs and have Twilio Verify
 credentials. See the repository `.env.example` for the Render variable names.
 Apple sign-in uses the `com.fairfares.mobile` bundle identifier.
 
+For production, set all three `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID` values in the
+EAS `production` environment before building. Also set the matching
+`GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`, and `GOOGLE_WEB_CLIENT_ID`
+values on Render. Set `APPLE_SIGN_IN_CLIENT_IDS=com.fairfares.mobile,com.fairfares.app`
+on Render. Public Expo variables are compiled into the binary, so changing only
+Render variables will not enable Google sign-in in an already-built app.
+
 Changing OAuth configuration, enabling Apple sign-in, or adding these native
 modules requires a new iOS and Android build; an over-the-air JavaScript update
 is not sufficient.
