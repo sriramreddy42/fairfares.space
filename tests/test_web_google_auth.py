@@ -86,6 +86,10 @@ class WebGoogleAuthTest(unittest.TestCase):
             self.assertNotIn("data-login_uri", body)
             self.assertIn('class="g_id_signin"', body)
             self.assertIn("fairfares_google_csrf=", response.headers["Set-Cookie"])
+            self.assertEqual(
+                response.headers["Cross-Origin-Opener-Policy"],
+                "same-origin-allow-popups",
+            )
             self.assertNotIn("Continue with Apple", body)
             self.assertNotIn("Continue with Facebook", body)
         finally:

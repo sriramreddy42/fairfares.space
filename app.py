@@ -29780,7 +29780,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(self), payment=(self)")
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        # Google Identity Services uses a cross-origin popup and returns the
+        # credential to this window with postMessage. Strict `same-origin`
+        # isolates that popup, leaving users stranded on /gsi/transform.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
