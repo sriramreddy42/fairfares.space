@@ -11,7 +11,7 @@ import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, 
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { bookRentalCar, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, sendSocialPhoneCode, setAuthToken, startRentalCheckout, verifySocialPhoneCode } from "./src/api/client";
+import { bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
@@ -207,8 +207,6 @@ function FairFaresApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [socialContinuation, setSocialContinuation] = useState("");
-  const [socialPhoneCode, setSocialPhoneCode] = useState("");
-  const [socialCodeSent, setSocialCodeSent] = useState(false);
   const [, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
     androidClientId: GOOGLE_ANDROID_CLIENT_ID,
@@ -1062,8 +1060,6 @@ function FairFaresApp() {
     if (!user) return;
     setData((current) => current ? { ...current, user } : current);
     setSocialContinuation("");
-    setSocialPhoneCode("");
-    setSocialCodeSent(false);
     setLoginOpen(false);
     setAuthMessage("");
     if (pendingListingAfterLogin) {
@@ -1074,10 +1070,8 @@ function FairFaresApp() {
   }
 
   function acceptSocialAuth(payload: MobileSocialAuthPayload) {
-    if (payload.phoneVerificationRequired && payload.continuationToken) {
+    if (payload.phoneRequired && payload.continuationToken) {
       setSocialContinuation(payload.continuationToken);
-      setSocialPhoneCode("");
-      setSocialCodeSent(false);
       setLoginOpen(false);
       setAuthMessage("");
       return;
@@ -1130,7 +1124,7 @@ function FairFaresApp() {
     }
   }
 
-  async function sendSocialOtp() {
+  async function saveSocialPhone() {
     if (authBusy || !socialContinuation) return;
     const nationalPhone = signupPhone.replace(/\D/g, "").replace(/^0+/, "");
     const e164Phone = `${signupCallingCode}${nationalPhone}`;
@@ -1139,32 +1133,12 @@ function FairFaresApp() {
       return;
     }
     setAuthBusy(true);
-    setAuthMessage("Sending verification code...");
+    setAuthMessage("Saving phone number...");
     try {
-      const payload = await sendSocialPhoneCode(socialContinuation, nationalPhone, signupCallingCode);
-      setSocialCodeSent(true);
-      setAuthMessage(payload.message || "Verification code sent.");
-    } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Could not send the verification code.");
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  async function verifySocialOtp() {
-    if (authBusy || !socialContinuation) return;
-    const cleanCode = socialPhoneCode.replace(/\D/g, "");
-    if (cleanCode.length < 4) {
-      setAuthMessage("Enter the verification code sent to your phone.");
-      return;
-    }
-    setAuthBusy(true);
-    setAuthMessage("Verifying phone...");
-    try {
-      const payload = await verifySocialPhoneCode(socialContinuation, cleanCode);
+      const payload = await completeSocialPhone(socialContinuation, nationalPhone, signupCallingCode);
       completeSocialLogin(payload.user);
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Phone verification failed.");
+      setAuthMessage(error instanceof Error ? error.message : "Could not save the phone number.");
     } finally {
       setAuthBusy(false);
     }
@@ -1685,70 +1659,47 @@ function FairFaresApp() {
         statusBarTranslucent
         onRequestClose={() => {
           setSocialContinuation("");
-          setSocialPhoneCode("");
-          setSocialCodeSent(false);
           setAuthMessage("");
         }}
       >
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={styles.socialPhoneCard}>
-            <Text style={styles.modalTitle}>Verify your mobile number</Text>
-            <Text style={styles.modalCopy}>Google or Apple verified your identity. FairFares also verifies a mobile number for secure account recovery and accurate Chitthi contact matching.</Text>
-            {!socialCodeSent ? (
-              <View style={styles.signupPhoneRow}>
-                <TouchableOpacity
-                  style={styles.signupCallingCode}
-                  onPress={() => setSignupCountryOpen(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Country calling code ${signupCallingCode}`}
-                >
-                  <Text style={styles.signupCallingCodeText}>{signupCallingCode}</Text>
-                  <Text style={styles.signupCallingCodeChevron}>⌄</Text>
-                </TouchableOpacity>
-                <TextInput
-                  value={signupPhone}
-                  onChangeText={setSignupPhone}
-                  placeholder="Mobile number"
-                  placeholderTextColor={theme.colors.muted}
-                  keyboardType="phone-pad"
-                  autoComplete="tel-national"
-                  accessibilityLabel="Mobile number without country code"
-                  style={[styles.input, styles.signupPhoneInput]}
-                />
-              </View>
-            ) : (
+            <Text style={styles.modalTitle}>Add your mobile number</Text>
+            <Text style={styles.modalCopy}>Google or Apple verified your identity. Add a mobile number for booking updates and account contact. No verification code will be sent.</Text>
+            <View style={styles.signupPhoneRow}>
+              <TouchableOpacity
+                style={styles.signupCallingCode}
+                onPress={() => setSignupCountryOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel={`Country calling code ${signupCallingCode}`}
+              >
+                <Text style={styles.signupCallingCodeText}>{signupCallingCode}</Text>
+                <Text style={styles.signupCallingCodeChevron}>⌄</Text>
+              </TouchableOpacity>
               <TextInput
-                value={socialPhoneCode}
-                onChangeText={(value) => setSocialPhoneCode(value.replace(/\D/g, "").slice(0, 10))}
-                placeholder="Verification code"
+                value={signupPhone}
+                onChangeText={setSignupPhone}
+                placeholder="Mobile number"
                 placeholderTextColor={theme.colors.muted}
-                keyboardType="number-pad"
-                autoComplete="one-time-code"
-                textContentType="oneTimeCode"
-                accessibilityLabel="Phone verification code"
-                style={styles.input}
+                keyboardType="phone-pad"
+                autoComplete="tel-national"
+                accessibilityLabel="Mobile number without country code"
+                style={[styles.input, styles.signupPhoneInput]}
               />
-            )}
+            </View>
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
             <TouchableOpacity
               style={[styles.primaryButton, authBusy && styles.disabledButton]}
-              onPress={socialCodeSent ? verifySocialOtp : sendSocialOtp}
+              onPress={saveSocialPhone}
               disabled={authBusy}
               accessibilityRole="button"
             >
-              <Text style={styles.primaryButtonText}>{authBusy ? "Please wait..." : socialCodeSent ? "Verify and continue" : "Send verification code"}</Text>
+              <Text style={styles.primaryButtonText}>{authBusy ? "Please wait..." : "Save and continue"}</Text>
             </TouchableOpacity>
-            {socialCodeSent ? (
-              <TouchableOpacity style={styles.secondaryButton} onPress={() => { setSocialCodeSent(false); setSocialPhoneCode(""); setAuthMessage(""); }}>
-                <Text style={styles.secondaryButtonText}>Change phone number</Text>
-              </TouchableOpacity>
-            ) : null}
             <TouchableOpacity
               style={styles.secondaryButton}
               onPress={() => {
                 setSocialContinuation("");
-                setSocialPhoneCode("");
-                setSocialCodeSent(false);
                 setAuthMessage("");
                 setLoginOpen(true);
               }}

@@ -1036,7 +1036,7 @@ export type MobileSocialAuthPayload = {
   ok: boolean;
   token?: string;
   user?: BootstrapPayload["user"];
-  phoneVerificationRequired?: boolean;
+  phoneRequired?: boolean;
   continuationToken?: string;
 };
 
@@ -1050,19 +1050,11 @@ export async function mobileSocialLogin(provider: "google" | "apple", identityTo
   return payload;
 }
 
-export async function sendSocialPhoneCode(continuationToken: string, phone: string, countryCode: string) {
-  return request<{ ok: boolean; message: string }>("/api/mobile/auth/phone/send", {
+export async function completeSocialPhone(continuationToken: string, phone: string, countryCode: string) {
+  const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>("/api/mobile/auth/phone/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ continuationToken, phone, countryCode })
-  });
-}
-
-export async function verifySocialPhoneCode(continuationToken: string, code: string) {
-  const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>("/api/mobile/auth/phone/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ continuationToken, code })
   });
   await setAuthToken(payload.token);
   return payload;

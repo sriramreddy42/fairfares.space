@@ -18480,6 +18480,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/auth/oauth": self.api_mobile_social_auth,
             "/api/mobile/auth/phone/send": self.api_mobile_social_phone_send,
             "/api/mobile/auth/phone/verify": self.api_mobile_social_phone_verify,
+            "/api/mobile/auth/phone/complete": self.api_mobile_social_phone_complete,
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/push-token": self.api_mobile_push_token,
@@ -27914,7 +27915,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = ? AND provider_subject = ?",
                         (email, provider, subject),
                     )
-                if row_value(user, "phone_verified_at") and canonical_e164_phone(row_value(user, "phone")):
+                if canonical_e164_phone(row_value(user, "phone")):
                     cleanup_expired_sessions(con)
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
@@ -27929,12 +27930,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
             self.send_json({
                 "ok": True,
-                "phoneVerificationRequired": True,
+                "phoneRequired": True,
                 "continuationToken": continuation,
                 "user": mobile_user_payload(user),
             })
         except sqlite3.IntegrityError:
             self.send_json({"ok": False, "error": "This social account is already linked to another FairFares account."}, 409)
+
+    def api_mobile_social_phone_complete(self) -> None:
+        payload = self.read_json_body()
+        continuation = str(payload.get("continuationToken") or "").strip()
+        phone = canonical_e164_phone(payload.get("phone"), payload.get("countryCode"))
+        if not continuation or not phone:
+            self.send_json({"ok": False, "error": "Choose a country code and enter a valid mobile number."}, 400)
+            return
+        token_hash = auth_token_hash(continuation)
+        with db() as con:
+            row = con.execute(
+                "SELECT * FROM auth_phone_continuations WHERE token_hash = ? AND used_at IS NULL AND datetime(expires_at) > datetime('now')",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
+                return
+            user_id = int(row["user_id"])
+            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, user_id)).fetchone()
+            if owner:
+                self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
+                return
+            con.execute(
+                "UPDATE users SET phone = ?, phone_verified_at = NULL, is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP) WHERE id = ?",
+                (phone, user_id),
+            )
+            con.execute("UPDATE auth_phone_continuations SET phone = ?, used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (phone, token_hash))
+            cleanup_expired_sessions(con)
+            session_token = secrets.token_urlsafe(32)
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
+            user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(user)})
 
     def api_mobile_social_phone_send(self) -> None:
         payload = self.read_json_body()

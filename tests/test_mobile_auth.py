@@ -186,7 +186,7 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
-    def test_social_login_requires_verified_phone_before_issuing_session(self):
+    def test_social_login_collects_phone_without_sms_before_issuing_session(self):
         server, thread = self.start_server()
         try:
             claims = {
@@ -201,29 +201,19 @@ class MobileAuthTest(unittest.TestCase):
                     "identityToken": "verified-google-token",
                 })
             self.assertEqual(status, 200)
-            self.assertTrue(social["phoneVerificationRequired"])
+            self.assertTrue(social["phoneRequired"])
             self.assertFalse(social.get("token"))
             continuation = social["continuationToken"]
 
-            with mock.patch.object(app, "twilio_verify_request", return_value={"status": "pending"}) as send_code:
-                send_status, sent = self.post_json(server, "/api/mobile/auth/phone/send", {
-                    "continuationToken": continuation,
-                    "countryCode": "+1",
-                    "phone": "937-555-0198",
-                })
-            self.assertEqual(send_status, 200)
-            self.assertTrue(sent["ok"])
-            send_code.assert_called_once_with("Verifications", {"To": "+19375550198", "Channel": "sms"})
-
-            with mock.patch.object(app, "twilio_verify_request", return_value={"status": "approved"}):
-                verify_status, verified = self.post_json(server, "/api/mobile/auth/phone/verify", {
-                    "continuationToken": continuation,
-                    "code": "123456",
-                })
-            self.assertEqual(verify_status, 200)
-            self.assertTrue(verified["token"])
-            self.assertEqual(verified["user"]["phone"], "+19375550198")
-            self.assertTrue(verified["user"]["phoneVerified"])
+            complete_status, completed = self.post_json(server, "/api/mobile/auth/phone/complete", {
+                "continuationToken": continuation,
+                "countryCode": "+1",
+                "phone": "937-555-0198",
+            })
+            self.assertEqual(complete_status, 200)
+            self.assertTrue(completed["token"])
+            self.assertEqual(completed["user"]["phone"], "+19375550198")
+            self.assertFalse(completed["user"]["phoneVerified"])
 
             with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
                 repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
@@ -232,7 +222,7 @@ class MobileAuthTest(unittest.TestCase):
                 })
             self.assertEqual(repeat_status, 200)
             self.assertTrue(repeat["token"])
-            self.assertFalse(repeat.get("phoneVerificationRequired", False))
+            self.assertFalse(repeat.get("phoneRequired", False))
         finally:
             server.shutdown()
             server.server_close()
@@ -256,7 +246,7 @@ class MobileAuthTest(unittest.TestCase):
                     "identityToken": "another-google-token",
                 })
             with self.assertRaises(urllib.error.HTTPError) as duplicate_phone:
-                self.post_json(server, "/api/mobile/auth/phone/send", {
+                self.post_json(server, "/api/mobile/auth/phone/complete", {
                     "continuationToken": social["continuationToken"],
                     "countryCode": "+1",
                     "phone": "937-555-0197",
