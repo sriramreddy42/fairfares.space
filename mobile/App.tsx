@@ -1493,7 +1493,7 @@ function FairFaresApp() {
             ]}
           >
             <View style={styles.launchLogoFrame}>
-              <Image source={require("./assets/fairfares-logo.png")} style={styles.launchLogo} resizeMode="contain" />
+              <Image source={require("./assets/fairfares-logo-mobile.png")} style={styles.launchLogo} resizeMode="contain" />
             </View>
             <View style={styles.launchTaglineGroup}>
               <Animated.Text
@@ -1510,7 +1510,7 @@ function FairFaresApp() {
           <View style={[styles.launchCarStage, wideLaunchLayout ? styles.launchCarStageWide : styles.launchCarStagePortrait]}>
             <View style={styles.launchCarGlow} />
             <Animated.Image
-              source={require("./assets/launch-car-v2.png")}
+              source={require("./assets/launch-car-mobile.png")}
               resizeMode="contain"
               style={[
                 styles.launchCar,

@@ -1,7 +1,7 @@
 import { ImageSourcePropType } from "react-native";
 
 export const appAssets = {
-  logo: require("../assets/fairfares-logo.png") as ImageSourcePropType,
+  logo: require("../assets/fairfares-logo-mobile.png") as ImageSourcePropType,
   explorer: require("../assets/fairfares-explorer-button.png") as ImageSourcePropType,
   navHome: require("../assets/nav-home.png") as ImageSourcePropType,
   navServices: require("../assets/nav-services.png") as ImageSourcePropType,
@@ -13,9 +13,8 @@ export const appAssets = {
   message: require("../assets/icons8-message.gif") as ImageSourcePropType,
   fchat: require("../assets/fchat-nav.png") as ImageSourcePropType,
   fchatWordmark: require("../assets/fchat-wordmark-white.png") as ImageSourcePropType,
-  chittiMascot: require("../assets/chitti/chitti-mascot.png") as ImageSourcePropType,
-  chittiPaperTexture: require("../assets/chitti/chitti-paper-texture.png") as ImageSourcePropType,
-  chittiLettersGold: require("../assets/chitti/chitti-letters-gold.png") as ImageSourcePropType,
+  chittiMascot: require("../assets/chitti/chitti-mascot-mobile.png") as ImageSourcePropType,
+  chittiLettersGold: require("../assets/chitti/chitti-letters-gold-mobile.png") as ImageSourcePropType,
   profile: require("../assets/account-nav.png") as ImageSourcePropType,
   serviceModify: require("../assets/service-modify.png") as ImageSourcePropType,
   serviceCancel: require("../assets/service-cancel.png") as ImageSourcePropType,
@@ -27,20 +26,20 @@ export const appAssets = {
   arrowUp: require("../assets/icons8-up-94.png") as ImageSourcePropType,
   arrowDown: require("../assets/icons8-arrow-down-94.png") as ImageSourcePropType,
   carFallback: require("../assets/car-toyota-corolla.jpg") as ImageSourcePropType,
-  housingRentalPromo: require("../assets/housing-rental-promo.jpg") as ImageSourcePropType,
-  exportsImportsPromo: require("../assets/exports-imports-coming-soon.jpg") as ImageSourcePropType,
-  rentalPromo: require("../assets/rental-car-promo.jpg") as ImageSourcePropType,
+  housingRentalPromo: require("../assets/housing-rental-promo-mobile.jpg") as ImageSourcePropType,
+  exportsImportsPromo: require("../assets/exports-imports-coming-soon-mobile.jpg") as ImageSourcePropType,
+  rentalPromo: require("../assets/rental-car-promo-mobile.jpg") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
-  rideShareStrip: require("../assets/ride-share-strip.png") as ImageSourcePropType,
-  rideListCarpoolBanner: require("../assets/ride-list-carpool-banner.jpg") as ImageSourcePropType,
+  rideShareStrip: require("../assets/ride-share-strip-mobile.png") as ImageSourcePropType,
+  rideListCarpoolBanner: require("../assets/ride-list-carpool-banner-mobile.jpg") as ImageSourcePropType,
   festivals: {
-    diwali: require("../assets/festivals/diwali.jpg") as ImageSourcePropType,
-    holi: require("../assets/festivals/holi.jpg") as ImageSourcePropType,
-    makarSankranti: require("../assets/festivals/makar-sankranti.jpg") as ImageSourcePropType,
-    christmas: require("../assets/festivals/christmas.jpg") as ImageSourcePropType,
-    republicDay: require("../assets/festivals/republic-day.jpg") as ImageSourcePropType,
-    rakshaBandhan: require("../assets/festivals/raksha-bandhan.jpg") as ImageSourcePropType,
-    navratri: require("../assets/festivals/navratri.jpg") as ImageSourcePropType,
-    independenceDay: require("../assets/festivals/independence-day.jpg") as ImageSourcePropType
+    diwali: require("../assets/festivals/diwali-mobile.jpg") as ImageSourcePropType,
+    holi: require("../assets/festivals/holi-mobile.jpg") as ImageSourcePropType,
+    makarSankranti: require("../assets/festivals/makar-sankranti-mobile.jpg") as ImageSourcePropType,
+    christmas: require("../assets/festivals/christmas-mobile.jpg") as ImageSourcePropType,
+    republicDay: require("../assets/festivals/republic-day-mobile.jpg") as ImageSourcePropType,
+    rakshaBandhan: require("../assets/festivals/raksha-bandhan-mobile.jpg") as ImageSourcePropType,
+    navratri: require("../assets/festivals/navratri-mobile.jpg") as ImageSourcePropType,
+    independenceDay: require("../assets/festivals/independence-day-mobile.jpg") as ImageSourcePropType
   }
 };
