@@ -12,6 +12,8 @@ import app
 
 
 class QuietHandler(app.FairFaresHandler):
+    suppress_operational_alerts = True
+
     def log_message(self, _format, *_args):
         return
 

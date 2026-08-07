@@ -18359,17 +18359,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
                 "error_type": type(exc).__name__,
             }, separators=(",", ":")), flush=True)
-            send_operational_alert(
-                f"server-exception:{type(exc).__name__}:{urllib.parse.urlparse(str(getattr(self, 'path', ''))).path}",
-                "Unhandled backend exception",
-                severity="critical",
-                details=[
-                    f"Request ID: {self.request_id}",
-                    f"Method: {str(getattr(self, 'command', ''))}",
-                    f"Path: {urllib.parse.urlparse(str(getattr(self, 'path', ''))).path[:300]}",
-                    f"Error type: {type(exc).__name__}",
-                ],
-            )
+            if not getattr(self, "suppress_operational_alerts", False):
+                send_operational_alert(
+                    f"server-exception:{type(exc).__name__}:{urllib.parse.urlparse(str(getattr(self, 'path', ''))).path}",
+                    "Unhandled backend exception",
+                    severity="critical",
+                    details=[
+                        f"Request ID: {self.request_id}",
+                        f"Method: {str(getattr(self, 'command', ''))}",
+                        f"Path: {urllib.parse.urlparse(str(getattr(self, 'path', ''))).path[:300]}",
+                        f"Error type: {type(exc).__name__}",
+                    ],
+                )
             raise
         finally:
             status = int(getattr(self, "response_status", 0) or 0)
@@ -18385,7 +18386,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "status": status,
                     "duration_ms": duration_ms,
                 }, separators=(",", ":")), flush=True)
-                if path != "/api/health" and status >= 500:
+                alerts_enabled = not getattr(self, "suppress_operational_alerts", False)
+                if alerts_enabled and path != "/api/health" and status >= 500:
                     send_operational_alert(
                         f"http-5xx:{method}:{path}:{status}",
                         "Backend request failed",
@@ -18396,7 +18398,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             f"Duration: {duration_ms} ms",
                         ],
                     )
-                elif path != "/api/health" and duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+                elif alerts_enabled and path not in {"/api/health", "/api/chat/events"} and duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
                     send_operational_alert(
                         f"slow-request:{method}:{path}",
                         "Slow backend request",
