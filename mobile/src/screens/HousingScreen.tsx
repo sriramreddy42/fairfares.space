@@ -485,6 +485,8 @@ export function HousingScreen({
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
+  const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
+  const [homeStoryDragging, setHomeStoryDragging] = useState(false);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -544,6 +546,7 @@ export function HousingScreen({
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
   const rideOwnerScrollRef = useRef<ScrollView | null>(null);
+  const homeStoryScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
@@ -558,6 +561,7 @@ export function HousingScreen({
     .map((part) => part[0]?.toUpperCase())
     .join("");
   const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
+  const homeStorySlideWidth = homeStoryViewportWidth || Math.max(1, viewportWidth - 28 - theme.spacing.md * 2);
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
@@ -712,11 +716,17 @@ export function HousingScreen({
       setHomeStoryIndex(0);
       return;
     }
+    if (homeStoryDragging) return;
     const timer = setTimeout(() => {
       setHomeStoryIndex((value) => (value + 1) % storyCount);
     }, 4000);
     return () => clearTimeout(timer);
-  }, [homeStoryIndex, homeTestimonials.length]);
+  }, [homeStoryDragging, homeStoryIndex, homeTestimonials.length]);
+
+  useEffect(() => {
+    if (!homeStorySlideWidth) return;
+    homeStoryScrollRef.current?.scrollTo({ x: homeStoryIndex * homeStorySlideWidth, animated: true });
+  }, [homeStoryIndex, homeStorySlideWidth]);
 
   useEffect(() => {
     setSearchPhraseIndex(0);
@@ -3028,9 +3038,29 @@ export function HousingScreen({
         ))}
       </View>
 
-      <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
-        {homeStoryIndex === 0 || !homeTestimonials[homeStoryIndex - 1] ? (
-          <>
+      <View
+        style={styles.welcome}
+        onLayout={(event) => {
+          setWelcomeY(event.nativeEvent.layout.y);
+          setHomeStoryViewportWidth(Math.max(1, event.nativeEvent.layout.width - theme.spacing.md * 2));
+        }}
+      >
+        <ScrollView
+          ref={homeStoryScrollRef}
+          horizontal
+          pagingEnabled
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator={false}
+          style={styles.homeStoryScroll}
+          decelerationRate="fast"
+          onScrollBeginDrag={() => setHomeStoryDragging(true)}
+          onMomentumScrollEnd={(event) => {
+            const nextIndex = Math.round(event.nativeEvent.contentOffset.x / homeStorySlideWidth);
+            setHomeStoryIndex(Math.max(0, Math.min(nextIndex, homeTestimonials.length)));
+            setHomeStoryDragging(false);
+          }}
+        >
+          <View style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
             <View style={styles.welcomeCopy}>
               <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
               <Text style={styles.welcomeMeta}>Check recent listings and explore nearby housing or carpool options.</Text>
@@ -3041,27 +3071,29 @@ export function HousingScreen({
                 <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>List your ride & earn</Text>
               </TouchableOpacity>
             </View>
-          </>
-        ) : (() => {
-          const testimonial = homeTestimonials[homeStoryIndex - 1];
-          const testimonialPhoto = testimonial.photoUrl ? absoluteAssetUrl(testimonial.photoUrl) : "";
-          const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
-          return (
-            <View style={styles.homeTestimonial}>
-              <View style={styles.homeTestimonialAvatar}>
-                {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
-              </View>
-              <View style={styles.homeTestimonialCopy}>
-                <View style={styles.homeTestimonialTopline}>
-                  <Text style={styles.homeTestimonialName} numberOfLines={1}>{testimonial.name}</Text>
-                  <Text style={styles.homeTestimonialStars}>{"★".repeat(testimonial.rating)}</Text>
+          </View>
+          {homeTestimonials.map((testimonial) => {
+            const testimonialPhoto = testimonial.photoUrl ? absoluteAssetUrl(testimonial.photoUrl) : "";
+            const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+            return (
+              <View key={testimonial.id} style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
+                <View style={styles.homeTestimonial}>
+                  <View style={styles.homeTestimonialAvatar}>
+                    {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
+                  </View>
+                  <View style={styles.homeTestimonialCopy}>
+                    <View style={styles.homeTestimonialTopline}>
+                      <Text style={styles.homeTestimonialName} numberOfLines={1}>{testimonial.name}</Text>
+                      <Text style={styles.homeTestimonialStars}>{"★".repeat(testimonial.rating)}</Text>
+                    </View>
+                    <Text style={styles.homeTestimonialCity}>📍 {testimonial.city}</Text>
+                    <Text style={styles.homeTestimonialMessage} numberOfLines={2}>“{testimonial.message}”</Text>
+                  </View>
                 </View>
-                <Text style={styles.homeTestimonialCity}>📍 {testimonial.city}</Text>
-                <Text style={styles.homeTestimonialMessage} numberOfLines={2}>“{testimonial.message}”</Text>
               </View>
-            </View>
-          );
-        })()}
+            );
+          })}
+        </ScrollView>
         {homeTestimonials.length > 0 ? (
           <View style={styles.homeStoryPager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             {Array.from({ length: 1 + homeTestimonials.length }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
@@ -3671,6 +3703,8 @@ const styles = StyleSheet.create({
   statRow: { width: 132, gap: 7 },
   stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 11, textAlign: "center" },
   carpoolCarouselStat: { color: "#8ff0c2", minHeight: 34, textAlignVertical: "center" },
+  homeStoryScroll: { flex: 1, alignSelf: "stretch" },
+  homeStorySlide: { minHeight: 92, flexDirection: "row", alignItems: "center", paddingRight: 1 },
   homeTestimonial: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
   homeTestimonialAvatar: { width: 54, height: 54, borderRadius: 27, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#16885b", borderWidth: 2, borderColor: "rgba(108,235,181,0.62)" },
   homeTestimonialEmoji: { fontSize: 27, lineHeight: 32 },
