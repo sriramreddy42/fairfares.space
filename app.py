@@ -18349,8 +18349,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.request_started_at = time.perf_counter()
         self.request_id = uuid.uuid4().hex[:12]
         self.response_status = 0
+        self.client_disconnected = False
         try:
             super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
+            # Mobile navigation, request timeouts, and closed browser tabs can
+            # disconnect after the server has started writing a valid response.
+            # This is a transport cancellation, not an application failure.
+            self.client_disconnected = True
+            self.close_connection = True
+            print(json.dumps({
+                "event": "client_disconnected",
+                "request_id": self.request_id,
+                "method": str(getattr(self, "command", "")),
+                "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
+                "error_type": type(exc).__name__,
+            }, separators=(",", ":")), flush=True)
         except Exception as exc:
             print(json.dumps({
                 "event": "server_exception",
@@ -18386,7 +18400,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "status": status,
                     "duration_ms": duration_ms,
                 }, separators=(",", ":")), flush=True)
-                alerts_enabled = not getattr(self, "suppress_operational_alerts", False)
+                alerts_enabled = (
+                    not getattr(self, "suppress_operational_alerts", False)
+                    and not getattr(self, "client_disconnected", False)
+                )
                 if alerts_enabled and path != "/api/health" and status >= 500:
                     send_operational_alert(
                         f"http-5xx:{method}:{path}:{status}",

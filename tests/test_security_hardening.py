@@ -136,6 +136,17 @@ class SecurityHardeningTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_client_disconnect_is_not_reported_as_a_backend_failure(self):
+        handler = object.__new__(QuietHandler)
+        handler.path = "/api/chat/conversations"
+        handler.command = "GET"
+        with patch.object(app.SimpleHTTPRequestHandler, "handle_one_request", side_effect=BrokenPipeError), \
+             patch.object(app, "send_operational_alert") as alert:
+            handler.handle_one_request()
+        self.assertTrue(handler.client_disconnected)
+        self.assertTrue(handler.close_connection)
+        alert.assert_not_called()
+
     def test_feedback_rate_limit_blocks_repeated_submissions(self):
         key = app.feedback_rate_limit_key("127.0.0.1", 42)
         for index in range(app.FEEDBACK_RATE_LIMIT_ATTEMPTS):
