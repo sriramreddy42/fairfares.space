@@ -2400,10 +2400,13 @@ def masked_email_hint(value: object) -> str:
     if "@" not in email:
         return "***"
     local, domain = email.split("@", 1)
-    domain_name, separator, suffix = domain.partition(".")
-    local_hint = f"{local[:1]}***" if local else "***"
-    domain_hint = f"{domain_name[:1]}***" if domain_name else "***"
-    return f"{local_hint}@{domain_hint}{separator}{suffix}" if separator and suffix else f"{local_hint}@{domain_hint}"
+    if len(local) <= 2:
+        local_hint = f"{local[:1]}***"
+    elif len(local) <= 4:
+        local_hint = f"{local[:1]}***{local[-1:]}"
+    else:
+        local_hint = f"{local[:2]}***{local[-2:]}"
+    return f"{local_hint}@{domain}"
 
 
 def stripe_api_request(path: str, params: dict[str, object], idempotency_key: str = "") -> tuple[dict[str, object], str]:

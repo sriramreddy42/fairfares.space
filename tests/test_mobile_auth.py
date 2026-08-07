@@ -255,7 +255,7 @@ class MobileAuthTest(unittest.TestCase):
             payload = json.loads(duplicate_phone.exception.read().decode("utf-8"))
             self.assertIn("another FairFares account", payload["error"])
             self.assertTrue(payload["emailRecoveryAvailable"])
-            self.assertEqual(payload["recoveryEmailHint"], "p***@e***.com")
+            self.assertEqual(payload["recoveryEmailHint"], "ph***er@example.com")
         finally:
             server.shutdown()
             server.server_close()

@@ -30,8 +30,13 @@ class SocialAuthConfigTest(unittest.TestCase):
 
     def test_email_recovery_hint_never_exposes_full_address(self):
         hint = app.masked_email_hint("person@example.com")
-        self.assertEqual(hint, "p***@e***.com")
+        self.assertEqual(hint, "pe***on@example.com")
         self.assertNotIn("person", hint)
+
+    def test_gmail_recovery_hint_is_recognizable_but_masked(self):
+        hint = app.masked_email_hint("sriramreddy42@gmail.com")
+        self.assertEqual(hint, "sr***42@gmail.com")
+        self.assertNotIn("sriramreddy42", hint)
 
 
 if __name__ == "__main__":
