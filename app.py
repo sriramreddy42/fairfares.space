@@ -5510,7 +5510,7 @@ def init_db() -> None:
             FROM app_feedback
             WHERE app_feedback.page = 'mobile-housing-city-experience'
               AND app_feedback.user_id IS NOT NULL
-              AND app_feedback.rating BETWEEN 1 AND 5
+              AND app_feedback.rating BETWEEN 4 AND 5
               AND LENGTH(TRIM(app_feedback.message)) >= 8
             """
         )
@@ -23334,7 +23334,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (user["id"] if user else None, rating, message, page, user_agent),
             )
-            if page == "mobile-housing-city-experience" and user and message:
+            if page == "mobile-housing-city-experience" and user and message and rating >= 4:
                 city, separator, testimonial_message = message.partition(": ")
                 if not separator:
                     city, testimonial_message = "FairFares community", message
