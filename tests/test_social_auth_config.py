@@ -20,6 +20,14 @@ class SocialAuthConfigTest(unittest.TestCase):
         self.assertIn("com.fairfares.app", allowed)
         self.assertIn("com.example.stale", allowed)
 
+    def test_apple_audience_error_identifies_received_app(self):
+        # The audience is not a secret; surfacing it makes App Store/EAS bundle
+        # mismatches actionable without exposing the identity token.
+        claims = {"aud": "com.fairfares.unexpected"}
+        audience = app.clean_text_value(claims.get("aud"), 200)
+        message = f"Apple sign-in audience '{audience or 'missing'}' is not configured for this FairFares app."
+        self.assertIn("com.fairfares.unexpected", message)
+
 
 if __name__ == "__main__":
     unittest.main()

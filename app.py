@@ -1785,8 +1785,18 @@ def verify_apple_identity_token(identity_token: str) -> dict[str, object]:
     except (InvalidSignature, KeyError, StopIteration, ValueError, urllib.error.URLError) as exc:
         raise ValueError("Apple could not verify this sign-in.") from exc
     allowed = configured_apple_client_ids()
-    if claims.get("iss") != "https://appleid.apple.com" or str(claims.get("aud") or "") not in allowed:
-        raise ValueError("Apple sign-in was issued for another app.")
+    audience = clean_text_value(claims.get("aud"), 200)
+    if claims.get("iss") != "https://appleid.apple.com":
+        raise ValueError("Apple sign-in issuer is invalid.")
+    if audience not in allowed:
+        print(json.dumps({
+            "event": "apple_signin_audience_mismatch",
+            "audience": audience or "missing",
+            "allowed_audiences": sorted(allowed),
+        }, separators=(",", ":")), flush=True)
+        raise ValueError(
+            f"Apple sign-in audience '{audience or 'missing'}' is not configured for this FairFares app."
+        )
     if int(claims.get("exp") or 0) <= int(time.time()):
         raise ValueError("Apple sign-in has expired.")
     if claims.get("email_verified") not in {True, "true", "True", 1, None}:
