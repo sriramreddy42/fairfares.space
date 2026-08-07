@@ -267,6 +267,72 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_encrypted_preview_envelopes_are_batched_and_membership_scoped(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'sender-device', 'sender-public-key')",
+                (self.sender_id,),
+            )
+            con.execute(
+                "INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'recipient-device', 'recipient-public-key')",
+                (self.recipient_id,),
+            )
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            envelopes = [
+                {
+                    "recipientUserId": self.sender_id,
+                    "recipientDeviceId": "sender-device",
+                    "senderPublicKey": "sender-public-key",
+                    "nonce": "sender-nonce",
+                    "ciphertext": "sender-ciphertext",
+                },
+                {
+                    "recipientUserId": self.recipient_id,
+                    "recipientDeviceId": "recipient-device",
+                    "senderPublicKey": "sender-public-key",
+                    "nonce": "preview-nonce",
+                    "ciphertext": "preview-ciphertext",
+                }
+            ]
+            message, error = app.save_encrypted_chat_message(
+                con,
+                con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone(),
+                sender,
+                envelopes,
+                "preview-1",
+            )
+            self.assertEqual(error, "")
+            message_id = int(message["id"])
+
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/preview-envelopes?message_ids={message_id}&device_id=recipient-device",
+                headers={"Authorization": "Bearer recipient-token", "Origin": "http://localhost:8082"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "http://localhost:8082")
+            self.assertEqual(payload["envelopes"], [{
+                "messageId": message_id,
+                "senderPublicKey": "sender-public-key",
+                "nonce": "preview-nonce",
+                "ciphertext": "preview-ciphertext",
+            }])
+
+            outsider_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/preview-envelopes?message_ids={message_id}&device_id=recipient-device",
+                headers={"Authorization": "Bearer outsider-token"},
+            )
+            with urllib.request.urlopen(outsider_request, timeout=3) as response:
+                outsider_payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(outsider_payload["envelopes"], [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_concurrent_sends_preserve_order_and_deduplicate_client_ids(self):
         def send(index):
             with app.db() as con:

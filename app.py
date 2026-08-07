@@ -20387,7 +20387,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"""SELECT envelopes.message_id, envelopes.sender_public_key, envelopes.nonce, envelopes.ciphertext
                     FROM chat_message_envelopes envelopes
                     JOIN chat_messages messages ON messages.id = envelopes.message_id
-                    JOIN chat_conversation_members members
+                    JOIN chat_participants members
                       ON members.conversation_id = messages.conversation_id AND members.user_id = ?
                     WHERE envelopes.recipient_user_id = ?
                       AND envelopes.recipient_device_id = ?
