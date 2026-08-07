@@ -91,6 +91,9 @@ LOGIN_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_LOGIN_WINDOW_SECON
 LOGIN_RATE_LIMIT_LOCK_SECONDS = positive_int_env("FAIRFARES_LOGIN_LOCK_SECONDS", 15 * 60)
 FEEDBACK_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_FEEDBACK_ATTEMPTS", 5)
 FEEDBACK_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_FEEDBACK_WINDOW_SECONDS", 60 * 60)
+AUTH_ACTION_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_AUTH_ACTION_ATTEMPTS", 5)
+AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_AUTH_ACTION_WINDOW_SECONDS", 15 * 60)
+MAX_PASSWORD_LENGTH = 256
 SOCIAL_AUTH_CONTINUATION_MINUTES = positive_int_env("FAIRFARES_SOCIAL_AUTH_CONTINUATION_MINUTES", 10)
 PHONE_OTP_COOLDOWN_SECONDS = positive_int_env("FAIRFARES_PHONE_OTP_COOLDOWN_SECONDS", 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
@@ -1640,10 +1643,88 @@ def password_hash_needs_upgrade(stored: str) -> bool:
 
 
 def login_rate_limit_key(client_ip: str, identifier: object) -> str:
-    return f"{client_ip.strip()}:{normalize_email(identifier) or normalize_phone(identifier)}"
+    identity = normalize_email(identifier) or normalize_phone(identifier)
+    return hashlib.sha256(f"login:ip:{client_ip.strip()[:64]}:{identity}".encode("utf-8")).hexdigest()
+
+
+def login_account_rate_limit_key(identifier: object) -> str:
+    identity = normalize_email(identifier) or normalize_phone(identifier)
+    return hashlib.sha256(f"login:account:{identity}".encode("utf-8")).hexdigest()
+
+
+def auth_action_rate_limit_key(client_ip: str, action: str) -> str:
+    safe_action = re.sub(r"[^a-z0-9_-]", "", str(action or "").lower())[:40]
+    return hashlib.sha256(f"auth-action:{safe_action}:{client_ip.strip()[:64]}".encode("utf-8")).hexdigest()
+
+
+def persistent_rate_limit_retry_after(
+    scope: str,
+    key: str,
+    attempts: int,
+    window_seconds: int,
+    lock_seconds: int,
+) -> int:
+    now = time.time()
+    with db() as con:
+        row = con.execute(
+            "SELECT attempt_count, window_started_at, locked_until FROM security_rate_limits WHERE scope = ? AND rate_key = ?",
+            (scope, key),
+        ).fetchone()
+        if not row:
+            return 0
+        locked_until = float(row_value(row, "locked_until") or 0)
+        if locked_until > now:
+            return max(1, int(locked_until - now))
+        if now - float(row_value(row, "window_started_at") or 0) >= window_seconds:
+            con.execute("DELETE FROM security_rate_limits WHERE scope = ? AND rate_key = ?", (scope, key))
+            return 0
+        if int(row_value(row, "attempt_count") or 0) < attempts:
+            return 0
+        return max(1, int(lock_seconds))
+
+
+def persistent_rate_limit_record(
+    scope: str,
+    key: str,
+    attempts: int,
+    window_seconds: int,
+    lock_seconds: int,
+) -> None:
+    now = time.time()
+    with db() as con:
+        row = con.execute(
+            "SELECT attempt_count, window_started_at FROM security_rate_limits WHERE scope = ? AND rate_key = ?",
+            (scope, key),
+        ).fetchone()
+        if not row or now - float(row_value(row, "window_started_at") or 0) >= window_seconds:
+            count = 1
+            window_started_at = now
+        else:
+            count = int(row_value(row, "attempt_count") or 0) + 1
+            window_started_at = float(row_value(row, "window_started_at") or now)
+        locked_until = now + lock_seconds if count >= attempts else 0
+        con.execute(
+            """INSERT INTO security_rate_limits (scope, rate_key, attempt_count, window_started_at, locked_until, updated_at)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(scope, rate_key) DO UPDATE SET
+                   attempt_count = excluded.attempt_count,
+                   window_started_at = excluded.window_started_at,
+                   locked_until = excluded.locked_until,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (scope, key, count, window_started_at, locked_until),
+        )
+
+
+def persistent_rate_limit_clear(scope: str, key: str) -> None:
+    with db() as con:
+        con.execute("DELETE FROM security_rate_limits WHERE scope = ? AND rate_key = ?", (scope, key))
 
 
 def login_retry_after(key: str, now: float | None = None) -> int:
+    if now is None:
+        return persistent_rate_limit_retry_after(
+            "login", key, LOGIN_RATE_LIMIT_ATTEMPTS, LOGIN_RATE_LIMIT_WINDOW_SECONDS, LOGIN_RATE_LIMIT_LOCK_SECONDS
+        )
     current = now if now is not None else time.monotonic()
     cutoff = current - LOGIN_RATE_LIMIT_WINDOW_SECONDS
     with _LOGIN_LOCK:
@@ -1658,6 +1739,11 @@ def login_retry_after(key: str, now: float | None = None) -> int:
 
 
 def record_login_failure(key: str, now: float | None = None) -> None:
+    if now is None:
+        persistent_rate_limit_record(
+            "login", key, LOGIN_RATE_LIMIT_ATTEMPTS, LOGIN_RATE_LIMIT_WINDOW_SECONDS, LOGIN_RATE_LIMIT_LOCK_SECONDS
+        )
+        return
     current = now if now is not None else time.monotonic()
     cutoff = current - LOGIN_RATE_LIMIT_WINDOW_SECONDS
     with _LOGIN_LOCK:
@@ -1667,8 +1753,23 @@ def record_login_failure(key: str, now: float | None = None) -> None:
 
 
 def clear_login_failures(key: str) -> None:
+    persistent_rate_limit_clear("login", key)
     with _LOGIN_LOCK:
         _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def auth_action_retry_after(key: str) -> int:
+    return persistent_rate_limit_retry_after(
+        "auth-action", key, AUTH_ACTION_RATE_LIMIT_ATTEMPTS, AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS,
+        AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS,
+    )
+
+
+def record_auth_action(key: str) -> None:
+    persistent_rate_limit_record(
+        "auth-action", key, AUTH_ACTION_RATE_LIMIT_ATTEMPTS, AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS,
+        AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS,
+    )
 
 
 def feedback_rate_limit_key(client_ip: str, user_id: int = 0) -> str:
@@ -1677,6 +1778,11 @@ def feedback_rate_limit_key(client_ip: str, user_id: int = 0) -> str:
 
 
 def feedback_retry_after(key: str, now: float | None = None) -> int:
+    if now is None:
+        return persistent_rate_limit_retry_after(
+            "feedback", key, FEEDBACK_RATE_LIMIT_ATTEMPTS, FEEDBACK_RATE_LIMIT_WINDOW_SECONDS,
+            FEEDBACK_RATE_LIMIT_WINDOW_SECONDS,
+        )
     current = now if now is not None else time.monotonic()
     cutoff = current - FEEDBACK_RATE_LIMIT_WINDOW_SECONDS
     with _FEEDBACK_SUBMISSIONS_LOCK:
@@ -1691,6 +1797,12 @@ def feedback_retry_after(key: str, now: float | None = None) -> int:
 
 
 def record_feedback_submission(key: str, now: float | None = None) -> None:
+    if now is None:
+        persistent_rate_limit_record(
+            "feedback", key, FEEDBACK_RATE_LIMIT_ATTEMPTS, FEEDBACK_RATE_LIMIT_WINDOW_SECONDS,
+            FEEDBACK_RATE_LIMIT_WINDOW_SECONDS,
+        )
+        return
     current = now if now is not None else time.monotonic()
     cutoff = current - FEEDBACK_RATE_LIMIT_WINDOW_SECONDS
     with _FEEDBACK_SUBMISSIONS_LOCK:
@@ -1700,6 +1812,7 @@ def record_feedback_submission(key: str, now: float | None = None) -> None:
 
 
 def clear_feedback_submissions(key: str) -> None:
+    persistent_rate_limit_clear("feedback", key)
     with _FEEDBACK_SUBMISSIONS_LOCK:
         _FEEDBACK_SUBMISSIONS.pop(key, None)
 
@@ -4460,6 +4573,16 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS security_rate_limits (
+                scope TEXT NOT NULL,
+                rate_key TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                window_started_at REAL NOT NULL,
+                locked_until REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(scope, rate_key)
+            );
+
             CREATE TABLE IF NOT EXISTS email_verifications (
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -5852,6 +5975,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
+        con.execute("DELETE FROM security_rate_limits WHERE datetime(updated_at) < datetime('now', '-2 days')")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_created ON accommodation_posts(visibility_status, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_expired_cleanup ON accommodation_posts(visibility_status, expired_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_user_created ON accommodation_posts(user_id, created_at DESC)")
@@ -12471,6 +12595,30 @@ def clean_multiline_text_value(value: object, max_length: int) -> str:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", str(value or ""))
     text = re.sub(r"[ \t\r\f\v]+", " ", text).strip()
     return text[:max_length]
+
+
+def clean_account_name(value: object) -> str:
+    return clean_text_value(value, 120)
+
+
+def valid_account_password(value: object) -> bool:
+    password = str(value or "")
+    return 8 <= len(password) <= MAX_PASSWORD_LENGTH
+
+
+def validate_account_fields(name: object, email: object, phone: object, password: object) -> tuple[str, str, str, str]:
+    clean_name = clean_account_name(name)
+    clean_email = normalize_email(email)
+    clean_phone = clean_text_value(phone, 40)
+    if len(clean_name) < 2:
+        return clean_name, clean_email, clean_phone, "Enter a name with at least 2 characters."
+    if not valid_contact_email(clean_email):
+        return clean_name, clean_email, clean_phone, "Enter a valid email address."
+    if not valid_contact_phone(clean_phone):
+        return clean_name, clean_email, clean_phone, "Enter a valid phone number."
+    if not valid_account_password(password):
+        return clean_name, clean_email, clean_phone, f"Password must be between 8 and {MAX_PASSWORD_LENGTH} characters."
+    return clean_name, clean_email, clean_phone, ""
 
 
 def valid_contact_email(value: str) -> bool:
@@ -21678,6 +21826,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def web_google_auth(self) -> None:
         form = self.read_form()
+        action_key = auth_action_rate_limit_key(self.client_ip(), "web-google")
+        if auth_action_retry_after(action_key):
+            self.login_page("Too many sign-in attempts. Please wait and try again.")
+            return
+        record_auth_action(action_key)
         credential = form.get("credential", "").strip()
         submitted_csrf = form.get("g_csrf_token", "").strip()
         submitted_fairfares_csrf = form.get("fairfares_google_csrf", "").strip()
@@ -21700,7 +21853,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             and cookie_fairfares_csrf
             and secrets.compare_digest(submitted_fairfares_csrf, cookie_fairfares_csrf)
         )
-        if not credential or not (google_csrf_valid or fairfares_csrf_valid):
+        if not credential or len(credential) > 20_000 or not (google_csrf_valid or fairfares_csrf_valid):
             self.login_page("Google sign-in could not be validated. Please try again.")
             return
         try:
@@ -21756,9 +21909,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def login(self) -> None:
         form = self.read_form()
         identifier = (form.get("email", "") or "").strip()
+        submitted_password = str(form.get("password") or "")
         next_path = self.safe_next_path(form.get("next", ""))
         rate_key = login_rate_limit_key(self.client_ip(), identifier)
-        retry_after = login_retry_after(rate_key)
+        account_rate_key = login_account_rate_limit_key(identifier)
+        retry_after = max(login_retry_after(rate_key), login_retry_after(account_rate_key))
         if retry_after:
             google_csrf = secrets.token_urlsafe(32)
             secure = "; Secure" if self.public_origin().startswith("https://") else ""
@@ -21787,11 +21942,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user = find_user_by_login_identifier(con, identifier)
         if not user:
             record_login_failure(rate_key)
+            record_login_failure(account_rate_key)
             log_login_failure(identifier, "user_not_found")
             self.login_page("That email and password did not match.", next_path)
             return
-        if not verify_password(form.get("password", ""), user["password_hash"]):
+        if len(submitted_password) > MAX_PASSWORD_LENGTH or not verify_password(submitted_password, user["password_hash"]):
             record_login_failure(rate_key)
+            record_login_failure(account_rate_key)
             log_login_failure(identifier, "password_mismatch")
             self.login_page("That email and password did not match.", next_path)
             return
@@ -21808,21 +21965,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             return
         clear_login_failures(rate_key)
+        clear_login_failures(account_rate_key)
         if password_hash_needs_upgrade(row_value(user, "password_hash")):
             with db() as con:
-                con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(form.get("password", "")), user["id"]))
+                con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(submitted_password), user["id"]))
         self.set_session(user["id"], next_path)
 
     def signup(self) -> None:
         form = self.read_form()
-        name = form.get("name") or "FairFares Member"
-        email = normalize_email(form.get("email", ""))
-        phone = form.get("phone", "").strip()
-        clean_phone = normalize_phone(phone)
-        referral_code = form.get("referral_code", "").strip()
+        action_key = auth_action_rate_limit_key(self.client_ip(), "web-signup")
+        if auth_action_retry_after(action_key):
+            self.signup_page("Too many signup attempts. Please wait and try again.")
+            return
+        record_auth_action(action_key)
         password = form.get("password", "")
-        if "@" not in email or len(password) < 8 or len(clean_phone) < 7:
-            self.signup_page("Use a valid email, phone number, and a password with at least 8 characters.")
+        name, email, phone, validation_error = validate_account_fields(
+            form.get("name"), form.get("email"), form.get("phone"), password
+        )
+        referral_code = re.sub(r"[^A-Za-z0-9_-]", "", str(form.get("referral_code") or ""))[:80]
+        if validation_error:
+            self.signup_page(validation_error)
             return
         try:
             with db() as con:
@@ -21922,6 +22084,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         email = normalize_email(form.get("email", ""))
 
+        action_key = auth_action_rate_limit_key(self.client_ip(), "forgot-password")
+        if auth_action_retry_after(action_key):
+            self.send_html(render_template("forgot_password.html", error="Too many requests. Please wait and try again."))
+            return
+        record_auth_action(action_key)
+
         if not email or "@" not in email:
             self.send_html(
                 render_template(
@@ -21934,9 +22102,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             user = find_user_by_email(con, email)
 
-        token = create_verification(user["id"] if user else 1, email, purpose="PASSWORD_RESET")
-
         if user:
+            token = create_verification(user["id"], email, purpose="PASSWORD_RESET")
             link = self.reset_password_url(token)
             outbox_file, delivery_status = send_password_reset_email(email, user["name"], link)
 
@@ -22005,12 +22172,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         token = form.get("token", "").strip()
         new_password = form.get("password", "")
 
-        if not token or len(new_password) < 8:
+        if not token or not valid_account_password(new_password):
             self.send_html(
                 render_template(
                     "reset_password.html",
                     token=escape(token),
-                    error="Password must be at least 8 characters.",
+                    error=f"Password must be between 8 and {MAX_PASSWORD_LENGTH} characters.",
                 )
             )
             return
@@ -28079,10 +28246,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_social_auth(self) -> None:
         payload = self.read_json_body()
+        action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-social")
+        retry_after = auth_action_retry_after(action_key)
+        if retry_after:
+            self.send_json(
+                {"ok": False, "error": "Too many sign-in attempts. Please wait and try again."},
+                429,
+                {"Retry-After": str(retry_after)},
+            )
+            return
+        record_auth_action(action_key)
         provider = clean_text_value(payload.get("provider"), 20).lower()
         identity_token = str(payload.get("identityToken") or "").strip()
         submitted_name = " ".join(str(payload.get("name") or "").split())[:120]
-        if provider not in {"google", "apple"} or not identity_token:
+        if provider not in {"google", "apple"} or not identity_token or len(identity_token) > 20_000:
             self.send_json({"ok": False, "error": "A supported social sign-in token is required."}, 400)
             return
         try:
@@ -28300,7 +28477,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         identifier = str(payload.get("identifier") or payload.get("email") or payload.get("phone") or "").strip()
         password = str(payload.get("password") or "")
         rate_key = login_rate_limit_key(self.client_ip(), identifier)
-        retry_after = login_retry_after(rate_key)
+        account_rate_key = login_account_rate_limit_key(identifier)
+        retry_after = max(login_retry_after(rate_key), login_retry_after(account_rate_key))
         if retry_after:
             self.send_response(429)
             self.send_header("Retry-After", str(retry_after))
@@ -28312,8 +28490,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         with db() as con:
             user = find_user_by_login_identifier(con, identifier)
-            if not user or not verify_password(password, row_value(user, "password_hash")):
+            if not user or len(password) > MAX_PASSWORD_LENGTH or not verify_password(password, row_value(user, "password_hash")):
                 record_login_failure(rate_key)
+                record_login_failure(account_rate_key)
                 log_login_failure(identifier, "mobile_password_mismatch")
                 self.send_json({"ok": False, "error": "That email/phone and password did not match."}, 401)
                 return
@@ -28336,6 +28515,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
                 return
             clear_login_failures(rate_key)
+            clear_login_failures(account_rate_key)
             if password_hash_needs_upgrade(row_value(user, "password_hash")):
                 con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), int(row_value(user, "id") or 0)))
             cleanup_expired_sessions(con)
@@ -28345,21 +28525,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_signup(self) -> None:
         payload = self.read_json_body()
-        name = " ".join(str(payload.get("name") or "").split())[:120]
-        email = normalize_email(payload.get("email") or payload.get("identifier") or "")
+        action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-signup")
+        retry_after = auth_action_retry_after(action_key)
+        if retry_after:
+            self.send_json(
+                {"ok": False, "error": "Too many signup attempts. Please wait and try again."},
+                429,
+                {"Retry-After": str(retry_after)},
+            )
+            return
+        record_auth_action(action_key)
         submitted_phone = str(payload.get("phone") or "").strip()
         country_code = str(payload.get("countryCode") or "").strip()
         phone = canonical_e164_phone(submitted_phone, country_code)
         # Keep older released clients working while all new builds send an
         # explicit countryCode and persist a canonical E.164 number.
-        clean_phone = normalize_phone(phone or submitted_phone)
         password = str(payload.get("password") or "")
+        name, email, _validated_phone, validation_error = validate_account_fields(
+            payload.get("name"), payload.get("email") or payload.get("identifier"), phone or submitted_phone, password
+        )
         phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
-        if len(name) < 2 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or not 7 <= len(clean_phone) <= 15 or len(password) < 8 or (country_code and not phone):
+        if validation_error or (country_code and not phone):
             self.send_json(
                 {
                     "ok": False,
-                    "error": "Use a valid email, phone number, and a password with at least 8 characters.",
+                    "error": validation_error or "Choose a valid country code and mobile number.",
                 },
                 400,
             )

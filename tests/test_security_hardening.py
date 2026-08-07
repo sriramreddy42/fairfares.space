@@ -78,6 +78,62 @@ class SecurityHardeningTest(unittest.TestCase):
         app.clear_login_failures(key)
         self.assertEqual(app.login_retry_after(key, now=1006), 0)
 
+    def test_login_rate_limit_is_persistent_and_account_scoped(self):
+        ip_key = app.login_rate_limit_key("127.0.0.1", "Person@Example.com")
+        account_key = app.login_account_rate_limit_key("person@example.com")
+        self.assertNotIn("person@example.com", ip_key)
+        self.assertNotEqual(ip_key, account_key)
+        for _index in range(app.LOGIN_RATE_LIMIT_ATTEMPTS):
+            app.record_login_failure(account_key)
+        self.assertGreater(app.login_retry_after(account_key), 0)
+        with app.db() as con:
+            stored = con.execute(
+                "SELECT attempt_count FROM security_rate_limits WHERE scope = 'login' AND rate_key = ?",
+                (account_key,),
+            ).fetchone()
+        self.assertEqual(stored["attempt_count"], app.LOGIN_RATE_LIMIT_ATTEMPTS)
+        app._LOGIN_ATTEMPTS.clear()
+        self.assertGreater(app.login_retry_after(account_key), 0)
+        app.clear_login_failures(account_key)
+        self.assertEqual(app.login_retry_after(account_key), 0)
+
+    def test_account_fields_are_cleaned_and_passwords_are_bounded(self):
+        name, email, phone, error = app.validate_account_fields(
+            "  Test\x00   Person  ", " TEST@Example.COM ", "+1 (303) 555-0199", "correct horse battery staple"
+        )
+        self.assertEqual(name, "Test Person")
+        self.assertEqual(email, "test@example.com")
+        self.assertEqual(phone, "+1 (303) 555-0199")
+        self.assertEqual(error, "")
+        self.assertFalse(app.valid_account_password("x" * (app.MAX_PASSWORD_LENGTH + 1)))
+
+    def test_unknown_password_reset_does_not_create_a_token_for_another_user(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES ('First User', 'first@example.com', ?, 1)",
+                (app.hash_password("StrongPassword123!"),),
+            )
+        server, thread = self.start_server()
+        try:
+            body = urllib.parse.urlencode({"email": "missing@example.com"}).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/forgot-password",
+                data=body,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+            with app.db() as con:
+                reset_count = con.execute(
+                    "SELECT COUNT(*) AS count FROM email_verifications WHERE purpose = 'PASSWORD_RESET'"
+                ).fetchone()["count"]
+            self.assertEqual(reset_count, 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_feedback_rate_limit_blocks_repeated_submissions(self):
         key = app.feedback_rate_limit_key("127.0.0.1", 42)
         for index in range(app.FEEDBACK_RATE_LIMIT_ATTEMPTS):
