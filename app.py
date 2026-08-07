@@ -29788,7 +29788,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
             "form-action 'self' https://checkout.stripe.com https://accounts.google.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://accounts.google.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
             "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "
             "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://accounts.google.com"
         )

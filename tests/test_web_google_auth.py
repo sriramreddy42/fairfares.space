@@ -90,6 +90,10 @@ class WebGoogleAuthTest(unittest.TestCase):
                 response.headers["Cross-Origin-Opener-Policy"],
                 "same-origin-allow-popups",
             )
+            self.assertIn(
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
+                response.headers["Content-Security-Policy"],
+            )
             self.assertNotIn("Continue with Apple", body)
             self.assertNotIn("Continue with Facebook", body)
         finally:
