@@ -221,6 +221,8 @@ class PushNotificationTest(unittest.TestCase):
         send_push.assert_called_once()
         self.assertEqual(send_push.call_args.args[3]["type"], "FAIRFARES_PROMO")
         self.assertEqual(send_push.call_args.args[3]["target"], "rentals")
+        self.assertTrue(send_push.call_args.args[1].startswith("🔥"))
+        self.assertTrue(send_push.call_args.args[2].startswith("🚙"))
         self.assertEqual(
             send_push.call_args.args[3]["imageUrl"],
             f"{app.schema_origin()}/static/img/notifications/denver-rental-deals.jpg",
@@ -238,7 +240,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(result["campaign"], "diwali")
         self.assertEqual(duplicate["sent"], 0)
         send_push.assert_called_once()
-        self.assertEqual(send_push.call_args.args[1], "Happy Diwali from FairFares")
+        self.assertEqual(send_push.call_args.args[1], "🎉 Happy Diwali from FairFares!")
         self.assertEqual(
             send_push.call_args.args[3]["imageUrl"],
             f"{app.schema_origin()}/static/img/notifications/festivals/diwali.jpg",

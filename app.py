@@ -16400,8 +16400,8 @@ def festival_campaign_for_day(value: date) -> dict[str, str] | None:
             campaign = FESTIVAL_CAMPAIGNS[slug]
             return {
                 "slug": slug,
-                "title": f"Happy {campaign['name']} from FairFares",
-                "body": "Travel together. Celebrate together. Find housing, rides, and deals in FairFares.",
+                "title": f"🎉 Happy {campaign['name']} from FairFares!",
+                "body": "✨ Celebrate with fairer fares—explore housing, shared rides, and rental deals near you.",
                 "target": "housing",
                 "image_path": f"/static/img/notifications/festivals/{campaign['image']}",
             }
@@ -16456,28 +16456,47 @@ def run_promotional_push_automation(now: datetime | None = None) -> dict[str, ob
         return queue_promotional_campaign(festival_campaign, f"festival-{festival_campaign['slug']}-{now.year}")
     week_number = int(now.strftime("%V"))
     rotation = week_number % 3
+    with db() as con:
+        cheapest_car = con.execute(
+            """
+            SELECT name, daily_price
+            FROM cars
+            WHERE UPPER(TRIM(status)) = 'AVAILABLE'
+              AND daily_price > 0
+            ORDER BY daily_price ASC, sort_order ASC, id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+    if cheapest_car:
+        cheapest_name = str(row_value(cheapest_car, "name") or "rental car")
+        cheapest_price = float(row_value(cheapest_car, "daily_price") or 0)
+        rental_title = f"🔥 Cheapest rental: {cheapest_name} from ${cheapest_price:.2f}/day"
+        rental_body = "🚙 A low rate picked for you—compare your dates and grab it while this car is available."
+    else:
+        rental_title = "🔥 Your lowest rental deals are ready"
+        rental_body = "🚙 Compare daily and weekly prices and grab the best available car for your dates."
     campaigns = {
         0: {
             "weekday": 4,
             "slug": "carpool",
-            "title": "Heading out of state?",
-            "body": "Share your ride, split the cost, and save with FairFares Carpool.",
+            "title": "🚗 Your route could pay for itself",
+            "body": "🛣️ List your trip, match with riders going your way, and split the travel cost.",
             "target": "carpool",
             "image_path": "/static/img/notifications/carpool-state-move.jpg",
         },
         1: {
             "weekday": 6,
             "slug": "housing",
-            "title": "Have a room or home to share?",
-            "body": "List it on FairFares, meet renters, and share the rent.",
+            "title": "🏡 Extra room? Turn it into savings",
+            "body": "✨ List your space, meet nearby renters, and start sharing the monthly cost.",
             "target": "housing",
             "image_path": "/static/img/notifications/housing-share-rent.jpg",
         },
         2: {
             "weekday": 3,
             "slug": "denver-rentals",
-            "title": "Denver rental deals are live",
-            "body": "Compare low daily and weekly car rates before they’re gone.",
+            "title": rental_title,
+            "body": rental_body,
             "target": "rentals",
             "image_path": "/static/img/notifications/denver-rental-deals.jpg",
         },
