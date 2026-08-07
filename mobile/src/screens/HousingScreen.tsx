@@ -2681,20 +2681,15 @@ export function HousingScreen({
           </ScrollView>
         </View>
 
-        <View style={styles.rideHero}>
-          <Image source={appAssets.rideShareStrip} style={styles.rideShareStrip} resizeMode="contain" />
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="List your ride for carpool"
-            style={styles.rideListBannerButton}
-            onPress={startRideOfferListing}
-            activeOpacity={0.86}
-          >
-            <View pointerEvents="none">
-              <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
-            </View>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="List your ride for carpool"
+          style={styles.rideListBannerButton}
+          onPress={startRideOfferListing}
+          activeOpacity={0.86}
+        >
+          <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="cover" />
+        </TouchableOpacity>
 
         <View style={styles.rideServiceDetail}>
           <View style={styles.rideServiceDetailHeader}>
@@ -3901,12 +3896,12 @@ const styles = StyleSheet.create({
   ridePopularShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 31, backgroundColor: "rgba(0,0,0,0.48)" },
   ridePopularCity: { position: "absolute", left: 11, right: 8, bottom: 7, color: "#fff", fontSize: 13, fontWeight: "900" },
   rideHero: {
-    borderRadius: theme.radius.lg,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "#090d12",
-    padding: 12,
-    gap: 10,
+    padding: 7,
+    gap: 6,
     shadowColor: "#000",
     shadowOpacity: 0.28,
     shadowRadius: 18,
@@ -3926,17 +3921,17 @@ const styles = StyleSheet.create({
   rideFeatureBadge: { color: theme.colors.soft, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideShareStrip: {
     width: "100%",
-    height: 32,
-    borderRadius: 12,
+    height: 25,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     overflow: "hidden",
     backgroundColor: "rgba(15,23,42,0.72)"
   },
-  ridePosterSection: { gap: theme.spacing.md },
+  ridePosterSection: { gap: 9 },
   ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
-  ridePosterCarousel: { gap: 12, paddingRight: 18 },
+  ridePosterCarousel: { gap: 9, paddingRight: 14 },
   ridePosterImageCard: {
     width: 330,
     height: 172,
@@ -3953,9 +3948,9 @@ const styles = StyleSheet.create({
   ridePosterImage: { flex: 1 },
   ridePosterImageRadius: { borderRadius: 20 },
   ridePosterCard: {
-    width: 286,
-    minHeight: 138,
-    borderRadius: 20,
+    width: 238,
+    minHeight: 108,
+    borderRadius: 16,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
@@ -3967,11 +3962,11 @@ const styles = StyleSheet.create({
   },
   ridePosterCardActive: { borderColor: theme.colors.text, shadowOpacity: 0.42 },
   ridePosterCardSoon: { opacity: 0.58 },
-  ridePosterCopy: { flex: 1, padding: 14, justifyContent: "space-between", gap: 10 },
-  ridePosterTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900" },
-  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 14, paddingVertical: 8, fontSize: 13, fontWeight: "900" },
-  ridePosterArt: { width: 102, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)" },
+  ridePosterCopy: { flex: 1, padding: 10, justifyContent: "space-between", gap: 6 },
+  ridePosterTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 20, fontWeight: "900" },
+  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 14, fontWeight: "800" },
+  ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 6, fontSize: 11, fontWeight: "900" },
+  ridePosterArt: { width: 76, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)", transform: [{ scale: 0.78 }] },
   rideGlyphWrap: { width: 78, height: 78, alignItems: "center", justifyContent: "center" },
   rideGlyphWrapSmall: { width: 42, height: 42 },
   rideGlyphCalendar: { width: 48, height: 46, borderRadius: 8, borderWidth: 3, borderColor: theme.colors.text, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.04)" },
@@ -4004,24 +3999,24 @@ const styles = StyleSheet.create({
   rideInsightTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900" },
   rideInsightMeta: { color: theme.colors.soft, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   rideServiceDetail: {
-    borderRadius: theme.radius.lg,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(15,23,42,0.76)",
-    padding: theme.spacing.md,
-    gap: 9
+    padding: 10,
+    gap: 7
   },
-  rideServiceDetailHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  rideServiceDetailHeader: { flexDirection: "row", alignItems: "center", gap: 9 },
   rideServiceDetailIconWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center"
   },
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
-  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 23, fontWeight: "800" },
+  rideServiceDetailTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "800" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
@@ -4029,22 +4024,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(255,255,255,0.05)",
-    padding: 12,
-    gap: 4
+    padding: 9,
+    gap: 3
   },
   rideExampleLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
-  rideExampleText: { color: theme.colors.text, fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  rideExampleText: { color: theme.colors.text, fontSize: 12, lineHeight: 16, fontWeight: "700" },
   rideServiceStep: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  rideServiceStepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  rideServiceStepDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center", marginTop: 1 },
   rideServiceStepDotText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
-  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  rideServiceStepText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "700" },
   rideLifecycleCard: {
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(255,255,255,0.05)",
-    padding: 12,
-    gap: 8
+    padding: 9,
+    gap: 6
   },
   rideLifecycleWrap: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   rideLifecyclePill: {
@@ -4240,13 +4235,13 @@ const styles = StyleSheet.create({
   rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
   rideListBannerButton: {
-    borderRadius: 18,
+    height: 96,
+    borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "#f7efe2"
+    borderColor: "rgba(255,255,255,0.14)"
   },
-  rideListBanner: { width: "100%", height: 168 },
+  rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideOwnerOfferCard: {
     width: "100%",
