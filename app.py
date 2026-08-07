@@ -18074,6 +18074,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/identity/stripe-session",
         }
 
+    def redirect_legacy_web_origin(self, parsed: urllib.parse.ParseResult) -> bool:
+        host = (self.headers.get("Host") or "").split(":", 1)[0].lower()
+        if host != "fairfares.onrender.com":
+            return False
+        if parsed.path.startswith(("/api/", "/static/", "/uploads/", "/.well-known/")):
+            return False
+        target = f"https://www.fairfare.space{parsed.path or '/'}"
+        if parsed.query:
+            target = f"{target}?{parsed.query}"
+        self.send_response(308)
+        self.send_header("Location", target)
+        self.end_headers()
+        return True
+
     def cors_allowed_origin(self) -> str:
         origin = (self.headers.get("Origin") or "").strip().rstrip("/")
         if not origin:
@@ -18123,6 +18137,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if self.redirect_legacy_web_origin(parsed):
+            return
         if parsed.path == "/.well-known/apple-app-site-association":
             self.app_association_file("ios")
             return

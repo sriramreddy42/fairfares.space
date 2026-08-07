@@ -134,7 +134,7 @@ OPENAI_API_KEY=your_openai_key
 
 ## Mobile App Shell
 
-FairFares can run as native iOS and Android apps through Capacitor. The current mobile shell loads the live hosted website at `https://fairfares.onrender.com`, which keeps the Flask backend, authentication, bookings, Explorer, and admin-driven content in one place.
+FairFares can run as native iOS and Android apps through Capacitor. The current mobile shell loads the canonical website at `https://www.fairfare.space`, which keeps authentication and booking navigation on the same origin as the public website.
 
 After changing `capacitor.config.json` or adding Capacitor plugins, sync the native projects:
 
@@ -163,7 +163,7 @@ The project includes `render.yaml` for Render hosting.
    - `FAIRFARES_BACKUP_KEEP=20`
    - `RESEND_API_KEY`
    - `RESEND_FROM=FairFares <hello@fairfare.space>`
-   - `PUBLIC_BASE_URL=https://your-render-url`
+   - `PUBLIC_BASE_URL=https://www.fairfare.space`
    - `STRIPE_PUBLISHABLE_KEY`
    - `STRIPE_SECRET_KEY`
    - `STRIPE_WEBHOOK_SECRET`

@@ -119,6 +119,25 @@ class WebGoogleAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_legacy_render_booking_url_redirects_to_canonical_origin(self):
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/manage-booking?booking_id=FF-123",
+                headers={"Host": "fairfares.onrender.com"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as redirect:
+                urllib.request.build_opener(NoRedirect()).open(request, timeout=5)
+            self.assertEqual(redirect.exception.code, 308)
+            self.assertEqual(
+                redirect.exception.headers["Location"],
+                "https://www.fairfare.space/manage-booking?booking_id=FF-123",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_google_callback_creates_verified_account_and_session(self):
         claims = {
             "sub": "google-web-member-123",

@@ -3,11 +3,11 @@
   "appName": "FairFares",
   "webDir": "static",
   "server": {
-    "url": "https://fairfares.onrender.com",
+    "url": "https://www.fairfare.space",
     "cleartext": false,
     "allowNavigation": [
-      "fairfares.onrender.com",
-      "*.fairfares.onrender.com",
+      "www.fairfare.space",
+      "fairfare.space",
       "www.google.com",
       "maps.google.com",
       "*.google.com",

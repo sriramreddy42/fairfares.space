@@ -124,7 +124,7 @@
       "expo-web-browser"
     ],
     "extra": {
-      "apiUrl": "https://fairfares.onrender.com",
+      "apiUrl": "https://www.fairfare.space",
       "eas": {
         "projectId": "e5c86839-49a9-4c8f-9477-37c971df2344",
         "build": {
