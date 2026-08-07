@@ -120,6 +120,35 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertLessEqual(results[0]["routeDeviationMiles"], app.ride_allowed_detour_miles(results[0]))
 
     @patch.object(app, "ride_point", side_effect=fake_ride_point)
+    def test_mid_route_search_is_not_discarded_by_city_text(self, _mock_point):
+        with app.db() as con:
+            self.insert_ride(
+                con,
+                self.driver_id,
+                "CARPOOL_OFFER",
+                "300 East 17th Ave, Denver, CO",
+                "Colorado Springs, CO",
+                max_detour=100,
+                pickup_distance=50,
+            )
+
+        with patch.object(app, "google_route_totals", return_value=None):
+            results = app.mobile_ride_posts(
+                city="Littleton, CO",
+                ride_type="CARPOOL_OFFER",
+                origin="Littleton, CO",
+                destination="Colorado Springs, CO",
+                limit=10,
+                origin_lat=POINTS["Littleton, CO"]["lat"],
+                origin_lng=POINTS["Littleton, CO"]["lng"],
+                destination_lat=POINTS["Colorado Springs, CO"]["lat"],
+                destination_lng=POINTS["Colorado Springs, CO"]["lng"],
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertLessEqual(float(results[0]["routeDeviationMiles"]), 50.0)
+
+    @patch.object(app, "ride_point", side_effect=fake_ride_point)
     def test_expired_carpool_offer_stays_visible_but_marked_expired(self, _mock_point):
         with app.db() as con:
             self.insert_ride(

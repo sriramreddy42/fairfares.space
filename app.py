@@ -13849,10 +13849,14 @@ def mobile_ride_posts(
             destination_point = {**destination_point, **supplied_destination}
     clauses = ["ride_posts.status = 'ACTIVE'"]
     values: list[object] = []
+    route_search = bool(origin and destination)
     if ride_type:
         clauses.append("ride_posts.ride_type = ?")
         values.append(ride_type)
-    if city:
+    # A rider may join and leave anywhere along a longer route. Restricting a
+    # two-ended search to the offer's city label would discard valid midway
+    # matches before route deviation can be calculated.
+    if city and not route_search:
         city_root = city.split(",", 1)[0].strip()
         clauses.append("(lower(ride_posts.city_label) LIKE lower(?) OR lower(ride_posts.origin_label) LIKE lower(?) OR lower(ride_posts.destination_label) LIKE lower(?))")
         values.extend([f"%{city_root}%", f"%{city_root}%", f"%{city_root}%"])
@@ -13864,12 +13868,16 @@ def mobile_ride_posts(
         ORDER BY datetime(ride_posts.created_at) DESC
         LIMIT ? OFFSET ?
     """
-    values.extend([max(1, min(int(limit or 30), 50)), max(0, int(offset or 0))])
+    page_limit = max(1, min(int(limit or 30), 50))
+    page_offset = max(0, int(offset or 0))
+    candidate_limit = 250 if route_search else page_limit
+    candidate_offset = 0 if route_search else page_offset
+    values.extend([candidate_limit, candidate_offset])
     with db() as con:
         rows = con.execute(sql, values).fetchall()
     payloads = [mobile_ride_payload(row, origin_point, destination_point) for row in rows]
     if origin or destination:
-        if origin and destination:
+        if route_search:
             route_filtered = []
             for item in payloads:
                 route_deviation = item.get("routeDeviationMiles")
@@ -13881,6 +13889,8 @@ def mobile_ride_posts(
                     route_filtered.append(item)
             payloads = route_filtered
         payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("routeDeviationMiles") or 9999), float(item.get("distanceMiles") or 9999)))
+    if route_search:
+        payloads = payloads[page_offset:page_offset + page_limit]
     return payloads
 
 
