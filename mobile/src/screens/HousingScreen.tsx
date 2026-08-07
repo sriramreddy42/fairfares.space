@@ -97,6 +97,35 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Rent ↓", value: "rentDesc" }
 ];
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
+const demoHousingTestimonials: BootstrapPayload["testimonials"] = [
+  {
+    id: -1,
+    name: "Maya P. · Demo",
+    city: "Denver, CO",
+    avatarEmoji: "🏡",
+    demo: true,
+    rating: 5,
+    message: "The city search made it easy to compare nearby rooms without losing track of my budget."
+  },
+  {
+    id: -2,
+    name: "Jordan K. · Demo",
+    city: "Aurora, CO",
+    avatarEmoji: "🚗",
+    demo: true,
+    rating: 4,
+    message: "I liked having housing, carpools, and rental options together while planning my move."
+  },
+  {
+    id: -3,
+    name: "Sam R. · Demo",
+    city: "Dayton, OH",
+    avatarEmoji: "🎓",
+    demo: true,
+    rating: 5,
+    message: "The filters helped me narrow the search quickly and understand what was available nearby."
+  }
+];
 
 function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | undefined) {
   if (!address) return "";
@@ -528,6 +557,7 @@ export function HousingScreen({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
+  const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
@@ -677,7 +707,7 @@ export function HousingScreen({
   }, [cityExperienceSubmitted, data?.user?.id]);
 
   useEffect(() => {
-    const storyCount = 1 + (data?.testimonials?.length || 0);
+    const storyCount = 1 + homeTestimonials.length;
     if (storyCount <= 1) {
       setHomeStoryIndex(0);
       return;
@@ -686,7 +716,7 @@ export function HousingScreen({
       setHomeStoryIndex((value) => (value + 1) % storyCount);
     }, 4000);
     return () => clearTimeout(timer);
-  }, [data?.testimonials?.length, homeStoryIndex]);
+  }, [homeStoryIndex, homeTestimonials.length]);
 
   useEffect(() => {
     setSearchPhraseIndex(0);
@@ -2999,7 +3029,7 @@ export function HousingScreen({
       </View>
 
       <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
-        {homeStoryIndex === 0 || !data?.testimonials?.[homeStoryIndex - 1] ? (
+        {homeStoryIndex === 0 || !homeTestimonials[homeStoryIndex - 1] ? (
           <>
             <View style={styles.welcomeCopy}>
               <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
@@ -3013,13 +3043,13 @@ export function HousingScreen({
             </View>
           </>
         ) : (() => {
-          const testimonial = data.testimonials[homeStoryIndex - 1];
+          const testimonial = homeTestimonials[homeStoryIndex - 1];
           const testimonialPhoto = testimonial.photoUrl ? absoluteAssetUrl(testimonial.photoUrl) : "";
           const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
           return (
             <View style={styles.homeTestimonial}>
               <View style={styles.homeTestimonialAvatar}>
-                {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
+                {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
               </View>
               <View style={styles.homeTestimonialCopy}>
                 <View style={styles.homeTestimonialTopline}>
@@ -3032,9 +3062,9 @@ export function HousingScreen({
             </View>
           );
         })()}
-        {(data?.testimonials?.length || 0) > 0 ? (
+        {homeTestimonials.length > 0 ? (
           <View style={styles.homeStoryPager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            {Array.from({ length: 1 + data!.testimonials.length }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
+            {Array.from({ length: 1 + homeTestimonials.length }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
           </View>
         ) : null}
       </View>
@@ -3643,6 +3673,7 @@ const styles = StyleSheet.create({
   carpoolCarouselStat: { color: "#8ff0c2", minHeight: 34, textAlignVertical: "center" },
   homeTestimonial: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
   homeTestimonialAvatar: { width: 54, height: 54, borderRadius: 27, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#16885b", borderWidth: 2, borderColor: "rgba(108,235,181,0.62)" },
+  homeTestimonialEmoji: { fontSize: 27, lineHeight: 32 },
   homeTestimonialCopy: { flex: 1, minWidth: 0, gap: 3 },
   homeTestimonialTopline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   homeTestimonialName: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "800" },

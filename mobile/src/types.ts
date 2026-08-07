@@ -523,6 +523,8 @@ export type BootstrapPayload = {
     name: string;
     city: string;
     photoUrl?: string;
+    avatarEmoji?: string;
+    demo?: boolean;
     rating: number;
     message: string;
   }>;
