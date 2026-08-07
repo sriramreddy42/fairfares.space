@@ -21,6 +21,10 @@ For a real device on the same Wi-Fi, the app derives your Mac's local IP from Ex
 
 Use `npm run start:go` for Expo Go. Use `npm run start:dev` only after adding `expo-dev-client` and creating a native development build.
 
+Expo Go can preview the app, but it cannot test Google or Apple OAuth because it
+cannot register the FairFares native redirect scheme. Install an EAS development
+build and use `npm run start:dev` when testing social sign-in.
+
 ## Social sign-in configuration
 
 Google and Apple sign-in both finish with SMS verification of the user's phone

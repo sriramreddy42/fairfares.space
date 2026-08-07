@@ -34,6 +34,7 @@ WebBrowser.maybeCompleteAuthSession();
 const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || "google-ios-client-not-configured";
 const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || "google-android-client-not-configured";
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || "google-web-client-not-configured";
+const IS_EXPO_GO = Constants.appOwnership === "expo";
 const GOOGLE_AUTH_CONFIGURED = Platform.select({
   ios: !GOOGLE_IOS_CLIENT_ID.includes("not-configured"),
   android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured"),
@@ -1103,6 +1104,10 @@ function FairFaresApp() {
   }
 
   async function startGoogleSignIn() {
+    if (IS_EXPO_GO && Platform.OS !== "web") {
+      setAuthMessage("Google sign-in cannot run inside Expo Go. Install the FairFares development build, start Metro with npm run start:dev, and try again there.");
+      return;
+    }
     if (!GOOGLE_AUTH_CONFIGURED) {
       setAuthMessage("Google sign-in is not configured for this build yet.");
       return;
