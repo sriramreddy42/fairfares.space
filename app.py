@@ -18965,7 +18965,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             commercial_duration=escape(commercial["duration_seconds"] if commercial else 12),
             commercial_live=escape("1" if commercial and commercial["is_live"] else "0"),
             commercial_badge=escape("Live now" if commercial and commercial["is_live"] else "Play feature"),
-            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+            auth_link=(
+                f'<a class="nav-button" href="/dashboard" title="Open your FairFares profile">{escape(user["email"])}</a>'
+                if user else '<a href="/login">Sign in / Join</a>'
+            ),
             guest_offer_modal="" if user else guest_offer_modal(),
             referral_claim_modal=referral_claim_modal(get_ready_referral_reward(user["id"]) if user else None),
         )

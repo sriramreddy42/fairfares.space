@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from http import cookies
 from pathlib import Path
 from unittest import mock
 
@@ -145,6 +146,56 @@ class WebGoogleAuthTest(unittest.TestCase):
             self.assertEqual(user["name"], "Web Member")
             self.assertEqual(int(user["is_verified"]), 1)
             self.assertEqual(int(identity["user_id"]), int(user["id"]))
+
+            session_cookie = cookies.SimpleCookie(redirect.exception.headers["Set-Cookie"])
+            token = session_cookie[app.SESSION_COOKIE].value
+            landing_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/",
+                headers={"Cookie": f"{app.SESSION_COOKIE}={token}"},
+            )
+            with urllib.request.urlopen(landing_request, timeout=5) as response:
+                landing = response.read().decode("utf-8")
+            self.assertIn("web.member@example.com", landing)
+            self.assertNotIn("Sign in / Join", landing)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_google_callback_reuses_existing_account_with_same_email(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Existing Member", "existing.member@example.com", app.hash_password("existing-password")),
+            )
+            existing_user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+        claims = {
+            "sub": "google-existing-member-123",
+            "email": "existing.member@example.com",
+            "email_verified": True,
+            "name": "Google Display Name",
+        }
+        server, thread = self.start_server()
+        try:
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                with self.assertRaises(urllib.error.HTTPError) as redirect:
+                    self.google_post(server)
+            self.assertEqual(redirect.exception.code, 303)
+            self.assertEqual(redirect.exception.headers["Location"], "/")
+            with app.db() as con:
+                users = con.execute(
+                    "SELECT * FROM users WHERE lower(email) = lower(?)",
+                    ("existing.member@example.com",),
+                ).fetchall()
+                identity = con.execute(
+                    "SELECT * FROM auth_identities WHERE provider = 'google' AND provider_subject = ?",
+                    ("google-existing-member-123",),
+                ).fetchone()
+            self.assertEqual(len(users), 1)
+            self.assertEqual(int(users[0]["id"]), existing_user_id)
+            self.assertEqual(users[0]["name"], "Existing Member")
+            self.assertEqual(int(identity["user_id"]), existing_user_id)
         finally:
             server.shutdown()
             server.server_close()
