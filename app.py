@@ -89,10 +89,14 @@ PASSWORD_HASH_ITERATIONS = 600_000
 LOGIN_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_LOGIN_ATTEMPTS", 5)
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_LOGIN_WINDOW_SECONDS", 15 * 60)
 LOGIN_RATE_LIMIT_LOCK_SECONDS = positive_int_env("FAIRFARES_LOGIN_LOCK_SECONDS", 15 * 60)
+FEEDBACK_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_FEEDBACK_ATTEMPTS", 5)
+FEEDBACK_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_FEEDBACK_WINDOW_SECONDS", 60 * 60)
 SOCIAL_AUTH_CONTINUATION_MINUTES = positive_int_env("FAIRFARES_SOCIAL_AUTH_CONTINUATION_MINUTES", 10)
 PHONE_OTP_COOLDOWN_SECONDS = positive_int_env("FAIRFARES_PHONE_OTP_COOLDOWN_SECONDS", 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
+_FEEDBACK_SUBMISSIONS: dict[str, list[float]] = {}
+_FEEDBACK_SUBMISSIONS_LOCK = threading.Lock()
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
 _CHAT_TYPING_LOCK = threading.Lock()
 _DIAGNOSTIC_REPORTS: dict[str, list[float]] = {}
@@ -1665,6 +1669,39 @@ def record_login_failure(key: str, now: float | None = None) -> None:
 def clear_login_failures(key: str) -> None:
     with _LOGIN_LOCK:
         _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def feedback_rate_limit_key(client_ip: str, user_id: int = 0) -> str:
+    identity = f"user:{user_id}" if user_id > 0 else f"ip:{client_ip.strip()[:64]}"
+    return hashlib.sha256(f"feedback:{identity}".encode("utf-8")).hexdigest()
+
+
+def feedback_retry_after(key: str, now: float | None = None) -> int:
+    current = now if now is not None else time.monotonic()
+    cutoff = current - FEEDBACK_RATE_LIMIT_WINDOW_SECONDS
+    with _FEEDBACK_SUBMISSIONS_LOCK:
+        recent = [value for value in _FEEDBACK_SUBMISSIONS.get(key, []) if value >= cutoff]
+        if recent:
+            _FEEDBACK_SUBMISSIONS[key] = recent
+        else:
+            _FEEDBACK_SUBMISSIONS.pop(key, None)
+        if len(recent) < FEEDBACK_RATE_LIMIT_ATTEMPTS:
+            return 0
+        return max(1, int(FEEDBACK_RATE_LIMIT_WINDOW_SECONDS - (current - recent[0])))
+
+
+def record_feedback_submission(key: str, now: float | None = None) -> None:
+    current = now if now is not None else time.monotonic()
+    cutoff = current - FEEDBACK_RATE_LIMIT_WINDOW_SECONDS
+    with _FEEDBACK_SUBMISSIONS_LOCK:
+        recent = [value for value in _FEEDBACK_SUBMISSIONS.get(key, []) if value >= cutoff]
+        recent.append(current)
+        _FEEDBACK_SUBMISSIONS[key] = recent[-FEEDBACK_RATE_LIMIT_ATTEMPTS:]
+
+
+def clear_feedback_submissions(key: str) -> None:
+    with _FEEDBACK_SUBMISSIONS_LOCK:
+        _FEEDBACK_SUBMISSIONS.pop(key, None)
 
 
 def application_secret() -> str:
@@ -18795,10 +18832,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_json(self, payload: dict[str, object], status: int = 200) -> None:
+    def send_json(self, payload: dict[str, object], status: int = 200, headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -23326,13 +23365,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         message = (form.get("message") or "").strip()[:1200]
         page = (form.get("page") or "").strip()[:300]
         user_agent = (self.headers.get("User-Agent") or "").strip()[:300]
+        user_id = int(user["id"]) if user else 0
+        rate_key = feedback_rate_limit_key(self.client_ip(), user_id)
+        retry_after = feedback_retry_after(rate_key)
+        if retry_after:
+            self.send_json(
+                {"ok": False, "message": "Too many feedback submissions. Please wait before trying again."},
+                429,
+                {"Retry-After": str(retry_after)},
+            )
+            return
         with db() as con:
+            if user_id:
+                duplicate = con.execute(
+                    """
+                    SELECT 1 FROM app_feedback
+                    WHERE user_id = ? AND rating = ? AND page = ? AND message = ?
+                      AND created_at >= datetime('now', '-10 minutes')
+                    LIMIT 1
+                    """,
+                    (user_id, rating, page, message),
+                ).fetchone()
+                if duplicate:
+                    self.send_json({"ok": True, "message": "We already received this feedback."})
+                    return
             cursor = con.execute(
                 """
                 INSERT INTO app_feedback (user_id, rating, message, page, user_agent)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (user["id"] if user else None, rating, message, page, user_agent),
+                (user_id or None, rating, message, page, user_agent),
             )
             if page == "mobile-housing-city-experience" and user and message and rating >= 4:
                 city, separator, testimonial_message = message.partition(": ")
@@ -23346,6 +23408,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (int(cursor.lastrowid), int(user["id"]), city[:80], rating, testimonial_message[:300]),
                 )
+        record_feedback_submission(rate_key)
         self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
 
     def ask_wiki_agent(self) -> None:

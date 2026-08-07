@@ -78,6 +78,15 @@ class SecurityHardeningTest(unittest.TestCase):
         app.clear_login_failures(key)
         self.assertEqual(app.login_retry_after(key, now=1006), 0)
 
+    def test_feedback_rate_limit_blocks_repeated_submissions(self):
+        key = app.feedback_rate_limit_key("127.0.0.1", 42)
+        for index in range(app.FEEDBACK_RATE_LIMIT_ATTEMPTS):
+            app.record_feedback_submission(key, now=2000 + index)
+        self.assertGreater(app.feedback_retry_after(key, now=2000 + app.FEEDBACK_RATE_LIMIT_ATTEMPTS), 0)
+        app.clear_feedback_submissions(key)
+        self.assertEqual(app.feedback_retry_after(key, now=2006), 0)
+        self.assertNotEqual(key, app.feedback_rate_limit_key("127.0.0.1", 43))
+
     def test_ooxml_validation_rejects_fake_and_macro_documents(self):
         mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         self.assertFalse(app.valid_chat_document_payload(mime, "resume.docx", b"not a zip"))
