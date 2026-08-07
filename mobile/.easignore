@@ -1,0 +1,9 @@
+.expo/
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+dist-visual/
+*.log
+.DS_Store
