@@ -48,6 +48,25 @@ class AuthBootstrapTest(unittest.TestCase):
 
         self.assertIsNone(self.admin_user())
 
+    def test_housing_experience_is_remembered_after_any_rating(self):
+        app.init_db()
+        with app.db() as con:
+            cursor = con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Review User", "review@example.com", app.hash_password("ReviewPassword123!")),
+            )
+            user_id = int(cursor.lastrowid)
+            self.assertFalse(app.has_submitted_housing_experience(user_id))
+            con.execute(
+                """
+                INSERT INTO app_feedback (user_id, rating, message, page)
+                VALUES (?, 2, 'The search needs clearer filters.', 'mobile-housing-city-experience')
+                """,
+                (user_id,),
+            )
+
+        self.assertTrue(app.has_submitted_housing_experience(user_id))
+
     def test_incomplete_admin_configuration_creates_no_admin(self):
         os.environ["FAIRFARES_ADMIN_EMAIL"] = "ops@fairfares.com"
         app.init_db()

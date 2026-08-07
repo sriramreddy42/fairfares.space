@@ -518,6 +518,7 @@ export type BootstrapPayload = {
     housingPosts: number;
     messages: number;
   };
+  hasSubmittedHousingExperience: boolean;
   testimonials: Array<{
     id: number;
     name: string;

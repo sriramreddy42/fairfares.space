@@ -703,12 +703,12 @@ export function HousingScreen({
   }, [activeSearchPhrases.length, searchPhraseIndex]);
 
   useEffect(() => {
-    if (!data?.user || cityExperienceSubmitted) return;
+    if (!data?.user || data.hasSubmittedHousingExperience || cityExperienceSubmitted) return;
     const timer = setTimeout(() => {
       setCityExperienceModalOpen(true);
     }, 3 * 60 * 1000);
     return () => clearTimeout(timer);
-  }, [cityExperienceSubmitted, data?.user?.id]);
+  }, [cityExperienceSubmitted, data?.hasSubmittedHousingExperience, data?.user?.id]);
 
   useEffect(() => {
     const storyCount = 1 + homeTestimonials.length;

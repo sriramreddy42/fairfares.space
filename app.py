@@ -9905,6 +9905,23 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict
     return testimonials
 
 
+def has_submitted_housing_experience(user_id: int) -> bool:
+    if user_id <= 0:
+        return False
+    with db() as con:
+        return bool(
+            con.execute(
+                """
+                SELECT 1
+                FROM app_feedback
+                WHERE user_id = ? AND page = 'mobile-housing-city-experience'
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+        )
+
+
 def get_exports_imports_interest_summary() -> dict[str, int]:
     with db() as con:
         row = con.execute(
@@ -28551,6 +28568,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
                     "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
+                "hasSubmittedHousingExperience": has_submitted_housing_experience(user_id),
                 "testimonials": get_mobile_housing_testimonials(city=city),
             }
         )
