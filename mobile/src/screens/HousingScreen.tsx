@@ -672,7 +672,7 @@ export function HousingScreen({
     if (!data?.user || cityExperienceSubmitted) return;
     const timer = setTimeout(() => {
       setCityExperienceModalOpen(true);
-    }, 5 * 60 * 1000);
+    }, 3 * 60 * 1000);
     return () => clearTimeout(timer);
   }, [cityExperienceSubmitted, data?.user?.id]);
 
