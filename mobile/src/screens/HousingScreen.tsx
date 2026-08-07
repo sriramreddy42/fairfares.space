@@ -455,6 +455,7 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
+  const [homeStoryIndex, setHomeStoryIndex] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -674,6 +675,18 @@ export function HousingScreen({
     }, 5 * 60 * 1000);
     return () => clearTimeout(timer);
   }, [cityExperienceSubmitted, data?.user?.id]);
+
+  useEffect(() => {
+    const storyCount = 1 + (data?.testimonials?.length || 0);
+    if (storyCount <= 1) {
+      setHomeStoryIndex(0);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setHomeStoryIndex((value) => (value + 1) % storyCount);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [data?.testimonials?.length, homeStoryIndex]);
 
   useEffect(() => {
     setSearchPhraseIndex(0);
@@ -2986,16 +2999,44 @@ export function HousingScreen({
       </View>
 
       <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
-        <View style={styles.welcomeCopy}>
-          <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
-          <Text style={styles.welcomeMeta}>Check recent listings and explore nearby housing or carpool options.</Text>
-        </View>
-        <View style={styles.statRow}>
-          <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
-          <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
-            <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>List your ride & earn</Text>
-          </TouchableOpacity>
-        </View>
+        {homeStoryIndex === 0 || !data?.testimonials?.[homeStoryIndex - 1] ? (
+          <>
+            <View style={styles.welcomeCopy}>
+              <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
+              <Text style={styles.welcomeMeta}>Check recent listings and explore nearby housing or carpool options.</Text>
+            </View>
+            <View style={styles.statRow}>
+              <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
+              <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
+                <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>List your ride & earn</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (() => {
+          const testimonial = data.testimonials[homeStoryIndex - 1];
+          const testimonialPhoto = testimonial.photoUrl ? absoluteAssetUrl(testimonial.photoUrl) : "";
+          const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+          return (
+            <View style={styles.homeTestimonial}>
+              <View style={styles.homeTestimonialAvatar}>
+                {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
+              </View>
+              <View style={styles.homeTestimonialCopy}>
+                <View style={styles.homeTestimonialTopline}>
+                  <Text style={styles.homeTestimonialName} numberOfLines={1}>{testimonial.name}</Text>
+                  <Text style={styles.homeTestimonialStars}>{"★".repeat(testimonial.rating)}</Text>
+                </View>
+                <Text style={styles.homeTestimonialCity}>📍 {testimonial.city}</Text>
+                <Text style={styles.homeTestimonialMessage} numberOfLines={2}>“{testimonial.message}”</Text>
+              </View>
+            </View>
+          );
+        })()}
+        {(data?.testimonials?.length || 0) > 0 ? (
+          <View style={styles.homeStoryPager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            {Array.from({ length: 1 + data!.testimonials.length }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
+          </View>
+        ) : null}
       </View>
 
       <Modal visible={cityExperienceModalOpen} transparent animationType="fade" onRequestClose={() => setCityExperienceModalOpen(false)}>
@@ -3593,13 +3634,24 @@ const styles = StyleSheet.create({
   cityExperienceModalTitle: { color: "#10231c", fontSize: 22, lineHeight: 27, fontWeight: "800", marginTop: 2 },
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
-  welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#10231c", gap: 12, flexDirection: "row", alignItems: "center" },
+  welcome: { minHeight: 132, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "#10231c", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden" },
   welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
   welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
   welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
   statRow: { width: 132, gap: 7 },
   stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 11, textAlign: "center" },
   carpoolCarouselStat: { color: "#8ff0c2", minHeight: 34, textAlignVertical: "center" },
+  homeTestimonial: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
+  homeTestimonialAvatar: { width: 54, height: 54, borderRadius: 27, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#16885b", borderWidth: 2, borderColor: "rgba(108,235,181,0.62)" },
+  homeTestimonialCopy: { flex: 1, minWidth: 0, gap: 3 },
+  homeTestimonialTopline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  homeTestimonialName: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "800" },
+  homeTestimonialStars: { color: "#f4b51e", fontSize: 12, lineHeight: 16, letterSpacing: 0.5 },
+  homeTestimonialCity: { color: "#75d9ad", fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  homeTestimonialMessage: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  homeStoryPager: { position: "absolute", left: 0, right: 0, bottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
+  homeStoryDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.24)" },
+  homeStoryDotActive: { width: 18, backgroundColor: "#37d59a" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
   housingCardRow: { gap: 10, paddingRight: 2 },

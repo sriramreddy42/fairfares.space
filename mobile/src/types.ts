@@ -518,4 +518,12 @@ export type BootstrapPayload = {
     housingPosts: number;
     messages: number;
   };
+  testimonials: Array<{
+    id: number;
+    name: string;
+    city: string;
+    photoUrl?: string;
+    rating: number;
+    message: string;
+  }>;
 };

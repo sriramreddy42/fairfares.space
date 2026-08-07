@@ -246,7 +246,8 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
     housing: [],
     communities: [],
     chat: { unreadCount: 0, conversations: [] },
-    dashboard: { housingPosts: 0, messages: 0 }
+    dashboard: { housingPosts: 0, messages: 0 },
+    testimonials: []
   };
 }
 

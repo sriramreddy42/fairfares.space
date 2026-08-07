@@ -9782,6 +9782,41 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_mobile_housing_testimonials(limit: int = 6) -> list[dict[str, object]]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT app_feedback.id, app_feedback.rating, app_feedback.message,
+                   users.name AS user_name, users.profile_photo_url
+            FROM app_feedback
+            JOIN users ON users.id = app_feedback.user_id
+            WHERE app_feedback.page = 'mobile-housing-city-experience'
+              AND app_feedback.rating BETWEEN 4 AND 5
+              AND LENGTH(TRIM(app_feedback.message)) >= 8
+            ORDER BY app_feedback.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 12)),),
+        ).fetchall()
+    testimonials: list[dict[str, object]] = []
+    for row in rows:
+        stored_message = str(row_value(row, "message") or "").strip()
+        city, separator, review = stored_message.partition(": ")
+        if not separator:
+            city, review = "FairFares community", stored_message
+        testimonials.append(
+            {
+                "id": int(row_value(row, "id") or 0),
+                "name": str(row_value(row, "user_name") or "FairFares member"),
+                "city": city[:80],
+                "photoUrl": str(row_value(row, "profile_photo_url") or ""),
+                "rating": int(row_value(row, "rating") or 5),
+                "message": review[:300],
+            }
+        )
+    return testimonials
+
+
 def get_exports_imports_interest_summary() -> dict[str, int]:
     with db() as con:
         row = con.execute(
@@ -28380,6 +28415,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
                     "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
+                "testimonials": get_mobile_housing_testimonials(),
             }
         )
 
