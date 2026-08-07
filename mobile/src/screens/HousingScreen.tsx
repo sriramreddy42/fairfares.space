@@ -455,7 +455,6 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
-  const [welcomeCarpoolSlide, setWelcomeCarpoolSlide] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -466,7 +465,8 @@ export function HousingScreen({
   const [cityExperienceText, setCityExperienceText] = useState("");
   const [cityExperienceBusy, setCityExperienceBusy] = useState(false);
   const [cityExperienceStatus, setCityExperienceStatus] = useState("");
-  const [submittedCityExperience, setSubmittedCityExperience] = useState<{ rating: number; text: string } | null>(null);
+  const [cityExperienceSubmitted, setCityExperienceSubmitted] = useState(false);
+  const [cityExperienceModalOpen, setCityExperienceModalOpen] = useState(false);
   const [rentalSearch, setRentalSearch] = useState<RentalSearchInput>(initialRentalSearch);
   const [rentalCars, setRentalCars] = useState<Car[]>(cars);
   const [rentalBusy, setRentalBusy] = useState(false);
@@ -573,8 +573,9 @@ export function HousingScreen({
         `${cityExperienceLocation}: ${reviewText}`,
         "mobile-housing-city-experience"
       );
-      setSubmittedCityExperience({ rating: cityExperienceRating, text: reviewText });
+      setCityExperienceSubmitted(true);
       setCityExperienceStatus("Thanks! Your experience was sent for review.");
+      setCityExperienceModalOpen(false);
     } catch (error) {
       setCityExperienceStatus(error instanceof Error ? error.message : "Could not send your experience. Please try again.");
     } finally {
@@ -667,11 +668,12 @@ export function HousingScreen({
   }, [activeSearchPhrases.length, searchPhraseIndex]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setWelcomeCarpoolSlide((value) => (value + 1) % 2);
-    }, 2800);
-    return () => clearInterval(timer);
-  }, []);
+    if (!data?.user || cityExperienceSubmitted) return;
+    const timer = setTimeout(() => {
+      setCityExperienceModalOpen(true);
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [cityExperienceSubmitted, data?.user?.id]);
 
   useEffect(() => {
     setSearchPhraseIndex(0);
@@ -2983,98 +2985,6 @@ export function HousingScreen({
         ))}
       </View>
 
-      <View style={styles.cityExperienceSection}>
-        <View style={styles.cityExperienceHeader}>
-          <View style={styles.cityExperienceHeaderCopy}>
-            <Text style={styles.cityExperienceEyebrow}>Community experiences</Text>
-            <Text style={styles.cityExperienceTitle}>How is your search in {cityExperienceLocation}?</Text>
-            <Text style={styles.cityExperienceSubtitle}>Share what worked and help the next person searching nearby.</Text>
-          </View>
-          <View style={styles.cityExperienceBubbles} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <View style={[styles.cityExperienceBubble, styles.cityExperienceBubbleLarge]}><Text style={styles.cityExperienceBubbleText}>★</Text></View>
-            <View style={[styles.cityExperienceBubble, styles.cityExperienceBubbleSmall]} />
-            <View style={[styles.cityExperienceBubble, styles.cityExperienceBubbleTiny]} />
-          </View>
-        </View>
-
-        <View style={styles.cityExperienceCard}>
-          <View style={styles.cityExperienceProfileRow}>
-            <View style={styles.cityExperienceAvatar}>
-              {cityExperiencePhoto ? (
-                <Image source={{ uri: cityExperiencePhoto }} style={styles.cityExperienceAvatarImage} />
-              ) : (
-                <Text style={styles.cityExperienceAvatarInitials}>{cityExperienceInitials || "FF"}</Text>
-              )}
-            </View>
-            <View style={styles.cityExperienceProfileCopy}>
-              <Text style={styles.cityExperienceName}>{data?.user?.name || "FairFares member"}</Text>
-              <Text style={styles.cityExperienceCity}>📍 {cityExperienceLocation}</Text>
-            </View>
-            <View style={styles.cityExperienceVerifiedPill}>
-              <Text style={styles.cityExperienceVerifiedText}>{data?.user?.isVerified ? "Verified" : "Your review"}</Text>
-            </View>
-          </View>
-
-          {submittedCityExperience ? (
-            <View style={styles.cityExperiencePreview}>
-              <Text style={styles.cityExperienceStarsReadOnly}>{"★".repeat(submittedCityExperience.rating)}<Text style={styles.cityExperienceStarsMuted}>{"★".repeat(5 - submittedCityExperience.rating)}</Text></Text>
-              <Text style={styles.cityExperienceReviewText}>“{submittedCityExperience.text}”</Text>
-              <Text style={styles.cityExperiencePending}>Pending community review</Text>
-            </View>
-          ) : (
-            <>
-              <Text style={styles.cityExperiencePrompt}>Rate your search experience</Text>
-              <View style={styles.cityExperienceStars}>
-                {[1, 2, 3, 4, 5].map((rating) => (
-                  <TouchableOpacity
-                    key={rating}
-                    style={styles.cityExperienceStarButton}
-                    onPress={() => {
-                      setCityExperienceRating(rating);
-                      setCityExperienceStatus("");
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${rating} star${rating === 1 ? "" : "s"}`}
-                  >
-                    <Text style={[styles.cityExperienceStar, rating <= cityExperienceRating && styles.cityExperienceStarActive]}>★</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TextInput
-                value={cityExperienceText}
-                onChangeText={(value) => {
-                  setCityExperienceText(value.slice(0, 300));
-                  setCityExperienceStatus("");
-                }}
-                placeholder={`What was searching in ${cityExperienceLocation} like?`}
-                placeholderTextColor="#718096"
-                multiline
-                maxLength={300}
-                style={styles.cityExperienceInput}
-                textAlignVertical="top"
-              />
-              <View style={styles.cityExperienceSubmitRow}>
-                <Text style={styles.cityExperienceCount}>{cityExperienceText.length}/300</Text>
-                <TouchableOpacity
-                  style={[styles.cityExperienceSubmit, cityExperienceBusy && styles.cityExperienceSubmitDisabled]}
-                  onPress={shareCityExperience}
-                  disabled={cityExperienceBusy}
-                >
-                  <Text style={styles.cityExperienceSubmitText}>{cityExperienceBusy ? "Sharing…" : "Share experience"}</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-          {cityExperienceStatus ? <Text style={styles.cityExperienceStatus}>{cityExperienceStatus}</Text> : null}
-        </View>
-
-        <View style={styles.cityExperiencePager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          <View style={[styles.cityExperiencePagerDot, styles.cityExperiencePagerDotActive]} />
-          <View style={styles.cityExperiencePagerDot} />
-          <View style={styles.cityExperiencePagerDot} />
-        </View>
-      </View>
-
       <View style={styles.welcome} onLayout={(event) => setWelcomeY(event.nativeEvent.layout.y)}>
         <View style={styles.welcomeCopy}>
           <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
@@ -3083,12 +2993,51 @@ export function HousingScreen({
         <View style={styles.statRow}>
           <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
           <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
-            <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>
-              {welcomeCarpoolSlide === 0 ? "Carpool" : "List your ride & earn"}
-            </Text>
+            <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>List your ride & earn</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      <Modal visible={cityExperienceModalOpen} transparent animationType="fade" onRequestClose={() => setCityExperienceModalOpen(false)}>
+        <KeyboardAvoidingView style={styles.cityExperienceModalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setCityExperienceModalOpen(false)} />
+          <View style={styles.cityExperienceModalCard}>
+            <View style={styles.cityExperienceModalHeader}>
+              <View>
+                <Text style={styles.cityExperienceEyebrow}>Community experience</Text>
+                <Text style={styles.cityExperienceModalTitle}>Rate your search</Text>
+              </View>
+              <TouchableOpacity style={styles.cityExperienceModalClose} onPress={() => setCityExperienceModalOpen(false)} accessibilityLabel="Close review">
+                <Text style={styles.cityExperienceModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.cityExperienceProfileRow}>
+              <View style={styles.cityExperienceAvatar}>
+                {cityExperiencePhoto ? <Image source={{ uri: cityExperiencePhoto }} style={styles.cityExperienceAvatarImage} /> : <Text style={styles.cityExperienceAvatarInitials}>{cityExperienceInitials || "FF"}</Text>}
+              </View>
+              <View style={styles.cityExperienceProfileCopy}>
+                <Text style={styles.cityExperienceName}>{data?.user?.name || "FairFares member"}</Text>
+                <Text style={styles.cityExperienceCity}>📍 {cityExperienceLocation}</Text>
+              </View>
+            </View>
+            <View style={styles.cityExperienceStars}>
+              {[1, 2, 3, 4, 5].map((rating) => (
+                <TouchableOpacity key={rating} style={styles.cityExperienceStarButton} onPress={() => { setCityExperienceRating(rating); setCityExperienceStatus(""); }} accessibilityLabel={`${rating} stars`}>
+                  <Text style={[styles.cityExperienceStar, rating <= cityExperienceRating && styles.cityExperienceStarActive]}>★</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput value={cityExperienceText} onChangeText={(value) => { setCityExperienceText(value.slice(0, 300)); setCityExperienceStatus(""); }} placeholder={`What was searching in ${cityExperienceLocation} like?`} placeholderTextColor="#718096" multiline maxLength={300} style={styles.cityExperienceInput} textAlignVertical="top" />
+            {cityExperienceStatus ? <Text style={styles.cityExperienceStatus}>{cityExperienceStatus}</Text> : null}
+            <View style={styles.cityExperienceSubmitRow}>
+              <Text style={styles.cityExperienceCount}>{cityExperienceText.length}/300</Text>
+              <TouchableOpacity style={[styles.cityExperienceSubmit, cityExperienceBusy && styles.cityExperienceSubmitDisabled]} onPress={shareCityExperience} disabled={cityExperienceBusy}>
+                <Text style={styles.cityExperienceSubmitText}>{cityExperienceBusy ? "Sharing…" : "Share experience"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <View style={styles.listingSectionHeader}>
         <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || "Denver, CO"}</Text>
@@ -3619,27 +3568,7 @@ const styles = StyleSheet.create({
     zIndex: 2
   },
   postActionArrowText: { color: theme.colors.text, fontSize: 24, lineHeight: 26, fontWeight: "600", marginTop: -2 },
-  cityExperienceSection: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(51,214,149,0.38)",
-    backgroundColor: "#0b2119",
-    padding: 16,
-    gap: 13,
-    overflow: "hidden"
-  },
-  cityExperienceHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  cityExperienceHeaderCopy: { flex: 1, minWidth: 0, gap: 4 },
   cityExperienceEyebrow: { color: "#56d99c", fontSize: 10, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
-  cityExperienceTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "800" },
-  cityExperienceSubtitle: { color: theme.colors.soft, fontSize: 12, lineHeight: 17 },
-  cityExperienceBubbles: { width: 66, height: 66, position: "relative" },
-  cityExperienceBubble: { position: "absolute", borderRadius: 999, backgroundColor: "rgba(48,210,143,0.20)", borderWidth: 1, borderColor: "rgba(105,239,182,0.28)", alignItems: "center", justifyContent: "center" },
-  cityExperienceBubbleLarge: { width: 45, height: 45, right: 0, top: 0 },
-  cityExperienceBubbleSmall: { width: 25, height: 25, left: 2, bottom: 1 },
-  cityExperienceBubbleTiny: { width: 13, height: 13, right: 5, bottom: 2, backgroundColor: "#f7bd28" },
-  cityExperienceBubbleText: { color: "#f7bd28", fontSize: 21, lineHeight: 24 },
-  cityExperienceCard: { borderRadius: 20, backgroundColor: "#f7fbf8", padding: 14, gap: 11, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 8 } },
   cityExperienceProfileRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   cityExperienceAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#1a8f61", borderWidth: 3, borderColor: "#c9f5df", overflow: "hidden", alignItems: "center", justifyContent: "center" },
   cityExperienceAvatarImage: { width: "100%", height: "100%" },
@@ -3647,9 +3576,6 @@ const styles = StyleSheet.create({
   cityExperienceProfileCopy: { flex: 1, minWidth: 0, gap: 2 },
   cityExperienceName: { color: "#10231c", fontSize: 14, lineHeight: 18, fontWeight: "800" },
   cityExperienceCity: { color: "#52645d", fontSize: 11, lineHeight: 15, fontWeight: "600" },
-  cityExperienceVerifiedPill: { borderRadius: 999, backgroundColor: "#e0f7ec", paddingHorizontal: 9, paddingVertical: 6 },
-  cityExperienceVerifiedText: { color: "#15714d", fontSize: 9, lineHeight: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
-  cityExperiencePrompt: { color: "#263b33", fontSize: 12, lineHeight: 16, fontWeight: "700" },
   cityExperienceStars: { flexDirection: "row", alignItems: "center", gap: 4 },
   cityExperienceStarButton: { width: 36, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: "#edf2ef" },
   cityExperienceStar: { color: "#b8c2bd", fontSize: 22, lineHeight: 25 },
@@ -3661,14 +3587,12 @@ const styles = StyleSheet.create({
   cityExperienceSubmitDisabled: { opacity: 0.55 },
   cityExperienceSubmitText: { color: "#ffffff", fontSize: 12, lineHeight: 15, fontWeight: "800" },
   cityExperienceStatus: { color: "#51645b", fontSize: 11, lineHeight: 16, fontWeight: "600" },
-  cityExperiencePreview: { borderRadius: 15, backgroundColor: "#eaf8f1", padding: 12, gap: 6 },
-  cityExperienceStarsReadOnly: { color: "#f4b51e", fontSize: 17, lineHeight: 21, letterSpacing: 1 },
-  cityExperienceStarsMuted: { color: "#c6d2cc" },
-  cityExperienceReviewText: { color: "#19352a", fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  cityExperiencePending: { color: "#337157", fontSize: 10, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5 },
-  cityExperiencePager: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-  cityExperiencePagerDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.24)" },
-  cityExperiencePagerDotActive: { width: 22, backgroundColor: "#3ad79a" },
+  cityExperienceModalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.72)", alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
+  cityExperienceModalCard: { width: "100%", maxWidth: 440, borderRadius: 24, backgroundColor: "#f7fbf8", padding: 18, gap: 14, borderWidth: 1, borderColor: "rgba(53,211,147,0.42)" },
+  cityExperienceModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  cityExperienceModalTitle: { color: "#10231c", fontSize: 22, lineHeight: 27, fontWeight: "800", marginTop: 2 },
+  cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
+  cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
   welcome: { borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, backgroundColor: "#10231c", gap: 12, flexDirection: "row", alignItems: "center" },
   welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
   welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
