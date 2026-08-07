@@ -5200,6 +5200,21 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS testimonials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feedback_id INTEGER UNIQUE,
+                user_id INTEGER NOT NULL,
+                city TEXT NOT NULL DEFAULT '',
+                rating INTEGER NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'PUBLISHED',
+                published_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(feedback_id) REFERENCES app_feedback(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS wiki_articles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -5470,6 +5485,34 @@ def init_db() -> None:
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
         ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
+        con.execute(
+            """
+            INSERT OR IGNORE INTO testimonials
+                (feedback_id, user_id, city, rating, message, status, published_at, created_at, updated_at)
+            SELECT app_feedback.id,
+                   app_feedback.user_id,
+                   CASE
+                     WHEN INSTR(app_feedback.message, ': ') > 0
+                     THEN SUBSTR(app_feedback.message, 1, INSTR(app_feedback.message, ': ') - 1)
+                     ELSE 'FairFares community'
+                   END,
+                   app_feedback.rating,
+                   CASE
+                     WHEN INSTR(app_feedback.message, ': ') > 0
+                     THEN SUBSTR(app_feedback.message, INSTR(app_feedback.message, ': ') + 2)
+                     ELSE app_feedback.message
+                   END,
+                   'PUBLISHED',
+                   app_feedback.created_at,
+                   app_feedback.created_at,
+                   app_feedback.created_at
+            FROM app_feedback
+            WHERE app_feedback.page = 'mobile-housing-city-experience'
+              AND app_feedback.user_id IS NOT NULL
+              AND app_feedback.rating BETWEEN 1 AND 5
+              AND LENGTH(TRIM(app_feedback.message)) >= 8
+            """
+        )
         ensure_column(con, "staff_account_requests", "phone", "phone TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "admin_note", "admin_note TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "staff_account_requests", "target_user_id", "target_user_id INTEGER")
@@ -9786,32 +9829,29 @@ def get_mobile_housing_testimonials(limit: int = 6) -> list[dict[str, object]]:
     with db() as con:
         rows = con.execute(
             """
-            SELECT app_feedback.id, app_feedback.rating, app_feedback.message,
+            SELECT testimonials.id, testimonials.rating, testimonials.message, testimonials.city,
                    users.name AS user_name, users.profile_photo_url
-            FROM app_feedback
-            JOIN users ON users.id = app_feedback.user_id
-            WHERE app_feedback.page = 'mobile-housing-city-experience'
-              AND app_feedback.rating BETWEEN 4 AND 5
-              AND LENGTH(TRIM(app_feedback.message)) >= 8
-            ORDER BY app_feedback.id DESC
+            FROM testimonials
+            JOIN users ON users.id = testimonials.user_id
+            WHERE testimonials.status = 'PUBLISHED'
+              AND testimonials.rating BETWEEN 4 AND 5
+              AND LENGTH(TRIM(testimonials.message)) >= 8
+            ORDER BY COALESCE(testimonials.published_at, testimonials.created_at) DESC,
+                     testimonials.id DESC
             LIMIT ?
             """,
             (max(1, min(int(limit), 12)),),
         ).fetchall()
     testimonials: list[dict[str, object]] = []
     for row in rows:
-        stored_message = str(row_value(row, "message") or "").strip()
-        city, separator, review = stored_message.partition(": ")
-        if not separator:
-            city, review = "FairFares community", stored_message
         testimonials.append(
             {
                 "id": int(row_value(row, "id") or 0),
                 "name": str(row_value(row, "user_name") or "FairFares member"),
-                "city": city[:80],
+                "city": str(row_value(row, "city") or "FairFares community")[:80],
                 "photoUrl": str(row_value(row, "profile_photo_url") or ""),
                 "rating": int(row_value(row, "rating") or 5),
-                "message": review[:300],
+                "message": str(row_value(row, "message") or "")[:300],
             }
         )
     return testimonials
@@ -23276,13 +23316,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         page = (form.get("page") or "").strip()[:300]
         user_agent = (self.headers.get("User-Agent") or "").strip()[:300]
         with db() as con:
-            con.execute(
+            cursor = con.execute(
                 """
                 INSERT INTO app_feedback (user_id, rating, message, page, user_agent)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (user["id"] if user else None, rating, message, page, user_agent),
             )
+            if page == "mobile-housing-city-experience" and user and message:
+                city, separator, testimonial_message = message.partition(": ")
+                if not separator:
+                    city, testimonial_message = "FairFares community", message
+                con.execute(
+                    """
+                    INSERT INTO testimonials
+                        (feedback_id, user_id, city, rating, message, status, published_at)
+                    VALUES (?, ?, ?, ?, ?, 'PUBLISHED', CURRENT_TIMESTAMP)
+                    """,
+                    (int(cursor.lastrowid), int(user["id"]), city[:80], rating, testimonial_message[:300]),
+                )
         self.send_json({"ok": True, "message": "Thank you. Your valuable website feedback was submitted."})
 
     def ask_wiki_agent(self) -> None:
