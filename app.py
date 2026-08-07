@@ -27174,6 +27174,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         has_current_booking = bool(booking and booking["booking_status"] not in {"CANCELLED", "RETURNED"})
         booking_status = row_value(booking, "booking_status") if booking else ""
         booking_payment_status = row_value(booking, "payment_status") if booking else ""
+        is_returned_booking = booking_status == "RETURNED"
         customer_tools_unlocked = booking_customer_tools_unlocked(booking)
         hold_pending = booking_payment_status in {"HOLD_PENDING", "PAY_AT_PICKUP"} and booking_status != "EXPIRED_HOLD"
         hold_expired = booking_status == "EXPIRED_HOLD" or booking_payment_status == "HOLD_EXPIRED"

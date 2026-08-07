@@ -35,7 +35,7 @@ class WebGoogleAuthTest(unittest.TestCase):
             )
         }
         os.environ["FAIRFARES_DB_PATH"] = str(Path(self.temp_dir.name) / "google-web.sqlite3")
-        os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
+        os.environ["FAIRFARES_SEED_DEFAULTS"] = "1"
         os.environ["GOOGLE_WEB_CLIENT_ID"] = "web-client.apps.googleusercontent.com"
         os.environ["PUBLIC_BASE_URL"] = "https://www.fairfare.space"
         app.refresh_storage_paths()
@@ -183,8 +183,9 @@ class WebGoogleAuthTest(unittest.TestCase):
             self.assertNotIn(">web.member@example.com</a>", landing)
             self.assertNotIn("Sign in / Join", landing)
 
+            selected_car_id = int(app.get_cars()[0]["id"])
             booking_request = urllib.request.Request(
-                f"http://127.0.0.1:{server.server_port}/manage-booking",
+                f"http://127.0.0.1:{server.server_port}/manage-booking?car_id={selected_car_id}",
                 headers={"Cookie": f"{app.SESSION_COOKIE}={token}"},
             )
             with mock.patch.object(app, "get_chat_conversations_for_user", side_effect=RuntimeError("legacy chat data")):
