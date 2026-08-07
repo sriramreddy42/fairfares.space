@@ -201,9 +201,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         if (!response.ok) {
           const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
           const requestId = response.headers.get("X-Request-ID") || "";
-          const enrichedError = httpError as Error & { fairFaresHttpStatus?: number; fairFaresRequestId?: string };
+          const enrichedError = httpError as Error & { fairFaresHttpStatus?: number; fairFaresRequestId?: string; fairFaresPayload?: unknown };
           enrichedError.fairFaresHttpStatus = response.status;
           enrichedError.fairFaresRequestId = requestId;
+          enrichedError.fairFaresPayload = payload;
           if ([502, 503, 504].includes(response.status) && attempt + 1 < attempts) {
             lastError = httpError.message;
             await wait(500 * (attempt + 1));

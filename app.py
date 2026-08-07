@@ -2395,6 +2395,17 @@ def masked_identifier(value: str) -> str:
     return f"{value[:6]}...{value[-4:]}"
 
 
+def masked_email_hint(value: object) -> str:
+    email = normalize_email(value or "")
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    domain_name, separator, suffix = domain.partition(".")
+    local_hint = f"{local[:1]}***" if local else "***"
+    domain_hint = f"{domain_name[:1]}***" if domain_name else "***"
+    return f"{local_hint}@{domain_hint}{separator}{suffix}" if separator and suffix else f"{local_hint}@{domain_hint}"
+
+
 def stripe_api_request(path: str, params: dict[str, object], idempotency_key: str = "") -> tuple[dict[str, object], str]:
     secret = stripe_secret_key()
     if not secret:
@@ -27956,7 +27967,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             user_id = int(row["user_id"])
             owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, user_id)).fetchone()
             if owner:
-                self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
+                owner_user = con.execute("SELECT email FROM users WHERE id = ?", (int(owner["id"]),)).fetchone()
+                self.send_json({
+                    "ok": False,
+                    "error": "That phone number belongs to another FairFares account.",
+                    "emailRecoveryAvailable": True,
+                    "recoveryEmailHint": masked_email_hint(row_value(owner_user, "email")),
+                }, 409)
                 return
             con.execute(
                 "UPDATE users SET phone = ?, phone_verified_at = NULL, is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP) WHERE id = ?",

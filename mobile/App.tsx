@@ -207,6 +207,8 @@ function FairFaresApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [socialContinuation, setSocialContinuation] = useState("");
+  const [socialRecoveryEmailHint, setSocialRecoveryEmailHint] = useState("");
+  const [showSocialRecoveryEmail, setShowSocialRecoveryEmail] = useState(false);
   const [, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
     androidClientId: GOOGLE_ANDROID_CLIENT_ID,
@@ -1060,6 +1062,8 @@ function FairFaresApp() {
     if (!user) return;
     setData((current) => current ? { ...current, user } : current);
     setSocialContinuation("");
+    setSocialRecoveryEmailHint("");
+    setShowSocialRecoveryEmail(false);
     setLoginOpen(false);
     setAuthMessage("");
     if (pendingListingAfterLogin) {
@@ -1072,6 +1076,8 @@ function FairFaresApp() {
   function acceptSocialAuth(payload: MobileSocialAuthPayload) {
     if (payload.phoneRequired && payload.continuationToken) {
       setSocialContinuation(payload.continuationToken);
+      setSocialRecoveryEmailHint("");
+      setShowSocialRecoveryEmail(false);
       setLoginOpen(false);
       setAuthMessage("");
       return;
@@ -1138,6 +1144,9 @@ function FairFaresApp() {
       const payload = await completeSocialPhone(socialContinuation, nationalPhone, signupCallingCode);
       completeSocialLogin(payload.user);
     } catch (error) {
+      const recovery = (error as Error & { fairFaresPayload?: { recoveryEmailHint?: string } })?.fairFaresPayload;
+      setSocialRecoveryEmailHint(String(recovery?.recoveryEmailHint || ""));
+      setShowSocialRecoveryEmail(false);
       setAuthMessage(error instanceof Error ? error.message : "Could not save the phone number.");
     } finally {
       setAuthBusy(false);
@@ -1659,6 +1668,8 @@ function FairFaresApp() {
         statusBarTranslucent
         onRequestClose={() => {
           setSocialContinuation("");
+          setSocialRecoveryEmailHint("");
+          setShowSocialRecoveryEmail(false);
           setAuthMessage("");
         }}
       >
@@ -1688,6 +1699,16 @@ function FairFaresApp() {
               />
             </View>
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
+            {socialRecoveryEmailHint ? (
+              <View>
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowSocialRecoveryEmail((current) => !current)}>
+                  <Text style={styles.secondaryButtonText}>Forgot user email ID?</Text>
+                </TouchableOpacity>
+                {showSocialRecoveryEmail ? (
+                  <Text style={styles.authMessage}>Account email hint: {socialRecoveryEmailHint}</Text>
+                ) : null}
+              </View>
+            ) : null}
             <TouchableOpacity
               style={[styles.primaryButton, authBusy && styles.disabledButton]}
               onPress={saveSocialPhone}
@@ -1700,6 +1721,8 @@ function FairFaresApp() {
               style={styles.secondaryButton}
               onPress={() => {
                 setSocialContinuation("");
+                setSocialRecoveryEmailHint("");
+                setShowSocialRecoveryEmail(false);
                 setAuthMessage("");
                 setLoginOpen(true);
               }}

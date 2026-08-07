@@ -28,6 +28,11 @@ class SocialAuthConfigTest(unittest.TestCase):
         message = f"Apple sign-in audience '{audience or 'missing'}' is not configured for this FairFares app."
         self.assertIn("com.fairfares.unexpected", message)
 
+    def test_email_recovery_hint_never_exposes_full_address(self):
+        hint = app.masked_email_hint("person@example.com")
+        self.assertEqual(hint, "p***@e***.com")
+        self.assertNotIn("person", hint)
+
 
 if __name__ == "__main__":
     unittest.main()
