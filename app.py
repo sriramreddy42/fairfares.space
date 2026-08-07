@@ -21509,7 +21509,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = 'google' AND provider_subject = ?",
                         (email, subject),
                     )
-            self.set_session(user_id)
+            self.set_session(user_id, "/")
         except sqlite3.IntegrityError:
             self.login_page("This Google account is already linked to another FairFares account.")
 

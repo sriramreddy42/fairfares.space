@@ -131,7 +131,7 @@ class WebGoogleAuthTest(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as redirect:
                     self.google_post(server)
             self.assertEqual(redirect.exception.code, 303)
-            self.assertEqual(redirect.exception.headers["Location"], "/dashboard")
+            self.assertEqual(redirect.exception.headers["Location"], "/")
             self.assertIn(f"{app.SESSION_COOKIE}=", redirect.exception.headers["Set-Cookie"])
             with app.db() as con:
                 user = con.execute(
@@ -194,7 +194,7 @@ class WebGoogleAuthTest(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as redirect:
                     urllib.request.build_opener(NoRedirect()).open(request, timeout=5)
             self.assertEqual(redirect.exception.code, 303)
-            self.assertEqual(redirect.exception.headers["Location"], "/dashboard")
+            self.assertEqual(redirect.exception.headers["Location"], "/")
         finally:
             server.shutdown()
             server.server_close()
