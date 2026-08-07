@@ -18600,35 +18600,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return form, files
 
     def current_user(self) -> sqlite3.Row | None:
-        token = ""
+        tokens: list[str] = []
         header = self.headers.get("Cookie", "")
-        jar = cookies.SimpleCookie(header)
-        morsel = jar.get(SESSION_COOKIE)
-        if morsel:
-            token = morsel.value
-        if not token:
+        # Browsers can retain both a legacy domain cookie and a newer host-only
+        # cookie with the same name. SimpleCookie keeps only one of those values,
+        # which can discard the freshly issued Google sign-in session. Preserve
+        # every candidate and use whichever token is active in our session store.
+        for part in header.split(";"):
+            name, separator, value = part.strip().partition("=")
+            if separator and name == SESSION_COOKIE and value and value not in tokens:
+                tokens.append(value.strip('"'))
+        if not tokens:
             auth_header = (self.headers.get("Authorization") or "").strip()
             if auth_header.lower().startswith("bearer "):
-                token = auth_header.split(" ", 1)[1].strip()
-        if not token:
+                bearer_token = auth_header.split(" ", 1)[1].strip()
+                if bearer_token:
+                    tokens.append(bearer_token)
+        if not tokens:
             return None
         with db() as con:
             idle_cutoff = f"-{SESSION_IDLE_TIMEOUT_DAYS} days"
             absolute_cutoff = f"-{SESSION_ABSOLUTE_TIMEOUT_DAYS} days"
+            placeholders = ", ".join("?" for _ in tokens)
             user = con.execute(
-                """
-                SELECT users.* FROM users
+                f"""
+                SELECT users.*, sessions.token AS authenticated_session_token FROM users
                 JOIN sessions ON sessions.user_id = users.id
-                WHERE sessions.token = ?
+                WHERE sessions.token IN ({placeholders})
                   AND datetime(sessions.created_at) >= datetime('now', ?)
                   AND datetime(COALESCE(NULLIF(sessions.last_seen_at, ''), sessions.created_at)) >= datetime('now', ?)
+                ORDER BY sessions.created_at DESC
+                LIMIT 1
                 """,
-                (token, absolute_cutoff, idle_cutoff),
+                (*tokens, absolute_cutoff, idle_cutoff),
             ).fetchone()
             if user:
-                con.execute("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?", (token,))
+                con.execute(
+                    "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
+                    (user["authenticated_session_token"],),
+                )
             else:
-                con.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                con.execute(f"DELETE FROM sessions WHERE token IN ({placeholders})", tokens)
             return user
 
     def send_html(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:

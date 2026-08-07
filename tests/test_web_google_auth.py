@@ -151,7 +151,12 @@ class WebGoogleAuthTest(unittest.TestCase):
             token = session_cookie[app.SESSION_COOKIE].value
             landing_request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/",
-                headers={"Cookie": f"{app.SESSION_COOKIE}={token}"},
+                headers={
+                    "Cookie": (
+                        f"{app.SESSION_COOKIE}={token}; "
+                        f"{app.SESSION_COOKIE}=stale-session-from-an-older-cookie"
+                    )
+                },
             )
             with urllib.request.urlopen(landing_request, timeout=5) as response:
                 landing = response.read().decode("utf-8")
