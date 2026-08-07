@@ -27003,6 +27003,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return_location: str = "",
         booking_identifier: str = "",
     ) -> None:
+        def load_member_component(label: str, loader: object, fallback: object) -> object:
+            try:
+                return loader()  # type: ignore[operator]
+            except Exception as exc:
+                print(json.dumps({
+                    "event": "manage_booking_component_error",
+                    "component": label,
+                    "user_id": int(row_value(user, "id") or 0),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:300],
+                }, separators=(",", ":")), flush=True)
+                return fallback
+
         booking_error = ""
         try:
             if user and selected_car_id:
@@ -27018,7 +27031,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 booking = get_booking_for_user(user["id"])
             else:
                 booking = None
-        except (RuntimeError, ValueError) as error:
+        except (RuntimeError, ValueError, sqlite3.Error) as error:
             booking = None
             selected_car_id = None
             booking_error = str(error)
@@ -27026,11 +27039,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         current_car_name = booking["car_name"] if booking else "Select a car"
         available_cars = get_cars()
         inventory_locations = get_inventory_locations()
-        user_bookings = get_bookings_for_user(user["id"]) if user else []
-        saved_cars = get_saved_cars_for_user(user["id"]) if user else []
-        support_tickets = get_support_tickets_for_user(user["id"]) if user else []
-        housing_posts = get_accommodation_posts_for_user(user["id"]) if user else []
-        chat_conversations = get_chat_conversations_for_user(int(user["id"])) if user else []
+        user_bookings = load_member_component("bookings", lambda: get_bookings_for_user(user["id"]), []) if user else []
+        saved_cars = load_member_component("saved_cars", lambda: get_saved_cars_for_user(user["id"]), []) if user else []
+        support_tickets = load_member_component("support_tickets", lambda: get_support_tickets_for_user(user["id"]), []) if user else []
+        housing_posts = load_member_component("housing_posts", lambda: get_accommodation_posts_for_user(user["id"]), []) if user else []
+        chat_conversations = load_member_component("chat_conversations", lambda: get_chat_conversations_for_user(int(user["id"])), []) if user else []
         chat_unread_count = sum(int(conversation.get("unread") or 0) for conversation in chat_conversations)
         housing_active_count = sum(
             1

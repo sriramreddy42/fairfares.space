@@ -163,6 +163,16 @@ class WebGoogleAuthTest(unittest.TestCase):
             self.assertIn(">Web Member</a>", landing)
             self.assertNotIn(">web.member@example.com</a>", landing)
             self.assertNotIn("Sign in / Join", landing)
+
+            booking_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/manage-booking",
+                headers={"Cookie": f"{app.SESSION_COOKIE}={token}"},
+            )
+            with mock.patch.object(app, "get_chat_conversations_for_user", side_effect=RuntimeError("legacy chat data")):
+                with urllib.request.urlopen(booking_request, timeout=10) as response:
+                    booking_page = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("Web Member", booking_page)
         finally:
             server.shutdown()
             server.server_close()
