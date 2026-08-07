@@ -2610,24 +2610,22 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const rideHomePlaces: RidePlaceSuggestion[] = [
+    const rideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = [
       {
-        label: "Charlotte Douglas International Airport (CLT), 5501 Josh Birmingham Pkwy, Charlotte, NC",
-        main: "Charlotte Douglas International Airport (CLT)",
-        secondary: "5501 Josh Birmingham Pkwy, Charlotte, NC",
-        distanceMiles: null,
-        lat: 35.2144,
-        lng: -80.9473,
-        source: "featured"
+        place: { label: "Denver, CO", main: "Denver, CO", secondary: "", distanceMiles: null, lat: 39.7392, lng: -104.9903, source: "featured" },
+        image: appAssets.cities.denver
       },
       {
-        label: "Los Angeles Union Station, 800 N Alameda St, Los Angeles, CA",
-        main: "Los Angeles Union Station",
-        secondary: "800 N Alameda St, Los Angeles, CA",
-        distanceMiles: null,
-        lat: 34.0562,
-        lng: -118.2365,
-        source: "featured"
+        place: { label: "Los Angeles, CA", main: "Los Angeles, CA", secondary: "", distanceMiles: null, lat: 34.0522, lng: -118.2437, source: "featured" },
+        image: appAssets.cities.losAngeles
+      },
+      {
+        place: { label: "Austin, TX", main: "Austin, TX", secondary: "", distanceMiles: null, lat: 30.2672, lng: -97.7431, source: "featured" },
+        image: appAssets.cities.austin
+      },
+      {
+        place: { label: "Miami, FL", main: "Miami, FL", secondary: "", distanceMiles: null, lat: 25.7617, lng: -80.1918, source: "featured" },
+        image: appAssets.cities.miami
       }
     ];
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
@@ -2665,29 +2663,22 @@ export function HousingScreen({
     );
     return (
       <>
-        <View style={styles.rideHomeSuggestionCard}>
-          {rideHomePlaces.map((place) => {
-            const lower = place.main.toLowerCase();
-            const icon = lower.includes("airport") ? "✈" : lower.includes("station") ? "↪" : "⌖";
-            return (
-              <TouchableOpacity
-                key={`${place.label}-${place.source}`}
-                style={styles.rideHomeSuggestionRow}
-                activeOpacity={0.84}
-                onPress={() => openRidePlannerWithSuggestion(place)}
-              >
-                <View style={[styles.rideHomeSuggestionIconWrap, lower.includes("union") && styles.rideHomeSuggestionIconWrapGreen]}>
-                  <Text style={styles.rideHomeSuggestionIcon}>{icon}</Text>
-                </View>
-                <View style={styles.rideHomeSuggestionCopy}>
-                  <Text style={styles.rideHomeSuggestionTitle} numberOfLines={1}>{place.main}</Text>
-                  <Text style={styles.rideHomeSuggestionMeta} numberOfLines={1}>{place.secondary || rideDefaultCity}</Text>
-                  {lower.includes("union") ? <Text style={styles.rideHomeSuggestionGood}>Lower prices than usual</Text> : null}
-                </View>
-                <Text style={styles.rideHomeSuggestionChevron}>›</Text>
+        <View style={styles.ridePopularSection}>
+          <View style={styles.ridePopularHeader}>
+            <Text style={styles.ridePopularTitle}>Popular in</Text>
+            <TouchableOpacity onPress={openRidePlanner} activeOpacity={0.75}>
+              <Text style={styles.ridePopularViewAll}>View all ›</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePopularList}>
+            {rideHomeCities.map(({ place, image }) => (
+              <TouchableOpacity key={place.label} style={styles.ridePopularCard} activeOpacity={0.84} onPress={() => openRidePlannerWithSuggestion(place)}>
+                <Image source={image} style={styles.ridePopularImage} resizeMode="cover" />
+                <View style={styles.ridePopularShade} />
+                <Text style={styles.ridePopularCity} numberOfLines={1}>{place.main}</Text>
               </TouchableOpacity>
-            );
-          })}
+            ))}
+          </ScrollView>
         </View>
 
         <View style={styles.rideHero}>
@@ -3887,39 +3878,23 @@ const styles = StyleSheet.create({
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
-  rideHomeSuggestionCard: {
-    borderRadius: 24,
+  ridePopularSection: { gap: 10 },
+  ridePopularHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
+  ridePopularTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  ridePopularViewAll: { color: theme.colors.green, fontSize: 14, fontWeight: "800" },
+  ridePopularList: { gap: 10, paddingRight: 4 },
+  ridePopularCard: {
+    width: 156,
+    height: 96,
+    borderRadius: 15,
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    backgroundColor: "rgba(255,255,255,0.03)",
-    overflow: "hidden"
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: theme.colors.panel2
   },
-  rideHomeSuggestionHelp: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", paddingHorizontal: 16, paddingTop: 12 },
-  rideHomeSuggestionRow: {
-    minHeight: 82,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.08)"
-  },
-  rideHomeSuggestionIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)"
-  },
-  rideHomeSuggestionIconWrapGreen: { backgroundColor: "rgba(34,197,94,0.16)" },
-  rideHomeSuggestionIcon: { color: theme.colors.text, fontSize: 22, fontWeight: "900" },
-  rideHomeSuggestionCopy: { flex: 1, minWidth: 0 },
-  rideHomeSuggestionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  rideHomeSuggestionMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 3 },
-  rideHomeSuggestionGood: { color: theme.colors.green, fontSize: 13, fontWeight: "900", marginTop: 5 },
-  rideHomeSuggestionChevron: { color: theme.colors.muted, fontSize: 24, fontWeight: "900" },
+  ridePopularImage: { ...StyleSheet.absoluteFillObject, width: undefined, height: undefined },
+  ridePopularShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 42, backgroundColor: "rgba(0,0,0,0.58)" },
+  ridePopularCity: { position: "absolute", left: 12, right: 8, bottom: 9, color: "#fff", fontSize: 14, fontWeight: "900" },
   rideHero: {
     borderRadius: theme.radius.lg,
     borderWidth: 1,

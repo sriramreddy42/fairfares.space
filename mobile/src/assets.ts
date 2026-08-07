@@ -32,6 +32,12 @@ export const appAssets = {
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip-mobile.png") as ImageSourcePropType,
   rideListCarpoolBanner: require("../assets/ride-list-carpool-banner-mobile.jpg") as ImageSourcePropType,
+  cities: {
+    denver: require("../assets/cities/denver.jpg") as ImageSourcePropType,
+    losAngeles: require("../assets/cities/los-angeles.jpg") as ImageSourcePropType,
+    austin: require("../assets/cities/austin.jpg") as ImageSourcePropType,
+    miami: require("../assets/cities/miami.jpg") as ImageSourcePropType
+  },
   festivals: {
     diwali: require("../assets/festivals/diwali-mobile.jpg") as ImageSourcePropType,
     holi: require("../assets/festivals/holi-mobile.jpg") as ImageSourcePropType,

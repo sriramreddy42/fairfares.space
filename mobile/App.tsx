@@ -44,8 +44,9 @@ const GOOGLE_AUTH_CONFIGURED = Platform.select({
 
 const STATIC_IMAGE_SOURCES = [
   ...Object.entries(appAssets)
-    .filter(([key]) => key !== "festivals")
+    .filter(([key]) => key !== "festivals" && key !== "cities")
     .map(([, source]) => source),
+  ...Object.values(appAssets.cities),
   ...Object.values(appAssets.festivals),
   require("./assets/launch-cityscape-v2.jpg"),
   require("./assets/launch-car-mobile.png")
