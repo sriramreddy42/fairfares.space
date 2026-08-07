@@ -2665,7 +2665,7 @@ export function HousingScreen({
       <>
         <View style={styles.ridePopularSection}>
           <View style={styles.ridePopularHeader}>
-            <Text style={styles.ridePopularTitle}>Popular in</Text>
+            <Text style={styles.ridePopularTitle}>Where are you going?</Text>
             <TouchableOpacity onPress={openRidePlanner} activeOpacity={0.75}>
               <Text style={styles.ridePopularViewAll}>View all ›</Text>
             </TouchableOpacity>
@@ -3889,17 +3889,17 @@ const styles = StyleSheet.create({
   ridePopularViewAll: { color: theme.colors.green, fontSize: 14, fontWeight: "800" },
   ridePopularList: { gap: 10, paddingRight: 4 },
   ridePopularCard: {
-    width: 156,
-    height: 96,
+    width: 158,
+    height: 92,
     borderRadius: 15,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: theme.colors.panel2
   },
-  ridePopularImage: { ...StyleSheet.absoluteFillObject, width: undefined, height: undefined },
-  ridePopularShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 42, backgroundColor: "rgba(0,0,0,0.58)" },
-  ridePopularCity: { position: "absolute", left: 12, right: 8, bottom: 9, color: "#fff", fontSize: 14, fontWeight: "900" },
+  ridePopularImage: { position: "absolute", left: 0, top: 0, width: "100%", height: "100%" },
+  ridePopularShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 31, backgroundColor: "rgba(0,0,0,0.48)" },
+  ridePopularCity: { position: "absolute", left: 11, right: 8, bottom: 7, color: "#fff", fontSize: 13, fontWeight: "900" },
   rideHero: {
     borderRadius: theme.radius.lg,
     borderWidth: 1,
