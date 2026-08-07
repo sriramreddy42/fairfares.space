@@ -1364,10 +1364,55 @@ searchForm?.addEventListener("submit", (event) => {
   setSearchLocked(true);
   document.getElementById("results")?.classList.add("has-searched");
   document.getElementById("results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(() => {
+    const experience = document.getElementById("searchExperience");
+    if (experience) experience.hidden = false;
+  }, 1200);
 });
 
 updateCars();
 updateRentalRanges();
+
+const searchExperience = document.getElementById("searchExperience");
+const searchExperienceForm = document.getElementById("searchExperienceForm");
+if (searchExperienceForm) {
+  const ratingInput = searchExperienceForm.querySelector("input[name='rating']");
+  const ratingButtons = [...searchExperienceForm.querySelectorAll("[data-search-rating]")];
+  const status = searchExperienceForm.querySelector(".search-testimonial-status");
+  ratingButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const rating = Number(button.dataset.searchRating || 0);
+      ratingInput.value = String(rating);
+      ratingButtons.forEach((candidate) => {
+        const active = Number(candidate.dataset.searchRating || 0) <= rating;
+        candidate.classList.toggle("is-active", active);
+        candidate.setAttribute("aria-checked", candidate === button ? "true" : "false");
+      });
+    });
+  });
+  searchExperienceForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!Number(ratingInput.value || 0)) {
+      status.textContent = "Choose a star rating first.";
+      return;
+    }
+    const submit = searchExperienceForm.querySelector("button[type='submit']");
+    submit.disabled = true;
+    status.textContent = "Sharing your experience...";
+    fetch("/feedback", { method: "POST", body: new URLSearchParams(new FormData(searchExperienceForm)) })
+      .then((response) => response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)))
+      .then(() => {
+        status.textContent = "Thank you. Your experience was sent for review.";
+        searchExperienceForm.reset();
+        ratingButtons.forEach((button) => {
+          button.classList.remove("is-active");
+          button.setAttribute("aria-checked", "false");
+        });
+      })
+      .catch((payload) => { status.textContent = payload?.message || "Your experience could not be submitted right now."; })
+      .finally(() => { submit.disabled = false; });
+  });
+}
 
 const heroFold = document.querySelector("[data-hero-fold]");
 const heroFoldTrigger = heroFold?.querySelector(".hero-fold-trigger");

@@ -189,6 +189,34 @@
       </section>
     </section>
 
+    <section class="search-testimonial-section" id="searchExperience" aria-labelledby="searchExperienceTitle" hidden>
+      <div class="search-testimonial-copy">
+        <p class="eyebrow">Customer experiences</p>
+        <h2 id="searchExperienceTitle">How was your FairFares search?</h2>
+        <p>Help the next renter—and help us improve prices, filters, locations, and availability. Experiences are reviewed before any testimonial is published.</p>
+      </div>
+      <form class="search-testimonial-form" id="searchExperienceForm">
+        <fieldset>
+          <legend>Rate your search experience</legend>
+          <div class="search-testimonial-stars" role="radiogroup" aria-label="Search experience rating">
+            <button type="button" data-search-rating="1" aria-label="1 star" aria-checked="false">★</button>
+            <button type="button" data-search-rating="2" aria-label="2 stars" aria-checked="false">★</button>
+            <button type="button" data-search-rating="3" aria-label="3 stars" aria-checked="false">★</button>
+            <button type="button" data-search-rating="4" aria-label="4 stars" aria-checked="false">★</button>
+            <button type="button" data-search-rating="5" aria-label="5 stars" aria-checked="false">★</button>
+          </div>
+          <input type="hidden" name="rating" value="">
+        </fieldset>
+        <label>
+          <span>Share your experience <small>(optional)</small></span>
+          <textarea name="message" rows="4" maxlength="1200" placeholder="What helped you find a car? What could be clearer?"></textarea>
+        </label>
+        <input type="hidden" name="page" value="search-experience-testimonial">
+        <button class="search-testimonial-submit" type="submit">Share experience</button>
+        <p class="search-testimonial-status" aria-live="polite"></p>
+      </form>
+    </section>
+
     <section class="homepage-faq" aria-labelledby="homepageFaqTitle">
       <div>
         <p class="eyebrow">FairFares FAQ</p>
