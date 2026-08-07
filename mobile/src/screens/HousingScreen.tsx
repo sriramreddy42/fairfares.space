@@ -3,6 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { WebView } from "react-native-webview";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -2681,15 +2682,28 @@ export function HousingScreen({
           </ScrollView>
         </View>
 
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="List your ride for carpool"
-          style={styles.rideListBannerButton}
-          onPress={startRideOfferListing}
-          activeOpacity={0.86}
-        >
-          <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
-        </TouchableOpacity>
+        <View style={styles.rideMediaCard}>
+          <View style={styles.rideVideoHalf}>
+            <WebView
+              source={{ uri: "https://www.youtube.com/embed/oZr8xoR-_U0?playsinline=1&rel=0" }}
+              style={styles.rideVideo}
+              allowsFullscreenVideo
+              mediaPlaybackRequiresUserAction
+              javaScriptEnabled
+              domStorageEnabled
+              scrollEnabled={false}
+            />
+          </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="List your ride for carpool"
+            style={styles.rideListBannerButton}
+            onPress={startRideOfferListing}
+            activeOpacity={0.86}
+          >
+            <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.rideServiceDetail}>
           <View style={styles.rideServiceDetailHeader}>
@@ -4234,14 +4248,18 @@ const styles = StyleSheet.create({
   rideHeroOwnerTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "900" },
   rideHeroOwnerMeta: { color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   rideHeroOwnerArrow: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
-  rideListBannerButton: {
+  rideMediaCard: {
     height: 112,
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "#f8f7f4"
+    backgroundColor: "#f8f7f4",
+    flexDirection: "row"
   },
+  rideVideoHalf: { flex: 1, backgroundColor: "#000", borderRightWidth: 1, borderRightColor: "rgba(0,0,0,0.14)", overflow: "hidden" },
+  rideVideo: { flex: 1, backgroundColor: "#000" },
+  rideListBannerButton: { flex: 1, backgroundColor: "#f8f7f4", overflow: "hidden" },
   rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideOwnerOfferCard: {
