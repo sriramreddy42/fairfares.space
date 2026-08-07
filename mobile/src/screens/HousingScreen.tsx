@@ -2883,7 +2883,9 @@ export function HousingScreen({
       scrollEventThrottle={16}
       onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
     >
-        <View style={styles.brandHeader}>
+        <View style={[styles.brandHeader, mode !== "housing" && styles.brandHeaderHidden]}>
+          {mode === "housing" ? (
+          <>
           {festivalCampaign ? (
             <View style={styles.festivalHero} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
               <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="cover" />
@@ -2907,9 +2909,9 @@ export function HousingScreen({
               <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
             </View>
             <View style={styles.freeServicesIconRail}>
-              {[appAssets.bed, appAssets.search, appAssets.ride, appAssets.roommates].map((icon, index) => (
-                <View key={index} style={styles.freeServicesIconBubble}>
-                  <Image source={icon} style={styles.freeServicesIcon} resizeMode="contain" />
+              {["🛏️", "🔍", "🚘", "🧑‍🤝‍🧑"].map((icon, index) => (
+                <View key={`${icon}-${index}`} style={styles.freeServicesIconBubble}>
+                  <Text style={styles.freeServicesIconEmoji}>{icon}</Text>
                 </View>
               ))}
             </View>
@@ -2937,6 +2939,8 @@ export function HousingScreen({
             })}
           </View>
           </>}
+          </>
+          ) : null}
         </View>
 
         <View style={[styles.stickySearch, searchIsScrolled && styles.stickySearchRaised]}>
@@ -3330,6 +3334,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(46,255,188,0.24)",
     backgroundColor: "#09bf78"
   },
+  brandHeaderHidden: { height: 0, borderWidth: 0, backgroundColor: "transparent" },
   festivalHero: { width: "100%", aspectRatio: 2, backgroundColor: "#00472d", position: "relative" },
   festivalPoster: { width: "100%", height: "100%" },
   festivalPosterActions: { position: "absolute", left: 0, right: 0, bottom: 0, height: "20%", flexDirection: "row" },
@@ -3391,7 +3396,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  freeServicesIcon: { width: 27, height: 27 },
+  freeServicesIconEmoji: { fontSize: 24, lineHeight: 30, textAlign: "center" },
   freeServicesLogo: { width: 88, height: 29, marginBottom: 4, marginLeft: -2 },
   topTabs: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
   topTab: { flex: 1, paddingVertical: 11, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
