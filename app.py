@@ -12946,7 +12946,10 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
     city_root = city.split(",", 1)[0].strip().lower()
     if not api_key or not city or not area or area.lower() == city_root or area.lower() == city.lower():
         return []
-    input_text = f"{area} {city}".strip() if area else city
+    # Keep the user's place text intact. The city coordinates below are only a
+    # proximity bias for neighborhood-style queries; appending the pickup city
+    # here turned destinations such as "Cincinnati" into "Cincinnati Denver, CO".
+    input_text = area or city
     geocode = google_accommodation_geocode(city)
     params: dict[str, str] = {
         "input": input_text,

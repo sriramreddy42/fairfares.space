@@ -1226,11 +1226,14 @@ export function HousingScreen({
     );
     setRideBusy(true);
     try {
-      const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
-      if (destinationMatches[0]?.label) {
-        effectiveDestination = destinationMatches[0].label;
+      let destinationPoint: RidePlaceSuggestion | undefined;
+      if (!destinationAlreadyPicked) {
+        const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
+        destinationPoint = destinationMatches[0];
+        if (destinationPoint?.label) {
+          effectiveDestination = destinationPoint.label;
+        }
       }
-      const destinationPoint = destinationMatches[0];
       selectedRideSuggestionRef.current = effectiveDestination;
       const nextRideType: RideType = listingRide ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
       setSelectedRideService("carpool");
