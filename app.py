@@ -18680,7 +18680,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.redirect(PUBLIC_REDIRECT_ROUTES[parsed.path])
             return
         routes = {
-            "/": self.home,
+            "/": self.accommodations_landing_redirect,
+            "/car-rentals": self.home,
             "/blog": self.blog_index_page,
             "/about": self.about_page,
             "/contact": self.contact_page,
@@ -19246,6 +19247,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def sitemap_xml_body(self) -> str:
         static_urls = [
             "/",
+            "/accommodations",
+            "/car-rentals",
             "/blog",
             "/about",
             "/contact",
@@ -19425,6 +19428,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             referral_claim_modal=referral_claim_modal(get_ready_referral_reward(user["id"]) if user else None),
         )
         self.send_html(body)
+
+    def accommodations_landing_redirect(self) -> None:
+        self.redirect("/accommodations")
 
     def seo_landing_page(self) -> None:
         landing = SEO_LANDING_PAGES.get(urllib.parse.urlparse(self.path).path)
