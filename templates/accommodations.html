@@ -45,8 +45,8 @@
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE"><img src="/static/img/icons8-double-bed.png" alt="" aria-hidden="true">I need a place to live</button>
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="NEED_PLACE" data-roommate-intent="1" data-category="shared_room"><img src="/static/img/icons8-roommates.png" alt="" aria-hidden="true">I need roommates</button>
       <button class="housing-live-pill" type="button" data-open-housing-post data-mode="HAVE_PLACE"><img src="/static/img/icons8-double-bed.png" alt="" aria-hidden="true">I have a place available</button>
-      <a class="housing-live-pill housing-ride-pill" href="/car-rentals#searchForm"><img src="/static/img/icons8-ride.gif" alt="" aria-hidden="true">I need a ride</a>
-      <a class="housing-live-pill housing-ride-pill" href="/contact?topic=provide-ride"><img src="/static/img/icons8-ride.gif" alt="" aria-hidden="true">I provide a ride</a>
+      <a class="housing-live-pill housing-ride-pill" href="#carpool" data-carpool-mode="CARPOOL_REQUEST"><img src="/static/img/icons8-ride.gif" alt="" aria-hidden="true">I need a ride</a>
+      <a class="housing-live-pill housing-ride-pill" href="#carpool" data-carpool-mode="CARPOOL_OFFER"><img src="/static/img/icons8-ride.gif" alt="" aria-hidden="true">I provide a ride</a>
     </div>
     <div class="housing-subnav-actions" aria-label="Housing account actions">
       <button class="housing-subnav-account-link housing-messenger-link fb-icon-button" type="button" data-chat-open data-tooltip="Chitthi" aria-label="Open Chitthi">
@@ -214,6 +214,38 @@
       <button type="button" data-filter-category="condo"><span>🏘️</span><strong>Condos</strong><small>Townhome leads</small></button>
       <button type="button" data-filter-category="town_house"><span>🚪</span><strong>Town House</strong><small>Townhouse rentals</small></button>
       <button type="button" data-filter-category="basement_apartment"><span>🔑</span><strong>Basement Apartment</strong><small>Private basement units</small></button>
+    </section>
+
+    <section class="web-carpool-section" id="carpool" aria-labelledby="webCarpoolTitle">
+      <div class="web-carpool-heading">
+        <div><p class="eyebrow">FairFares Carpool</p><h2 id="webCarpoolTitle">Going the same way?</h2><p>Find nearby riders or share open seats. Route matching and updates stay connected through Chitthi.</p></div>
+        <div class="web-carpool-actions">
+          <button type="button" data-carpool-open="CARPOOL_REQUEST">I need a ride</button>
+          <button type="button" data-carpool-open="CARPOOL_OFFER">I can drive</button>
+        </div>
+      </div>
+      <form class="web-carpool-search" data-carpool-search>
+        <label><span>City</span><input name="city" value="$search_city" placeholder="Denver, CO"></label>
+        <label><span>From</span><input name="origin" placeholder="Campus, neighborhood, or address"></label>
+        <label><span>To</span><input name="destination" placeholder="Destination"></label>
+        <button type="submit">Find carpools</button>
+      </form>
+      <div class="web-carpool-results" data-carpool-results><p>Loading available carpools…</p></div>
+      <form class="web-carpool-post" data-carpool-post hidden>
+        <header><div><span data-carpool-post-kicker>Post a ride</span><h3 data-carpool-post-title>Tell us where you are going</h3></div><button type="button" data-carpool-close aria-label="Close carpool form">×</button></header>
+        <input type="hidden" name="rideType" value="CARPOOL_REQUEST">
+        <div>
+          <label><span>City</span><input name="city" value="$search_city" required></label>
+          <label><span>From</span><input name="origin" required></label>
+          <label><span>To</span><input name="destination" required></label>
+          <label><span>Date</span><input name="pickupDate" type="date" required></label>
+          <label><span>Time</span><input name="pickupTime" type="time" required></label>
+          <label><span>Seats</span><input name="seats" type="number" min="1" max="8" value="1" required></label>
+          <label class="web-carpool-contribution"><span>Contribution per seat</span><input name="contributionPerSeat" type="number" min="0" step="1" value="0"></label>
+        </div>
+        <button class="web-carpool-submit" type="submit">Post to Carpool</button>
+        <p data-carpool-status></p>
+      </form>
     </section>
 
     <section class="housing-map-section" aria-label="Housing results map">
@@ -755,6 +787,101 @@
           searchForm.submit();
         });
       });
+      const carpoolSearch = document.querySelector("[data-carpool-search]");
+      const carpoolResults = document.querySelector("[data-carpool-results]");
+      const carpoolPost = document.querySelector("[data-carpool-post]");
+      const carpoolStatus = carpoolPost?.querySelector("[data-carpool-status]");
+      const carpoolDate = carpoolPost?.querySelector('[name="pickupDate"]');
+      if (carpoolDate) carpoolDate.min = new Date().toISOString().slice(0, 10);
+      const renderCarpools = (rides) => {
+        if (!carpoolResults) return;
+        carpoolResults.replaceChildren();
+        if (!rides.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "No matching carpools yet. Be the first to post this route.";
+          carpoolResults.append(empty);
+          return;
+        }
+        rides.slice(0, 9).forEach((ride) => {
+          const card = document.createElement("article");
+          card.className = "web-carpool-card";
+          const header = document.createElement("header");
+          const owner = document.createElement("b");
+          owner.textContent = ride.ownerName || "FairFares member";
+          const type = document.createElement("span");
+          type.textContent = ride.type === "CARPOOL_OFFER" ? "Offering seats" : "Needs a ride";
+          header.append(owner, type);
+          const title = document.createElement("h3");
+          title.textContent = ride.title || "Carpool route";
+          const route = document.createElement("div");
+          route.className = "web-carpool-route";
+          const from = document.createElement("span");
+          const fromMarker = document.createElement("b"); fromMarker.textContent = "A";
+          from.append(fromMarker, document.createTextNode(ride.origin || "Pickup open"));
+          const to = document.createElement("span");
+          const toMarker = document.createElement("b"); toMarker.textContent = "B";
+          to.append(toMarker, document.createTextNode(ride.destination || "Destination open"));
+          route.append(from, to);
+          const meta = document.createElement("div");
+          meta.className = "web-carpool-meta";
+          [ride.pickupDate || "Date flexible", ride.pickupTime || "Time flexible", `${Number(ride.seats || 1)} seat${Number(ride.seats || 1) === 1 ? "" : "s"}`, Number(ride.contributionPerSeat || 0) ? `$${Number(ride.contributionPerSeat).toFixed(0)}/seat` : "Contribution open"].forEach((value) => { const item = document.createElement("span"); item.textContent = value; meta.append(item); });
+          card.append(header, title, route, meta);
+          carpoolResults.append(card);
+        });
+      };
+      const loadCarpools = async () => {
+        if (!carpoolSearch || !carpoolResults) return;
+        carpoolResults.innerHTML = "<p>Finding carpools…</p>";
+        const query = new URLSearchParams(new FormData(carpoolSearch));
+        query.set("limit", "9");
+        try {
+          const response = await fetch(`/api/mobile/rides?${query.toString()}`, { headers: { Accept: "application/json" } });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load carpools.");
+          renderCarpools(payload.rides || []);
+        } catch (error) {
+          carpoolResults.replaceChildren();
+          const message = document.createElement("p");
+          message.textContent = error.message || "Could not load carpools.";
+          carpoolResults.appendChild(message);
+        }
+      };
+      const openCarpoolPost = (mode) => {
+        if (!carpoolPost) return;
+        if (document.body.dataset.authenticated !== "true") {
+          window.location.href = `/login?next=${encodeURIComponent("/accommodations#carpool")}`;
+          return;
+        }
+        const type = mode === "CARPOOL_OFFER" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
+        carpoolPost.querySelector('[name="rideType"]').value = type;
+        carpoolPost.querySelector("[data-carpool-post-kicker]").textContent = type === "CARPOOL_OFFER" ? "Offer seats" : "Request a ride";
+        carpoolPost.querySelector("[data-carpool-post-title]").textContent = type === "CARPOOL_OFFER" ? "Share your route with nearby riders" : "Tell nearby drivers where you are going";
+        carpoolPost.querySelector(".web-carpool-contribution").hidden = type !== "CARPOOL_OFFER";
+        carpoolPost.hidden = false;
+        document.body.style.overflow = "hidden";
+      };
+      carpoolSearch?.addEventListener("submit", (event) => { event.preventDefault(); loadCarpools(); });
+      document.querySelectorAll("[data-carpool-open], [data-carpool-mode]").forEach((button) => button.addEventListener("click", (event) => { event.preventDefault(); document.querySelector("#carpool")?.scrollIntoView({ behavior: "smooth" }); openCarpoolPost(button.dataset.carpoolOpen || button.dataset.carpoolMode || "CARPOOL_REQUEST"); }));
+      carpoolPost?.querySelector("[data-carpool-close]")?.addEventListener("click", () => { carpoolPost.hidden = true; document.body.style.overflow = ""; });
+      carpoolPost?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (carpoolStatus) carpoolStatus.textContent = "Posting your carpool…";
+        const values = Object.fromEntries(new FormData(carpoolPost).entries());
+        try {
+          const response = await fetch("/api/mobile/rides", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(values) });
+          const payload = await response.json();
+          if (response.status === 401) { window.location.href = `/login?next=${encodeURIComponent("/accommodations#carpool")}`; return; }
+          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not post this carpool.");
+          carpoolPost.hidden = true;
+          document.body.style.overflow = "";
+          carpoolPost.reset();
+          await loadCarpools();
+          document.querySelector("#carpool")?.scrollIntoView({ behavior: "smooth" });
+        } catch (error) {
+          if (carpoolStatus) carpoolStatus.textContent = error.message || "Could not post this carpool.";
+        }
+      });
+      loadCarpools();
       const locationInput = locationModal && locationModal.querySelector("[data-location-search]");
       const locationButton = locationModal && locationModal.querySelector("[data-use-location]");
       if (locationButton && locationInput) {
