@@ -130,7 +130,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260808-carpool-activity"
+ASSET_VERSION = "20260808-parent-design-system"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -689,7 +689,10 @@ PAGE_STYLESHEETS = {
     "index.html": [f"/static/css/booking-form.min.css?v={ASSET_VERSION}"],
     "wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
 }
-SHARED_STYLESHEETS = [f"/static/css/app-feedback.min.css?v={ASSET_VERSION}"]
+SHARED_STYLESHEETS = [
+    f"/static/css/app-feedback.min.css?v={ASSET_VERSION}",
+    f"/static/css/fairfares-design-system.css?v={ASSET_VERSION}",
+]
 
 
 def refresh_storage_paths() -> None:
