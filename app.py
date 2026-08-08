@@ -19605,6 +19605,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "accommodations.html",
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
             is_authenticated="true" if user else "false",
+            current_user_id=escape(str(int(row_value(user, "id") or 0))),
             status_message=status_message,
             post_modal_hidden=post_modal_hidden,
             search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
@@ -28181,6 +28182,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = render_template(
             "dashboard.html",
             is_authenticated="true" if user else "false",
+            current_user_id=escape(str(int(row_value(user, "id") or 0))),
             name=escape(user["name"] if user else "FairFares Member"),
             role="Admin" if user and user["is_admin"] else "Student",
             admin_panel=admin_panel,
@@ -30413,7 +30415,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "form-action 'self' https://checkout.stripe.com https://accounts.google.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://accounts.google.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
+            "form-action 'self' https://checkout.stripe.com https://accounts.google.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://accounts.google.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
             "media-src 'self' blob: https://a-us.storyblok.com; "
             "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "

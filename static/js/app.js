@@ -1994,6 +1994,7 @@ const chatTabs = chatDrawer?.querySelectorAll("[data-chat-tab]");
 const chatCreateToggle = chatDrawer?.querySelector("[data-chat-create-toggle]");
 const chatCreateForm = chatDrawer?.querySelector("[data-chat-create-form]");
 const fairfaresLoggedIn = document.body?.dataset.authenticated === "true";
+const chitthiUserId = Number(document.body?.dataset.userId || 0);
 let activeChatConversationId = "";
 let activeChatPostId = "";
 let chatPollTimer = 0;
@@ -2001,6 +2002,117 @@ let activeChatTab = "all";
 let chatConversations = [];
 let chatCommunities = [];
 let chatInboxLoaded = false;
+let chitthiIdentityPromise = null;
+
+function chitthiToBase64(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+
+function chitthiFromBase64(value) {
+  const binary = atob(value || "");
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function getChitthiBrowserIdentity() {
+  if (!fairfaresLoggedIn || !chitthiUserId || !window.nacl) return null;
+  if (chitthiIdentityPromise) return chitthiIdentityPromise;
+  chitthiIdentityPromise = (async () => {
+    const storageKey = `fairfares.chitthi.web.e2ee.${chitthiUserId}`;
+    let identity;
+    try { identity = JSON.parse(localStorage.getItem(storageKey) || "null"); } catch { identity = null; }
+    if (!identity?.deviceId || !identity?.publicKey || !identity?.secretKey) {
+      const pair = window.nacl.box.keyPair();
+      identity = {
+        deviceId: `web-${Date.now().toString(36)}-${chitthiToBase64(window.nacl.randomBytes(9)).replace(/[^A-Za-z0-9]/g, "")}`,
+        publicKey: chitthiToBase64(pair.publicKey),
+        secretKey: chitthiToBase64(pair.secretKey)
+      };
+      localStorage.setItem(storageKey, JSON.stringify(identity));
+    }
+    const registration = await fetch("/api/chat/e2ee/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ deviceId: identity.deviceId, publicKey: identity.publicKey })
+    });
+    const payload = await registration.json();
+    if (!registration.ok || !payload.ok) throw new Error(payload.message || "Could not secure this Chitthi browser.");
+    return identity;
+  })();
+  return chitthiIdentityPromise;
+}
+
+function decryptChitthiEnvelope(envelope, identity) {
+  try {
+    const opened = window.nacl.box.open(
+      chitthiFromBase64(envelope.ciphertext),
+      chitthiFromBase64(envelope.nonce),
+      chitthiFromBase64(envelope.senderPublicKey),
+      chitthiFromBase64(identity.secretKey)
+    );
+    return opened ? new TextDecoder().decode(opened) : "";
+  } catch { return ""; }
+}
+
+async function decryptChitthiMessages(conversationId, messages) {
+  const encrypted = (messages || []).filter((message) => /end-to-end encrypted message/i.test(message.text || ""));
+  if (!encrypted.length) return messages || [];
+  const identity = await getChitthiBrowserIdentity();
+  if (!identity) return messages || [];
+  const response = await fetch(`/api/chat/e2ee/envelopes?conversation_id=${encodeURIComponent(conversationId)}&device_id=${encodeURIComponent(identity.deviceId)}`, { headers: { Accept: "application/json" } });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not unlock this Chitthi.");
+  const envelopes = new Map((payload.envelopes || []).map((envelope) => [Number(envelope.messageId), envelope]));
+  return (messages || []).map((message) => {
+    if (!/end-to-end encrypted message/i.test(message.text || "")) return message;
+    const envelope = envelopes.get(Number(message.id));
+    const clearText = envelope ? decryptChitthiEnvelope(envelope, identity) : "";
+    return { ...message, text: clearText || "Encrypted before this browser joined Chitthi. Open it on the original device." };
+  });
+}
+
+async function decryptChitthiPreviews() {
+  const targets = chatConversations.filter((conversation) => /end-to-end encrypted message/i.test(conversation.lastMessage || "") && Number(conversation.lastMessageId || 0));
+  if (!targets.length) return;
+  const identity = await getChitthiBrowserIdentity();
+  if (!identity) return;
+  const ids = targets.map((conversation) => Number(conversation.lastMessageId)).join(",");
+  const response = await fetch(`/api/chat/e2ee/preview-envelopes?device_id=${encodeURIComponent(identity.deviceId)}&message_ids=${encodeURIComponent(ids)}`, { headers: { Accept: "application/json" } });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) return;
+  const envelopes = new Map((payload.envelopes || []).map((envelope) => [Number(envelope.messageId), envelope]));
+  chatConversations = chatConversations.map((conversation) => {
+    const envelope = envelopes.get(Number(conversation.lastMessageId));
+    const clearText = envelope ? decryptChitthiEnvelope(envelope, identity) : "";
+    return clearText ? { ...conversation, lastMessage: clearText } : conversation;
+  });
+  renderChatList();
+}
+
+async function sendEncryptedChitthi(conversationId, text) {
+  const identity = await getChitthiBrowserIdentity();
+  if (!identity) throw new Error("Chitthi encryption is unavailable in this browser.");
+  const keysResponse = await fetch(`/api/chat/e2ee/keys?conversation_id=${encodeURIComponent(conversationId)}`, { headers: { Accept: "application/json" } });
+  const keysPayload = await keysResponse.json();
+  if (!keysResponse.ok || !keysPayload.ok) throw new Error(keysPayload.message || "Could not load Chitthi keys.");
+  if (!keysPayload.ready) throw new Error(keysPayload.warning || "Every participant must open the latest Chitthi before encryption can start.");
+  const textBytes = new TextEncoder().encode(text);
+  const secretKey = chitthiFromBase64(identity.secretKey);
+  const envelopes = (keysPayload.keys || []).map((key) => {
+    const nonce = window.nacl.randomBytes(window.nacl.box.nonceLength);
+    const ciphertext = window.nacl.box(textBytes, nonce, chitthiFromBase64(key.publicKey), secretKey);
+    return { recipientUserId: key.userId, recipientDeviceId: key.deviceId, senderPublicKey: identity.publicKey, nonce: chitthiToBase64(nonce), ciphertext: chitthiToBase64(ciphertext) };
+  });
+  const response = await fetch("/api/chat/e2ee/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId: crypto?.randomUUID?.() || String(Date.now()) })
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Encrypted Chitthi could not be sent.");
+  return payload;
+}
 
 function chatEscape(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -2143,6 +2255,7 @@ async function loadChatInbox() {
     chatInboxLoaded = true;
     await communityPromise;
     renderChatList();
+    decryptChitthiPreviews().catch(() => {});
   } catch (error) {
     await communityPromise;
     renderChatList();
@@ -2213,7 +2326,7 @@ async function loadChatMessages() {
   const payload = await response.json();
   if (!response.ok || !payload.ok) throw new Error(payload.message || "Could not load messages.");
   if (chatTitle && payload.conversation?.subject) chatTitle.textContent = payload.conversation.subject;
-  renderChatMessages(payload.messages || []);
+  renderChatMessages(await decryptChitthiMessages(activeChatConversationId, payload.messages || []));
 }
 
 function openChatDrawer() {
@@ -2347,16 +2460,20 @@ chatForm?.addEventListener("submit", async (event) => {
   const params = new URLSearchParams();
   params.set("message", text);
   params.set("client_message_id", crypto?.randomUUID?.() || String(Date.now()));
-  const endpoint = activeChatConversationId ? "/api/chat/messages" : "/api/chat/conversations";
+  const endpoint = activeChatConversationId ? "/api/chat/e2ee/messages" : "/api/chat/conversations";
   if (activeChatConversationId) params.set("conversation_id", activeChatConversationId);
   if (activeChatPostId) params.set("post_id", activeChatPostId);
   setChatStatus("Sending...");
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: params
-    });
+    if (activeChatConversationId) {
+      await sendEncryptedChitthi(activeChatConversationId, text);
+      input.value = "";
+      await loadChatMessages();
+      await loadChatInbox();
+      setChatStatus("");
+      return;
+    }
+    const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body: params });
     const payload = await response.json();
     if (payload.login_required) {
       window.location.href = loginRedirectUrl();

@@ -12,9 +12,10 @@
   <meta name="twitter:title" content="FairFares Housing | Rooms and Shared Rent">
   <meta name="twitter:description" content="Find or post local accommodation leads for rooms, roommates, short stays, and apartments.">
   $stylesheet_links
+  <script defer src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js" integrity="sha384-05+sicyRJQ56XpL4U9HJ8YbtSzFDvAg7apPKOGV6A0JsAJKFM68jp5oLnUjG5mEp" crossorigin="anonymous"></script>
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
-<body class="public-header-compact accommodations-page" data-authenticated="$is_authenticated">
+<body class="public-header-compact accommodations-page" data-authenticated="$is_authenticated" data-user-id="$current_user_id">
   <header class="housing-topbar">
     <a class="housing-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
     <div class="housing-top-location-search">
@@ -48,7 +49,7 @@
       <a class="housing-live-pill housing-ride-pill" href="/contact?topic=provide-ride"><img src="/static/img/icons8-ride.gif" alt="" aria-hidden="true">I provide a ride</a>
     </div>
     <div class="housing-subnav-actions" aria-label="Housing account actions">
-      <button class="housing-subnav-account-link housing-messenger-link fb-icon-button" type="button" data-chat-open data-tooltip="Fair Messenger" aria-label="Open Fair Messenger">
+      <button class="housing-subnav-account-link housing-messenger-link fb-icon-button" type="button" data-chat-open data-tooltip="Chitthi" aria-label="Open Chitthi">
         <img src="/static/img/icons8-message.gif" alt="" aria-hidden="true">
         <b class="$chat_unread_badge_class">$chat_unread_count</b>
       </button>
@@ -663,12 +664,12 @@
     <div class="fairfares-chat-panel" role="dialog" aria-modal="true" aria-labelledby="fairfaresChatTitle">
       <aside class="fairfares-chat-sidebar">
         <header>
-          <div><span>Fair Messenger</span><h2>Chats</h2></div>
+          <div><span>Chitthi</span><h2>Letters</h2></div>
           <button type="button" data-chat-close aria-label="Close chat">×</button>
         </header>
         <label class="fairfares-chat-search">
           <span aria-hidden="true">⌕</span>
-          <input type="search" data-chat-search placeholder="Search Messenger">
+          <input type="search" data-chat-search placeholder="Search Chitthi">
         </label>
         <nav class="fairfares-chat-tabs" aria-label="Chat filters">
           <button type="button" class="is-active" data-chat-tab="all">All</button>
@@ -695,12 +696,12 @@
       </aside>
       <section class="fairfares-chat-thread">
         <header>
-          <div><span>FairFares chat</span><h2 id="fairfaresChatTitle">Select a conversation</h2></div>
+          <div><span>Chitthi · End-to-end encrypted</span><h2 id="fairfaresChatTitle">Select a letter</h2></div>
           <button type="button" data-chat-close aria-label="Close chat">×</button>
         </header>
         <div class="fairfares-chat-messages" data-chat-messages></div>
         <form class="fairfares-chat-form" data-chat-form>
-          <input name="message" placeholder="Type a message" maxlength="2000" required>
+          <input name="message" placeholder="Write a Chitthi" maxlength="2000" required>
           <button type="submit">Send</button>
         </form>
         <p data-chat-status></p>
