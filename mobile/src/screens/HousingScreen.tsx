@@ -2684,15 +2684,24 @@ export function HousingScreen({
 
         <View style={styles.rideMediaCard}>
           <View style={styles.rideVideoHalf}>
-            <WebView
-              source={{ uri: "https://www.youtube.com/embed/oZr8xoR-_U0?playsinline=1&rel=0" }}
-              style={styles.rideVideo}
-              allowsFullscreenVideo
-              mediaPlaybackRequiresUserAction
-              javaScriptEnabled
-              domStorageEnabled
-              scrollEnabled={false}
-            />
+            {Platform.OS === "web" ? React.createElement("iframe", {
+              src: "https://www.youtube.com/embed/oZr8xoR-_U0?playsinline=1&rel=0",
+              title: "FairFares carpool video",
+              allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+              allowFullScreen: true,
+              frameBorder: "0",
+              style: { width: "100%", height: "100%", border: 0, display: "block", backgroundColor: "#000" }
+            }) : (
+              <WebView
+                source={{ uri: "https://www.youtube.com/embed/oZr8xoR-_U0?playsinline=1&rel=0" }}
+                style={styles.rideVideo}
+                allowsFullscreenVideo
+                mediaPlaybackRequiresUserAction
+                javaScriptEnabled
+                domStorageEnabled
+                scrollEnabled={false}
+              />
+            )}
           </View>
           <TouchableOpacity
             accessibilityRole="button"
@@ -4254,12 +4263,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "#f8f7f4",
+    backgroundColor: "#000",
     flexDirection: "row"
   },
   rideVideoHalf: { flex: 1, backgroundColor: "#000", borderRightWidth: 1, borderRightColor: "rgba(0,0,0,0.14)", overflow: "hidden" },
   rideVideo: { flex: 1, backgroundColor: "#000" },
-  rideListBannerButton: { flex: 1, backgroundColor: "#f8f7f4", overflow: "hidden" },
+  rideListBannerButton: { flex: 1, backgroundColor: "#000", overflow: "hidden" },
   rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rideOwnerOfferCard: {
