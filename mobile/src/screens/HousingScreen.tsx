@@ -2715,61 +2715,29 @@ export function HousingScreen({
         </View>
 
         <View style={styles.rideServiceDetail}>
-          <View style={styles.rideServiceDetailHeader}>
-            <View style={styles.rideServiceDetailIconWrap}>{renderRideGlyph(activeService.glyph, true)}</View>
-            <View style={styles.rideServiceDetailCopy}>
-              <Text style={styles.rideServiceDetailLabel}>{activeService.title}</Text>
-              <Text style={styles.rideServiceDetailTitle}>{activeService.title} in {rideDefaultCity}</Text>
+          <View style={styles.rideSimpleHeader}>
+            <View>
+              <Text style={styles.rideServiceDetailLabel}>CARPOOL</Text>
+              <Text style={styles.rideServiceDetailTitle}>How it works</Text>
             </View>
+            <Text style={styles.rideSimpleTrust}>✓ Safe · simple · shared</Text>
           </View>
-          <View style={styles.rideExampleBox}>
-            <Text style={styles.rideExampleLabel}>Example</Text>
-            <Text style={styles.rideExampleText}>{activeService.stat}</Text>
-          </View>
-          <View style={styles.rideLifecycleCard}>
-            {activeService.works.map((step, index) => (
-              <View key={`${activeService.key}-${step}`} style={styles.rideServiceStep}>
-                <View style={styles.rideServiceStepDot}>
-                  <Text style={styles.rideServiceStepDotText}>{index + 1}</Text>
-                </View>
-                <Text style={styles.rideServiceStepText}>{step}</Text>
+          <View style={styles.rideSimpleSteps}>
+            {["Search or list", "Match the route", "Confirm in Chitthi"].map((step, index) => (
+              <View key={step} style={styles.rideSimpleStep}>
+                <View style={styles.rideServiceStepDot}><Text style={styles.rideServiceStepDotText}>{index + 1}</Text></View>
+                <Text style={styles.rideSimpleStepText}>{step}</Text>
               </View>
             ))}
           </View>
-        </View>
-
-        <View style={styles.ridePosterSection}>
-          <View style={styles.ridePosterHeader}>
-            <Text style={styles.rideSectionEyebrow}>Ride feed</Text>
-            <Text style={styles.ridePosterHint}>Swipe for more</Text>
+          <View style={styles.ridePrimaryActions}>
+            <TouchableOpacity style={styles.rideFindButton} activeOpacity={0.84} onPress={openRidePlanner}>
+              <Text style={styles.rideFindButtonText}>🔎 Find a ride</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rideOfferButton} activeOpacity={0.84} onPress={startRideOfferListing}>
+              <Text style={styles.rideOfferButtonText}>＋ List a ride</Text>
+            </TouchableOpacity>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePosterCarousel}>
-            {rideServicePosters.map((service) => {
-              const selected = service.key === selectedRideService;
-              return (
-                <TouchableOpacity
-                  key={service.key}
-                  activeOpacity={0.88}
-                  style={[
-                    styles.ridePosterCard,
-                    { backgroundColor: service.tint },
-                    !service.available && styles.ridePosterCardSoon,
-                    selected && styles.ridePosterCardActive
-                  ]}
-                  onPress={() => selectRideService(service)}
-                >
-                  <View style={styles.ridePosterCopy}>
-                    <Text style={styles.ridePosterTitle}>{service.title}</Text>
-                    <Text style={styles.ridePosterSubtitle}>{service.subtitle}</Text>
-                    <Text style={styles.ridePosterButton}>{service.available ? "Start carpool" : "Coming soon"}</Text>
-                  </View>
-                  <View style={styles.ridePosterArt}>
-                    {renderRideGlyph(service.glyph)}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
         </View>
       </>
     );
@@ -2981,7 +2949,7 @@ export function HousingScreen({
           <TouchableOpacity style={styles.searchBar} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
             <Text style={styles.searchText} numberOfLines={1}>{searchBarText}</Text>
-            <Text style={styles.later}>{mode === "ride" ? "Later" : "Search"}</Text>
+            <Text style={styles.later}>Search</Text>
           </TouchableOpacity>
         </View>
 
@@ -4041,6 +4009,16 @@ const styles = StyleSheet.create({
   rideServiceDetailCopy: { flex: 1, minWidth: 0 },
   rideServiceDetailTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "800" },
   rideServiceDetailLabel: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  rideSimpleHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  rideSimpleTrust: { color: theme.colors.green, fontSize: 11, fontWeight: "800" },
+  rideSimpleSteps: { flexDirection: "row", gap: 7, marginTop: 3 },
+  rideSimpleStep: { flex: 1, minHeight: 66, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 8, paddingVertical: 9, alignItems: "center", justifyContent: "center", gap: 6 },
+  rideSimpleStepText: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", textAlign: "center" },
+  ridePrimaryActions: { flexDirection: "row", gap: 8, marginTop: 2 },
+  rideFindButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  rideFindButtonText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  rideOfferButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
+  rideOfferButtonText: { color: "#fff", fontSize: 13, fontWeight: "900" },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
     borderRadius: 14,
