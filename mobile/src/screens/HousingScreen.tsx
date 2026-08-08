@@ -3,7 +3,6 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
@@ -2692,15 +2691,16 @@ export function HousingScreen({
               frameBorder: "0",
               style: { width: "100%", height: "100%", border: 0, display: "block", backgroundColor: "#000" }
             }) : (
-              <WebView
-                source={{ uri: "https://www.youtube.com/embed/oZr8xoR-_U0?playsinline=1&rel=0" }}
-                style={styles.rideVideo}
-                allowsFullscreenVideo
-                mediaPlaybackRequiresUserAction
-                javaScriptEnabled
-                domStorageEnabled
-                scrollEnabled={false}
-              />
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Play FairFares carpool video on YouTube"
+                style={styles.rideVideoNativeLink}
+                activeOpacity={0.84}
+                onPress={() => void Linking.openURL("https://www.youtube.com/watch?v=oZr8xoR-_U0")}
+              >
+                <Image source={{ uri: "https://img.youtube.com/vi/oZr8xoR-_U0/hqdefault.jpg" }} style={styles.rideVideoThumbnail} resizeMode="cover" />
+                <View style={styles.rideVideoPlay}><Text style={styles.rideVideoPlayText}>▶</Text></View>
+              </TouchableOpacity>
             )}
           </View>
           <TouchableOpacity
@@ -4267,7 +4267,10 @@ const styles = StyleSheet.create({
     flexDirection: "row"
   },
   rideVideoHalf: { flex: 1, backgroundColor: "#000", borderRightWidth: 1, borderRightColor: "rgba(0,0,0,0.14)", overflow: "hidden" },
-  rideVideo: { flex: 1, backgroundColor: "#000" },
+  rideVideoNativeLink: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
+  rideVideoThumbnail: { width: "100%", height: "100%" },
+  rideVideoPlay: { position: "absolute", width: 38, height: 28, borderRadius: 8, backgroundColor: "rgba(220,0,0,0.94)", alignItems: "center", justifyContent: "center" },
+  rideVideoPlayText: { color: "#fff", fontSize: 15, marginLeft: 2 },
   rideListBannerButton: { flex: 1, backgroundColor: "#000", overflow: "hidden" },
   rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
