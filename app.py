@@ -130,7 +130,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260808-chitthi-logo"
+ASSET_VERSION = "20260808-location-search"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -19508,7 +19508,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         search_metro = (params.get("metro", [""])[0] or "").strip()
         search_gender = (params.get("gender", [""])[0] or "").strip()
         search_ad_id = (params.get("ad_id", [""])[0] or "").strip()
+        search_city = (params.get("city", [""])[0] or "").strip()
         search_area = (params.get("area", [""])[0] or "").strip()
+        search_radius = max(0.0, min(100.0, float_from_value((params.get("radius", [""])[0] or "").strip())))
         search_move_in = (params.get("move_in", [""])[0] or "").strip()
         search_budget = (params.get("price", params.get("budget", [""]))[0] or "").strip()
         clauses = ["visibility_status = 'ACTIVE'", "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))"]
@@ -19542,9 +19544,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if search_property_type:
             clauses.append("category = ?")
             values.append(search_property_type)
-        metro_context = accommodation_metro_context(search_metro, search_area)
-        if not search_metro and search_area:
-            search_metro = cached_accommodation_metro_for_place(search_area)
+        location_query = search_area or search_city
+        metro_context = accommodation_metro_context(search_metro, location_query)
+        if not search_metro and location_query:
+            search_metro = cached_accommodation_metro_for_place(location_query)
         if search_metro:
             metro_terms = accommodation_location_terms(search_metro)
             metro_sql = " OR ".join(
@@ -19563,7 +19566,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ad_pattern = f"%{search_ad_id}%"
             clauses.append("(public_id LIKE ? OR title LIKE ? OR description LIKE ?)")
             values.extend([ad_pattern, ad_pattern, ad_pattern])
-        if search_area:
+        if search_city:
+            city_pattern = f"%{search_city.split(',', 1)[0].strip()}%"
+            clauses.append("(city LIKE ? OR city_area_zip LIKE ? OR primary_neighborhood LIKE ? OR area_or_apartment LIKE ?)")
+            values.extend([city_pattern] * 4)
+        if search_area and not search_radius:
             pattern = f"%{search_area}%"
             clauses.append(
                 "(city_area_zip LIKE ? OR area_or_apartment LIKE ? OR work_school_location LIKE ? OR description LIKE ? OR street_address LIKE ? OR city LIKE ? OR zip_code LIKE ? OR primary_neighborhood LIKE ? OR apartment_name LIKE ?)"
@@ -19592,7 +19599,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 values,
             ).fetchall()
-        map_payload = accommodation_post_map_payload(posts, search_area or metro_context["selected_location"], search_metro)
+        search_focus = search_area or search_city or metro_context["selected_location"]
+        map_payload = accommodation_post_map_payload(posts, search_focus, search_metro)
+        if search_radius:
+            allowed_post_ids = {
+                str(item.get("id") or "")
+                for item in map_payload.get("posts", [])
+                if item.get("distance") is not None and float(item.get("distance") or 0) <= search_radius
+            }
+            posts = [row for row in posts if str(row_value(row, "public_id")) in allowed_post_ids]
+            map_payload = accommodation_post_map_payload(posts, search_focus, search_metro)
         map_payload_json = json.dumps(map_payload).replace("</", "<\\/")
         chat_unread_count = 0
         if user:
@@ -19633,7 +19649,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             top_city_chips=metro_context["top_city_chips"],
             top_city_rows=metro_context["top_city_rows"],
             search_ad_id=escape(search_ad_id),
+            search_city=escape(search_city or str(metro_context["selected_location"]).split(",", 1)[0]),
             search_area=escape(search_area),
+            search_radius_options=render_select_options(ACCOMMODATION_RADIUS_OPTIONS, str(int(search_radius or 10))),
             search_move_in=escape(search_move_in),
             search_budget=escape(search_budget),
             category_options=render_select_options(ACCOMMODATION_CATEGORIES),

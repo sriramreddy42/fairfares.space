@@ -626,15 +626,23 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   border-radius: 14px;
   display: grid;
   gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(190px, 1.15fr) minmax(112px, 0.5fr) auto;
   margin-bottom: 16px;
   max-width: 680px;
   overflow: hidden;
-  padding: 5px 5px 5px 15px;
+  padding: 5px;
 }
 
-.housing-hero-search > span { color: #e9001d; font-size: 1.35rem; }
-.housing-hero-search input { border: 0; color: #071943; font: inherit; min-height: 50px; outline: 0; padding: 0 6px; width: 100%; }
+.housing-hero-search label {
+  border-right: 1px solid #dbe3ee;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 12px;
+}
+.housing-hero-search label > span { color: #67748a; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+.housing-hero-search input,
+.housing-hero-search select { background: #fff; border: 0; color: #071943; font: inherit; font-weight: 800; min-height: 30px; min-width: 0; outline: 0; padding: 0; width: 100%; }
 .housing-hero-search button { background: #e9001d; border: 0; border-radius: 9px; color: #fff; cursor: pointer; font: inherit; font-weight: 900; min-height: 50px; padding: 0 20px; }
 
 .housing-hero-secondary {
@@ -2407,13 +2415,14 @@ body.housing-detail-open {
   }
 
   .housing-hero-search {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .housing-hero-search button {
-    grid-column: 1 / -1;
     width: 100%;
   }
+
+  .housing-hero-search label { border-bottom: 1px solid #dbe3ee; border-right: 0; }
 
   .housing-landing-preview {
     grid-template-columns: 1fr;

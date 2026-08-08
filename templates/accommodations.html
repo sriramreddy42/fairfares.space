@@ -163,8 +163,18 @@
         <h1>Find a place that feels like yours.</h1>
         <p class="housing-hero-lede">Discover rooms, roommates, apartments, and flexible stays near school, work, and the places you already go.</p>
         <form class="housing-hero-search" action="/accommodations" method="get">
-          <span aria-hidden="true">⌖</span>
-          <input id="housingHeroArea" name="area" value="$search_area" placeholder="City, campus, or neighborhood" aria-label="City, campus, or neighborhood">
+          <label>
+            <span>City</span>
+            <input name="city" value="$search_city" placeholder="Denver" aria-label="City">
+          </label>
+          <label>
+            <span>Neighborhood</span>
+            <input id="housingHeroArea" name="area" value="$search_area" placeholder="Campus or neighborhood" aria-label="Neighborhood">
+          </label>
+          <label>
+            <span>Radius</span>
+            <select name="radius" aria-label="Search radius">$search_radius_options</select>
+          </label>
           <button type="submit">Search homes</button>
         </form>
         <div class="housing-hero-actions">
