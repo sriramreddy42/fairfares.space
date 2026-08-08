@@ -1,60 +1,26 @@
-/* FairFares parent visual system. Chitthi intentionally keeps its own internal theme. */
-:root {
-  --ff-black: #050a08;
-  --ff-ink: #0b1411;
-  --ff-surface: #111c18;
-  --ff-surface-raised: #17241f;
-  --ff-paper: #f4f7f5;
-  --ff-white: #fff;
-  --ff-muted: #a8b5ae;
-  --ff-line: #2a3a33;
-  --ff-emerald: #12b878;
-  --ff-blue: #2785ff;
-  --ff-gold: #d6a62e;
-  --ff-danger: #e5484d;
-  --ff-radius: 16px;
-  --ff-radius-lg: 24px;
-  --ff-shadow: 0 18px 45px rgba(0,0,0,.22);
+/* FairFares parent visual system — intentionally mobile-only. */
+:root{--ff-black:#050a08;--ff-ink:#0b1411;--ff-surface:#111c18;--ff-surface-raised:#17241f;--ff-white:#fff;--ff-muted:#a8b5ae;--ff-line:#2a3a33;--ff-emerald:#12b878;--ff-blue:#2785ff;--ff-gold:#d6a62e;--ff-danger:#e5484d}
+
+@media(max-width:860px){
+  body.fairfares-home,body.accommodations-page,body.carpool-page,body.explorer-screen,body.manage-screen{background:var(--ff-black)!important;color:var(--ff-white)}
+
+  body.fairfares-home .main-nav,body.explorer-screen .main-nav,body.manage-screen .main-nav,.accommodations-page .housing-topbar,.carpool-page .carpool-nav,.accommodations-page .housing-mobile-bottom-nav{background:rgba(5,10,8,.98)!important;border-color:var(--ff-line)!important}
+  body.fairfares-home .main-nav a,body.explorer-screen .main-nav a,body.manage-screen .main-nav a,.accommodations-page .housing-top-links a,.carpool-page .carpool-nav a{color:#dce5e0!important}
+  body.fairfares-home .main-nav a.active,body.explorer-screen .main-nav a.active,body.manage-screen .main-nav a.active,.carpool-page .carpool-nav a.active{color:var(--ff-emerald)!important}
+  .main-nav .nav-links a.active::after{background:var(--ff-emerald)!important}.menu-button span{background:var(--ff-white)!important}
+
+  body.fairfares-home .search-panel>button,body.fairfares-home .select-button,body.accommodations-page .select-button,body.accommodations-page .housing-post-button,body.accommodations-page .housing-hero-search button,body.carpool-page .carpool-hero-actions button:first-child,body.carpool-page .carpool-search button,body.carpool-page .carpool-submit,body.carpool-page .carpool-card-action,body.explorer-screen .select-button,body.manage-screen .page-heading button,body.manage-screen .manage-card button:not(.danger-button){background:var(--ff-emerald)!important;border-color:var(--ff-emerald)!important;color:var(--ff-white)!important}
+  body.fairfares-home .light-button,body.accommodations-page .housing-hero-secondary,body.carpool-page .carpool-hero-actions button:last-child,body.explorer-screen .light-button,body.manage-screen .light-button{background:transparent!important;border:1px solid var(--ff-blue)!important;color:var(--ff-blue)!important}
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid rgba(39,133,255,.55)!important;outline-offset:2px}
+
+  .fairfares-home .booking-hero{background:var(--ff-ink)!important}.fairfares-home .search-panel,.fairfares-home .filters,.fairfares-home .cars-panel,.fairfares-home .results-promo,.fairfares-home .results-ad-card,.fairfares-home .car-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.fairfares-home .search-panel h1,.fairfares-home .results-toolbar h2,.fairfares-home .car-card h2,.fairfares-home .car-card h3{color:var(--ff-white)!important}.fairfares-home .search-panel label>span,.fairfares-home .car-card p,.fairfares-home .results-promo p{color:var(--ff-muted)!important}.fairfares-home .car-card{border-left:3px solid var(--ff-gold)!important}.fairfares-home .results-toolbar h2 span,.fairfares-home .ad-kicker,.fairfares-home .rental-estimate>span:first-child,.fairfares-home .rental-length-value{color:var(--ff-gold)!important}
+
+  .accommodations-page .housing-mobile-app{background:var(--ff-black)!important;color:var(--ff-white)!important}.accommodations-page .housing-mobile-hero,.accommodations-page .housing-mobile-cta,.accommodations-page .housing-mobile-match,.accommodations-page .housing-mobile-listings,.accommodations-page .housing-mobile-room-types,.accommodations-page .housing-mobile-localities{background-color:var(--ff-surface)!important;color:var(--ff-white)!important}.accommodations-page .housing-mobile-app h1,.accommodations-page .housing-mobile-app h2,.accommodations-page .housing-mobile-app b{color:var(--ff-white)!important}.accommodations-page .housing-mobile-app p,.accommodations-page .housing-mobile-app small{color:var(--ff-muted)!important}.accommodations-page .housing-mobile-segments button.is-active,.accommodations-page .housing-mobile-cta button,.accommodations-page .housing-mobile-match button{background:var(--ff-emerald)!important;color:var(--ff-white)!important}
+
+  .carpool-page .carpool-hero{background:linear-gradient(120deg,#071510,#10251d)!important}.carpool-page .carpool-finder,.carpool-page .carpool-activity,.carpool-page .carpool-how article,.carpool-page .carpool-card,.carpool-page .carpool-activity-card,.carpool-page .carpool-post{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.carpool-page .carpool-eyebrow{color:var(--ff-emerald)!important}.carpool-page .carpool-results-head h2,.carpool-page .carpool-card h3,.carpool-page .carpool-post h2{color:var(--ff-white)!important}.carpool-page .carpool-card-route p,.carpool-page .carpool-card footer,.carpool-page .carpool-activity-card p,.carpool-page .carpool-activity-card small,.carpool-page .carpool-how p{color:var(--ff-muted)!important}.carpool-page .carpool-empty{background:var(--ff-surface-raised)!important}
+
+  .explorer-screen .explorer-page,.manage-screen .manage-layout{background:var(--ff-black)!important}.explorer-screen .explorer-builder,.explorer-screen .explorer-form,.explorer-screen .explorer-step,.explorer-screen .explorer-book-card,.explorer-screen .explorer-side,.explorer-screen .explorer-community,.manage-screen .manage-sidebar,.manage-screen .manage-content,.manage-screen .manage-card,.manage-screen .trip-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.explorer-screen .explorer-step h2,.explorer-screen .explorer-side h2,.explorer-screen .explorer-side h3,.explorer-screen .explorer-builder h2,.manage-screen h1,.manage-screen h2,.manage-screen h3{color:var(--ff-white)!important}.explorer-screen .explorer-step p,.explorer-screen .explorer-book-card p,.manage-screen .manage-card p,.manage-screen .manage-sidebar a span,.manage-screen .page-heading p{color:var(--ff-muted)!important}.manage-screen .manage-sidebar a{color:var(--ff-white)!important}.manage-screen .manage-sidebar a.side-active{background:var(--ff-emerald)!important;color:var(--ff-white)!important}
+
+  /* Chitthi keeps its own green/gold identity inside the messenger. */
+  .chat-drawer,.chat-drawer *,.chat-modal,.chat-modal *,[class*="chitthi"]{--ff-emerald:#0d6b42}
 }
-
-body.fairfares-home,body.accommodations-page,body.carpool-page,body.explorer-screen,body.manage-screen{background:var(--ff-black)!important;color:var(--ff-white)}
-
-/* One shared navigation language. */
-body.fairfares-home .main-nav,body.explorer-screen .main-nav,body.manage-screen .main-nav,.accommodations-page .housing-topbar,.carpool-page .carpool-nav{background:rgba(5,10,8,.97)!important;border-color:var(--ff-line)!important;box-shadow:0 8px 28px rgba(0,0,0,.18)}
-body.fairfares-home .main-nav a,body.explorer-screen .main-nav a,body.manage-screen .main-nav a,.accommodations-page .housing-top-links a,.carpool-page .carpool-nav a{color:#dce5e0!important}
-body.fairfares-home .main-nav a.active,body.fairfares-home .main-nav a:hover,body.explorer-screen .main-nav a.active,body.explorer-screen .main-nav a:hover,body.manage-screen .main-nav a.active,body.manage-screen .main-nav a:hover,.accommodations-page .housing-top-links a.active,.accommodations-page .housing-top-links a:hover,.carpool-page .carpool-nav a.active,.carpool-page .carpool-nav a:hover{color:var(--ff-emerald)!important}
-.main-nav .nav-actions,.main-nav .nav-actions a,.carpool-page .carpool-account{color:var(--ff-white)!important}.menu-button span{background:var(--ff-white)!important}
-
-/* Emerald actions and blue secondary controls. */
-body.fairfares-home .search-panel>button,body.fairfares-home .select-button,body.accommodations-page .select-button,body.accommodations-page .housing-post-button,body.accommodations-page .housing-hero-search button,body.carpool-page .carpool-hero-actions button:first-child,body.carpool-page .carpool-search button,body.carpool-page .carpool-submit,body.carpool-page .carpool-card-action,body.explorer-screen .select-button,body.manage-screen .page-heading button,body.manage-screen .manage-card button:not(.danger-button){background:var(--ff-emerald)!important;border-color:var(--ff-emerald)!important;color:var(--ff-white)!important}
-body.fairfares-home .light-button,body.accommodations-page .housing-hero-secondary,body.carpool-page .carpool-hero-actions button:last-child,body.explorer-screen .light-button,body.manage-screen .light-button{background:transparent!important;border:1px solid var(--ff-blue)!important;color:var(--ff-blue)!important}
-button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid rgba(39,133,255,.55)!important;outline-offset:2px}
-
-/* Rental Cars: gold is a category accent, not a global action color. */
-.fairfares-home .booking-hero{background:var(--ff-ink)!important}.fairfares-home .search-panel,.fairfares-home .filters,.fairfares-home .cars-panel,.fairfares-home .results-promo,.fairfares-home .results-ad-card,.fairfares-home .car-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}
-.fairfares-home .search-panel h1,.fairfares-home .results-toolbar h2,.fairfares-home .car-card h2,.fairfares-home .car-card h3{color:var(--ff-white)!important}.fairfares-home .search-panel label>span,.fairfares-home .car-card p,.fairfares-home .results-promo p{color:var(--ff-muted)!important}.fairfares-home .car-card{border-left:3px solid var(--ff-gold)!important}.fairfares-home .results-toolbar h2 span,.fairfares-home .ad-kicker{color:var(--ff-gold)!important}
-
-/* Housing uses the parent emerald/blue system instead of purple and red. */
-.accommodations-page .housing-market-nav,.accommodations-page .housing-shell{background:var(--ff-black)!important}.accommodations-page .housing-hero{background:linear-gradient(120deg,#071510,#10251d)!important;border-color:var(--ff-line)!important}.accommodations-page .housing-category-strip,.accommodations-page .housing-map-section,.accommodations-page .housing-posts-section,.accommodations-page .housing-post-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.accommodations-page .housing-category-strip button{background:var(--ff-surface-raised)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.accommodations-page .housing-category-strip small,.accommodations-page .housing-hero-lede,.accommodations-page .housing-post-card p{color:var(--ff-muted)!important}.accommodations-page .eyebrow{color:var(--ff-emerald)!important}
-
-/* Carpool shares FairFares surfaces and actions. */
-.carpool-page .carpool-hero{background:linear-gradient(120deg,#071510,#10251d)!important}.carpool-page .carpool-finder,.carpool-page .carpool-activity,.carpool-page .carpool-how article,.carpool-page .carpool-card,.carpool-page .carpool-activity-card,.carpool-page .carpool-post{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.carpool-page .carpool-eyebrow{color:var(--ff-emerald)!important}.carpool-page .carpool-results-head h2,.carpool-page .carpool-card h3,.carpool-page .carpool-post h2{color:var(--ff-white)!important}.carpool-page .carpool-card-route p,.carpool-page .carpool-card footer,.carpool-page .carpool-activity-card p,.carpool-page .carpool-activity-card small,.carpool-page .carpool-how p{color:var(--ff-muted)!important}.carpool-page .carpool-empty{background:var(--ff-surface-raised)!important}
-
-/* Explorer and Account adopt the same parent surfaces. */
-.explorer-screen .explorer-page,.manage-screen .manage-layout{background:var(--ff-black)!important}.explorer-screen .explorer-builder,.explorer-screen .explorer-step,.explorer-screen .explorer-book-card,.explorer-screen .explorer-community,.manage-screen .manage-sidebar,.manage-screen .manage-content,.manage-screen .manage-card,.manage-screen .trip-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}.explorer-screen .explorer-step p,.explorer-screen .explorer-book-card p,.manage-screen .manage-card p,.manage-screen .manage-sidebar a span,.manage-screen .page-heading p{color:var(--ff-muted)!important}.manage-screen .manage-sidebar a{color:var(--ff-white)!important}.manage-screen .manage-sidebar a.side-active{background:var(--ff-emerald)!important;color:var(--ff-white)!important}
-
-/* Chitthi boundary: retain its internal dark-green and gold identity. */
-.chat-drawer,.chat-drawer *,.chat-modal,.chat-modal *,[class*="chitthi"]{--ff-emerald:#0d6b42}
-
-@media(max-width:860px){body.fairfares-home .main-nav,body.explorer-screen .main-nav,body.manage-screen .main-nav{background:var(--ff-black)!important}.accommodations-page .housing-mobile-app{background:var(--ff-black)!important;color:var(--ff-white)!important}.accommodations-page .housing-mobile-hero,.accommodations-page .housing-mobile-cta,.accommodations-page .housing-mobile-match,.accommodations-page .housing-mobile-listings,.accommodations-page .housing-mobile-room-types,.accommodations-page .housing-mobile-localities{background-color:var(--ff-surface)!important;color:var(--ff-white)!important}}
-
-/* Final legacy-accent cleanup. */
-body.fairfares-home .top-brand,body.explorer-screen .top-brand,body.manage-screen .top-brand{background:var(--ff-black)!important}
-.main-nav .nav-links a.active::after{background:var(--ff-emerald)!important}
-.accommodations-page .housing-live-pill{background:var(--ff-surface-raised)!important;border:1px solid var(--ff-line)!important;color:var(--ff-white)!important}
-.accommodations-page .housing-live-pill:hover{border-color:var(--ff-emerald)!important;color:var(--ff-emerald)!important}.accommodations-page .housing-ride-pill{border-color:var(--ff-blue)!important}
-.accommodations-page .housing-preview-photo>span,.accommodations-page .housing-preview-body>span{background:var(--ff-emerald)!important;color:var(--ff-white)!important}
-.fairfares-home .rental-estimate>span:first-child,.fairfares-home .rental-length-value{color:var(--ff-gold)!important}
-.explorer-screen .explorer-form,.explorer-screen .explorer-side,.explorer-screen .explorer-bonus-card,.explorer-screen .quest-progress-card,.explorer-screen .quest-boost-card,.explorer-screen .quest-badge-card{background:var(--ff-surface)!important;border-color:var(--ff-line)!important;color:var(--ff-white)!important}
-.explorer-screen .explorer-step h2,.explorer-screen .explorer-side h2,.explorer-screen .explorer-side h3,.explorer-screen .explorer-builder h2,.explorer-screen .explorer-builder h3{color:var(--ff-white)!important}
-.explorer-screen .explorer-step>small,.explorer-screen .explorer-form small{color:var(--ff-emerald)!important}
