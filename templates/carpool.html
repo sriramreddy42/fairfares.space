@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FairFares Carpool | Find or Share a Ride</title>
+  <meta name="description" content="Find nearby riders, request a ride, or share open seats with the FairFares community.">
+  <link rel="canonical" href="https://www.fairfare.space/carpool">
+  $stylesheet_links
+</head>
+<body class="carpool-page" data-authenticated="$is_authenticated" data-user-id="$current_user_id">
+  <header class="carpool-nav">
+    <a class="carpool-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
+    <nav aria-label="Main navigation">
+      <a class="active" href="/carpool">Carpool</a>
+      <a href="/accommodations">Housing</a>
+      <a href="/car-rentals">Car Rentals</a>
+      <a href="/deals">Deals</a>
+      <a href="/explorer">Explorer</a>
+      <a href="/contact">Contact</a>
+    </nav>
+    $auth_link
+  </header>
+
+  <main>
+    <section class="carpool-hero">
+      <div class="carpool-hero-copy">
+        <p class="carpool-eyebrow">Community rides by FairFares</p>
+        <h1>Going the same way?</h1>
+        <p>Find a ride or share your open seats with people headed along your route.</p>
+        <div class="carpool-hero-actions">
+          <button type="button" data-carpool-open="CARPOOL_REQUEST">I need a ride</button>
+          <button type="button" data-carpool-open="CARPOOL_OFFER">I can drive</button>
+        </div>
+      </div>
+      <div class="carpool-route-art" aria-hidden="true"><span>A</span><i></i><b>🚘</b><i></i><span>B</span></div>
+    </section>
+
+    <section class="carpool-finder" aria-labelledby="carpoolResultsTitle">
+      <form class="carpool-search" data-carpool-search>
+        <label><span>City</span><input name="city" value="$search_city" placeholder="Denver, CO"></label>
+        <label><span>From</span><input name="origin" placeholder="Campus, neighborhood, or address"></label>
+        <label><span>To</span><input name="destination" placeholder="Destination"></label>
+        <button type="submit">Find carpools</button>
+      </form>
+      <div class="carpool-results-head"><div><p class="carpool-eyebrow">Available routes</p><h2 id="carpoolResultsTitle">Carpools near you</h2></div><span data-carpool-count></span></div>
+      <div class="carpool-results" data-carpool-results><p>Finding carpools…</p></div>
+    </section>
+
+    <section class="carpool-how">
+      <article><span>1</span><h2>Search your route</h2><p>Enter where you are leaving from and where you need to go.</p></article>
+      <article><span>2</span><h2>Post or match</h2><p>Request a ride or offer available seats to the community.</p></article>
+      <article><span>3</span><h2>Connect in Chitthi</h2><p>Coordinate trip details through FairFares messaging.</p></article>
+    </section>
+  </main>
+
+  <form class="carpool-post" data-carpool-post hidden>
+    <header><div><span data-carpool-post-kicker>Post a ride</span><h2 data-carpool-post-title>Tell us where you are going</h2></div><button type="button" data-carpool-close aria-label="Close">×</button></header>
+    <input type="hidden" name="rideType" value="CARPOOL_REQUEST">
+    <div class="carpool-post-grid">
+      <label><span>City</span><input name="city" value="$search_city" required></label>
+      <label><span>From</span><input name="origin" required></label>
+      <label><span>To</span><input name="destination" required></label>
+      <label><span>Date</span><input name="pickupDate" type="date" required></label>
+      <label><span>Time</span><input name="pickupTime" type="time" required></label>
+      <label><span>Seats</span><input name="seats" type="number" min="1" max="8" value="1" required></label>
+      <label data-carpool-contribution><span>Contribution per seat</span><input name="contributionPerSeat" type="number" min="0" step="1" value="0"></label>
+    </div>
+    <button class="carpool-submit" type="submit">Post to Carpool</button>
+    <p data-carpool-status></p>
+  </form>
+
+  <script>
+  (() => {
+    const search = document.querySelector('[data-carpool-search]');
+    const results = document.querySelector('[data-carpool-results]');
+    const count = document.querySelector('[data-carpool-count]');
+    const post = document.querySelector('[data-carpool-post]');
+    const status = document.querySelector('[data-carpool-status]');
+    const date = post.querySelector('[name="pickupDate"]');
+    date.min = new Date().toISOString().slice(0, 10);
+
+    function render(rides) {
+      results.replaceChildren();
+      count.textContent = `${rides.length} route${rides.length === 1 ? '' : 's'}`;
+      if (!rides.length) {
+        const empty = document.createElement('div'); empty.className = 'carpool-empty';
+        empty.innerHTML = '<b>No matching carpools yet</b><span>Be the first to post this route.</span>';
+        results.append(empty); return;
+      }
+      rides.forEach((ride) => {
+        const card = document.createElement('article'); card.className = 'carpool-card';
+        const head = document.createElement('header');
+        const owner = document.createElement('strong'); owner.textContent = ride.ownerName || 'FairFares member';
+        const badge = document.createElement('span'); badge.textContent = ride.type === 'CARPOOL_OFFER' ? 'Offering seats' : 'Needs a ride';
+        head.append(owner, badge);
+        const title = document.createElement('h3'); title.textContent = ride.title || 'Carpool route';
+        const route = document.createElement('div'); route.className = 'carpool-card-route';
+        [['A', ride.origin || 'Pickup open'], ['B', ride.destination || 'Destination open']].forEach(([marker, label]) => {
+          const row = document.createElement('p'); const dot = document.createElement('b'); dot.textContent = marker;
+          row.append(dot, document.createTextNode(label)); route.append(row);
+        });
+        const meta = document.createElement('footer');
+        [ride.pickupDate || 'Flexible date', ride.pickupTime || 'Flexible time', `${Number(ride.seats || 1)} seat${Number(ride.seats || 1) === 1 ? '' : 's'}`, Number(ride.contributionPerSeat || 0) ? `$${Number(ride.contributionPerSeat).toFixed(0)}/seat` : 'Contribution open'].forEach((value) => { const item = document.createElement('span'); item.textContent = value; meta.append(item); });
+        card.append(head, title, route, meta); results.append(card);
+      });
+    }
+
+    async function load() {
+      results.innerHTML = '<p>Finding carpools…</p>';
+      const query = new URLSearchParams(new FormData(search)); query.set('limit', '30');
+      try {
+        const response = await fetch(`/api/mobile/rides?${query}`, {headers:{Accept:'application/json'}});
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load carpools.');
+        render(payload.rides || []);
+      } catch (error) { results.textContent = error.message || 'Could not load carpools.'; }
+    }
+
+    function openPost(mode) {
+      if (document.body.dataset.authenticated !== 'true') { location.href = '/login?next=/carpool'; return; }
+      const offer = mode === 'CARPOOL_OFFER';
+      post.querySelector('[name="rideType"]').value = offer ? 'CARPOOL_OFFER' : 'CARPOOL_REQUEST';
+      post.querySelector('[data-carpool-post-kicker]').textContent = offer ? 'Offer seats' : 'Request a ride';
+      post.querySelector('[data-carpool-post-title]').textContent = offer ? 'Share your route with nearby riders' : 'Tell nearby drivers where you are going';
+      post.querySelector('[data-carpool-contribution]').hidden = !offer;
+      post.hidden = false; document.body.classList.add('carpool-modal-open');
+    }
+    document.querySelectorAll('[data-carpool-open]').forEach((button) => button.addEventListener('click', () => openPost(button.dataset.carpoolOpen)));
+    document.querySelector('[data-carpool-close]').addEventListener('click', () => { post.hidden = true; document.body.classList.remove('carpool-modal-open'); });
+    search.addEventListener('submit', (event) => { event.preventDefault(); load(); });
+    post.addEventListener('submit', async (event) => {
+      event.preventDefault(); status.textContent = 'Posting your carpool…';
+      try {
+        const response = await fetch('/api/mobile/rides', {method:'POST', headers:{'Content-Type':'application/json',Accept:'application/json'}, body:JSON.stringify(Object.fromEntries(new FormData(post).entries()))});
+        const payload = await response.json();
+        if (response.status === 401) { location.href = '/login?next=/carpool'; return; }
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not post this carpool.');
+        post.hidden = true; document.body.classList.remove('carpool-modal-open'); post.reset(); await load();
+      } catch (error) { status.textContent = error.message || 'Could not post this carpool.'; }
+    });
+    load();
+  })();
+  </script>
+</body>
+</html>

@@ -130,7 +130,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260808-web-carpool"
+ASSET_VERSION = "20260808-carpool-page"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -685,6 +685,7 @@ BASE_STYLESHEETS = [
 PAGE_STYLESHEETS = {
     "admin_wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
     "accommodations.html": [f"/static/css/accommodations.css?v={ASSET_VERSION}"],
+    "carpool.html": [f"/static/css/carpool.css?v={ASSET_VERSION}"],
     "index.html": [f"/static/css/booking-form.min.css?v={ASSET_VERSION}"],
     "wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
 }
@@ -18692,6 +18693,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/accommodations": self.accommodations_page,
+            "/carpool": self.carpool_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
             "/activate": self.activate_account,
@@ -19496,6 +19498,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
+
+    def carpool_page(self) -> None:
+        user = self.current_user()
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        search_city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        self.send_html(
+            render_template(
+                "carpool.html",
+                is_authenticated="true" if user else "false",
+                current_user_id=int(row_value(user, "id") or 0) if user else 0,
+                search_city=escape(search_city),
+                auth_link='<a class="carpool-account" href="/dashboard">Dashboard</a>' if user else '<a class="carpool-account" href="/login?next=/carpool">Sign in</a>',
+            )
+        )
 
     def accommodations_page(self) -> None:
         user = self.current_user()
