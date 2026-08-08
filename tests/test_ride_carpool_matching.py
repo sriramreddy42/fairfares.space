@@ -264,6 +264,36 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(metrics["routeDeviationMinutes"], 16)
         self.assertEqual(metrics["routeDeviationSource"], "GOOGLE_DIRECTIONS")
 
+    @patch.object(app, "google_route_totals")
+    def test_ride_search_does_not_call_google_directions_per_candidate(self, mock_route):
+        with app.db() as con:
+            for _ in range(12):
+                self.insert_ride(
+                    con,
+                    self.driver_id,
+                    "CARPOOL_OFFER",
+                    "Denver, CO",
+                    "Colorado Springs, CO",
+                    max_detour=50,
+                    pickup_distance=50,
+                )
+
+        results = app.mobile_ride_posts(
+            city="Denver, CO",
+            ride_type="CARPOOL_OFFER",
+            origin="Littleton, CO",
+            destination="Colorado Springs, CO",
+            limit=30,
+            origin_lat=POINTS["Littleton, CO"]["lat"],
+            origin_lng=POINTS["Littleton, CO"]["lng"],
+            destination_lat=POINTS["Colorado Springs, CO"]["lat"],
+            destination_lng=POINTS["Colorado Springs, CO"]["lng"],
+        )
+
+        self.assertTrue(results)
+        mock_route.assert_not_called()
+        self.assertTrue(all(item["routeDeviationSource"] == "ESTIMATE" for item in results))
+
     @patch.object(app, "ride_point", side_effect=fake_ride_point)
     def test_bulk_matching_keeps_same_route_and_filters_false_routes(self, _mock_point):
         with app.db() as con:

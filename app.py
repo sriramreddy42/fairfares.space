@@ -13727,7 +13727,12 @@ def ride_coordinate_value(row: sqlite3.Row | dict[str, object], *keys: str) -> f
     return 0.0
 
 
-def ride_route_detour_details(row: sqlite3.Row | dict[str, object], origin_point: dict[str, object], destination_point: dict[str, object]) -> dict[str, object]:
+def ride_route_detour_details(
+    row: sqlite3.Row | dict[str, object],
+    origin_point: dict[str, object],
+    destination_point: dict[str, object],
+    allow_google: bool = True,
+) -> dict[str, object]:
     driver_origin_lat = ride_coordinate_value(row, "origin_lat", "originLat")
     driver_origin_lng = ride_coordinate_value(row, "origin_lng", "originLng")
     driver_dest_lat = ride_coordinate_value(row, "destination_lat", "destinationLat")
@@ -13742,12 +13747,13 @@ def ride_route_detour_details(row: sqlite3.Row | dict[str, object], origin_point
     driver_destination = {"lat": driver_dest_lat, "lng": driver_dest_lng}
     query_origin = {"lat": query_origin_lat, "lng": query_origin_lng}
     query_destination = {"lat": query_dest_lat, "lng": query_dest_lng}
-    direct_route = google_route_totals([driver_origin, driver_destination])
-    route_with_rider = google_route_totals([driver_origin, query_origin, query_destination, driver_destination])
-    if direct_route and route_with_rider:
-        extra_miles = round(max(0.0, route_with_rider[0] - direct_route[0]), 1)
-        extra_minutes = max(0, int(route_with_rider[1] - direct_route[1]))
-        return {"miles": extra_miles, "minutes": extra_minutes, "source": "GOOGLE_DIRECTIONS"}
+    if allow_google:
+        direct_route = google_route_totals([driver_origin, driver_destination])
+        route_with_rider = google_route_totals([driver_origin, query_origin, query_destination, driver_destination])
+        if direct_route and route_with_rider:
+            extra_miles = round(max(0.0, route_with_rider[0] - direct_route[0]), 1)
+            extra_minutes = max(0, int(route_with_rider[1] - direct_route[1]))
+            return {"miles": extra_miles, "minutes": extra_minutes, "source": "GOOGLE_DIRECTIONS"}
     direct_driver_route = distance_miles_between(driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng)
     route_with_rider = (
         distance_miles_between(driver_origin_lat, driver_origin_lng, query_origin_lat, query_origin_lng)
@@ -13758,12 +13764,24 @@ def ride_route_detour_details(row: sqlite3.Row | dict[str, object], origin_point
     return {"miles": extra_miles, "minutes": ride_detour_minutes_from_miles(extra_miles), "source": "ESTIMATE"}
 
 
-def ride_route_detour_miles(row: sqlite3.Row | dict[str, object], origin_point: dict[str, object], destination_point: dict[str, object]) -> float | None:
-    miles = ride_route_detour_details(row, origin_point, destination_point).get("miles")
+def ride_route_detour_miles(
+    row: sqlite3.Row | dict[str, object],
+    origin_point: dict[str, object],
+    destination_point: dict[str, object],
+    allow_google: bool = True,
+) -> float | None:
+    miles = ride_route_detour_details(row, origin_point, destination_point, allow_google=allow_google).get("miles")
     return float(miles) if miles is not None else None
 
 
-def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object], pickup_date: str = "", pickup_time: str = "") -> int:
+def ride_score(
+    row: sqlite3.Row,
+    origin_point: dict[str, object],
+    destination_point: dict[str, object],
+    pickup_date: str = "",
+    pickup_time: str = "",
+    allow_google: bool = True,
+) -> int:
     score = 55
     origin_lat = float(row_value(row, "origin_lat") or 0)
     origin_lng = float(row_value(row, "origin_lng") or 0)
@@ -13779,7 +13797,7 @@ def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_po
     if dest_lat and dest_lng and query_dest_lat and query_dest_lng:
         drop_distance = distance_miles_between(query_dest_lat, query_dest_lng, dest_lat, dest_lng)
         score += max(0, 15 - int(drop_distance * 2))
-    route_deviation = ride_route_detour_miles(row, origin_point, destination_point)
+    route_deviation = ride_route_detour_miles(row, origin_point, destination_point, allow_google=allow_google)
     if route_deviation is not None:
         score += max(0, 20 - int(route_deviation))
     if pickup_date and pickup_date == row_value(row, "pickup_date"):
@@ -13791,7 +13809,12 @@ def ride_score(row: sqlite3.Row, origin_point: dict[str, object], destination_po
     return max(0, min(score, 100))
 
 
-def ride_route_match_metrics(row: sqlite3.Row, origin_point: dict[str, object], destination_point: dict[str, object]) -> dict[str, object]:
+def ride_route_match_metrics(
+    row: sqlite3.Row,
+    origin_point: dict[str, object],
+    destination_point: dict[str, object],
+    allow_google: bool = True,
+) -> dict[str, object]:
     origin_lat = float(row_value(row, "origin_lat") or 0)
     origin_lng = float(row_value(row, "origin_lng") or 0)
     dest_lat = float(row_value(row, "destination_lat") or 0)
@@ -13810,7 +13833,7 @@ def ride_route_match_metrics(row: sqlite3.Row, origin_point: dict[str, object], 
         if dest_lat and dest_lng and query_dest_lat and query_dest_lng
         else None
     )
-    route_deviation_details = ride_route_detour_details(row, origin_point, destination_point)
+    route_deviation_details = ride_route_detour_details(row, origin_point, destination_point, allow_google=allow_google)
     route_deviation = route_deviation_details.get("miles")
     route_deviation_minutes = route_deviation_details.get("minutes")
     if route_deviation is None:
@@ -13848,10 +13871,15 @@ def ride_effective_status(row: sqlite3.Row | dict[str, object]) -> str:
     return status
 
 
-def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None = None, destination_point: dict[str, object] | None = None) -> dict[str, object]:
+def mobile_ride_payload(
+    row: sqlite3.Row,
+    origin_point: dict[str, object] | None = None,
+    destination_point: dict[str, object] | None = None,
+    allow_google_routes: bool = True,
+) -> dict[str, object]:
     origin_point = origin_point or {}
     destination_point = destination_point or {}
-    route_metrics = ride_route_match_metrics(row, origin_point, destination_point)
+    route_metrics = ride_route_match_metrics(row, origin_point, destination_point, allow_google=allow_google_routes)
     expired = ride_post_expired(row)
     status = ride_effective_status(row)
     owner_user_id = int(row_value(row, "user_id") or 0)
@@ -13902,7 +13930,7 @@ def mobile_ride_payload(row: sqlite3.Row, origin_point: dict[str, object] | None
         "routeDeviationMiles": route_metrics.get("routeDeviationMiles"),
         "routeDeviationMinutes": route_metrics.get("routeDeviationMinutes"),
         "routeDeviationSource": route_metrics.get("routeDeviationSource"),
-        "matchScore": ride_score(row, origin_point, destination_point),
+        "matchScore": ride_score(row, origin_point, destination_point, allow_google=allow_google_routes),
         "createdAt": row_value(row, "created_at"),
     }
 
@@ -13986,8 +14014,18 @@ def mobile_ride_posts(
 ) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
-    origin_point = ride_point(origin, city) if origin else ride_point(city)
-    destination_point = ride_point(destination, city) if destination else {}
+    if origin_lat and origin_lng:
+        origin_point = accommodation_location_point(origin or city, city, allow_refresh=False)
+        if not origin_point or not float(origin_point.get("lat") or 0) or not float(origin_point.get("lng") or 0):
+            origin_point = {"label": origin or city, "lat": float(origin_lat), "lng": float(origin_lng), "source": "CLIENT"}
+    else:
+        origin_point = ride_point(origin, city) if origin else ride_point(city)
+    if destination_lat and destination_lng:
+        destination_point = accommodation_location_point(destination, city, allow_refresh=False)
+        if not destination_point or not float(destination_point.get("lat") or 0) or not float(destination_point.get("lng") or 0):
+            destination_point = {"label": destination, "lat": float(destination_lat), "lng": float(destination_lng), "source": "CLIENT"}
+    else:
+        destination_point = ride_point(destination, city) if destination else {}
     if origin_lat and origin_lng:
         supplied_origin = {"lat": float(origin_lat), "lng": float(origin_lng)}
         resolved_origin_lat = float(origin_point.get("lat") or 0)
@@ -14043,7 +14081,10 @@ def mobile_ride_posts(
     values.extend([candidate_limit, candidate_offset])
     with db() as con:
         rows = con.execute(sql, values).fetchall()
-    payloads = [mobile_ride_payload(row, origin_point, destination_point) for row in rows]
+    # Search results must not fan out into sequential Google Directions calls.
+    # Fast coordinate estimates shortlist candidates; dispatch performs the
+    # detailed route validation when a rider actually requests a match.
+    payloads = [mobile_ride_payload(row, origin_point, destination_point, allow_google_routes=False) for row in rows]
     if origin or destination:
         if route_search:
             route_filtered = []
