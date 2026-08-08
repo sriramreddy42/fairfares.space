@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
-import { Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
 import { appAssets } from "../assets";
@@ -1093,6 +1093,7 @@ export function HousingScreen({
   }
 
   function selectRidePlace(place: RidePlaceSuggestion) {
+    const selectedField = rideFocusedField;
     selectedRideSuggestionRef.current = place.label;
     setRideForm((current) => ({
       ...current,
@@ -1101,8 +1102,11 @@ export function HousingScreen({
         ? { originLat: place.lat, originLng: place.lng }
         : { destinationLat: place.lat, destinationLng: place.lng })
     }));
-    if (rideFocusedField === "origin") {
+    if (selectedField === "origin") {
       setRideFocusedField("destination");
+    } else if (rideForm.rideType !== "CARPOOL_OFFER") {
+      setRideSuggestions([]);
+      void planRideRoute(place, "CARPOOL_REQUEST");
     }
   }
 
@@ -1130,6 +1134,7 @@ export function HousingScreen({
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     void useCurrentRideLocationForOrigin();
+    void planRideRoute(place, "CARPOOL_REQUEST");
   }
 
   function ridePlanComplete() {
@@ -1208,25 +1213,27 @@ export function HousingScreen({
     }
   }
 
-  async function planRideRoute() {
+  async function planRideRoute(selectedDestination?: RidePlaceSuggestion, requestedRideType: RideType = rideForm.rideType) {
     if (ridePlanSubmittingRef.current) return;
-    if (!rideForm.destination.trim()) {
+    const submittedDestination = selectedDestination?.label || rideForm.destination.trim();
+    if (!submittedDestination) {
       Alert.alert("Destination needed", "Enter where you want to go.");
       return;
     }
     ridePlanSubmittingRef.current = true;
     const effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
-    let effectiveDestination = rideForm.destination.trim();
-    const listingRide = rideForm.rideType === "CARPOOL_OFFER";
+    let effectiveDestination = submittedDestination;
+    const listingRide = requestedRideType === "CARPOOL_OFFER";
     const destinationAlreadyPicked = Boolean(
-      rideForm.destination.trim() &&
+      selectedDestination ||
+        (rideForm.destination.trim() &&
         (rideForm.destinationLat !== null ||
           rideForm.destinationLng !== null ||
-          rideForm.destination.trim() === selectedRideSuggestionRef.current)
+          rideForm.destination.trim() === selectedRideSuggestionRef.current))
     );
     setRideBusy(true);
     try {
-      let destinationPoint: RidePlaceSuggestion | undefined;
+      let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
       if (!destinationAlreadyPicked) {
         const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
         destinationPoint = destinationMatches[0];
@@ -2330,7 +2337,7 @@ export function HousingScreen({
                       setRideFocusedField("destination");
                       updateRideForm("destination", text);
                     }}
-                    onSubmitEditing={planRideRoute}
+                    onSubmitEditing={() => void planRideRoute()}
                     placeholder={listingRide ? "Where are you going?" : "Where to?"}
                     placeholderTextColor={theme.colors.muted}
                     style={[styles.rideRouteInput, rideFocusedField === "destination" && styles.rideRouteInputActive]}
@@ -2468,9 +2475,11 @@ export function HousingScreen({
                 ) : null}
               </View>
 
-              <Pressable style={styles.ridePlannerSearchButton} onPress={planRideRoute} disabled={rideBusy}>
-                <Text style={styles.ridePlannerSearchText}>{rideBusy ? (listingRide ? "Listing ride..." : "Finding rides...") : plannerActionText}</Text>
-              </Pressable>
+              {listingRide ? (
+                <Pressable style={styles.ridePlannerSearchButton} onPress={() => void planRideRoute()} disabled={rideBusy}>
+                  <Text style={styles.ridePlannerSearchText}>{rideBusy ? "Listing ride..." : plannerActionText}</Text>
+                </Pressable>
+              ) : null}
             </ScrollView>
           ) : (
             <View style={styles.rideChoiceScreen}>
@@ -2606,6 +2615,15 @@ export function HousingScreen({
               </ScrollView>
             </View>
           )}
+          {ridePlannerStage === "plan" && rideBusy && !listingRide ? (
+            <View style={styles.rideSearchLoadingOverlay}>
+              <View style={styles.rideSearchLoadingCard}>
+                <ActivityIndicator size="large" color={theme.colors.text} />
+                <Text style={styles.rideSearchLoadingTitle}>Finding rides</Text>
+                <Text style={styles.rideSearchLoadingCopy}>Checking routes and nearby listings for {rideForm.destination || "your destination"}…</Text>
+              </View>
+            </View>
+          ) : null}
         </KeyboardAvoidingView>
       </Modal>
     );
@@ -4557,6 +4575,10 @@ const styles = StyleSheet.create({
   rideUtilityText: { color: theme.colors.soft, fontSize: 16, fontWeight: "900" },
   ridePlannerSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 58, alignItems: "center", justifyContent: "center", marginTop: 4 },
   ridePlannerSearchText: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  rideSearchLoadingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "rgba(8,8,9,0.74)", alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
+  rideSearchLoadingCard: { width: "100%", maxWidth: 340, ...theme.depth.raised, paddingHorizontal: 24, paddingVertical: 28, alignItems: "center", gap: 10 },
+  rideSearchLoadingTitle: { color: theme.colors.text, ...theme.typography.sectionTitle, marginTop: 4 },
+  rideSearchLoadingCopy: { color: theme.colors.muted, ...theme.typography.body, textAlign: "center" },
   rideChoiceScreen: { flex: 1, backgroundColor: "#111" },
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
   rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
