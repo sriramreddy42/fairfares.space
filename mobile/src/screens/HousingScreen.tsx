@@ -2702,6 +2702,8 @@ export function HousingScreen({
                 <View style={styles.rideVideoPlay}><Text style={styles.rideVideoPlayText}>▶</Text></View>
               </TouchableOpacity>
             )}
+            <View pointerEvents="none" style={styles.rideVideoCaptionShade} />
+            <Text pointerEvents="none" style={styles.rideVideoCaption}>What is carpooling & ridesharing?</Text>
           </View>
         </View>
 
@@ -4029,10 +4031,10 @@ const styles = StyleSheet.create({
   rideSimpleStep: { flex: 1, minHeight: 66, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 8, paddingVertical: 9, alignItems: "center", justifyContent: "center", gap: 6 },
   rideSimpleStepText: { color: theme.colors.soft, fontSize: 11, lineHeight: 14, fontWeight: "800", textAlign: "center" },
   ridePrimaryActions: { flexDirection: "row", gap: 8, marginTop: 2 },
-  rideFindButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
-  rideFindButtonText: { color: "#fff", fontSize: 13, fontWeight: "900" },
-  rideOfferButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
-  rideOfferButtonText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  rideFindButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: "rgba(10,132,255,0.16)", borderWidth: 1, borderColor: "rgba(10,132,255,0.58)", alignItems: "center", justifyContent: "center" },
+  rideFindButtonText: { color: "#64b5ff", fontSize: 13, fontWeight: "800" },
+  rideOfferButton: { flex: 1, minHeight: 42, borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
+  rideOfferButtonText: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
     borderRadius: 14,
@@ -4263,6 +4265,8 @@ const styles = StyleSheet.create({
   rideVideoThumbnail: { width: "100%", height: "100%" },
   rideVideoPlay: { position: "absolute", width: 38, height: 28, borderRadius: 8, backgroundColor: "rgba(220,0,0,0.94)", alignItems: "center", justifyContent: "center" },
   rideVideoPlayText: { color: "#fff", fontSize: 15, marginLeft: 2 },
+  rideVideoCaptionShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 30, backgroundColor: "rgba(0,0,0,0.52)" },
+  rideVideoCaption: { position: "absolute", left: 10, right: 8, bottom: 7, color: "#fff", fontSize: 11, fontWeight: "800" },
   rideListBannerButton: { flex: 1, backgroundColor: "#000", overflow: "hidden" },
   rideListBanner: { width: "100%", height: "100%" },
   rideOwnerOfferGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
