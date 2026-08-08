@@ -389,6 +389,7 @@ function FairFaresApp() {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === "web" || typeof Image.resolveAssetSource !== "function") return;
     const task = InteractionManager.runAfterInteractions(() => {
       const metroAssetUris = STATIC_IMAGE_SOURCES
         .map((source) => Image.resolveAssetSource(source)?.uri || "")
