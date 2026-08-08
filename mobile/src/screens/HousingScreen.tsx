@@ -2616,14 +2616,19 @@ export function HousingScreen({
             </View>
           )}
           {ridePlannerStage === "plan" && rideBusy && !listingRide ? (
-            <View style={styles.rideSearchLoadingOverlay}>
+            <BlurView
+              tint="dark"
+              intensity={38}
+              experimentalBlurMethod="dimezisBlurView"
+              style={styles.rideSearchLoadingOverlay}
+            >
               <View style={styles.rideSearchLoadingCard}>
                 <ActivityIndicator size="large" color={theme.colors.text} />
                 <Text style={styles.rideSearchLoadingTitle}>Finding rides</Text>
                 <Text style={styles.rideSearchLoadingCopy}>Checking routes and nearby listings for {rideForm.destination || "your destination"}…</Text>
-                <Image source={appAssets.rideEarnLoading} style={styles.rideSearchLoadingPromo} resizeMode="cover" />
+                <Image source={appAssets.rideEarnLoading} style={styles.rideSearchLoadingPromo} resizeMode="contain" />
               </View>
-            </View>
+            </BlurView>
           ) : null}
         </KeyboardAvoidingView>
       </Modal>
@@ -4576,7 +4581,7 @@ const styles = StyleSheet.create({
   rideUtilityText: { color: theme.colors.soft, fontSize: 16, fontWeight: "900" },
   ridePlannerSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 58, alignItems: "center", justifyContent: "center", marginTop: 4 },
   ridePlannerSearchText: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
-  rideSearchLoadingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "rgba(8,8,9,0.74)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  rideSearchLoadingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "rgba(8,8,9,0.22)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
   rideSearchLoadingCard: { width: "100%", maxWidth: 378, paddingHorizontal: 12, paddingVertical: 20, alignItems: "center", gap: 10 },
   rideSearchLoadingTitle: { color: theme.colors.text, ...theme.typography.sectionTitle, marginTop: 4 },
   rideSearchLoadingCopy: { color: theme.colors.muted, ...theme.typography.body, textAlign: "center" },
