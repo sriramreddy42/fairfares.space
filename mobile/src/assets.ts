@@ -31,6 +31,7 @@ export const appAssets = {
   rentalPromo: require("../assets/rental-car-promo-mobile.jpg") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip-mobile.png") as ImageSourcePropType,
+  rideEarnLoading: require("../assets/list-your-ride-earn-loading.jpg") as ImageSourcePropType,
   cities: {
     denver: require("../assets/cities/denver.jpg") as ImageSourcePropType,
     losAngeles: require("../assets/cities/los-angeles.jpg") as ImageSourcePropType,

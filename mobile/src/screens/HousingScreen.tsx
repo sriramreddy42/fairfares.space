@@ -2621,6 +2621,7 @@ export function HousingScreen({
                 <ActivityIndicator size="large" color={theme.colors.text} />
                 <Text style={styles.rideSearchLoadingTitle}>Finding rides</Text>
                 <Text style={styles.rideSearchLoadingCopy}>Checking routes and nearby listings for {rideForm.destination || "your destination"}…</Text>
+                <Image source={appAssets.rideEarnLoading} style={styles.rideSearchLoadingPromo} resizeMode="cover" />
               </View>
             </View>
           ) : null}
@@ -4579,6 +4580,7 @@ const styles = StyleSheet.create({
   rideSearchLoadingCard: { width: "100%", maxWidth: 340, ...theme.depth.raised, paddingHorizontal: 24, paddingVertical: 28, alignItems: "center", gap: 10 },
   rideSearchLoadingTitle: { color: theme.colors.text, ...theme.typography.sectionTitle, marginTop: 4 },
   rideSearchLoadingCopy: { color: theme.colors.muted, ...theme.typography.body, textAlign: "center" },
+  rideSearchLoadingPromo: { width: "100%", aspectRatio: 3 / 2, borderRadius: theme.radius.md, marginTop: 6, borderWidth: 1, borderColor: theme.colors.line },
   rideChoiceScreen: { flex: 1, backgroundColor: "#111" },
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
   rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
