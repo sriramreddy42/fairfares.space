@@ -157,13 +157,40 @@
 
   <main class="housing-shell">
     <section class="housing-hero">
-      <div>
-        <p class="eyebrow">FairFares housing help</p>
-        <h1>Find local rooms, shared rent, and short stays.</h1>
+      <div class="housing-landing-copy">
+        <p class="eyebrow">Housing that starts with community</p>
+        <h1>Find a place that feels like yours.</h1>
+        <p class="housing-hero-lede">Discover rooms, roommates, apartments, and flexible stays near school, work, and the places you already go.</p>
+        <form class="housing-hero-search" action="/accommodations" method="get">
+          <span aria-hidden="true">⌖</span>
+          <input id="housingHeroArea" name="area" value="$search_area" placeholder="City, campus, or neighborhood" aria-label="City, campus, or neighborhood">
+          <button type="submit">Search homes</button>
+        </form>
         <div class="housing-hero-actions">
-          <button class="select-button" type="button" data-open-housing-post>Post your need</button>
+          <a class="select-button" href="#housing-posts">Browse available places</a>
+          <button class="housing-hero-secondary" type="button" data-open-housing-post data-mode="HAVE_PLACE">List a place</button>
+        </div>
+        <div class="housing-hero-proof" aria-label="FairFares housing benefits">
+          <span><b>Direct</b> member messaging</span>
+          <span><b>Local</b> map-based discovery</span>
+          <span><b>Free</b> to post a housing need</span>
         </div>
       </div>
+      <aside class="housing-landing-preview" aria-label="Example FairFares housing match">
+        <div class="housing-preview-photo">
+          <span>Popular near $selected_location</span>
+          <b>Move-in ready</b>
+        </div>
+        <div class="housing-preview-body">
+          <div><p>Private room · Flexible stay</p><h2>Find your next home base</h2></div>
+          <strong>From your local community</strong>
+          <ul>
+            <li>Room and roommate leads</li>
+            <li>Search by rent and distance</li>
+            <li>Message members in Chitthi</li>
+          </ul>
+        </div>
+      </aside>
     </section>
 
     <form class="housing-search-card housing-filter-card" action="/accommodations" method="get">

@@ -1014,6 +1014,12 @@ export async function openChatWithPerson(targetUserId: number) {
   });
 }
 
+export async function openIssuesAndSuggestionsChat() {
+  return request<{ ok: boolean; conversation: ChatConversation }>("/api/chat/feedback-conversation", {
+    method: "POST"
+  });
+}
+
 export async function setChatPhoneDiscoverability(enabled: boolean) {
   return request<{ ok: boolean; enabled: boolean }>("/api/chat/phone-discoverability", {
     method: "POST",

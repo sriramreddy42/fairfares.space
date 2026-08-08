@@ -83,6 +83,9 @@ MAX_CHAT_FILE_BYTES = 8_000_000
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 15_000_000
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = ""
+CHITTHI_FEEDBACK_EMAIL = os.environ.get(
+    "FAIRFARES_CHITTHI_FEEDBACK_EMAIL", "sriramreddy42@gmail.com"
+).strip().lower()
 DEFAULT_PROMOTED_ADMIN_EMAILS = ""
 DEFAULT_REVOKED_ADMIN_EMAILS = ""
 PASSWORD_HASH_ITERATIONS = 600_000
@@ -18839,6 +18842,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/explorer/checkins": self.api_explorer_checkin,
             "/api/explorer/xp": self.api_explorer_xp,
             "/api/chat/conversations": self.api_create_chat_conversation,
+            "/api/chat/feedback-conversation": self.api_open_feedback_conversation,
             "/api/chat/communities": self.api_create_chat_community,
             "/api/chat/groups/photo": self.api_update_chat_group_photo,
             "/api/chat/communities/join": self.api_join_chat_community,
@@ -20351,6 +20355,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "message": chat_message_payload(message, int(user["id"])) if message else None,
             }
         )
+
+    def api_open_feedback_conversation(self) -> None:
+        """Open the configured private Chitthi inbox for product issues and ideas."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to message the FairFares team."}, 401)
+            return
+        if not CHITTHI_FEEDBACK_EMAIL:
+            self.send_json({"ok": False, "message": "The issues and suggestions inbox is not configured yet."}, 503)
+            return
+        with db() as con:
+            recipient = con.execute(
+                "SELECT * FROM users WHERE LOWER(TRIM(email)) = ? LIMIT 1",
+                (CHITTHI_FEEDBACK_EMAIL,),
+            ).fetchone()
+            if not recipient:
+                self.send_json({"ok": False, "message": "The issues and suggestions inbox is not available yet."}, 503)
+                return
+            if int(recipient["id"]) == int(user["id"]):
+                self.send_json({"ok": False, "message": "This profile receives issues and suggestions from other members."}, 400)
+                return
+            conversation, error = get_or_create_person_conversation(con, user, int(recipient["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": error or "Could not open the issues and suggestions chat."}, 400)
+                return
+            full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
+            conversation_payload = chat_row_payload(full_conversation, int(user["id"]))
+        self.send_json({"ok": True, "conversation": conversation_payload})
 
     def api_create_chat_community(self) -> None:
         user = self.current_user()
@@ -30383,6 +30415,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
             "form-action 'self' https://checkout.stripe.com https://accounts.google.com; script-src 'self' 'unsafe-inline' https://js.stripe.com https://accounts.google.com https://maps.googleapis.com https://maps.gstatic.com https://www.googletagmanager.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
+            "media-src 'self' blob: https://a-us.storyblok.com; "
             "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "
             "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://accounts.google.com"
         )

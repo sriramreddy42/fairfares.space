@@ -38,6 +38,7 @@ import {
   openChatForPost,
   openCommunityChat,
   openChatWithPerson,
+  openIssuesAndSuggestionsChat,
   pollChatEvents,
   reportChatMessage,
   registerChatDeviceKey,
@@ -1433,6 +1434,37 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
   }
 
+  async function openFeedbackChat() {
+    if (!signedIn) {
+      onRequireLogin();
+      return;
+    }
+    const existingConversation = conversations.find((conversation) => {
+      if (conversation.communityId || conversation.kind === "GROUP") return false;
+      const name = (conversation.otherName || conversation.subject || "").trim().toLowerCase();
+      return name === "sriram reddy bandari" || (name.includes("sriram") && name.includes("bandari"));
+    });
+    if (existingConversation) {
+      await openConversation(existingConversation);
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await openIssuesAndSuggestionsChat();
+      setActiveConversationId(response.conversation.id);
+      setActiveConversation(response.conversation);
+      setActiveSubject(response.conversation.otherName || "Sriram Reddy Bandari");
+      onThreadModeChange?.(true);
+      const payload = await getChatMessages(response.conversation.id);
+      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      await refreshMessenger();
+    } catch (error) {
+      Alert.alert("Could not open this Chitthi", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function findPeopleFromContacts(mode: "chat" | "create" | "add" = "chat", communityId = "") {
     if (!signedIn) {
       onRequireLogin();
@@ -2674,6 +2706,17 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
       >
+        {tab === "All" ? (
+          <TouchableOpacity style={styles.feedbackChatCard} onPress={() => void openFeedbackChat()} disabled={loading}>
+            <View style={styles.feedbackChatAvatar}><Text style={styles.feedbackChatAvatarText}>SR</Text></View>
+            <View style={styles.chatCopy}>
+              <Text style={styles.feedbackChatEyebrow}>ISSUES &amp; SUGGESTIONS</Text>
+              <Text style={styles.feedbackChatName}>Sriram Reddy Bandari</Text>
+              <Text style={styles.feedbackChatCopy}>Share a problem, an idea, or something FairFares can improve.</Text>
+            </View>
+            <Text style={styles.feedbackChatArrow}>›</Text>
+          </TouchableOpacity>
+        ) : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -3171,5 +3214,12 @@ const styles = StyleSheet.create({
   letterEmptyCard: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 24, borderRadius: 22, borderWidth: 1, borderColor: "rgba(219,180,107,0.24)", backgroundColor: "rgba(7,24,22,0.78)", alignItems: "center" },
   letterEmptyIcon: { fontSize: 30, marginBottom: 8 },
   letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
-  letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 }
+  letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 },
+  feedbackChatCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 13, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 22, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)" },
+  feedbackChatAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center", backgroundColor: "#D6A95F", borderWidth: 2, borderColor: "#F4D99E" },
+  feedbackChatAvatarText: { color: "#173A2A", fontSize: 16, fontWeight: "800" },
+  feedbackChatEyebrow: { color: "#efbd68", fontSize: 9, letterSpacing: 0.9, fontWeight: "800", marginBottom: 2 },
+  feedbackChatName: { color: "#fff8e8", fontSize: 16, fontWeight: "700" },
+  feedbackChatCopy: { color: "#c4cec7", fontSize: 12, lineHeight: 17, marginTop: 3 },
+  feedbackChatArrow: { color: "#efbd68", fontSize: 30, fontWeight: "300" }
 });
