@@ -19631,6 +19631,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             status_message=status_message,
             post_modal_hidden=post_modal_hidden,
             search_need_options=render_select_options(ACCOMMODATION_SEARCH_NEEDS, search_need),
+            search_property_type=escape(search_property_type),
             search_property_type_options=render_select_options(ACCOMMODATION_PROPERTY_TYPE_FILTERS, search_property_type),
             search_metro_options=render_select_options(accommodation_metro_filter_options(), search_metro),
             search_gender_options=render_select_options(ACCOMMODATION_GENDER_FILTERS, search_gender),

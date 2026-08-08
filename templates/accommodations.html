@@ -163,6 +163,7 @@
         <h1>Find a place that feels like yours.</h1>
         <p class="housing-hero-lede">Discover rooms, roommates, apartments, and flexible stays near school, work, and the places you already go.</p>
         <form class="housing-hero-search" action="/accommodations" method="get">
+          <input type="hidden" name="property_type" value="$search_property_type">
           <label>
             <span>City</span>
             <input name="city" value="$search_city" placeholder="Denver" aria-label="City">
@@ -203,39 +204,6 @@
         </div>
       </aside>
     </section>
-
-    <form class="housing-search-card housing-filter-card" action="/accommodations" method="get">
-      <div class="housing-filter-bar">
-        <label>
-          <span>Looking for</span>
-          <select name="need">$search_need_options</select>
-        </label>
-        <label>
-          <span>Property type</span>
-          <select name="property_type">$search_property_type_options</select>
-        </label>
-        <label>
-          <span>Metro</span>
-          <select name="metro">$search_metro_options</select>
-        </label>
-        <label class="housing-area-pill">
-          <span>Area</span>
-          <input name="area" value="$search_area" placeholder="Denver Metro Area">
-        </label>
-        <label>
-          <span>Gender</span>
-          <select name="gender">$search_gender_options</select>
-        </label>
-        <label>
-          <span>Price</span>
-          <select name="price">$search_price_options</select>
-        </label>
-        <button class="select-button housing-search-submit" type="submit">Search</button>
-      </div>
-      <div class="housing-ad-search">
-        <input name="ad_id" value="$search_ad_id" placeholder="Search by Ad ID">
-      </div>
-    </form>
 
     <section class="housing-category-strip" aria-label="Accommodation categories">
       <button type="button" data-filter-category="single_room"><span>🛏️</span><strong>Single Room</strong><small>Private room leads</small></button>
@@ -722,7 +690,7 @@
   <script>
     (() => {
       const form = document.querySelector("[data-accommodation-form]");
-      const searchForm = document.querySelector(".housing-filter-card");
+      const searchForm = document.querySelector(".housing-hero-search");
       const topSearchButton = document.querySelector(".housing-top-search");
       const locationModal = document.querySelector("[data-location-modal]");
       const openLocation = () => {
@@ -740,14 +708,9 @@
       const submitLocation = (place, metro) => {
         if (!searchForm) return;
         const areaInput = searchForm.querySelector('input[name="area"]');
-        const metroSelect = searchForm.querySelector('select[name="metro"]');
+        const cityInput = searchForm.querySelector('input[name="city"]');
         if (areaInput && place) areaInput.value = place;
-        if (metroSelect && metro) {
-          if (![...metroSelect.options].some((option) => option.value === metro)) {
-            metroSelect.add(new Option(metro, metro));
-          }
-          metroSelect.value = metro;
-        }
+        if (cityInput && metro) cityInput.value = metro.replace(/\s+Metro Area$/i, "");
         closeLocation();
         searchForm.submit();
       };
@@ -787,7 +750,7 @@
           event.preventDefault();
           if (!searchForm) return;
           const category = button.dataset.filterCategory || "";
-          const propertySelect = searchForm.querySelector('select[name="property_type"]');
+          const propertySelect = searchForm.querySelector('[name="property_type"]');
           if (propertySelect) propertySelect.value = category;
           searchForm.submit();
         });
