@@ -1379,6 +1379,51 @@
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
   padding: 14px;
 }
+.chitthi-web-brand {
+  align-items: center;
+  background: #061b19;
+  border: 1px solid rgba(214, 169, 95, 0.55);
+  border-radius: 14px;
+  display: flex;
+  min-height: 64px;
+  padding: 6px 14px;
+  width: min(245px, calc(100% - 52px));
+}
+.chitthi-web-brand img {
+  display: block;
+  height: 50px;
+  object-fit: contain;
+  object-position: left center;
+  width: 100%;
+}
+.chitthi-thread-heading {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: 124px minmax(0, 1fr);
+  min-width: 0;
+}
+.chitthi-thread-heading img {
+  background: #061b19;
+  border-radius: 9px;
+  grid-row: 1 / span 2;
+  height: 46px;
+  object-fit: contain;
+  padding: 4px 8px;
+  width: 112px;
+}
+.fairfares-chat-thread .chitthi-thread-heading > span {
+  align-self: end;
+  color: #287d5b;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+}
+.fairfares-chat-thread .chitthi-thread-heading > h2 {
+  font-size: 1.05rem;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fairfares-chat-thread {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;

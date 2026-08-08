@@ -264,6 +264,13 @@ body.accommodations-page.public-header-compact:not(.admin-screen):not(.login-scr
   width: 42px;
 }
 
+.housing-messenger-link .chitthi-launch-mascot {
+  height: 38px !important;
+  max-height: none !important;
+  object-fit: contain;
+  width: 31px !important;
+}
+
 .housing-subnav-actions .fb-icon-button {
   align-items: center;
   background: #eef1f5;
