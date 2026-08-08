@@ -2703,15 +2703,6 @@ export function HousingScreen({
               </TouchableOpacity>
             )}
           </View>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="List your ride for carpool"
-            style={styles.rideListBannerButton}
-            onPress={startRideOfferListing}
-            activeOpacity={0.86}
-          >
-            <Image source={appAssets.rideListCarpoolBanner} style={styles.rideListBanner} resizeMode="contain" />
-          </TouchableOpacity>
         </View>
 
         <View style={styles.rideServiceDetail}>
@@ -2738,6 +2729,28 @@ export function HousingScreen({
               <Text style={styles.rideOfferButtonText}>＋ List a ride</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.ridePosterSection}>
+          <View style={styles.ridePosterHeader}>
+            <View>
+              <Text style={styles.rideSectionEyebrow}>COMING SOON</Text>
+              <Text style={styles.rideComingSoonTitle}>More ways to ride</Text>
+            </View>
+            <Text style={styles.ridePosterHint}>Preview ›</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePosterCarousel}>
+            {rideServicePosters.filter((service) => !service.available).map((service) => (
+              <View key={service.key} style={[styles.ridePosterCard, { backgroundColor: service.tint }, styles.ridePosterCardSoon]}>
+                <View style={styles.ridePosterCopy}>
+                  <Text style={styles.ridePosterTitle}>{service.title}</Text>
+                  <Text style={styles.ridePosterSubtitle}>{service.subtitle}</Text>
+                  <Text style={styles.ridePosterButton}>Coming soon</Text>
+                </View>
+                <View style={styles.ridePosterArt}>{renderRideGlyph(service.glyph)}</View>
+              </View>
+            ))}
+          </ScrollView>
         </View>
       </>
     );
@@ -3922,6 +3935,7 @@ const styles = StyleSheet.create({
   ridePosterSection: { gap: 9 },
   ridePosterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   ridePosterHint: { color: theme.colors.muted, fontSize: 12, fontWeight: "900" },
+  rideComingSoonTitle: { color: theme.colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900", marginTop: 2 },
   ridePosterCarousel: { gap: 9, paddingRight: 14 },
   ridePosterImageCard: {
     width: 330,
@@ -4244,7 +4258,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
     flexDirection: "row"
   },
-  rideVideoHalf: { flex: 1, backgroundColor: "#000", borderRightWidth: 1, borderRightColor: "rgba(0,0,0,0.14)", overflow: "hidden" },
+  rideVideoHalf: { flex: 1, backgroundColor: "#000", overflow: "hidden" },
   rideVideoNativeLink: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
   rideVideoThumbnail: { width: "100%", height: "100%" },
   rideVideoPlay: { position: "absolute", width: 38, height: 28, borderRadius: 8, backgroundColor: "rgba(220,0,0,0.94)", alignItems: "center", justifyContent: "center" },
