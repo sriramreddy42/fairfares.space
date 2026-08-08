@@ -24,5 +24,20 @@ export const theme = {
     sm: 10,
     md: 16,
     lg: 24
+  },
+  typography: {
+    screenTitle: { fontSize: 24, lineHeight: 29, fontWeight: "700" as const },
+    sectionTitle: { fontSize: 19, lineHeight: 24, fontWeight: "700" as const },
+    cardTitle: { fontSize: 15, lineHeight: 20, fontWeight: "700" as const },
+    body: { fontSize: 14, lineHeight: 19, fontWeight: "400" as const },
+    bodyStrong: { fontSize: 14, lineHeight: 19, fontWeight: "600" as const },
+    caption: { fontSize: 12, lineHeight: 16, fontWeight: "500" as const },
+    button: { fontSize: 14, lineHeight: 18, fontWeight: "600" as const },
+    eyebrow: { fontSize: 11, lineHeight: 15, fontWeight: "700" as const, letterSpacing: 0.7, textTransform: "uppercase" as const }
+  },
+  depth: {
+    card: { backgroundColor: "#181819", borderColor: "#343436", borderWidth: 1, borderRadius: 18 },
+    raised: { backgroundColor: "#242425", borderColor: "#3a3a3c", borderWidth: 1, borderRadius: 18 },
+    input: { backgroundColor: "#242425", borderColor: "#3a3a3c", borderWidth: 1, borderRadius: 18 }
   }
 };

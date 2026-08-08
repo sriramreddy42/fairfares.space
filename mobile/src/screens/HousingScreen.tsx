@@ -3605,7 +3605,7 @@ const styles = StyleSheet.create({
   exportsInfoDoneButton: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 2 },
   exportsInfoDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
   homeSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
-  homeSectionTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },
+  homeSectionTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
   homeSectionAction: { color: theme.colors.brand, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   postActionGrid: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingHorizontal: 2, paddingVertical: 5 },
   postActionCard: {
@@ -3715,7 +3715,7 @@ const styles = StyleSheet.create({
   homeStoryDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.24)" },
   homeStoryDotActive: { width: 18, backgroundColor: "#37d59a" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
+  listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
   housingCardRow: { gap: 10, paddingRight: 2 },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
@@ -3886,7 +3886,7 @@ const styles = StyleSheet.create({
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   ridePopularSection: { gap: 12 },
   ridePopularHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
-  ridePopularTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "700" },
+  ridePopularTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
   ridePopularViewAll: { color: theme.colors.green, fontSize: 13, fontWeight: "700" },
   ridePopularList: { gap: 12, paddingRight: 8 },
   ridePopularCard: {
@@ -4006,10 +4006,7 @@ const styles = StyleSheet.create({
   rideInsightTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900" },
   rideInsightMeta: { color: theme.colors.soft, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   rideServiceDetail: {
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.line,
-    backgroundColor: theme.colors.panel,
+    ...theme.depth.card,
     padding: 16,
     gap: 14
   },

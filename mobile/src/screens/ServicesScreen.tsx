@@ -963,18 +963,14 @@ const styles = StyleSheet.create({
   },
   servicesTitle: {
     color: theme.colors.text,
-    fontSize: 24,
-    lineHeight: 29,
-    fontWeight: "700"
+    ...theme.typography.screenTitle
   },
   serviceSection: {
     gap: 14
   },
   serviceSectionTitle: {
     color: theme.colors.text,
-    fontSize: 18,
-    lineHeight: 23,
-    fontWeight: "600"
+    ...theme.typography.sectionTitle
   },
   serviceTileGrid: {
     flexDirection: "row",
@@ -985,8 +981,10 @@ const styles = StyleSheet.create({
   serviceTile: {
     width: "48%",
     minHeight: 104,
-    borderRadius: 13,
-    backgroundColor: "#242424",
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.panel,
+    borderWidth: 1,
+    borderColor: theme.colors.line,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
@@ -1017,8 +1015,7 @@ const styles = StyleSheet.create({
   },
   serviceTileLabel: {
     color: theme.colors.soft,
-    fontSize: 14,
-    fontWeight: "800",
+    ...theme.typography.cardTitle,
     textAlign: "center"
   },
   tileBadge: {
@@ -1090,20 +1087,14 @@ const styles = StyleSheet.create({
   },
   title: {
     color: theme.colors.text,
-    fontSize: 32,
-    fontWeight: "900"
+    ...theme.typography.screenTitle
   },
   subtitle: {
     color: theme.colors.muted,
-    fontSize: 15,
-    fontWeight: "700",
-    lineHeight: 21
+    ...theme.typography.body
   },
   bookingPanel: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "rgba(17,24,39,0.72)",
+    ...theme.depth.card,
     padding: 14,
     gap: 10
   },
@@ -1131,13 +1122,11 @@ const styles = StyleSheet.create({
   },
   bookingTitle: {
     color: theme.colors.text,
-    fontSize: 15,
-    fontWeight: "900"
+    ...theme.typography.cardTitle
   },
   bookingMeta: {
     color: theme.colors.muted,
-    fontSize: 13,
-    fontWeight: "800"
+    ...theme.typography.caption
   },
   chevron: {
     color: theme.colors.accent,
@@ -1186,19 +1175,13 @@ const styles = StyleSheet.create({
   actionButton: {
     width: "48%",
     minHeight: 116,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-    backgroundColor: "rgba(17,24,39,0.82)",
+    ...theme.depth.card,
     paddingHorizontal: 12,
     paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.36,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 }
+    shadowOpacity: 0
   },
   primaryAction: {
     backgroundColor: theme.colors.accent,
