@@ -48,6 +48,11 @@
       <div class="carpool-results" data-carpool-results><p>Finding carpools…</p></div>
     </section>
 
+    <section class="carpool-activity" aria-labelledby="carpoolActivityTitle">
+      <div class="carpool-results-head"><div><p class="carpool-eyebrow">Requests and listings</p><h2 id="carpoolActivityTitle">My ride activity</h2></div><button type="button" data-activity-refresh>Refresh</button></div>
+      <div class="carpool-activity-list" data-carpool-activity><p>Loading your ride activity…</p></div>
+    </section>
+
     <section class="carpool-how">
       <article><span>1</span><h2>Search your route</h2><p>Enter where you are leaving from and where you need to go.</p></article>
       <article><span>2</span><h2>Post or match</h2><p>Request a ride or offer available seats to the community.</p></article>
@@ -78,6 +83,8 @@
     const count = document.querySelector('[data-carpool-count]');
     const post = document.querySelector('[data-carpool-post]');
     const status = document.querySelector('[data-carpool-status]');
+    const activity = document.querySelector('[data-carpool-activity]');
+    const currentUserId = Number(document.body.dataset.userId || 0);
     const date = post.querySelector('[name="pickupDate"]');
     date.min = new Date().toISOString().slice(0, 10);
 
@@ -103,7 +110,14 @@
         });
         const meta = document.createElement('footer');
         [ride.pickupDate || 'Flexible date', ride.pickupTime || 'Flexible time', `${Number(ride.seats || 1)} seat${Number(ride.seats || 1) === 1 ? '' : 's'}`, Number(ride.contributionPerSeat || 0) ? `$${Number(ride.contributionPerSeat).toFixed(0)}/seat` : 'Contribution open'].forEach((value) => { const item = document.createElement('span'); item.textContent = value; meta.append(item); });
-        card.append(head, title, route, meta); results.append(card);
+        card.append(head, title, route, meta);
+        if (ride.type === 'CARPOOL_OFFER' && Number(ride.ownerUserId || 0) !== currentUserId) {
+          const request = document.createElement('button'); request.className = 'carpool-card-action'; request.type = 'button'; request.textContent = 'Request this ride';
+          request.addEventListener('click', () => { openPost('CARPOOL_REQUEST', ride); }); card.append(request);
+        } else if (Number(ride.ownerUserId || 0) === currentUserId) {
+          const mine = document.createElement('p'); mine.className = 'carpool-mine'; mine.textContent = 'Your listing'; card.append(mine);
+        }
+        results.append(card);
       });
     }
 
@@ -118,14 +132,59 @@
       } catch (error) { results.textContent = error.message || 'Could not load carpools.'; }
     }
 
-    function openPost(mode) {
+    function openPost(mode, ride = null) {
       if (document.body.dataset.authenticated !== 'true') { location.href = '/login?next=/carpool'; return; }
       const offer = mode === 'CARPOOL_OFFER';
       post.querySelector('[name="rideType"]').value = offer ? 'CARPOOL_OFFER' : 'CARPOOL_REQUEST';
       post.querySelector('[data-carpool-post-kicker]').textContent = offer ? 'Offer seats' : 'Request a ride';
       post.querySelector('[data-carpool-post-title]').textContent = offer ? 'Share your route with nearby riders' : 'Tell nearby drivers where you are going';
       post.querySelector('[data-carpool-contribution]').hidden = !offer;
+      if (ride) {
+        post.querySelector('[name="city"]').value = ride.city || search.city.value;
+        post.querySelector('[name="origin"]').value = ride.origin || '';
+        post.querySelector('[name="destination"]').value = ride.destination || '';
+        post.querySelector('[name="pickupDate"]').value = ride.pickupDate || '';
+        post.querySelector('[name="pickupTime"]').value = ride.pickupTime || '';
+      }
       post.hidden = false; document.body.classList.add('carpool-modal-open');
+    }
+
+    function activityButtons(ride, container) {
+      if (ride.activityRole !== 'DRIVER_NOTIFICATION') return;
+      const state = String(ride.dispatchStatus || 'PENDING').toUpperCase();
+      const actions = state === 'PENDING' ? [['ACCEPT','Accept'],['DECLINE','Decline']] : state === 'ACCEPTED' ? [['EN_ROUTE','Start trip'],['COMPLETED','Complete']] : state === 'EN_ROUTE' ? [['ARRIVED','I arrived'],['COMPLETED','Complete']] : state === 'ARRIVED' ? [['COMPLETED','Complete']] : [];
+      if (!actions.length) return;
+      const controls = document.createElement('div'); controls.className = 'carpool-activity-actions';
+      actions.forEach(([action, label]) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.dataset.rideAction = action; button.addEventListener('click', () => updateRide(ride.id, action)); controls.append(button); });
+      container.append(controls);
+    }
+
+    async function updateRide(rideId, action) {
+      try {
+        const response = await fetch('/api/mobile/rides/dispatch', {method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({rideId,action})});
+        const payload = await response.json(); if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not update this request.');
+        await loadActivity();
+      } catch (error) { alert(error.message || 'Could not update this request.'); }
+    }
+
+    async function loadActivity() {
+      if (document.body.dataset.authenticated !== 'true') { activity.innerHTML = '<div class="carpool-empty"><b>Sign in to see requests and listings</b><a href="/login?next=/carpool">Sign in to FairFares</a></div>'; return; }
+      activity.innerHTML = '<p>Loading your ride activity…</p>';
+      try {
+        const response = await fetch('/api/mobile/rides/activity', {headers:{Accept:'application/json'}}); const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load ride activity.');
+        activity.replaceChildren();
+        if (!(payload.rides || []).length) { activity.innerHTML = '<div class="carpool-empty"><b>No requests or listings yet</b><span>Post a ride above to get started.</span></div>'; return; }
+        payload.rides.forEach((ride) => {
+          const card = document.createElement('article'); card.className = 'carpool-activity-card';
+          const top = document.createElement('header'); const title = document.createElement('strong'); title.textContent = ride.title || 'Carpool route';
+          const state = document.createElement('span'); state.textContent = String(ride.dispatchStatus || ride.statusLabel || ride.status || 'Active').replaceAll('_',' '); top.append(title,state);
+          const route = document.createElement('p'); route.textContent = `${ride.origin || 'Pickup'} → ${ride.destination || 'Destination'}`;
+          const detail = document.createElement('small');
+          detail.textContent = ride.activityRole === 'DRIVER_NOTIFICATION' ? `Ride request • ${ride.pickupDate || 'Flexible date'} ${ride.pickupTime || ''}` : `${ride.typeLabel || 'Your listing'} • ${ride.dispatchNotifiedCount || 0} driver notification${Number(ride.dispatchNotifiedCount || 0) === 1 ? '' : 's'}`;
+          card.append(top,route,detail); activityButtons(ride,card); activity.append(card);
+        });
+      } catch (error) { activity.textContent = error.message || 'Could not load ride activity.'; }
     }
     document.querySelectorAll('[data-carpool-open]').forEach((button) => button.addEventListener('click', () => openPost(button.dataset.carpoolOpen)));
     document.querySelector('[data-carpool-close]').addEventListener('click', () => { post.hidden = true; document.body.classList.remove('carpool-modal-open'); });
@@ -137,10 +196,11 @@
         const payload = await response.json();
         if (response.status === 401) { location.href = '/login?next=/carpool'; return; }
         if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not post this carpool.');
-        post.hidden = true; document.body.classList.remove('carpool-modal-open'); post.reset(); await load();
+        post.hidden = true; document.body.classList.remove('carpool-modal-open'); post.reset(); await Promise.all([load(), loadActivity()]);
       } catch (error) { status.textContent = error.message || 'Could not post this carpool.'; }
     });
-    load();
+    document.querySelector('[data-activity-refresh]').addEventListener('click', loadActivity);
+    load(); loadActivity();
   })();
   </script>
 </body>
