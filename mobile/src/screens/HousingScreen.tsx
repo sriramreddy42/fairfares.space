@@ -2928,7 +2928,7 @@ export function HousingScreen({
             <View style={styles.freeServicesCopy}>
               <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
               <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
-              <Text style={styles.freeServicesTitle}>Your Official Relocation Partner</Text>
+              <Text style={styles.freeServicesTitle}>Your Relocation Partner</Text>
               <View style={styles.freeServicesPoweredBy}>
                 <Text style={styles.freeServicesPoweredLabel}>Powered by</Text>
                 <Image source={appAssets.chittiMascot} style={styles.freeServicesMascot} resizeMode="contain" />
