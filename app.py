@@ -130,7 +130,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260809-chitthi-beauty"
+ASSET_VERSION = "20260809-desktop-website-beauty"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
