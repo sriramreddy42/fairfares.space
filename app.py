@@ -16494,7 +16494,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     notification_type = str(notification_data.get("type") or "")
     image_url = str(notification_data.get("imageUrl") or "").strip()
     rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
-    channel_id = "marketing" if notification_type == "FAIRFARES_PROMO" else "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "fchat"
+    channel_id = "marketing" if notification_type == "FAIRFARES_PROMO" else "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
     for offset in range(0, len(valid_tokens), 100):
         token_batch = valid_tokens[offset:offset + 100]
         messages = [

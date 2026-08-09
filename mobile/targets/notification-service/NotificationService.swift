@@ -32,6 +32,8 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
 
+        content.sound = .default
+
         let senderName = stringValue(payload["senderName"]).isEmpty
             ? (content.title.isEmpty ? "FairFares member" : content.title)
             : stringValue(payload["senderName"])

@@ -101,7 +101,7 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#2F6BFF",
-          "defaultChannel": "fchat"
+          "defaultChannel": "chitthi-messages-v2"
         }
       ],
       "expo-secure-store",

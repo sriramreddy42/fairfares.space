@@ -285,9 +285,10 @@ function FairFaresApp() {
     try {
       if (Platform.OS === "android") {
         await Promise.all([
-          Notifications.setNotificationChannelAsync("fchat", {
+          Notifications.setNotificationChannelAsync("chitthi-messages-v2", {
             name: "Chitthi messages",
             importance: Notifications.AndroidImportance.HIGH,
+            sound: "default",
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#4f7cff"
           }),
