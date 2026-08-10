@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
-import { BootstrapPayload, RideDriverProfile, RidePost } from "../types";
+import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RideDriverProfile, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { syncChatIdentityRecovery } from "../utils/chatRecovery";
 
@@ -24,6 +24,10 @@ type Props = {
 
 const DRIVER_VERIFICATION_DAYS = 30;
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
+type AccountHistorySection = "housing" | "carpool" | "rentals";
+type AccountHistoryItem = { id: string; title: string; meta: string; status: string; current: boolean };
+const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
+const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
 
 function firstInitial(name = "") {
@@ -61,6 +65,9 @@ export function ProfileScreen({
   const draftUserIdRef = useRef<number | null>(null);
   const [rideProfile, setRideProfile] = useState<RideDriverProfile | null>(null);
   const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
+  const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
+  const [rentalActivity, setRentalActivity] = useState<RentalServiceBooking[]>([]);
+  const [historySection, setHistorySection] = useState<AccountHistorySection | null>(null);
   const [carpoolLoading, setCarpoolLoading] = useState(false);
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
   const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
@@ -112,20 +119,24 @@ export function ProfileScreen({
 
   useEffect(() => {
     let cancelled = false;
-    async function loadCarpoolProfile() {
+    async function loadAccountActivity() {
       if (!user) {
         setRideProfile(null);
         setRideActivity([]);
+        setHousingActivity([]);
+        setRentalActivity([]);
         return;
       }
       setCarpoolLoading(true);
-      const [profileResult, activityResult] = await Promise.allSettled([getRideDriverProfile(), getRideActivity()]);
+      const [profileResult, activityResult, housingResult, rentalResult] = await Promise.allSettled([getRideDriverProfile(), getRideActivity(), getHousingActivity(), getRentalBookings()]);
       if (cancelled) return;
       setRideProfile(profileResult.status === "fulfilled" ? profileResult.value : null);
       setRideActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
+      setHousingActivity(housingResult.status === "fulfilled" ? housingResult.value : []);
+      setRentalActivity(rentalResult.status === "fulfilled" ? rentalResult.value : []);
       setCarpoolLoading(false);
     }
-    void loadCarpoolProfile();
+    void loadAccountActivity();
     return () => {
       cancelled = true;
     };
@@ -146,10 +157,44 @@ export function ProfileScreen({
   const daysLeft = verificationDaysLeft(rideProfile);
   const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
   const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
+  const accountHistoryItems = useMemo<AccountHistoryItem[]>(() => {
+    if (historySection === "housing") return housingActivity.map((post) => ({
+      id: post.id,
+      title: post.title,
+      meta: `${post.location} · ${post.modeLabel}`,
+      status: post.expiryLabel,
+      current: post.status === "ACTIVE" && post.expiryLabel !== "Expired"
+    }));
+    if (historySection === "carpool") return rideActivity.map((ride) => {
+      const status = String(ride.dispatchStatus || ride.status || "Active").replaceAll("_", " ");
+      return {
+        id: `${ride.activityRole || "ride"}-${ride.id}`,
+        title: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
+        meta: [ride.pickupDate || ride.startDate, ride.pickupTime].filter(Boolean).join(" · ") || "Timing open",
+        status,
+        current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired
+      };
+    });
+    if (historySection === "rentals") return rentalActivity.map((booking) => {
+      const status = String(booking.statusLabel || booking.status || "Current").replaceAll("_", " ");
+      return {
+        id: String(booking.id),
+        title: booking.carName || "Rental car",
+        meta: [booking.pickupDate, booking.pickupLocation].filter(Boolean).join(" · "),
+        status,
+        current: !PAST_RENTAL_STATUSES.has(String(booking.status || "").toUpperCase())
+      };
+    });
+    return [];
+  }, [historySection, housingActivity, rentalActivity, rideActivity]);
+  const currentHistoryItems = accountHistoryItems.filter((item) => item.current);
+  const previousHistoryItems = accountHistoryItems.filter((item) => !item.current);
+  const historyTitle = historySection === "housing" ? "Housing history" : historySection === "carpool" ? "Carpool history" : "Rental car history";
+  const historyAction = historySection === "housing" ? onOpenHousing : historySection === "carpool" ? onOpenRide : onOpenServices;
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
-    { title: "Housing", copy: "Current and previous housing activity", icon: appAssets.serviceHome, onPress: onOpenActivity },
-    { title: "Carpool", copy: "Current requests and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenActivity },
-    { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: onOpenActivity },
+    { title: "Housing", copy: "Current and previous housing activity", icon: appAssets.serviceHome, onPress: () => user ? setHistorySection("housing") : onLogin() },
+    { title: "Carpool", copy: "Current requests and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: () => user ? setHistorySection("carpool") : onLogin() },
+    { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: () => user ? setHistorySection("rentals") : onLogin() },
     { title: "Chitthi", copy: "Current and previous conversations", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
     { title: "Report an issue", copy: "Send a tracked support or safety report", icon: appAssets.serviceSupport, onPress: () => user ? setSupportOpen(true) : onLogin() },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
@@ -379,6 +424,40 @@ export function ProfileScreen({
           <Text style={styles.logoutText}>Log out of FairFares</Text>
         </TouchableOpacity>
       ) : null}
+      <Modal visible={Boolean(historySection)} transparent animationType="slide" onRequestClose={() => setHistorySection(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.historySheet}>
+            <View style={styles.supportHeader}>
+              <View style={styles.supportHeaderCopy}>
+                <Text style={styles.cardTitle}>{historyTitle}</Text>
+                <Text style={styles.cardCopy}>Records connected only to your FairFares account.</Text>
+              </View>
+              <TouchableOpacity style={styles.closeButton} onPress={() => setHistorySection(null)} accessibilityLabel="Close history">
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.historyScroll} contentContainerStyle={styles.historyContent} showsVerticalScrollIndicator={false}>
+              <Text style={styles.historySectionTitle}>Current · {currentHistoryItems.length}</Text>
+              {currentHistoryItems.length ? currentHistoryItems.map((item) => (
+                <View key={`current-${item.id}`} style={styles.historyRow}>
+                  <View style={styles.historyRowCopy}><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
+                  <Text style={styles.historyCurrentBadge}>{item.status}</Text>
+                </View>
+              )) : <Text style={styles.historyEmpty}>No current records.</Text>}
+              <Text style={styles.historySectionTitle}>Previous · {previousHistoryItems.length}</Text>
+              {previousHistoryItems.length ? previousHistoryItems.map((item) => (
+                <View key={`previous-${item.id}`} style={styles.historyRow}>
+                  <View style={styles.historyRowCopy}><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
+                  <Text style={styles.historyPreviousBadge}>{item.status}</Text>
+                </View>
+              )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}
+            </ScrollView>
+            <TouchableOpacity style={styles.historyManageButton} onPress={() => { setHistorySection(null); historyAction?.(); }}>
+              <Text style={styles.primaryButtonText}>Manage {historySection === "rentals" ? "rentals" : historySection}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <Modal visible={supportOpen} transparent animationType="slide" onRequestClose={() => setSupportOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.supportSheet}>
@@ -489,6 +568,18 @@ const styles = StyleSheet.create({
   menuChevron: { color: theme.colors.soft, fontSize: 24, fontWeight: "500" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.68)" },
   supportSheet: { backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 11, maxHeight: "90%" },
+  historySheet: { height: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 14 },
+  historyScroll: { flex: 1 },
+  historyContent: { gap: 9, paddingBottom: 16 },
+  historySectionTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 6 },
+  historyRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  historyRowCopy: { flex: 1, minWidth: 0, gap: 3 },
+  historyItemTitle: { color: theme.colors.text, fontSize: 14, lineHeight: 19, fontWeight: "800" },
+  historyItemMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 17 },
+  historyCurrentBadge: { maxWidth: 100, color: "#4ade80", fontSize: 11, fontWeight: "800", textTransform: "capitalize" },
+  historyPreviousBadge: { maxWidth: 100, color: theme.colors.muted, fontSize: 11, fontWeight: "800", textTransform: "capitalize" },
+  historyEmpty: { color: theme.colors.muted, padding: 14, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2 },
+  historyManageButton: { minHeight: 48, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", justifyContent: "center" },
   supportHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   supportHeaderCopy: { flex: 1 },
   closeButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
