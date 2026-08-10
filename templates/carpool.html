@@ -40,7 +40,16 @@
     <section class="carpool-finder" aria-labelledby="carpoolResultsTitle">
       <form class="carpool-search" data-carpool-search>
         <label><span>City</span><input name="city" value="$search_city" placeholder="Denver, CO"></label>
-        <label><span>From</span><input name="origin" placeholder="Campus, neighborhood, or address"></label>
+        <div class="carpool-search-field carpool-origin-field">
+          <span>From</span>
+          <div class="carpool-origin-control">
+            <input name="origin" placeholder="Campus, neighborhood, or address" aria-label="Pickup location">
+            <button type="button" class="carpool-current-location" data-current-location aria-label="Use my current location" title="Use my current location">⌖ <span>Current location</span></button>
+          </div>
+          <small data-location-status aria-live="polite"></small>
+          <input type="hidden" name="originLat">
+          <input type="hidden" name="originLng">
+        </div>
         <label><span>To</span><input name="destination" placeholder="Destination"></label>
         <button type="submit">Find carpools</button>
       </form>
@@ -84,6 +93,11 @@
     const post = document.querySelector('[data-carpool-post]');
     const status = document.querySelector('[data-carpool-status]');
     const activity = document.querySelector('[data-carpool-activity]');
+    const locationButton = search.querySelector('[data-current-location]');
+    const locationStatus = search.querySelector('[data-location-status]');
+    const originInput = search.querySelector('[name="origin"]');
+    const originLatInput = search.querySelector('[name="originLat"]');
+    const originLngInput = search.querySelector('[name="originLng"]');
     const currentUserId = Number(document.body.dataset.userId || 0);
     const date = post.querySelector('[name="pickupDate"]');
     date.min = new Date().toISOString().slice(0, 10);
@@ -130,6 +144,48 @@
         if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load carpools.');
         render(payload.rides || []);
       } catch (error) { results.textContent = error.message || 'Could not load carpools.'; }
+    }
+
+    function locationErrorMessage(error) {
+      if (error && error.code === 1) return 'Location permission was denied. Enter your pickup manually or allow location access in your browser.';
+      if (error && error.code === 2) return 'Your current location is unavailable. Enter your pickup manually.';
+      if (error && error.code === 3) return 'Finding your location took too long. Please try again or enter it manually.';
+      return 'Could not find your current location. Enter your pickup manually.';
+    }
+
+    function useCurrentLocation() {
+      if (!navigator.geolocation) {
+        locationStatus.textContent = 'Current location is not supported by this browser. Enter your pickup manually.';
+        return;
+      }
+      locationButton.disabled = true;
+      locationButton.classList.add('is-loading');
+      locationStatus.textContent = 'Finding your current location…';
+      navigator.geolocation.getCurrentPosition(async ({coords}) => {
+        const lat = Number(coords.latitude);
+        const lng = Number(coords.longitude);
+        let label = 'Current location';
+        try {
+          const response = await fetch(`/api/mobile/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`, {headers:{Accept:'application/json'}});
+          const payload = await response.json();
+          if (response.ok && payload.ok && payload.label) label = payload.label;
+        } catch (_) {
+          // Coordinates still provide accurate matching if the address cannot be resolved.
+        }
+        originInput.value = label;
+        originLatInput.value = String(lat);
+        originLngInput.value = String(lng);
+        locationStatus.textContent = 'Current pickup location added.';
+        locationButton.disabled = false;
+        locationButton.classList.remove('is-loading');
+        load();
+      }, (error) => {
+        originLatInput.value = '';
+        originLngInput.value = '';
+        locationStatus.textContent = locationErrorMessage(error);
+        locationButton.disabled = false;
+        locationButton.classList.remove('is-loading');
+      }, {enableHighAccuracy:true, timeout:12000, maximumAge:60000});
     }
 
     function openPost(mode, ride = null) {
@@ -188,6 +244,12 @@
     }
     document.querySelectorAll('[data-carpool-open]').forEach((button) => button.addEventListener('click', () => openPost(button.dataset.carpoolOpen)));
     document.querySelector('[data-carpool-close]').addEventListener('click', () => { post.hidden = true; document.body.classList.remove('carpool-modal-open'); });
+    locationButton.addEventListener('click', useCurrentLocation);
+    originInput.addEventListener('input', () => {
+      originLatInput.value = '';
+      originLngInput.value = '';
+      locationStatus.textContent = '';
+    });
     search.addEventListener('submit', (event) => { event.preventDefault(); load(); });
     post.addEventListener('submit', async (event) => {
       event.preventDefault(); status.textContent = 'Posting your carpool…';
