@@ -1322,14 +1322,14 @@ def cached_mobile_search(cache_key: tuple[object, ...], factory):
     with _MOBILE_SEARCH_CACHE_LOCK:
         cached = _MOBILE_SEARCH_CACHE.get(cache_key)
         if cached and cached[0] > now:
-            return cached[1]
+            return cached[1], "HIT"
         key_lock = _MOBILE_SEARCH_KEY_LOCKS.setdefault(cache_key, threading.Lock())
     with key_lock:
         now = time.monotonic()
         with _MOBILE_SEARCH_CACHE_LOCK:
             cached = _MOBILE_SEARCH_CACHE.get(cache_key)
             if cached and cached[0] > now:
-                return cached[1]
+                return cached[1], "HIT"
         value = factory()
         with _MOBILE_SEARCH_CACHE_LOCK:
             _MOBILE_SEARCH_CACHE[cache_key] = (time.monotonic() + MOBILE_SEARCH_CACHE_SECONDS, value)
@@ -1338,7 +1338,7 @@ def cached_mobile_search(cache_key: tuple[object, ...], factory):
                 for key in expired:
                     _MOBILE_SEARCH_CACHE.pop(key, None)
                     _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
-        return value
+        return value, "MISS"
 
 
 class FairFaresConnection(sqlite3.Connection):
@@ -1363,6 +1363,14 @@ def db() -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass
     return connection
+
+
+class FairFaresHTTPServer(ThreadingHTTPServer):
+    """HTTP server tuned for bursty mobile traffic while WSGI migration proceeds."""
+
+    allow_reuse_address = True
+    daemon_threads = True
+    request_queue_size = positive_int_env("FAIRFARES_HTTP_BACKLOG", 512)
 
 
 def list_db_backups() -> list[Path]:
@@ -29478,7 +29486,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             limit, offset = 30, 0
         search_radius = float_from_value(radius)
-        posts = cached_mobile_search(
+        posts, cache_status = cached_mobile_search(
             ("housing", city, area, need, category, gender, budget, search_radius, limit, center_lat, center_lng, offset),
             lambda: mobile_housing_posts(
                 city=city,
@@ -29513,7 +29521,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "nextOffset": offset + len(posts),
                 },
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
-            }
+            },
+            headers={"X-FairFares-Cache": cache_status},
         )
 
     def api_mobile_housing_activity(self) -> None:
@@ -29541,7 +29550,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
-        rides = cached_mobile_search(
+        rides, cache_status = cached_mobile_search(
             ("rides", city, ride_type, origin, destination, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset),
             lambda: mobile_ride_posts(
                 city=city,
@@ -29572,7 +29581,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "nextOffset": offset + len(rides),
                 },
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
-            }
+            },
+            headers={"X-FairFares-Cache": cache_status},
         )
 
     def api_mobile_ride_activity(self) -> None:
@@ -31020,6 +31030,6 @@ if __name__ == "__main__":
     start_promotional_push_scheduler()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer((host, port), FairFaresHandler)
+    server = FairFaresHTTPServer((host, port), FairFaresHandler)
     print(f"FairFares running at http://{host}:{port}")
     server.serve_forever()

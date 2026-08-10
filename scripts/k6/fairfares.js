@@ -23,12 +23,14 @@ const profiles = {
   '100': [{ duration: '20s', target: 100 }, { duration: '60s', target: 100 }, { duration: '15s', target: 0 }],
   medium: [{ duration: '20s', target: 250 }, { duration: '60s', target: 250 }, { duration: '15s', target: 0 }],
   high: [{ duration: '30s', target: 500 }, { duration: '90s', target: 500 }, { duration: '20s', target: 0 }],
+  cold250: [{ duration: '20s', target: 250 }, { duration: '60s', target: 250 }, { duration: '15s', target: 0 }],
+  cold500: [{ duration: '30s', target: 500 }, { duration: '90s', target: 500 }, { duration: '20s', target: 0 }],
   stress: [
     { duration: '30s', target: 250 }, { duration: '30s', target: 500 },
     { duration: '45s', target: 1000 }, { duration: '60s', target: 1000 },
     { duration: '30s', target: 0 },
   ],
-  spike: [{ duration: '5s', target: 500 }, { duration: '60s', target: 500 }, { duration: '10s', target: 0 }],
+  spike: [{ duration: '10s', target: 50 }, { duration: '15s', target: 50 }, { duration: '2s', target: 500 }, { duration: '60s', target: 500 }, { duration: '10s', target: 0 }],
 };
 
 if (!profiles[profile]) throw new Error(`Unknown PROFILE=${profile}`);
@@ -44,6 +46,8 @@ export const options = {
     carpool_duration: ['p(95)<1500'],
     rentals_duration: ['p(95)<1500'],
     chitthi_duration: ['p(95)<1500'],
+    cache_hit_duration: ['p(95)<500'],
+    cache_miss_duration: ['p(95)<2000'],
   },
 };
 
@@ -52,6 +56,10 @@ const housingDuration = new Trend('housing_duration', true);
 const carpoolDuration = new Trend('carpool_duration', true);
 const rentalsDuration = new Trend('rentals_duration', true);
 const chitthiDuration = new Trend('chitthi_duration', true);
+const cacheHitDuration = new Trend('cache_hit_duration', true);
+const cacheMissDuration = new Trend('cache_miss_duration', true);
+const cacheHits = new Counter('cache_hits');
+const cacheMisses = new Counter('cache_misses');
 const journeyFailures = new Rate('journey_failures');
 const journeyCount = new Counter('journeys');
 let token = '';
@@ -63,6 +71,15 @@ function headers() {
 function request(label, path, trend) {
   const response = http.get(`${baseUrl}${path}`, { headers: headers(), tags: { journey: label } });
   trend.add(response.timings.duration);
+  const cacheHeader = Object.keys(response.headers).find((name) => name.toLowerCase() === 'x-fairfares-cache');
+  const cacheStatus = String(cacheHeader ? response.headers[cacheHeader] : '').toUpperCase();
+  if (cacheStatus === 'HIT') {
+    cacheHitDuration.add(response.timings.duration);
+    cacheHits.add(1);
+  } else if (cacheStatus === 'MISS') {
+    cacheMissDuration.add(response.timings.duration);
+    cacheMisses.add(1);
+  }
   const ok = check(response, { [`${label}: 200`]: (r) => r.status === 200 });
   journeyFailures.add(!ok);
   journeyCount.add(1, { journey: label });
@@ -87,12 +104,16 @@ function authenticate() {
 
 export default function () {
   authenticate();
+  const coldCache = __ENV.COLD_CACHE === '1' || profile.startsWith('cold');
+  const uniqueSearch = `${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const choice = Math.random();
   if (choice < 0.30) {
-    request('housing-search', '/api/mobile/housing?city=Denver%2C%20CO&area=Capitol%20Hill&radius=60&limit=50', housingDuration);
+    const area = coldCache ? `Capitol%20Hill%20Block%20${uniqueSearch}` : 'Capitol%20Hill';
+    request('housing-search', `/api/mobile/housing?city=Denver%2C%20CO&area=${area}&radius=60&limit=50`, housingDuration);
     if (Math.random() < 0.25) request('housing-history', '/api/mobile/housing/activity', housingDuration);
   } else if (choice < 0.55) {
-    request('carpool-search', '/api/mobile/rides?city=Denver%2C%20CO&type=CARPOOL_OFFER&origin=Denver%2C%20CO&destination=Colorado%20Springs%2C%20CO', carpoolDuration);
+    const origin = coldCache ? `Denver%20Union%20Station%20Gate%20${uniqueSearch}` : 'Denver%2C%20CO';
+    request('carpool-search', `/api/mobile/rides?city=Denver%2C%20CO&type=CARPOOL_OFFER&origin=${origin}&destination=Colorado%20Springs%2C%20CO`, carpoolDuration);
     if (Math.random() < 0.25) request('carpool-history', '/api/mobile/rides/activity', carpoolDuration);
   } else if (choice < 0.72) {
     request('rental-search', '/api/mobile/rentals?location=Denver', rentalsDuration);

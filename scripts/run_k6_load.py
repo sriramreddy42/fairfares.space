@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "k6" / "fairfares.js"
-PROFILE_USERS = {"smoke": 10, "normal": 50, "100": 100, "medium": 250, "high": 500, "stress": 1000, "spike": 500}
+PROFILE_USERS = {"smoke": 10, "normal": 50, "100": 100, "medium": 250, "high": 500, "cold250": 250, "cold500": 500, "stress": 1000, "spike": 500}
 PASSWORD = "FairFaresK6!"
 
 
@@ -82,7 +82,7 @@ def main():
                 )
             assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
-        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        server = app.FairFaresHTTPServer(("127.0.0.1", 0), QuietHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         summary = args.summary or (ROOT / "artifacts" / "k6" / f"{args.profile}.json")

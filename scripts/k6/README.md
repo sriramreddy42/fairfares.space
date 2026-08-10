@@ -8,8 +8,10 @@ python3 scripts/run_k6_load.py normal
 python3 scripts/run_k6_load.py 100
 python3 scripts/run_k6_load.py medium
 python3 scripts/run_k6_load.py high
+python3 scripts/run_k6_load.py cold250
+python3 scripts/run_k6_load.py cold500
 python3 scripts/run_k6_load.py stress
 python3 scripts/run_k6_load.py spike
 ```
 
-Run profiles in order and stop when thresholds fail. Results are written to `artifacts/k6/<profile>.json`. The workload mixes housing search/history, carpool search/history, rental search/bookings, Chitthi inbox/public communities, bootstrap, and dynamic location suggestions with normal user think time.
+Run profiles in order and stop when thresholds fail. Results are written to `artifacts/k6/<profile>.json`. The workload mixes housing search/history, carpool search/history, rental search/bookings, Chitthi inbox/public communities, bootstrap, and dynamic location suggestions with normal user think time. `cold250` and `cold500` use a unique plausible area/route per iteration so search requests cannot reuse a warm cache entry. The report separates `cache_hit_duration` and `cache_miss_duration`.
