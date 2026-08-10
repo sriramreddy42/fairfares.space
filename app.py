@@ -15334,41 +15334,51 @@ def chat_suggestion_city(value: str) -> str:
     return ""
 
 
-def ensure_location_chat_communities(con: sqlite3.Connection, city: str) -> str:
-    """Create the standard public discovery groups for a supported city on demand."""
+def location_chat_community_suggestions(city: str) -> tuple[str, tuple[dict[str, str], ...]]:
+    """Return deterministic, virtual public-group suggestions for a city."""
     canonical = chat_suggestion_city(city)
     if not canonical or canonical.lower() == "denver, co":
-        return canonical
+        return canonical, ()
     city_name = canonical.split(",", 1)[0].strip()
     location_key = hashlib.sha256(canonical.lower().encode("utf-8")).hexdigest()[:10].upper()
-    suggestions = (
-        (f"FFG-LOCAL-{location_key}-HOUSING", "GROUP", f"{city_name} Housing & Roommates", f"Housing, rooms, and roommate leads around {city_name}."),
-        (f"FFG-LOCAL-{location_key}-RIDES", "GROUP", f"{city_name} Ride Share", f"Local carpools and ride coordination around {city_name}."),
-        (f"FFC-LOCAL-{location_key}", "COMMUNITY", f"{city_name} Community", f"Meet nearby FairFares members and share local information."),
+    return canonical, (
+        {"id": f"FFG-LOCAL-{location_key}-HOUSING", "purpose": "HOUSING", "kind": "GROUP", "name": f"{city_name} Housing & Roommates", "description": f"Housing, rooms, and roommate leads around {city_name}."},
+        {"id": f"FFG-LOCAL-{location_key}-RIDES", "purpose": "RIDES", "kind": "GROUP", "name": f"{city_name} Ride Share", "description": f"Local carpools and ride coordination around {city_name}."},
+        {"id": f"FFC-LOCAL-{location_key}", "purpose": "COMMUNITY", "kind": "COMMUNITY", "name": f"{city_name} Community", "description": f"Meet nearby FairFares members and share local information."},
     )
-    for public_id, kind, name, description in suggestions:
-        con.execute(
-            """
-            INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility)
-            VALUES (?, ?, ?, ?, ?, 'PUBLIC')
-            ON CONFLICT(public_id) DO UPDATE SET
-                name = excluded.name,
-                description = excluded.description,
-                area_label = excluded.area_label,
-                visibility = 'PUBLIC',
-                created_by_user_id = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (public_id, kind, name, description, canonical),
-        )
-    return canonical
+
+
+def chat_community_purposes(kind: object, name: object, description: object) -> set[str]:
+    text = f"{name or ''} {description or ''}".lower()
+    purposes: set[str] = set()
+    if any(term in text for term in ("housing", "roommate", "room", "sublet", "apartment")):
+        purposes.add("HOUSING")
+    if any(term in text for term in ("ride", "carpool", "commute", "driver")):
+        purposes.add("RIDES")
+    if str(kind or "").upper() == "COMMUNITY" or "community" in text:
+        purposes.add("COMMUNITY")
+    return purposes
+
+
+def materialize_location_chat_community(con: sqlite3.Connection, public_id: str, city: str, purpose: str) -> bool:
+    canonical, suggestions = location_chat_community_suggestions(city)
+    suggestion = next((item for item in suggestions if item["id"] == public_id and item["purpose"] == purpose.upper()), None)
+    if not canonical or not suggestion:
+        return False
+    con.execute(
+        """
+        INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility)
+        VALUES (?, ?, ?, ?, ?, 'PUBLIC')
+        ON CONFLICT(public_id) DO NOTHING
+        """,
+        (suggestion["id"], suggestion["kind"], suggestion["name"], suggestion["description"], canonical),
+    )
+    return True
 
 
 def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: str = "") -> list[dict[str, object]]:
-    canonical_city = chat_suggestion_city(suggestion_city)
+    canonical_city, virtual_suggestions = location_chat_community_suggestions(suggestion_city)
     with db() as con:
-        if canonical_city:
-            canonical_city = ensure_location_chat_communities(con, canonical_city)
         rows = con.execute(
             """
             SELECT communities.*,
@@ -15391,7 +15401,7 @@ def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: s
             """,
             (int(user_id or 0), int(user_id or 0), canonical_city, canonical_city, int(user_id or 0)),
         ).fetchall()
-    return [
+    communities = [
         {
             "id": row_value(row, "public_id"),
             "kind": row_value(row, "kind"),
@@ -15405,9 +15415,28 @@ def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: s
             "visibility": row_value(row, "visibility") or "PUBLIC",
             "memberRole": row_value(row, "member_role") or "",
             "canManageMembers": (row_value(row, "member_role") or "") in {"OWNER", "ADMIN"},
+            "virtual": False,
+            "suggestionCity": "",
+            "suggestionPurpose": "",
         }
         for row in rows
     ]
+    existing_local_purposes: set[str] = set()
+    for row in rows:
+        if canonical_city and str(row_value(row, "area_label") or "").lower() == canonical_city.lower():
+            existing_local_purposes.update(chat_community_purposes(row_value(row, "kind"), row_value(row, "name"), row_value(row, "description")))
+    existing_ids = {str(item.get("id") or "") for item in communities}
+    for suggestion in virtual_suggestions:
+        if suggestion["purpose"] in existing_local_purposes or suggestion["id"] in existing_ids:
+            continue
+        communities.append({
+            "id": suggestion["id"], "kind": suggestion["kind"], "name": suggestion["name"],
+            "description": suggestion["description"], "area": canonical_city, "photoUrl": "",
+            "memberCount": 0, "joined": False, "createdByUserId": 0, "visibility": "PUBLIC",
+            "memberRole": "", "canManageMembers": False, "virtual": True,
+            "suggestionCity": canonical_city, "suggestionPurpose": suggestion["purpose"],
+        })
+    return communities
 
 
 def create_chat_community(
@@ -15445,12 +15474,15 @@ def create_chat_community(
     return (created[0] if created else None), ""
 
 
-def join_chat_community(public_id: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "", suggestion_purpose: str = "") -> tuple[dict[str, object] | None, str]:
     with db() as con:
         community = con.execute(
             "SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1",
             (public_id,),
         ).fetchone()
+        if not community and suggestion_city and suggestion_purpose:
+            if materialize_location_chat_community(con, public_id, suggestion_city, suggestion_purpose):
+                community = con.execute("SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1", (public_id,)).fetchone()
         if not community:
             return None, "Community not found."
         if (row_value(community, "visibility") or "PUBLIC") != "PUBLIC":
@@ -20602,10 +20634,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         public_id = (form.get("community_id") or "").strip()
+        suggestion_city = (form.get("suggestion_city") or "").strip()
+        suggestion_purpose = (form.get("suggestion_purpose") or "").strip()
         if not public_id:
             self.send_json({"ok": False, "message": "Choose a group or community first."}, 400)
             return
-        community, error = join_chat_community(public_id, int(user["id"]))
+        community, error = join_chat_community(public_id, int(user["id"]), suggestion_city, suggestion_purpose)
         if not community:
             self.send_json({"ok": False, "message": error or "Could not join this community."}, 404)
             return

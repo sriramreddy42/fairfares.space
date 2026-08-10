@@ -161,6 +161,9 @@ export type Community = {
   visibility: "PUBLIC" | "PRIVATE";
   memberRole: "OWNER" | "ADMIN" | "MEMBER" | "";
   canManageMembers: boolean;
+  virtual?: boolean;
+  suggestionCity?: string;
+  suggestionPurpose?: "HOUSING" | "RIDES" | "COMMUNITY" | "";
 };
 
 export type ChatGroupMember = {

@@ -941,11 +941,11 @@ export async function updateChatGroupPhoto(communityId: string, photo: string) {
   });
 }
 
-export async function joinChatCommunity(communityId: string) {
+export async function joinChatCommunity(communityId: string, suggestionCity = "", suggestionPurpose = "") {
   return request<{ ok: boolean; community: Community }>("/api/chat/communities/join", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ community_id: communityId })
+    body: formBody({ community_id: communityId, suggestion_city: suggestionCity, suggestion_purpose: suggestionPurpose })
   });
 }
 

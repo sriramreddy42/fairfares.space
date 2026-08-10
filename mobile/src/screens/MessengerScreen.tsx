@@ -1630,7 +1630,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onThreadModeChange?.(true);
     setLoading(true);
     try {
-      const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id)).community;
+      const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id, community.suggestionCity, community.suggestionPurpose)).community;
       setCommunities((current) => current.map((item) => (item.id === joinedCommunity.id ? joinedCommunity : item)));
       const response = await openCommunityChat(joinedCommunity.id);
       setActiveConversationId(response.conversation.id);

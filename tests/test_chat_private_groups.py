@@ -63,11 +63,24 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIn("Menlo Park Ride Share", menlo_names)
         self.assertIn("Menlo Park Community", menlo_names)
         self.assertNotIn("Denver Roommates", menlo_names)
+        self.assertTrue(all(row["virtual"] for row in menlo_groups if row["area"] == "Menlo Park, CA"))
+
+        with app.db() as con:
+            self.assertEqual(con.execute(
+                "SELECT COUNT(*) AS total FROM chat_communities WHERE area_label = 'Menlo Park, CA'"
+            ).fetchone()["total"], 0)
 
         local_group = next(row for row in menlo_groups if row["name"] == "Menlo Park Ride Share")
-        joined, error = app.join_chat_community(local_group["id"], self.outsider)
+        joined, error = app.join_chat_community(
+            local_group["id"], self.outsider, local_group["suggestionCity"], local_group["suggestionPurpose"]
+        )
         self.assertFalse(error)
         self.assertTrue(joined["joined"])
+        self.assertFalse(joined["virtual"])
+        with app.db() as con:
+            self.assertEqual(con.execute(
+                "SELECT COUNT(*) AS total FROM chat_communities WHERE area_label = 'Menlo Park, CA'"
+            ).fetchone()["total"], 1)
         # Joined groups stay available even after the member browses another city.
         denver_groups = app.get_chat_communities_for_user(self.outsider, "Denver, CO")
         self.assertIn(local_group["id"], {row["id"] for row in denver_groups})
@@ -82,6 +95,43 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         # Free-form searches must not create arbitrary public groups.
         invalid_groups = app.get_chat_communities_for_user(self.outsider, "somewhere near the airport")
         self.assertNotIn("Somewhere Near The Airport Community", {row["name"] for row in invalid_groups})
+
+    def test_existing_public_group_replaces_matching_virtual_suggestion(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility)
+                VALUES ('SEATTLE-HOMES', 'GROUP', 'Seattle Student Housing', 'Rooms and apartments', 'Seattle, WA', 'PUBLIC')
+                """
+            )
+        groups = app.get_chat_communities_for_user(self.outsider, "Seattle, WA")
+        names = {row["name"] for row in groups}
+        self.assertIn("Seattle Student Housing", names)
+        self.assertNotIn("Seattle Housing & Roommates", names)
+        self.assertIn("Seattle Ride Share", names)
+        self.assertIn("Seattle Community", names)
+
+    def test_virtual_suggestion_materializes_once_and_rejects_tampering(self):
+        suggestion = next(
+            row for row in app.get_chat_communities_for_user(self.member, "Dayton, OH")
+            if row["suggestionPurpose"] == "COMMUNITY"
+        )
+        for user_id in (self.member, self.outsider):
+            joined, error = app.join_chat_community(
+                suggestion["id"], user_id, suggestion["suggestionCity"], suggestion["suggestionPurpose"]
+            )
+            self.assertFalse(error)
+            self.assertTrue(joined["joined"])
+        with app.db() as con:
+            group = con.execute("SELECT id FROM chat_communities WHERE public_id = ?", (suggestion["id"],)).fetchone()
+            self.assertIsNotNone(group)
+            self.assertEqual(con.execute(
+                "SELECT COUNT(*) AS total FROM chat_community_members WHERE community_id = ?", (group["id"],)
+            ).fetchone()["total"], 2)
+
+        rejected, error = app.join_chat_community("FFG-TAMPERED", self.owner, "Dayton, OH", "RIDES")
+        self.assertIsNone(rejected)
+        self.assertIn("not found", error.lower())
 
     def test_invite_is_hashed_and_joins_once(self):
         group = self.create_group()
