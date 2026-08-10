@@ -2060,13 +2060,25 @@ function FairFaresApp() {
                   ))}
                 </View>
               </View>
-              <TextInput
-                value={searchCity}
-                onChangeText={(value) => { selectedCitySuggestionRef.current = ""; setSearchCity(value); setSearchCitySuggestions([]); }}
-                placeholder="City, e.g. Denver, CO"
-                placeholderTextColor={theme.colors.muted}
-                style={styles.input}
-              />
+              <View style={styles.searchInputWrap}>
+                <TextInput
+                  value={searchCity}
+                  onChangeText={(value) => { selectedCitySuggestionRef.current = ""; setSearchCity(value); setSearchCitySuggestions([]); }}
+                  placeholder="City, e.g. Denver, CO"
+                  placeholderTextColor={theme.colors.muted}
+                  style={[styles.input, styles.searchInputWithClear]}
+                />
+                {searchCity ? (
+                  <TouchableOpacity
+                    style={styles.searchInputClear}
+                    onPress={() => { selectedCitySuggestionRef.current = ""; setSearchCity(""); setSearchCitySuggestions([]); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear city search"
+                  >
+                    <Text style={styles.searchInputClearText}>×</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               {searchCitySuggestions.length ? (
                 <View style={styles.citySuggestionDropdown} accessibilityLabel="City suggestions">
                   {searchCitySuggestions.map((cityOption) => (
