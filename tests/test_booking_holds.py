@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -38,6 +39,12 @@ class BookingHoldTest(unittest.TestCase):
             os.environ["FAIRFARES_SEED_DEFAULTS"] = self.old_seed
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
+
+    def test_database_enforces_declared_foreign_keys(self):
+        with app.db() as con:
+            self.assertEqual(con.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.IntegrityError):
+                con.execute("INSERT INTO sessions (token, user_id) VALUES ('orphan-session', 999999999)")
 
     def test_select_creates_pending_hold_with_daily_rate_pricing(self):
         cars = app.get_cars()

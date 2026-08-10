@@ -1320,6 +1320,9 @@ def db() -> sqlite3.Connection:
     connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection, timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 30000")
+    # SQLite does not enforce declared relationships unless this is enabled on
+    # every connection. Keep invalid references from entering the database.
+    connection.execute("PRAGMA foreign_keys = ON")
     try:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
@@ -1477,6 +1480,10 @@ def purge_user_accounts(
         }
 
     deleted_rows: dict[str, int] = {}
+    # The selected closure contains both parents and every dependent row. Defer
+    # checks until the surrounding transaction commits so deletion order cannot
+    # temporarily violate a relationship (including self-referencing messages).
+    con.execute("PRAGMA defer_foreign_keys = ON")
     for table, record_ids in sorted(selected.items(), key=lambda item: item[0] == "users"):
         if not record_ids:
             continue
@@ -5981,9 +5988,11 @@ def init_db() -> None:
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_activity ON chat_conversations(status, last_message_at DESC, updated_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_communities_discovery ON chat_communities(visibility, area_label COLLATE NOCASE, kind, name)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_group_invites_community ON chat_group_invites(community_id, revoked_at, expires_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_user ON chat_device_keys(user_id, revoked_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_envelopes_recipient ON chat_message_envelopes(message_id, recipient_user_id, recipient_device_id)")
@@ -6002,14 +6011,20 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_expired_cleanup ON accommodation_posts(visibility_status, expired_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_user_created ON accommodation_posts(user_id, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_mode_category ON accommodation_posts(post_mode, category, visibility_status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_city_status_created ON accommodation_posts(city COLLATE NOCASE, visibility_status, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_interests_post_created ON accommodation_interests(post_id, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_interests_user_created ON accommodation_interests(user_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_images_post_sort ON accommodation_post_images(post_id, sort_order, id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_status_type_created ON ride_posts(status, ride_type, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_user_status_created ON ride_posts(user_id, status, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_city_status_created ON ride_posts(city_label COLLATE NOCASE, status, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_instances_post_date ON ride_instances(ride_post_id, instance_date, pickup_time)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_status ON ride_dispatch_notifications(driver_user_id, status, notified_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user_status_dates ON bookings(user_id, booking_status, pickup_date)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_car_status_dates ON bookings(car_id, booking_status, pickup_date, dropoff_date)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_transactions_booking_created ON transactions(booking_id, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_driver_licenses_user_created ON driver_licenses(user_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_feedback_page_created ON app_feedback(page, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_testimonials_status_city_published ON testimonials(status, city COLLATE NOCASE, published_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_posts_visibility_created ON workspace_posts(visibility, created_at DESC, id DESC)")
