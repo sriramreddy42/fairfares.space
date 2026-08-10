@@ -15332,10 +15332,21 @@ def chat_suggestion_city(value: str) -> str:
     if lowered in supported:
         return supported[lowered]
     common_city_states = {
-        "atlanta": "Atlanta, GA", "boston": "Boston, MA", "houston": "Houston, TX",
-        "las vegas": "Las Vegas, NV", "los angeles": "Los Angeles, CA", "miami": "Miami, FL",
-        "new york": "New York, NY", "phoenix": "Phoenix, AZ", "portland": "Portland, OR",
-        "san diego": "San Diego, CA", "seattle": "Seattle, WA", "washington": "Washington, DC",
+        "albuquerque": "Albuquerque, NM", "atlanta": "Atlanta, GA", "baltimore": "Baltimore, MD",
+        "boston": "Boston, MA", "charlotte": "Charlotte, NC", "columbus": "Columbus, OH",
+        "detroit": "Detroit, MI", "el paso": "El Paso, TX", "fort worth": "Fort Worth, TX",
+        "houston": "Houston, TX", "indianapolis": "Indianapolis, IN", "jacksonville": "Jacksonville, FL",
+        "kansas city": "Kansas City, MO", "las vegas": "Las Vegas, NV", "los angeles": "Los Angeles, CA",
+        "louisville": "Louisville, KY", "memphis": "Memphis, TN", "miami": "Miami, FL",
+        "milwaukee": "Milwaukee, WI", "minneapolis": "Minneapolis, MN", "nashville": "Nashville, TN",
+        "new orleans": "New Orleans, LA", "new york": "New York, NY", "oklahoma city": "Oklahoma City, OK",
+        "omaha": "Omaha, NE", "orlando": "Orlando, FL", "philadelphia": "Philadelphia, PA",
+        "phoenix": "Phoenix, AZ", "pittsburgh": "Pittsburgh, PA", "portland": "Portland, OR",
+        "raleigh": "Raleigh, NC", "richmond": "Richmond, VA", "sacramento": "Sacramento, CA",
+        "saint louis": "St. Louis, MO", "salt lake city": "Salt Lake City, UT", "san antonio": "San Antonio, TX",
+        "san diego": "San Diego, CA", "seattle": "Seattle, WA", "st louis": "St. Louis, MO",
+        "st. louis": "St. Louis, MO", "tampa": "Tampa, FL", "tucson": "Tucson, AZ",
+        "virginia beach": "Virginia Beach, VA", "washington": "Washington, DC",
     }
     if lowered in common_city_states:
         return common_city_states[lowered]
@@ -15400,6 +15411,9 @@ def materialize_location_chat_community(con: sqlite3.Connection, public_id: str,
 
 def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: str = "") -> list[dict[str, object]]:
     canonical_city, virtual_suggestions = location_chat_community_suggestions(suggestion_city)
+    # A non-empty but unrecognized search must not become an empty SQL filter,
+    # which would expose unrelated public groups from every city.
+    query_city = canonical_city or ("__INVALID_CITY__" if suggestion_city.strip() else "")
     with db() as con:
         rows = con.execute(
             """
@@ -15421,7 +15435,7 @@ def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: s
             GROUP BY communities.id
             ORDER BY CASE communities.kind WHEN 'GROUP' THEN 0 ELSE 1 END, communities.name
             """,
-            (int(user_id or 0), int(user_id or 0), canonical_city, canonical_city, int(user_id or 0)),
+            (int(user_id or 0), int(user_id or 0), query_city, query_city, int(user_id or 0)),
         ).fetchall()
     communities = [
         {

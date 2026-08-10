@@ -95,6 +95,13 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         # Free-form searches must not create arbitrary public groups.
         invalid_groups = app.get_chat_communities_for_user(self.outsider, "somewhere near the airport")
         self.assertNotIn("Somewhere Near The Airport Community", {row["name"] for row in invalid_groups})
+        self.assertNotIn("Denver Roommates", {row["name"] for row in invalid_groups})
+
+    def test_plain_st_louis_search_gets_canonical_local_suggestions(self):
+        groups = app.get_chat_communities_for_user(self.outsider, "St. Louis")
+        suggestions = {row["name"] for row in groups if not row["joined"] and row["area"] == "St. Louis, MO"}
+        self.assertEqual(suggestions, {"St. Louis Housing & Roommates", "St. Louis Ride Share", "St. Louis Community"})
+        self.assertNotIn("Denver Roommates", {row["name"] for row in groups})
 
     def test_joining_all_denver_groups_does_not_hide_miami_suggestions(self):
         for community in app.get_chat_communities_for_user(self.outsider, "Denver, CO"):
