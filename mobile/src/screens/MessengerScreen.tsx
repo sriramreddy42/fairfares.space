@@ -5,7 +5,6 @@ import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
-import { BlurView } from "expo-blur";
 import { Alert, Image, Keyboard, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
@@ -61,6 +60,7 @@ import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 import { useNearbyRelay } from "../providers/NearbyRelayProvider";
+import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -2224,7 +2224,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
           <View style={styles.wallpaperShade} />
         </View>
-        <BlurView intensity={48} tint="dark" style={styles.threadHeader}>
+        <AdaptiveGlassView intensity={48} tintColor="#08291D" fallbackColor="rgba(4,25,19,0.96)" style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
@@ -2247,7 +2247,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
-        </BlurView>
+        </AdaptiveGlassView>
 
         {selectedMessageIds.length ? (
           <View style={styles.messageSelectionBar}>

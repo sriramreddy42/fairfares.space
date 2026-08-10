@@ -2,6 +2,7 @@ import React from "react";
 import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
+import { AdaptiveGlassView } from "./AdaptiveGlassView";
 
 export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
@@ -32,7 +33,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
   }
 
   return (
-    <View style={[styles.bar, active === "messenger" && styles.chittiBar]}>
+    <AdaptiveGlassView style={[styles.bar, active === "messenger" && styles.chittiBar]} tintColor={active === "messenger" ? "#08281C" : "#171918"} fallbackColor={active === "messenger" ? "rgba(3,16,15,0.97)" : "rgba(25,25,25,0.96)"} interactive>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
@@ -54,7 +55,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
           </TouchableOpacity>
         );
       })}
-    </View>
+    </AdaptiveGlassView>
   );
 }
 
@@ -68,7 +69,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
     height: 64,
-    backgroundColor: "rgba(25,25,25,0.96)",
+    backgroundColor: "transparent",
     borderRadius: 32,
     borderWidth: 1,
     borderColor: "#2e2e2f",
@@ -78,7 +79,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6
   },
   chittiBar: {
-    backgroundColor: "rgba(3,16,15,0.97)",
+    backgroundColor: "transparent",
     borderColor: "rgba(220,171,84,0.26)"
   },
   item: {
