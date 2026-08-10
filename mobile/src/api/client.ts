@@ -412,6 +412,18 @@ export async function respondToRideDispatch(rideId: string, action: "ACCEPT" | "
   return payload.ride;
 }
 
+export async function updateRideDriverLocation(rideId: string, latitude: number, longitude: number) {
+  return request<{ ok: boolean; location: { latitude: number; longitude: number; status: string } }>("/api/mobile/rides/driver-location", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rideId, latitude, longitude })
+  });
+}
+
+export async function getRideDriverLocation(rideId: string) {
+  return request<{ ok: boolean; available: boolean; status: string; location?: { latitude: number; longitude: number; updatedAt: string; ageSeconds: number } }>(`/api/mobile/rides/driver-location?rideId=${encodeURIComponent(rideId)}`);
+}
+
 export async function getRideDriverProfile() {
   const payload = await request<{ ok: boolean; profile: RideDriverProfile }>("/api/mobile/rides/driver-profile");
   return payload.profile;

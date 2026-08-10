@@ -5893,6 +5893,9 @@ def init_db() -> None:
         ensure_column(con, "ride_dispatch_notifications", "dropoff_distance_miles", "dropoff_distance_miles REAL NOT NULL DEFAULT 0")
         ensure_column(con, "ride_dispatch_notifications", "route_deviation_miles", "route_deviation_miles REAL NOT NULL DEFAULT 0")
         ensure_column(con, "ride_dispatch_notifications", "route_deviation_minutes", "route_deviation_minutes INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "ride_dispatch_notifications", "driver_lat", "driver_lat REAL")
+        ensure_column(con, "ride_dispatch_notifications", "driver_lng", "driver_lng REAL")
+        ensure_column(con, "ride_dispatch_notifications", "driver_location_updated_at", "driver_location_updated_at TEXT")
         ensure_column(con, "ride_driver_profiles", "vehicle_make_model", "vehicle_make_model TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_driver_profiles", "vehicle_year", "vehicle_year TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_driver_profiles", "vehicle_color", "vehicle_color TEXT NOT NULL DEFAULT ''")
@@ -18611,6 +18614,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rides/activity":
             self.api_mobile_ride_activity()
             return
+        if parsed.path == "/api/mobile/rides/driver-location":
+            self.api_mobile_ride_driver_location(parsed)
+            return
         if parsed.path == "/api/mobile/rides/driver-profile":
             self.api_mobile_ride_driver_profile()
             return
@@ -18888,6 +18894,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
+            "/api/mobile/rides/driver-location": self.api_mobile_update_ride_driver_location,
             "/api/mobile/rides/driver-profile": self.api_mobile_save_ride_driver_profile,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
@@ -29337,6 +29344,96 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(row_value(user, "id") or 0)
         status_code, response = apply_ride_dispatch_action(user_id, ride_public_id, action)
         self.send_json(response, status_code)
+
+    def api_mobile_update_ride_driver_location(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to share driver location."}, 401)
+            return
+        payload = self.read_json_body()
+        ride_public_id = clean_text_value(payload.get("rideId") or payload.get("ride_id"), 40)
+        try:
+            latitude = float(payload.get("latitude"))
+            longitude = float(payload.get("longitude"))
+        except (TypeError, ValueError):
+            self.send_json({"ok": False, "error": "A valid driver location is required."}, 400)
+            return
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            self.send_json({"ok": False, "error": "The driver location is outside the supported range."}, 400)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            dispatch = con.execute(
+                """
+                SELECT notifications.id, notifications.status
+                FROM ride_dispatch_notifications notifications
+                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                WHERE requests.public_id = ? AND notifications.driver_user_id = ?
+                LIMIT 1
+                """,
+                (ride_public_id, user_id),
+            ).fetchone()
+            if not dispatch:
+                self.send_json({"ok": False, "error": "This ride is not assigned to your driver account."}, 403)
+                return
+            status = str(row_value(dispatch, "status") or "").upper()
+            if status not in {"ACCEPTED", "EN_ROUTE", "ARRIVED"}:
+                self.send_json({"ok": False, "error": "Live location is available only during an accepted active trip."}, 409)
+                return
+            con.execute(
+                """
+                UPDATE ride_dispatch_notifications
+                SET driver_lat = ?, driver_lng = ?, driver_location_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (latitude, longitude, int(row_value(dispatch, "id") or 0)),
+            )
+        self.send_json({"ok": True, "location": {"latitude": latitude, "longitude": longitude, "status": status}})
+
+    def api_mobile_ride_driver_location(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to view driver location."}, 401)
+            return
+        query = urllib.parse.parse_qs(parsed.query)
+        ride_public_id = clean_text_value((query.get("rideId") or query.get("ride_id") or [""])[0], 40)
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            dispatch = con.execute(
+                """
+                SELECT notifications.*, requests.user_id AS rider_user_id
+                FROM ride_dispatch_notifications notifications
+                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                WHERE requests.public_id = ?
+                  AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED')
+                  AND (requests.user_id = ? OR notifications.driver_user_id = ?)
+                ORDER BY datetime(notifications.responded_at) DESC
+                LIMIT 1
+                """,
+                (ride_public_id, user_id, user_id),
+            ).fetchone()
+        if not dispatch:
+            self.send_json({"ok": False, "error": "Driver location is available only to the matched rider and driver."}, 404)
+            return
+        latitude = row_value(dispatch, "driver_lat")
+        longitude = row_value(dispatch, "driver_lng")
+        updated_at = str(row_value(dispatch, "driver_location_updated_at") or "")
+        if latitude is None or longitude is None or not updated_at:
+            self.send_json({"ok": True, "available": False, "status": row_value(dispatch, "status") or "ACCEPTED"})
+            return
+        try:
+            updated = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            age_seconds = max(0, int((datetime.now(timezone.utc) - updated).total_seconds()))
+        except ValueError:
+            age_seconds = 0
+        self.send_json({
+            "ok": True,
+            "available": True,
+            "location": {"latitude": float(latitude), "longitude": float(longitude), "updatedAt": updated_at, "ageSeconds": age_seconds},
+            "status": row_value(dispatch, "status") or "ACCEPTED",
+        })
 
     def api_mobile_ride_driver_profile(self) -> None:
         user = self.current_user()

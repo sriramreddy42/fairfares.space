@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as Location from "expo-location";
 import { Alert, Image, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { getRentalBookings, getRideActivity, respondToRideDispatch } from "../api/client";
+import { getRentalBookings, getRideActivity, getRideDriverLocation, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { BootstrapPayload, HousingPost, RentalServiceBooking, RidePost } from "../types";
@@ -209,6 +210,8 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const [loading, setLoading] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [rideActionBusyId, setRideActionBusyId] = useState("");
+  const driverLocationSubscription = useRef<Location.LocationSubscription | null>(null);
+  const sharingDriverRideId = useRef("");
 
   useEffect(() => {
     let cancelled = false;
@@ -264,6 +267,39 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const pastBookings = useMemo(() => bookings.filter((booking) => !isUpcomingBooking(booking)), [bookings]);
   const recentHousing = (data?.housing || []).slice(0, 3);
 
+  const liveDriverRide = useMemo(
+    () => incomingRiderRequests.find((ride) => ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
+    [incomingRiderRequests]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function maintainDriverLocation() {
+      if (!liveDriverRide) {
+        driverLocationSubscription.current?.remove();
+        driverLocationSubscription.current = null;
+        sharingDriverRideId.current = "";
+        return;
+      }
+      if (sharingDriverRideId.current === liveDriverRide.id && driverLocationSubscription.current) return;
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (cancelled || permission.status !== "granted") return;
+      driverLocationSubscription.current?.remove();
+      sharingDriverRideId.current = liveDriverRide.id;
+      driverLocationSubscription.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, timeInterval: 10000, distanceInterval: 20 },
+        (position) => void updateRideDriverLocation(liveDriverRide.id, position.coords.latitude, position.coords.longitude).catch(() => undefined)
+      );
+    }
+    void maintainDriverLocation();
+    return () => { cancelled = true; };
+  }, [liveDriverRide?.id]);
+
+  useEffect(() => () => {
+    driverLocationSubscription.current?.remove();
+    driverLocationSubscription.current = null;
+  }, []);
+
   function handleReserveRide() {
     if (!data?.user) {
       onRequireLogin?.();
@@ -295,6 +331,15 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     }
     setRideActionBusyId(ride.id);
     try {
+      if (action === "EN_ROUTE") {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== "granted") {
+          Alert.alert("Location permission required", "Allow location while using FairFares so the matched rider can see the driver's live location.");
+          return;
+        }
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        await updateRideDriverLocation(ride.id, position.coords.latitude, position.coords.longitude);
+      }
       const updated = await respondToRideDispatch(ride.id, action);
       setRides((current) => current.map((item) => item.id === ride.id ? { ...item, ...updated } : item));
       if (action === "ACCEPT") {
@@ -336,6 +381,37 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       await Linking.openURL(url);
     } catch {
       Alert.alert("Map unavailable", "The route could not be opened on this device.");
+    }
+  }
+
+  async function openDriverLocation(ride: RidePost) {
+    setRideActionBusyId(ride.id);
+    try {
+      if (isIncomingRiderRequest(ride)) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== "granted") throw new Error("Allow location while using FairFares to share your position with the matched rider.");
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        await updateRideDriverLocation(ride.id, position.coords.latitude, position.coords.longitude);
+        Alert.alert("Driver location shared", "Your matched rider can now open your latest live location. Sharing continues while the trip is active and FairFares is open.");
+        return;
+      }
+      const response = await getRideDriverLocation(ride.id);
+      if (!response.available || !response.location) {
+        Alert.alert("Driver location pending", "The driver's live location will appear after the driver starts the trip.");
+        return;
+      }
+      if (response.location.ageSeconds > 120) {
+        Alert.alert("Location may be outdated", "The driver has not sent a fresh location in the last two minutes. You can try again shortly.");
+      }
+      const { latitude, longitude } = response.location;
+      const url = Platform.OS === "ios"
+        ? `http://maps.apple.com/?ll=${latitude},${longitude}&q=${encodeURIComponent("FairFares driver")}`
+        : `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+      await Linking.openURL(url);
+    } catch (error) {
+      Alert.alert("Driver location unavailable", error instanceof Error ? error.message : "The live driver location could not be opened.");
+    } finally {
+      setRideActionBusyId("");
     }
   }
 
@@ -398,8 +474,8 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <TouchableOpacity style={styles.secondaryPill} onPress={() => void openRideRoute(ride)}>
                 <Text style={styles.secondaryPillText}>View route</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryPill} onPress={() => handleRideChat(ride)}>
-                <Text style={styles.secondaryPillText}>Driver location</Text>
+              <TouchableOpacity style={styles.secondaryPill} onPress={() => void openDriverLocation(ride)} disabled={rideActionBusyId === ride.id}>
+                <Text style={styles.secondaryPillText}>{isIncomingRiderRequest(ride) ? "Share location" : "Driver location"}</Text>
               </TouchableOpacity>
             </View>
           </View>
