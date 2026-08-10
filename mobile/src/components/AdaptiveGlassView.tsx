@@ -28,6 +28,10 @@ export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fall
   const [reduceTransparency, setReduceTransparency] = useState(false);
 
   useEffect(() => {
+    if (Platform.OS === "web" || typeof AccessibilityInfo.isReduceTransparencyEnabled !== "function") {
+      setReduceTransparency(false);
+      return;
+    }
     void AccessibilityInfo.isReduceTransparencyEnabled().then(setReduceTransparency);
     const subscription = AccessibilityInfo.addEventListener("reduceTransparencyChanged", setReduceTransparency);
     return () => subscription.remove();
