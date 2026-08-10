@@ -455,7 +455,14 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             {!isIncomingRiderRequest(ride) && (ride.dispatchStatus || "").toUpperCase() === "ARRIVED" && ride.acceptedVehicleNumber ? (
               <View style={styles.arrivedVehicleCard}>
                 <Text style={styles.arrivedVehicleLabel}>Your driver has arrived</Text>
-                <Text style={styles.arrivedVehicleNumber}>Vehicle {ride.acceptedVehicleNumber}</Text>
+                <View style={styles.licensePlate}>
+                  <View style={[styles.licensePlateBolt, styles.licensePlateBoltLeft]} />
+                  <View style={[styles.licensePlateBolt, styles.licensePlateBoltRight]} />
+                  <Text style={styles.licensePlateState}>{ride.acceptedVehicleState || "VEHICLE"}</Text>
+                  <View style={styles.licensePlateRule} />
+                  <Text style={styles.licensePlateNumber} adjustsFontSizeToFit numberOfLines={1}>{ride.acceptedVehiclePlate || ride.acceptedVehicleNumber}</Text>
+                  <Text style={styles.licensePlateFooter}>FAIRFARES · VERIFIED ARRIVAL</Text>
+                </View>
                 <Text style={styles.arrivedVehicleSafety}>Confirm the plate before entering the vehicle.</Text>
               </View>
             ) : null}
@@ -699,10 +706,17 @@ const styles = StyleSheet.create({
   upcomingCarousel: { gap: 10, paddingRight: 10 },
   rideCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: theme.spacing.sm },
   latestChatPreview: { color: theme.colors.soft, backgroundColor: "rgba(59,130,246,0.12)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontWeight: "500", overflow: "hidden" },
-  arrivedVehicleCard: { backgroundColor: "rgba(34,197,94,0.14)", borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11 },
+  arrivedVehicleCard: { backgroundColor: "rgba(34,197,94,0.14)", borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", borderRadius: 14, paddingHorizontal: 13, paddingVertical: 12 },
   arrivedVehicleLabel: { color: "#7DE5A8", fontSize: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5 },
-  arrivedVehicleNumber: { color: theme.colors.text, fontSize: 20, fontWeight: "900", marginTop: 3 },
-  arrivedVehicleSafety: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", marginTop: 4 },
+  licensePlate: { position: "relative", minHeight: 112, backgroundColor: "#FDFEFC", borderWidth: 3, borderColor: "#183B76", borderRadius: 13, alignItems: "center", justifyContent: "center", paddingHorizontal: 25, paddingTop: 10, paddingBottom: 8, marginTop: 9, overflow: "hidden" },
+  licensePlateBolt: { position: "absolute", top: 12, width: 15, height: 7, borderRadius: 4, backgroundColor: "#D7D9D6", borderWidth: 1, borderColor: "#A9ACA8" },
+  licensePlateBoltLeft: { left: 22 },
+  licensePlateBoltRight: { right: 22 },
+  licensePlateState: { color: "#183B76", fontSize: 14, lineHeight: 17, fontWeight: "900", letterSpacing: 2.2, textTransform: "uppercase" },
+  licensePlateRule: { width: "84%", height: 3, borderRadius: 2, backgroundColor: "#F5A623", marginTop: 4, marginBottom: 3 },
+  licensePlateNumber: { width: "100%", color: "#123A79", fontSize: 37, lineHeight: 43, fontWeight: "900", letterSpacing: 3, textAlign: "center" },
+  licensePlateFooter: { color: "#B87912", fontSize: 8, fontWeight: "900", letterSpacing: 1.1, marginTop: 1 },
+  arrivedVehicleSafety: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", marginTop: 7, textAlign: "center" },
   cardTitle: { color: theme.colors.text, ...theme.typography.cardTitle },
   routeText: { color: theme.colors.soft, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   cardMeta: { color: theme.colors.muted, ...theme.typography.body },

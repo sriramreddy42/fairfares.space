@@ -29312,6 +29312,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         payload["acceptedDriverName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["acceptedDriverRideId"] = row_value(accepted, "driver_ride_public_id")
                         if str(payload["dispatchStatus"]).upper() in {"ARRIVED", "IN_PROGRESS"}:
+                            payload["acceptedVehicleState"] = clean_text_value(row_value(accepted, "driver_license_state"), 12)
+                            payload["acceptedVehiclePlate"] = clean_text_value(row_value(accepted, "driver_license_plate"), 24)
                             payload["acceptedVehicleNumber"] = " ".join(
                                 value for value in (
                                     clean_text_value(row_value(accepted, "driver_license_state"), 12),
