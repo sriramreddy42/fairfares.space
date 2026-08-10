@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "k6" / "fairfares.js"
-PROFILE_USERS = {"smoke": 10, "normal": 50, "medium": 250, "high": 500, "stress": 1000, "spike": 500}
+PROFILE_USERS = {"smoke": 10, "normal": 50, "100": 100, "medium": 250, "high": 500, "stress": 1000, "spike": 500}
 PASSWORD = "FairFaresK6!"
 
 

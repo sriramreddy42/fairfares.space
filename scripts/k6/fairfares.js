@@ -20,6 +20,7 @@ if (dangerous && !isLoopback && __ENV.ALLOW_REMOTE_HIGH_LOAD !== 'YES_I_ACCEPT_T
 const profiles = {
   smoke: [{ duration: '5s', target: 10 }, { duration: '15s', target: 10 }, { duration: '5s', target: 0 }],
   normal: [{ duration: '15s', target: 50 }, { duration: '45s', target: 50 }, { duration: '10s', target: 0 }],
+  '100': [{ duration: '20s', target: 100 }, { duration: '60s', target: 100 }, { duration: '15s', target: 0 }],
   medium: [{ duration: '20s', target: 250 }, { duration: '60s', target: 250 }, { duration: '15s', target: 0 }],
   high: [{ duration: '30s', target: 500 }, { duration: '90s', target: 500 }, { duration: '20s', target: 0 }],
   stress: [

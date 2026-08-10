@@ -67,6 +67,7 @@ def positive_int_env(name: str, default: int) -> int:
 
 SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
+SESSION_TOUCH_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_TOUCH_SECONDS", 5 * 60)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 MAX_HOUSING_IMAGE_BYTES = 3_000_000
@@ -103,6 +104,8 @@ _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
 _FEEDBACK_SUBMISSIONS: dict[str, list[float]] = {}
 _FEEDBACK_SUBMISSIONS_LOCK = threading.Lock()
+_SESSION_TOUCHES: dict[str, float] = {}
+_SESSION_TOUCHES_LOCK = threading.Lock()
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
 _CHAT_TYPING_LOCK = threading.Lock()
 _DIAGNOSTIC_REPORTS: dict[str, list[float]] = {}
@@ -110,8 +113,14 @@ _DIAGNOSTIC_REPORTS_LOCK = threading.Lock()
 DIAGNOSTIC_REPORT_LIMIT = positive_int_env("FAIRFARES_DIAGNOSTIC_REPORTS_PER_HOUR", 30)
 _OPERATIONAL_ALERTS: dict[str, float] = {}
 _OPERATIONAL_ALERTS_LOCK = threading.Lock()
+_ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
+_ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
+_MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
+_MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
+_MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
+MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 5)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -1305,6 +1314,31 @@ def is_safe_mobile_return_url(url: str) -> bool:
         origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
         return origin in configured_cors_allowed_origins() or is_loopback_origin(origin)
     return False
+
+
+def cached_mobile_search(cache_key: tuple[object, ...], factory):
+    """Single-flight a short-lived public search result for burst traffic."""
+    now = time.monotonic()
+    with _MOBILE_SEARCH_CACHE_LOCK:
+        cached = _MOBILE_SEARCH_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1]
+        key_lock = _MOBILE_SEARCH_KEY_LOCKS.setdefault(cache_key, threading.Lock())
+    with key_lock:
+        now = time.monotonic()
+        with _MOBILE_SEARCH_CACHE_LOCK:
+            cached = _MOBILE_SEARCH_CACHE.get(cache_key)
+            if cached and cached[0] > now:
+                return cached[1]
+        value = factory()
+        with _MOBILE_SEARCH_CACHE_LOCK:
+            _MOBILE_SEARCH_CACHE[cache_key] = (time.monotonic() + MOBILE_SEARCH_CACHE_SECONDS, value)
+            if len(_MOBILE_SEARCH_CACHE) > 1_000:
+                expired = [key for key, entry in _MOBILE_SEARCH_CACHE.items() if entry[0] <= time.monotonic()]
+                for key in expired:
+                    _MOBILE_SEARCH_CACHE.pop(key, None)
+                    _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
+        return value
 
 
 class FairFaresConnection(sqlite3.Connection):
@@ -12534,7 +12568,18 @@ def delete_local_accommodation_images(image_references: list[str]) -> None:
             target.unlink(missing_ok=True)
 
 
-def expire_accommodation_posts() -> None:
+def expire_accommodation_posts(*, force: bool = True) -> None:
+    # A housing search is a read path. Without throttling, every search opens a
+    # write transaction for expiry housekeeping, serializing all SQLite-backed
+    # API traffic under load. Explicit maintenance calls remain immediate.
+    if not force:
+        database_key = str(DB_PATH.resolve())
+        now = time.monotonic()
+        with _ACCOMMODATION_EXPIRY_LOCK:
+            last_run = _ACCOMMODATION_EXPIRY_LAST_RUN.get(database_key, 0.0)
+            if now - last_run < 60:
+                return
+            _ACCOMMODATION_EXPIRY_LAST_RUN[database_key] = now
     with db() as con:
         expire_accommodation_posts_in_connection(con)
         image_references = purge_expired_accommodation_posts_in_connection(con)
@@ -14664,7 +14709,7 @@ def mobile_housing_posts(
     center_lng: float = 0,
     offset: int = 0,
 ) -> list[dict[str, object]]:
-    expire_accommodation_posts()
+    expire_accommodation_posts(force=False)
     clauses = [
         "visibility_status = 'ACTIVE'",
         "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
@@ -19336,12 +19381,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (*tokens, absolute_cutoff, idle_cutoff),
             ).fetchone()
+            should_touch = False
             if user:
+                session_token = str(user["authenticated_session_token"])
+                now = time.monotonic()
+                with _SESSION_TOUCHES_LOCK:
+                    last_touch = _SESSION_TOUCHES.get(session_token, 0.0)
+                    should_touch = now - last_touch >= SESSION_TOUCH_INTERVAL_SECONDS
+                    if should_touch:
+                        _SESSION_TOUCHES[session_token] = now
+                    if len(_SESSION_TOUCHES) > 10_000:
+                        stale_before = now - max(SESSION_TOUCH_INTERVAL_SECONDS * 2, 3_600)
+                        for token, touched_at in list(_SESSION_TOUCHES.items()):
+                            if touched_at < stale_before:
+                                _SESSION_TOUCHES.pop(token, None)
+            if user and should_touch:
                 con.execute(
                     "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
                     (user["authenticated_session_token"],),
                 )
-            else:
+            elif not user:
                 con.execute(f"DELETE FROM sessions WHERE token IN ({placeholders})", tokens)
             return user
 
@@ -29418,18 +29477,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
-        posts = mobile_housing_posts(
-            city=city,
-            area=area,
-            need=need,
-            category=category,
-            gender=gender,
-            budget=budget,
-            radius=float_from_value(radius),
-            limit=limit,
-            center_lat=center_lat,
-            center_lng=center_lng,
-            offset=offset,
+        search_radius = float_from_value(radius)
+        posts = cached_mobile_search(
+            ("housing", city, area, need, category, gender, budget, search_radius, limit, center_lat, center_lng, offset),
+            lambda: mobile_housing_posts(
+                city=city,
+                area=area,
+                need=need,
+                category=category,
+                gender=gender,
+                budget=budget,
+                radius=search_radius,
+                limit=limit,
+                center_lat=center_lat,
+                center_lng=center_lng,
+                offset=offset,
+            ),
         )
         self.send_json(
             {
@@ -29478,17 +29541,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
-        rides = mobile_ride_posts(
-            city=city,
-            ride_type=ride_type,
-            origin=origin,
-            destination=destination,
-            limit=limit,
-            origin_lat=origin_lat,
-            origin_lng=origin_lng,
-            destination_lat=destination_lat,
-            destination_lng=destination_lng,
-            offset=offset,
+        rides = cached_mobile_search(
+            ("rides", city, ride_type, origin, destination, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset),
+            lambda: mobile_ride_posts(
+                city=city,
+                ride_type=ride_type,
+                origin=origin,
+                destination=destination,
+                limit=limit,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+                destination_lat=destination_lat,
+                destination_lng=destination_lng,
+                offset=offset,
+            ),
         )
         self.send_json(
             {

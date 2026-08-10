@@ -5,6 +5,7 @@ This suite runs realistic, authenticated mobile/API journeys against an isolated
 ```bash
 python3 scripts/run_k6_load.py smoke
 python3 scripts/run_k6_load.py normal
+python3 scripts/run_k6_load.py 100
 python3 scripts/run_k6_load.py medium
 python3 scripts/run_k6_load.py high
 python3 scripts/run_k6_load.py stress
