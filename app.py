@@ -30924,7 +30924,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; "
             "media-src 'self' blob: https://a-us.storyblok.com; "
             "connect-src 'self' https://api.stripe.com https://*.googleapis.com https://*.google.com https://maps.gstatic.com https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net; "
-            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://accounts.google.com"
+            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://accounts.google.com https://www.youtube.com https://www.youtube-nocookie.com"
         )
         if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("PUBLIC_BASE_URL", "").startswith("https://"):
             self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

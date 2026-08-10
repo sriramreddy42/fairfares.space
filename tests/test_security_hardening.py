@@ -197,6 +197,9 @@ class SecurityHardeningTest(unittest.TestCase):
             self.assertIn("frame-ancestors 'none'", content_security_policy)
             self.assertIn("https://maps.googleapis.com", content_security_policy)
             self.assertIn("https://maps.gstatic.com", content_security_policy)
+            self.assertIn("frame-src ", content_security_policy)
+            self.assertIn("https://www.youtube.com", content_security_policy)
+            self.assertIn("https://www.youtube-nocookie.com", content_security_policy)
         finally:
             server.shutdown()
             server.server_close()

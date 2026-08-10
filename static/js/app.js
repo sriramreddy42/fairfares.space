@@ -1452,6 +1452,15 @@ function ensureHeroVideoSource() {
 
 function startHeroFoldPlayback() {
   heroFoldRunning = true;
+  if (reduceMotion.matches) {
+    heroFold.classList.add("is-playing");
+    const isLive = heroFoldVideo.dataset.live === "1";
+    if (!isLive) {
+      const duration = Number(heroFoldVideo.dataset.duration || 12);
+      heroFoldTimer = window.setTimeout(closeHeroFold, Math.max(duration, 6) * 1000);
+    }
+    return;
+  }
   heroFold.classList.add("is-folding");
   heroFoldTimer = window.setTimeout(() => {
     heroFold.classList.add("is-playing");
@@ -1465,7 +1474,7 @@ function startHeroFoldPlayback() {
 }
 
 function playHeroFold(options = {}) {
-  if (!heroFold || !heroFoldVideo || heroFoldRunning || reduceMotion.matches) return;
+  if (!heroFold || !heroFoldVideo || heroFoldRunning) return;
   ensureHeroVideoSource().then((available) => {
     if (available) {
       startHeroFoldPlayback();
