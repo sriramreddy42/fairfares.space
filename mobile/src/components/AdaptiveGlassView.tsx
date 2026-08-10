@@ -1,5 +1,5 @@
 import React, { ReactNode, useEffect, useState } from "react";
-import { AccessibilityInfo, Platform, StyleProp, View, ViewStyle } from "react-native";
+import { AccessibilityInfo, LayoutChangeEvent, Platform, StyleProp, View, ViewStyle } from "react-native";
 import { BlurView } from "expo-blur";
 import { requireOptionalNativeModule } from "expo-modules-core";
 
@@ -15,15 +15,16 @@ if (Platform.OS === "ios" && requireOptionalNativeModule("ExpoGlassEffect")) {
 }
 
 type Props = {
-  children: ReactNode;
+  children?: ReactNode;
   style?: StyleProp<ViewStyle>;
   tintColor?: string;
   fallbackColor?: string;
   intensity?: number;
   interactive?: boolean;
+  onLayout?: (event: LayoutChangeEvent) => void;
 };
 
-export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fallbackColor = "rgba(20,22,21,0.94)", intensity = 58, interactive = false }: Props) {
+export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fallbackColor = "rgba(20,22,21,0.94)", intensity = 58, interactive = false, onLayout }: Props) {
   const [reduceTransparency, setReduceTransparency] = useState(false);
 
   useEffect(() => {
@@ -35,10 +36,10 @@ export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fall
   const NativeGlassView = glassEffectPackage?.GlassView;
   const nativeGlassAvailable = Boolean(NativeGlassView && glassEffectPackage?.isLiquidGlassAvailable() && glassEffectPackage?.isGlassEffectAPIAvailable());
   if (NativeGlassView && nativeGlassAvailable && !reduceTransparency) {
-    return <NativeGlassView style={style} glassEffectStyle="regular" tintColor={tintColor} isInteractive={interactive}>{children}</NativeGlassView>;
+    return <NativeGlassView style={style} glassEffectStyle="regular" tintColor={tintColor} isInteractive={interactive} onLayout={onLayout}>{children}</NativeGlassView>;
   }
   if (reduceTransparency) {
-    return <View style={[style, { backgroundColor: fallbackColor }]}>{children}</View>;
+    return <View style={[style, { backgroundColor: fallbackColor }]} onLayout={onLayout}>{children}</View>;
   }
-  return <BlurView style={style} intensity={intensity} tint="dark" experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}>{children}</BlurView>;
+  return <BlurView style={style} intensity={intensity} tint="dark" experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined} onLayout={onLayout}>{children}</BlurView>;
 }

@@ -1,5 +1,5 @@
-import React from "react";
-import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Animated, Image, ImageSourcePropType, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { AdaptiveGlassView } from "./AdaptiveGlassView";
@@ -28,16 +28,57 @@ type Props = {
 };
 
 export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
+  const [barWidth, setBarWidth] = useState(0);
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const indicatorStretch = useRef(new Animated.Value(1)).current;
+  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.key === active));
+
+  useEffect(() => {
+    if (!barWidth) return;
+    const slotWidth = (barWidth - 12) / tabs.length;
+    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 58) / 2;
+    Animated.parallel([
+      Animated.spring(indicatorX, {
+        toValue: targetX,
+        damping: 18,
+        stiffness: 155,
+        mass: 0.72,
+        useNativeDriver: true
+      }),
+      Animated.sequence([
+        Animated.timing(indicatorStretch, { toValue: 1.28, duration: 110, useNativeDriver: true }),
+        Animated.spring(indicatorStretch, { toValue: 1, damping: 12, stiffness: 190, useNativeDriver: true })
+      ])
+    ]).start();
+  }, [activeIndex, barWidth, indicatorStretch, indicatorX]);
+
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    setBarWidth(width);
+    const slotWidth = (width - 12) / tabs.length;
+    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 58) / 2);
+  };
+
   if (hidden) {
     return null;
   }
 
   return (
-    <AdaptiveGlassView style={[styles.bar, active === "messenger" && styles.chittiBar]} tintColor={active === "messenger" ? "#08281C" : "#171918"} fallbackColor={active === "messenger" ? "rgba(3,16,15,0.97)" : "rgba(25,25,25,0.96)"} interactive>
+    <AdaptiveGlassView style={[styles.bar, active === "messenger" && styles.chittiBar]} tintColor={active === "messenger" ? "#08281C" : "#171918"} fallbackColor={active === "messenger" ? "rgba(3,16,15,0.97)" : "rgba(25,25,25,0.96)"} interactive onLayout={handleLayout}>
+      {barWidth > 0 ? (
+        <Animated.View pointerEvents="none" style={[styles.indicatorMotion, { transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }] }]}>
+          <AdaptiveGlassView
+            style={[styles.liquidIndicator, active === "messenger" && styles.chittiIndicator]}
+            tintColor={active === "messenger" ? "#17653C" : "#FFFFFF"}
+            fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(255,255,255,0.13)"}
+            intensity={72}
+          />
+        </Animated.View>
+      ) : null}
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
-          <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.activeItem, isActive && tab.key === "messenger" && styles.chittiItem]} onPress={() => onChange(tab.key)}>
+          <TouchableOpacity key={tab.key} style={styles.item} onPress={() => onChange(tab.key)}>
             <View style={[styles.icon, tab.key === "messenger" && styles.chittiIcon]}>
               <Image
                 source={tab.icon}
@@ -90,33 +131,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    borderWidth: 1,
-    borderColor: "transparent"
+    zIndex: 1
   },
-  activeItem: {
-    borderColor: "rgba(255,255,255,0.30)",
-    backgroundColor: "rgba(255,255,255,0.11)",
-    shadowColor: "#FFFFFF",
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 }
+  indicatorMotion: {
+    position: "absolute",
+    left: 0,
+    top: 9,
+    width: 58,
+    height: 46
   },
-  chittiItem: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: "rgba(18,92,49,0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(79,195,94,0.44)",
-    transform: [{ scale: 1.02 }],
-    shadowColor: "#35d06f",
-    shadowOpacity: 0.23,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 5
+  liquidIndicator: {
+    flex: 1,
+    borderRadius: 19,
+    backgroundColor: "transparent",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.22)",
+    overflow: "hidden"
   },
-  active: {
-    borderRadius: 28
+  chittiIndicator: {
+    borderColor: "rgba(91,211,118,0.40)"
   },
   icon: {
     width: 38,
