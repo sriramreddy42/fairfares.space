@@ -59,6 +59,26 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertNotIn("Miamisburg", options["selectedLocation"])
         self.assertNotEqual(app.cached_accommodation_metro_for_place("Miami"), "Dayton Metro Area")
 
+    def test_geocoded_us_city_dynamically_feeds_group_suggestions(self):
+        geocode = {
+            "formatted_address": "Boise, ID, USA",
+            "address_components": [
+                {"long_name": "Boise", "short_name": "Boise", "types": ["locality"]},
+                {"long_name": "Idaho", "short_name": "ID", "types": ["administrative_area_level_1"]},
+                {"long_name": "United States", "short_name": "US", "types": ["country"]},
+            ],
+            "geometry": {"location": {"lat": 43.615, "lng": -116.2023}},
+        }
+        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test-key"}), patch.object(
+            app, "google_accommodation_geocode", return_value=geocode
+        ), patch.object(app, "google_accommodation_nearby_areas", return_value=[]):
+            point = app.accommodation_location_point("Boise")
+
+        self.assertEqual(point["label"], "Boise, ID")
+        self.assertEqual(app.chat_suggestion_city("Boise"), "Boise, ID")
+        names = {row["name"] for row in app.get_chat_communities_for_user(self.user_id, "Boise")}
+        self.assertIn("Boise Community", names)
+
     @patch.object(
         app,
         "accommodation_location_point",

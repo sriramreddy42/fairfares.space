@@ -42,6 +42,19 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'x', 1)", (name, email))
         return int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
+    @staticmethod
+    def cache_city(con, city, state):
+        metro_key = f"test-{city.lower().replace(' ', '-').replace('.', '')}-{state.lower()}"
+        con.execute(
+            "INSERT INTO accommodation_metros (metro_key, name, country, state, center_city) VALUES (?, ?, 'US', ?, ?)",
+            (metro_key, f"{city} Metro Area", state, city),
+        )
+        metro_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        con.execute(
+            "INSERT INTO accommodation_local_areas (metro_id, place_key, name, city, state) VALUES (?, ?, ?, ?, ?)",
+            (metro_id, f"test-{metro_key}", f"{city}, {state}", city, state),
+        )
+
     def create_group(self):
         group, error = app.create_chat_community(self.owner, "Private travelers", "GROUP", "Trusted members", "Denver")
         self.assertFalse(error)
@@ -98,6 +111,8 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertNotIn("Denver Roommates", {row["name"] for row in invalid_groups})
 
     def test_plain_st_louis_search_gets_canonical_local_suggestions(self):
+        with app.db() as con:
+            self.cache_city(con, "St. Louis", "MO")
         groups = app.get_chat_communities_for_user(self.outsider, "St. Louis")
         suggestions = {row["name"] for row in groups if not row["joined"] and row["area"] == "St. Louis, MO"}
         self.assertEqual(suggestions, {"St. Louis Housing & Roommates", "St. Louis Ride Share", "St. Louis Community"})
@@ -110,6 +125,8 @@ class ChatPrivateGroupsTest(unittest.TestCase):
                 self.assertFalse(error)
                 self.assertTrue(joined["joined"])
 
+        with app.db() as con:
+            self.cache_city(con, "Miami", "FL")
         miami_groups = app.get_chat_communities_for_user(self.outsider, "Miami")
         suggestions = {row["name"] for row in miami_groups if not row["joined"]}
         self.assertEqual(suggestions, {"Miami Housing & Roommates", "Miami Ride Share", "Miami Community"})

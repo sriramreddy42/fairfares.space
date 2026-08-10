@@ -15331,29 +15331,42 @@ def chat_suggestion_city(value: str) -> str:
     lowered = clean.lower()
     if lowered in supported:
         return supported[lowered]
-    common_city_states = {
-        "albuquerque": "Albuquerque, NM", "atlanta": "Atlanta, GA", "baltimore": "Baltimore, MD",
-        "boston": "Boston, MA", "charlotte": "Charlotte, NC", "columbus": "Columbus, OH",
-        "detroit": "Detroit, MI", "el paso": "El Paso, TX", "fort worth": "Fort Worth, TX",
-        "houston": "Houston, TX", "indianapolis": "Indianapolis, IN", "jacksonville": "Jacksonville, FL",
-        "kansas city": "Kansas City, MO", "las vegas": "Las Vegas, NV", "los angeles": "Los Angeles, CA",
-        "louisville": "Louisville, KY", "memphis": "Memphis, TN", "miami": "Miami, FL",
-        "milwaukee": "Milwaukee, WI", "minneapolis": "Minneapolis, MN", "nashville": "Nashville, TN",
-        "new orleans": "New Orleans, LA", "new york": "New York, NY", "oklahoma city": "Oklahoma City, OK",
-        "omaha": "Omaha, NE", "orlando": "Orlando, FL", "philadelphia": "Philadelphia, PA",
-        "phoenix": "Phoenix, AZ", "pittsburgh": "Pittsburgh, PA", "portland": "Portland, OR",
-        "raleigh": "Raleigh, NC", "richmond": "Richmond, VA", "sacramento": "Sacramento, CA",
-        "saint louis": "St. Louis, MO", "salt lake city": "Salt Lake City, UT", "san antonio": "San Antonio, TX",
-        "san diego": "San Diego, CA", "seattle": "Seattle, WA", "st louis": "St. Louis, MO",
-        "st. louis": "St. Louis, MO", "tampa": "Tampa, FL", "tucson": "Tucson, AZ",
-        "virginia beach": "Virginia Beach, VA", "washington": "Washington, DC",
-    }
-    if lowered in common_city_states:
-        return common_city_states[lowered]
     city_only = lowered.split(",", 1)[0].strip()
     matches = [label for key, label in supported.items() if key.split(",", 1)[0].strip() == city_only]
     if len(matches) == 1:
         return matches[0]
+    # Housing/location search geocodes arbitrary U.S. cities and stores their
+    # structured locality and state. Reuse that verified cache instead of
+    # maintaining a static city catalog or accepting arbitrary free-form text.
+    city_candidates = {city_only}
+    if city_only.startswith("saint "):
+        city_candidates.add(f"st. {city_only[6:]}")
+    elif city_only.startswith("st. "):
+        city_candidates.add(f"saint {city_only[4:]}")
+    elif city_only.startswith("st "):
+        city_candidates.update({f"st. {city_only[3:]}", f"saint {city_only[3:]}"})
+    try:
+        with db() as con:
+            placeholders = ",".join("?" for _ in city_candidates)
+            cached_rows = con.execute(
+                f"""
+                SELECT DISTINCT area.city, area.state
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE LOWER(area.city) IN ({placeholders})
+                  AND UPPER(COALESCE(metro.country, 'US')) IN ('US', 'USA')
+                  AND LENGTH(TRIM(area.state)) = 2
+                """,
+                tuple(sorted(city_candidates)),
+            ).fetchall()
+        cached_labels = {
+            f"{str(row['city']).strip()}, {str(row['state']).strip().upper()}"
+            for row in cached_rows if str(row["city"] or "").strip() and str(row["state"] or "").strip()
+        }
+        if len(cached_labels) == 1:
+            return next(iter(cached_labels))
+    except sqlite3.Error:
+        pass
     # Housing search can resolve cities outside the pre-seeded metro catalog.
     # Accept only a compact US City, ST shape so arbitrary search text cannot
     # create public communities.
