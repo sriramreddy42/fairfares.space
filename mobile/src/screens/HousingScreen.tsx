@@ -3415,7 +3415,7 @@ const styles = StyleSheet.create({
   },
   freeServicesPoweredLabel: { color: "rgba(255,255,255,0.82)", fontSize: 7.5, lineHeight: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.35 },
   freeServicesMascot: { width: 18, height: 25 },
-  freeServicesChitthiLogo: { width: 62, height: 22 },
+  freeServicesChitthiLogo: { width: 62, height: 22, marginLeft: -13 },
   freeServicesIconBubble: {
     width: 38,
     height: 38,
