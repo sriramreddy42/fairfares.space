@@ -15319,7 +15319,19 @@ def chat_suggestion_city(value: str) -> str:
         return supported[lowered]
     city_only = lowered.split(",", 1)[0].strip()
     matches = [label for key, label in supported.items() if key.split(",", 1)[0].strip() == city_only]
-    return matches[0] if len(matches) == 1 else ""
+    if len(matches) == 1:
+        return matches[0]
+    # Housing search can resolve cities outside the pre-seeded metro catalog.
+    # Accept only a compact US City, ST shape so arbitrary search text cannot
+    # create public communities.
+    city_state = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{1,49}),\s*([A-Za-z]{2})", clean)
+    us_state_codes = {
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+    }
+    if city_state and city_state.group(2).upper() in us_state_codes:
+        city_name = " ".join(part.capitalize() for part in city_state.group(1).split())
+        return f"{city_name}, {city_state.group(2).upper()}"
+    return ""
 
 
 def ensure_location_chat_communities(con: sqlite3.Connection, city: str) -> str:

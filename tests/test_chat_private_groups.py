@@ -72,6 +72,17 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         denver_groups = app.get_chat_communities_for_user(self.outsider, "Denver, CO")
         self.assertIn(local_group["id"], {row["id"] for row in denver_groups})
 
+    def test_public_group_suggestions_support_searched_us_city(self):
+        seattle_groups = app.get_chat_communities_for_user(self.outsider, "Seattle, WA")
+        seattle_names = {row["name"] for row in seattle_groups}
+        self.assertIn("Seattle Housing & Roommates", seattle_names)
+        self.assertIn("Seattle Ride Share", seattle_names)
+        self.assertIn("Seattle Community", seattle_names)
+
+        # Free-form searches must not create arbitrary public groups.
+        invalid_groups = app.get_chat_communities_for_user(self.outsider, "somewhere near the airport")
+        self.assertNotIn("Somewhere Near The Airport Community", {row["name"] for row in invalid_groups})
+
     def test_invite_is_hashed_and_joins_once(self):
         group = self.create_group()
         token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)

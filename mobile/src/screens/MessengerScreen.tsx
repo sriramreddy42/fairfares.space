@@ -64,6 +64,7 @@ import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 
 type Props = {
   data: BootstrapPayload | null;
+  preferredSuggestionCity?: string;
   pendingPost: HousingPost | null;
   pendingRide: RidePost | null;
   pendingGroupInvite?: string;
@@ -417,7 +418,7 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
-export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
@@ -557,8 +558,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
   useEffect(() => {
     let cancelled = false;
-    const fallbackCity = data?.location.city || "";
+    const searchedCity = String(preferredSuggestionCity || "").trim();
+    const fallbackCity = searchedCity || data?.location.city || "";
     setSuggestionCity(fallbackCity);
+    if (searchedCity) {
+      void getChatCommunities(searchedCity)
+        .then((nextCommunities) => { if (!cancelled) setCommunities(nextCommunities); })
+        .catch(() => undefined);
+      return () => { cancelled = true; };
+    }
     if (Platform.OS === "web") return () => { cancelled = true; };
     void (async () => {
       try {
@@ -576,7 +584,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       }
     })();
     return () => { cancelled = true; };
-  }, [data?.location.city]);
+  }, [data?.location.city, preferredSuggestionCity]);
 
   const visibleEmojis = useMemo(() => {
     const query = emojiSearch.trim().toLowerCase();

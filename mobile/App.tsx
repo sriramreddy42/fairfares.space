@@ -252,6 +252,7 @@ function FairFaresApp() {
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
+  const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -771,6 +772,7 @@ function FairFaresApp() {
     const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setArea(resolvedArea);
     setCity(resolvedCity);
+    setChitthiSuggestionCity(resolvedCity);
     setHousingSearchCoordinates(nextCoordinates);
     setLoading(true);
     try {
@@ -810,6 +812,7 @@ function FairFaresApp() {
     const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setCity(resolvedCity);
     setArea(resolvedArea);
+    setChitthiSuggestionCity(resolvedCity);
     setSearchRadius(cleanRadius);
     setSelectedNeed(nextNeed);
     setHousingSearchCoordinates(nextCoordinates);
@@ -1309,6 +1312,7 @@ function FairFaresApp() {
     ) : activeTab === "messenger" ? (
       <MessengerScreen
         data={data}
+        preferredSuggestionCity={chitthiSuggestionCity}
         pendingPost={pendingPost}
         pendingRide={pendingRide}
         pendingGroupInvite={pendingGroupInvite}
