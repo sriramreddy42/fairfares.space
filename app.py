@@ -1359,11 +1359,15 @@ class FairFaresConnection(sqlite3.Connection):
             self.close()
 
 
-def db() -> sqlite3.Connection:
+def db(busy_timeout_ms: int | None = None) -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection, timeout=30)
+    # Do not let one contended SQLite writer pin an HTTP worker for the mobile
+    # client's entire 30-second timeout. Normal writes complete in milliseconds;
+    # callers receive a retryable 503 when the database remains busy.
+    busy_timeout_ms = max(25, busy_timeout_ms if busy_timeout_ms is not None else positive_int_env("FAIRFARES_DB_BUSY_TIMEOUT_MS", 5000))
+    connection = sqlite3.connect(DB_PATH, factory=FairFaresConnection, timeout=busy_timeout_ms / 1000)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout = 30000")
+    connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     # SQLite does not enforce declared relationships unless this is enabled on
     # every connection. Keep invalid references from entering the database.
     connection.execute("PRAGMA foreign_keys = ON")
@@ -1372,6 +1376,20 @@ def db() -> sqlite3.Connection:
     # request connection: those PRAGMAs can contend with an active transaction
     # and make otherwise read-only endpoints wait behind a writer.
     return connection
+
+
+def touch_session_last_seen_best_effort(session_token: str) -> None:
+    """Refresh session activity without allowing auth reads to queue behind writers."""
+    try:
+        with db(busy_timeout_ms=50) as con:
+            con.execute(
+                "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
+                (session_token,),
+            )
+    except sqlite3.OperationalError:
+        # Missing one activity refresh is harmless; a later request will retry.
+        with _SESSION_TOUCHES_LOCK:
+            _SESSION_TOUCHES.pop(session_token, None)
 
 
 class FairFaresHTTPServer(ThreadingHTTPServer):
@@ -19107,6 +19125,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
                 "error_type": type(exc).__name__,
             }, separators=(",", ":")), flush=True)
+        except sqlite3.OperationalError as exc:
+            # A busy SQLite database is temporary capacity pressure, not an
+            # unhandled application crash. Return an explicit retryable result
+            # before the mobile client's request timeout expires.
+            message = str(exc).lower()
+            error_kind = "database_busy" if ("locked" in message or "busy" in message) else "database_operational_error"
+            print(json.dumps({
+                "event": error_kind,
+                "request_id": self.request_id,
+                "method": str(getattr(self, "command", "")),
+                "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
+            }, separators=(",", ":")), flush=True)
+            if int(getattr(self, "response_status", 0) or 0) == 0:
+                try:
+                    self.send_json(
+                        {"ok": False, "retryable": True, "message": "FairFares is temporarily busy. Please try again."},
+                        503,
+                        {"Retry-After": "1"},
+                    )
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    self.client_disconnected = True
+                    self.close_connection = True
+            else:
+                self.close_connection = True
         except Exception as exc:
             print(json.dumps({
                 "event": "server_exception",
@@ -19777,6 +19819,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     tokens.append(bearer_token)
         if not tokens:
             return None
+        authenticated_session_token = ""
+        should_touch = False
         with db() as con:
             idle_cutoff = f"-{SESSION_IDLE_TIMEOUT_DAYS} days"
             absolute_cutoff = f"-{SESSION_ABSOLUTE_TIMEOUT_DAYS} days"
@@ -19793,9 +19837,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (*tokens, absolute_cutoff, idle_cutoff),
             ).fetchone()
-            should_touch = False
             if user:
                 session_token = str(user["authenticated_session_token"])
+                authenticated_session_token = session_token
                 now = time.monotonic()
                 with _SESSION_TOUCHES_LOCK:
                     last_touch = _SESSION_TOUCHES.get(session_token, 0.0)
@@ -19807,14 +19851,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         for token, touched_at in list(_SESSION_TOUCHES.items()):
                             if touched_at < stale_before:
                                 _SESSION_TOUCHES.pop(token, None)
-            if user and should_touch:
-                con.execute(
-                    "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
-                    (user["authenticated_session_token"],),
-                )
-            elif not user:
-                con.execute(f"DELETE FROM sessions WHERE token IN ({placeholders})", tokens)
-            return user
+        # Authentication itself remains read-only. A contended activity refresh
+        # must never delay login checks, conversation lists, or message sends.
+        if user and should_touch:
+            touch_session_last_seen_best_effort(authenticated_session_token)
+        return user
 
     def send_html(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
@@ -20814,6 +20855,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
                         read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
                     WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                      AND (delivered_at IS NULL OR read_at IS NULL)
                     """,
                     (conversation["id"], current_user_id),
                 )
@@ -20843,9 +20885,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """
                     UPDATE chat_participants
                     SET last_read_message_id = MAX(last_read_message_id, ?)
-                    WHERE conversation_id = ? AND user_id = ?
+                    WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                     """,
-                    (last_message_id, conversation["id"], current_user_id),
+                    (last_message_id, conversation["id"], current_user_id, last_message_id),
                 )
         self.send_json(
             {
@@ -20912,6 +20954,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
                             read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
                         WHERE conversation_id = ? AND sender_id != ? AND id <= ? AND deleted_at IS NULL
+                          AND (delivered_at IS NULL OR read_at IS NULL)
                         """,
                         (conversation_id, current_user_id, newest_incoming_id),
                     )
@@ -20919,9 +20962,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """
                         UPDATE chat_participants
                         SET last_read_message_id = MAX(last_read_message_id, ?)
-                        WHERE conversation_id = ? AND user_id = ?
+                        WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                         """,
-                        (newest_incoming_id, conversation_id, current_user_id),
+                        (newest_incoming_id, conversation_id, current_user_id, newest_incoming_id),
                     )
                 receipt_rows = con.execute(
                     """
@@ -21187,6 +21230,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ) if message_text else None
             full_conversation = get_chat_conversation_for_user(con, int(conversation["id"]), int(user["id"])) or conversation
             if message:
+                con.commit()
                 self.notify_chat_recipients(con, full_conversation, user, message)
             conversation_payload = chat_row_payload(full_conversation, int(user["id"]))
         self.send_json(
@@ -21504,6 +21548,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": error}, 409)
                 return
             if not bool(form.get("silent")):
+                con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
 
@@ -21521,6 +21566,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (int(message["conversation_id"]),)).fetchone()
             sender = con.execute("SELECT * FROM users WHERE id = ?", (int(message["sender_id"]),)).fetchone()
             if conversation and sender:
+                con.commit()
                 self.notify_chat_recipients(con, conversation, sender, message)
         self.send_json({"ok": True, "messageId": int(message["id"])}, 201)
 
@@ -21569,6 +21615,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
             if not bool(payload.get("silent")):
+                con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
 
@@ -21641,6 +21688,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": block_error}, 403)
                 return
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
+            con.commit()
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))})
 
@@ -21745,6 +21793,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (int(message["id"]),),
             ).fetchone()
+            con.commit()
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
 
@@ -21809,6 +21858,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             message = save_chat_message(con, int(conversation["id"]), user, message_text, client_message_id)
             con.execute("UPDATE chat_messages SET message_type = ?, metadata_json = ? WHERE id = ?", (message_type, json.dumps(clean_metadata), int(message["id"])))
             message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
+            con.commit()
             self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
 
@@ -22214,9 +22264,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 UPDATE chat_participants
                 SET last_read_message_id = MAX(last_read_message_id, ?)
-                WHERE conversation_id = ? AND user_id = ?
+                WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                 """,
-                (last_message_id, conversation["id"], user["id"]),
+                (last_message_id, conversation["id"], user["id"], last_message_id),
             )
         self.send_json({"ok": True})
 

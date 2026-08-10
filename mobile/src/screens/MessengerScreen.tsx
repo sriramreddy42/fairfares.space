@@ -31,7 +31,6 @@ import {
   joinChatGroupInvite,
   previewChatGroupInvite,
   leaveChatGroup,
-  markChatRead,
   muteChatConversation,
   openChatForRide,
   openChatForPost,
@@ -984,7 +983,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
           });
           if ((payload.messages || []).some((message) => !message.mine)) {
-            await markChatRead(activeConversationId, String(cursor));
             const nextConversations = await decryptConversationPreviews(await getChatConversations());
             if (cancelled) return;
             setConversations(nextConversations);
@@ -1251,9 +1249,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
         setConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, unread: 0 } : item));
-        void markChatRead(conversation.id, String(lastMessage.id))
-          .then(() => refreshMessenger({ showLoader: false, showError: false }))
-          .catch(() => undefined);
+        void refreshMessenger({ showLoader: false, showError: false });
       } else {
         void refreshMessenger({ showLoader: false, showError: false });
       }
@@ -1693,9 +1689,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
-        void markChatRead(response.conversation.id, String(lastMessage.id))
-          .then(() => refreshMessenger({ showLoader: false, showError: false }))
-          .catch(() => undefined);
+        void refreshMessenger({ showLoader: false, showError: false });
       } else {
         void refreshMessenger({ showLoader: false, showError: false });
       }
