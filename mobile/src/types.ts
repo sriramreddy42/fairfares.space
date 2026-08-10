@@ -225,6 +225,7 @@ export type RidePost = {
   dispatchRespondedAt?: string;
   acceptedDriverName?: string;
   acceptedDriverRideId?: string;
+  acceptedVehicleNumber?: string;
   matchedRideId?: string;
   matchedRouteTitle?: string;
   matchedRouteOrigin?: string;

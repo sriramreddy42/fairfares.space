@@ -14296,6 +14296,16 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                 clean_text_value(row_value(request_row, "destination_label") or row_value(request_row, "destination"), 90),
             ) if value
         )
+        driver_profile = con.execute(
+            "SELECT license_plate, license_state FROM ride_driver_profiles WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        vehicle_number = " ".join(
+            value for value in (
+                clean_text_value(row_value(driver_profile, "license_state"), 12) if driver_profile else "",
+                clean_text_value(row_value(driver_profile, "license_plate"), 24) if driver_profile else "",
+            ) if value
+        )
     status_titles = {
         "ACCEPTED": "Carpool request accepted",
         "DECLINED": "Carpool request declined",
@@ -14306,7 +14316,7 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
     send_mobile_push_for_users(
         [requester_user_id],
         status_titles.get(next_status, "Carpool request updated"),
-        route_label or "Open FairFares to review your carpool activity.",
+        (f"Vehicle: {vehicle_number}. {route_label}" if next_status == "ARRIVED" and vehicle_number else route_label) or "Open FairFares to review your carpool activity.",
         {"type": "CARPOOL_STATUS", "rideId": ride_public_id, "status": next_status, "target": "activity"},
     )
     response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)
@@ -29275,10 +29285,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if row_value(row, "rider_role") == "RIDER":
                     accepted = con.execute(
                         """
-                        SELECT notifications.*, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id
+                        SELECT notifications.*, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
+                               driver_profiles.license_plate AS driver_license_plate,
+                               driver_profiles.license_state AS driver_license_state
                         FROM ride_dispatch_notifications notifications
                         JOIN users ON users.id = notifications.driver_user_id
                         JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
+                        LEFT JOIN ride_driver_profiles driver_profiles ON driver_profiles.user_id = notifications.driver_user_id
                         WHERE notifications.request_ride_post_id = ?
                           AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
                         ORDER BY datetime(notifications.responded_at) DESC
@@ -29298,6 +29311,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         payload["routeDeviationMinutes"] = int(row_value(accepted, "route_deviation_minutes") or 0)
                         payload["acceptedDriverName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["acceptedDriverRideId"] = row_value(accepted, "driver_ride_public_id")
+                        if str(payload["dispatchStatus"]).upper() in {"ARRIVED", "IN_PROGRESS"}:
+                            payload["acceptedVehicleNumber"] = " ".join(
+                                value for value in (
+                                    clean_text_value(row_value(accepted, "driver_license_state"), 12),
+                                    clean_text_value(row_value(accepted, "driver_license_plate"), 24),
+                                ) if value
+                            )
                         payload["ownerUserId"] = driver_user_id
                         payload["ownerName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
