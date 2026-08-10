@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Image, ImageSourcePropType, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Image, ImageSourcePropType, LayoutChangeEvent, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { AdaptiveGlassView } from "./AdaptiveGlassView";
@@ -32,6 +32,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
   const indicatorX = useRef(new Animated.Value(0)).current;
   const indicatorStretch = useRef(new Animated.Value(1)).current;
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.key === active));
+  const useNativeAnimationDriver = Platform.OS !== "web";
 
   useEffect(() => {
     if (!barWidth) return;
@@ -43,14 +44,14 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
         damping: 18,
         stiffness: 155,
         mass: 0.72,
-        useNativeDriver: true
+        useNativeDriver: useNativeAnimationDriver
       }),
       Animated.sequence([
-        Animated.timing(indicatorStretch, { toValue: 1.28, duration: 110, useNativeDriver: true }),
-        Animated.spring(indicatorStretch, { toValue: 1, damping: 12, stiffness: 190, useNativeDriver: true })
+        Animated.timing(indicatorStretch, { toValue: 1.28, duration: 110, useNativeDriver: useNativeAnimationDriver }),
+        Animated.spring(indicatorStretch, { toValue: 1, damping: 12, stiffness: 190, useNativeDriver: useNativeAnimationDriver })
       ])
     ]).start();
-  }, [activeIndex, barWidth, indicatorStretch, indicatorX]);
+  }, [activeIndex, barWidth, indicatorStretch, indicatorX, useNativeAnimationDriver]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const width = event.nativeEvent.layout.width;
@@ -68,7 +69,12 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
       {barWidth > 0 ? (
         <Animated.View pointerEvents="none" style={[styles.indicatorMotion, { transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }] }]}>
           <AdaptiveGlassView
-            style={[styles.liquidIndicator, active === "messenger" && styles.chittiIndicator]}
+            style={[
+              styles.liquidIndicator,
+              Platform.OS !== "ios" && styles.fallbackLiquidIndicator,
+              active === "messenger" && styles.chittiIndicator,
+              active === "messenger" && Platform.OS !== "ios" && styles.chittiFallbackIndicator
+            ]}
             tintColor={active === "messenger" ? "#17653C" : "#FFFFFF"}
             fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(255,255,255,0.13)"}
             intensity={72}
@@ -148,8 +154,20 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.22)",
     overflow: "hidden"
   },
+  fallbackLiquidIndicator: {
+    backgroundColor: "rgba(255,255,255,0.14)",
+    shadowColor: "#FFFFFF",
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4
+  },
   chittiIndicator: {
     borderColor: "rgba(91,211,118,0.40)"
+  },
+  chittiFallbackIndicator: {
+    backgroundColor: "rgba(24,111,61,0.68)",
+    shadowColor: "#35D06F"
   },
   icon: {
     width: 38,
