@@ -491,6 +491,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [groupDraft, setGroupDraft] = useState(blankGroup);
   const [groupPhoto, setGroupPhoto] = useState("");
   const [feedbackCardDismissed, setFeedbackCardDismissed] = useState(false);
+  const [groupSuggestionsDismissed, setGroupSuggestionsDismissed] = useState(false);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const activeGroup = useMemo(
@@ -545,6 +546,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     AsyncStorage.getItem(storageKey)
       .then((value) => setFeedbackCardDismissed(value === "1"))
       .catch(() => setFeedbackCardDismissed(false));
+  }, [data?.user?.id]);
+
+  useEffect(() => {
+    const storageKey = `fairfares.chitthi.group-suggestions-dismissed.${data?.user?.id || "guest"}`;
+    AsyncStorage.getItem(storageKey)
+      .then((value) => setGroupSuggestionsDismissed(value === "1"))
+      .catch(() => setGroupSuggestionsDismissed(false));
   }, [data?.user?.id]);
 
   const visibleEmojis = useMemo(() => {
@@ -1036,10 +1044,22 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       if (!matchesSearch) return false;
       if (tab === "Communities") return community.kind === "COMMUNITY";
       if (tab !== "All" && tab !== "Groups") return false;
+      if (!community.joined) return false;
       if (tab === "Groups" && community.kind !== "GROUP") return false;
       return !activeCommunityIds.has(community.id);
     });
   }, [communities, personConversations, search, tab]);
+
+  const suggestedCommunities = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (groupSuggestionsDismissed || (tab !== "All" && tab !== "Groups" && tab !== "Communities")) return [];
+    return communities.filter((community) => {
+      if (community.joined) return false;
+      if (tab === "Groups" && community.kind !== "GROUP") return false;
+      if (tab === "Communities" && community.kind !== "COMMUNITY") return false;
+      return !query || `${community.name} ${community.description} ${community.area}`.toLowerCase().includes(query);
+    });
+  }, [communities, groupSuggestionsDismissed, search, tab]);
 
   function communityGlyph(name: string) {
     const value = name.toLowerCase();
@@ -2833,6 +2853,36 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </TouchableOpacity>
           </TouchableOpacity>
         ) : null}
+        {suggestedCommunities.length ? (
+          <View style={styles.groupSuggestionsSection}>
+            <View style={styles.groupSuggestionsHeader}>
+              <View style={styles.groupSuggestionsCopy}>
+                <Text style={styles.groupSuggestionsTitle}>Suggested groups</Text>
+                <Text style={styles.groupSuggestionsSubtitle}>Public FairFares groups you can join</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.groupSuggestionsDismiss}
+                accessibilityLabel="Dismiss suggested groups"
+                onPress={() => {
+                  setGroupSuggestionsDismissed(true);
+                  void AsyncStorage.setItem(`fairfares.chitthi.group-suggestions-dismissed.${data?.user?.id || "guest"}`, "1");
+                }}
+              >
+                <Text style={styles.groupSuggestionsDismissText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            {suggestedCommunities.map((community) => (
+              <TouchableOpacity key={`suggested-${community.id}`} style={styles.suggestedGroupRow} onPress={() => void openCommunityThread(community)}>
+                <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
+                <View style={styles.chatCopy}>
+                  <Text style={styles.chatName}>{community.name}</Text>
+                  <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
+                </View>
+                <View style={styles.suggestedJoinButton}><Text style={styles.suggestedJoinText}>Join</Text></View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -3429,5 +3479,15 @@ const styles = StyleSheet.create({
   feedbackChatCopy: { color: "#c4cec7", fontSize: 11.5, lineHeight: 15, marginTop: 2 },
   feedbackChatArrow: { color: "#efbd68", fontSize: 25, fontWeight: "300" },
   feedbackChatDismiss: { position: "absolute", top: 3, right: 5, width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(2,18,13,0.58)", zIndex: 3 },
-  feedbackChatDismissText: { color: "#f4d99e", fontSize: 18, lineHeight: 21, fontWeight: "500" }
+  feedbackChatDismissText: { color: "#f4d99e", fontSize: 18, lineHeight: 21, fontWeight: "500" },
+  groupSuggestionsSection: { marginBottom: 12, padding: 10, borderRadius: 20, borderWidth: 1, borderColor: "rgba(219,180,107,0.22)", backgroundColor: "rgba(7,24,22,0.74)", gap: 7 },
+  groupSuggestionsHeader: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 3 },
+  groupSuggestionsCopy: { flex: 1, minWidth: 0 },
+  groupSuggestionsTitle: { color: "#efbd68", fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
+  groupSuggestionsSubtitle: { color: "#9eaaa2", fontSize: 10.5, marginTop: 2 },
+  groupSuggestionsDismiss: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)" },
+  groupSuggestionsDismissText: { color: "#cbd2cd", fontSize: 20, lineHeight: 23 },
+  suggestedGroupRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 15, backgroundColor: "rgba(20,51,40,0.72)" },
+  suggestedJoinButton: { minWidth: 48, height: 30, paddingHorizontal: 10, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#1b8551" },
+  suggestedJoinText: { color: "#fff", fontSize: 11, fontWeight: "800" }
 });
