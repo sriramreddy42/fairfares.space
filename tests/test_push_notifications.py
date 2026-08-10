@@ -91,7 +91,8 @@ class PushNotificationTest(unittest.TestCase):
         request = mock_open.call_args.args[0]
         messages = json.loads(request.data.decode("utf-8"))
         self.assertEqual([message["to"] for message in messages], [good_token, stale_token])
-        self.assertTrue(all(message["channelId"] == "carpool" for message in messages))
+        self.assertTrue(all(message["channelId"] == "carpool-v2" for message in messages))
+        self.assertTrue(all(message["sound"] == "default" for message in messages))
         self.assertEqual(messages[0]["data"]["rideId"], "ride-1")
         with app.db() as con:
             states = {row["token"]: row["enabled"] for row in con.execute("SELECT token, enabled FROM mobile_push_tokens")}
@@ -136,9 +137,26 @@ class PushNotificationTest(unittest.TestCase):
                 {"type": "FAIRFARES_PROMO", "target": "rentals", "imageUrl": image_url},
             )
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
-        self.assertEqual(message["channelId"], "marketing")
+        self.assertEqual(message["channelId"], "marketing-v2")
         self.assertTrue(message["mutableContent"])
         self.assertEqual(message["richContent"], {"image": image_url})
+
+    def test_chat_payload_carries_unread_badge(self):
+        token = "ExpoPushToken[badge-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-badge"}]})
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push(token.split(), "New message", "Hello", {"type": "FCHAT_MESSAGE", "badge": 4})
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["badge"], 4)
+
+    def test_transient_expo_failure_is_retried(self):
+        token = "ExpoPushToken[retry-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-retry"}]})
+        with patch.object(app.urllib.request, "urlopen", side_effect=[OSError("temporary"), response]) as mock_open, patch.object(app.time, "sleep"):
+            app.send_expo_push([token], "Rental updated", "Ready", {"type": "RENTAL_BOOKING"})
+        self.assertEqual(mock_open.call_count, 2)
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["channelId"], "rentals-v2")
 
     def test_fchat_avatar_urls_are_short_lived_and_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
@@ -164,7 +182,7 @@ class PushNotificationTest(unittest.TestCase):
                 {"type": "RENTAL_BOOKING", "event": "PAYMENT_CONFIRMED", "bookingId": "FF-100"},
             )
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
-        self.assertEqual(messages[0]["channelId"], "rentals")
+        self.assertEqual(messages[0]["channelId"], "rentals-v2")
         self.assertEqual(messages[0]["data"]["bookingId"], "FF-100")
         self.assertNotIn("mutableContent", messages[0])
 

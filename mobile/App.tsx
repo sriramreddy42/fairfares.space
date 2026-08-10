@@ -36,6 +36,12 @@ const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || "go
 const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || "google-android-client-not-configured";
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || "google-web-client-not-configured";
 const IS_EXPO_GO = Constants.appOwnership === "expo";
+const NOTIFICATION_CHANNELS = {
+  chitthi: "chitthi-messages-v2",
+  carpool: "carpool-v2",
+  rentals: "rentals-v2",
+  marketing: "marketing-v2"
+} as const;
 const GOOGLE_AUTH_CONFIGURED = Platform.select({
   ios: !GOOGLE_IOS_CLIENT_ID.includes("not-configured"),
   android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured"),
@@ -281,6 +287,7 @@ function FairFaresApp() {
   const launchPromiseOffset = useRef(new Animated.Value(10)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
+  const notificationPermissionPromptShownRef = useRef(false);
   async function enableMobileNotifications(requestPermission = true) {
     if (Platform.OS === "web" || !Device.isDevice) {
       return false;
@@ -288,28 +295,31 @@ function FairFaresApp() {
     try {
       if (Platform.OS === "android") {
         await Promise.all([
-          Notifications.setNotificationChannelAsync("chitthi-messages-v2", {
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.chitthi, {
             name: "Chitthi messages",
             importance: Notifications.AndroidImportance.HIGH,
             sound: "default",
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#4f7cff"
           }),
-          Notifications.setNotificationChannelAsync("carpool", {
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.carpool, {
             name: "Carpool activity",
             importance: Notifications.AndroidImportance.HIGH,
+            sound: "default",
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#22c55e"
           }),
-          Notifications.setNotificationChannelAsync("rentals", {
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.rentals, {
             name: "Rental bookings",
             importance: Notifications.AndroidImportance.HIGH,
+            sound: "default",
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#f59e0b"
           }),
-          Notifications.setNotificationChannelAsync("marketing", {
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.marketing, {
             name: "FairFares ideas and deals",
             importance: Notifications.AndroidImportance.DEFAULT,
+            sound: "default",
             vibrationPattern: [0, 180],
             lightColor: "#4f7cff"
           })
@@ -318,6 +328,17 @@ function FairFaresApp() {
       let permission = await Notifications.getPermissionsAsync();
       if (permission.status !== "granted" && requestPermission) permission = await Notifications.requestPermissionsAsync();
       if (permission.status !== "granted") {
+        if (requestPermission && !notificationPermissionPromptShownRef.current) {
+          notificationPermissionPromptShownRef.current = true;
+          Alert.alert(
+            "Turn on notifications",
+            "Enable notifications in Settings to hear Chitthi messages and receive carpool and rental updates.",
+            [
+              { text: "Not now", style: "cancel" },
+              { text: "Open Settings", onPress: () => void Linking.openSettings() }
+            ]
+          );
+        }
         return false;
       }
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
@@ -335,6 +356,9 @@ function FairFaresApp() {
   }
 
   async function unregisterNotificationsForLogout() {
+    if (Platform.OS !== "web") {
+      await Notifications.setBadgeCountAsync(0).catch(() => false);
+    }
     if (!pushTokenRef.current || !data?.user) return;
     try {
       const deviceId = (await getOrCreateDeviceIdentity(Number(data.user.id))).deviceId;
@@ -422,6 +446,16 @@ function FairFaresApp() {
   }, [data?.user?.id]);
 
   useEffect(() => {
+    if (Platform.OS === "web" || !data?.user) return;
+    const subscription = Notifications.addPushTokenListener(() => {
+      // Expo push tokens can rotate after the underlying APNs/FCM token changes.
+      // Re-fetch and register the current Expo token immediately.
+      void enableMobileNotifications(false);
+    });
+    return () => subscription.remove();
+  }, [data?.user?.id]);
+
+  useEffect(() => {
     if (googleResponse?.type !== "success") return;
     const response = googleResponse as typeof googleResponse & {
       authentication?: { idToken?: string } | null;
@@ -449,6 +483,9 @@ function FairFaresApp() {
           chat: { unreadCount, conversations: conversations.slice(0, 10) },
           dashboard: { ...current.dashboard, messages: unreadCount }
         } : current);
+        if (Platform.OS !== "web") {
+          await Notifications.setBadgeCountAsync(unreadCount).catch(() => false);
+        }
       } catch {
         // Keep the last confirmed count during short network interruptions.
       }
@@ -468,7 +505,7 @@ function FairFaresApp() {
         setPendingPost(null);
         setPendingRide(null);
         setActiveTab("messenger");
-      } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS") {
+      } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
         setPendingPost(null);
         setPendingRide(null);
         setRideOwnerOpenToken(0);

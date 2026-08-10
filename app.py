@@ -16800,7 +16800,11 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     notification_type = str(notification_data.get("type") or "")
     image_url = str(notification_data.get("imageUrl") or "").strip()
     rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
-    channel_id = "marketing" if notification_type == "FAIRFARES_PROMO" else "rentals" if notification_type == "RENTAL_BOOKING" else "carpool" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
+    channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
+    try:
+        badge_count = max(0, int(notification_data.get("badge") or 0))
+    except (TypeError, ValueError):
+        badge_count = 0
     for offset in range(0, len(valid_tokens), 100):
         token_batch = valid_tokens[offset:offset + 100]
         messages = [
@@ -16811,6 +16815,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "body": body[:240],
                 "data": notification_data,
                 "channelId": channel_id,
+                **({"badge": badge_count} if badge_count else {}),
                 **({"mutableContent": True, "categoryId": "FCHAT_MESSAGE"} if notification_type == "FCHAT_MESSAGE" else {}),
                 **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
             }
@@ -16823,8 +16828,20 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                payload = json.loads(response.read().decode("utf-8") or "{}")
+            payload: dict[str, object] = {}
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(request, timeout=8) as response:
+                        payload = json.loads(response.read().decode("utf-8") or "{}")
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        time.sleep(0.25 * (2 ** attempt))
+            if last_error is not None:
+                raise last_error
             tickets = payload.get("data") if isinstance(payload, dict) else []
             invalid_tokens: list[str] = []
             if isinstance(tickets, list):
@@ -20574,6 +20591,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         for recipient in recipients:
             recipient_id = int(row_value(recipient, "id") or 0)
             if not row_value(recipient, "chat_muted_at") and recipient_id:
+                unread_badge = int(con.execute(
+                    """
+                    SELECT COUNT(*) AS unread_count
+                    FROM chat_participants participant
+                    JOIN chat_messages unread_message
+                      ON unread_message.conversation_id = participant.conversation_id
+                     AND unread_message.id > participant.last_read_message_id
+                     AND unread_message.sender_id != participant.user_id
+                     AND unread_message.deleted_at IS NULL
+                    WHERE participant.user_id = ?
+                    """,
+                    (recipient_id,),
+                ).fetchone()["unread_count"] or 0)
                 token_rows = con.execute(
                     "SELECT token, device_id FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
                     (recipient_id,),
@@ -20590,6 +20620,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",
                         "previewNonce": str(row_value(envelope, "preview_nonce") or "") if envelope else "",
                         "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
+                        "badge": unread_badge,
                     }))
             email = normalize_email(row_value(recipient, "email"))
             if not email:
