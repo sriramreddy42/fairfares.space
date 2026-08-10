@@ -1698,6 +1698,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     ]);
   }
 
+  async function messageGroupMember(member: ChatGroupMember) {
+    if (member.isCurrentUser) return;
+    setGroupMembersOpen(false);
+    setGroupMemberSearch("");
+    await openContactChat({ id: member.id, name: member.name });
+  }
+
   async function leaveActiveGroup() {
     const communityId = activeConversation?.communityId || "";
     if (!communityId) return;
@@ -2301,10 +2308,11 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 {filteredGroupMembers.map((member) => {
                   const currentRole = groupMembers.find((item) => item.isCurrentUser)?.role || "MEMBER";
                   const canManage = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
-                  return <TouchableOpacity key={member.id} style={styles.groupMemberRow} activeOpacity={canManage ? 0.65 : 1} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`${member.name}, ${member.role.toLowerCase()}`}>
+                  return <TouchableOpacity key={member.id} style={styles.groupMemberRow} disabled={member.isCurrentUser} activeOpacity={0.65} onPress={() => void messageGroupMember(member)} onLongPress={canManage ? () => showGroupMemberActions(member) : undefined} accessibilityLabel={member.isCurrentUser ? `${member.name}, you` : `Message ${member.name} privately`}>
                     <View style={styles.groupMemberAvatar}>{chatPhotoUrl(member.photoUrl) ? <Image source={{ uri: chatPhotoUrl(member.photoUrl) }} style={styles.groupMemberAvatarImage} /> : <Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text>}</View>
-                    <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? "Add a member tag" : member.role === "MEMBER" ? "Group member" : member.role === "ADMIN" ? "Group admin" : "Group owner"}</Text></View>
-                    {member.role !== "MEMBER" ? <Text style={styles.groupMemberRole}>{member.role === "OWNER" ? "Owner" : "Admin"}</Text> : null}{canManage ? <Text style={styles.groupMemberChevron}>›</Text> : null}
+                    <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? "Add a member tag" : "Tap to message privately"}</Text></View>
+                    {member.role !== "MEMBER" ? <Text style={styles.groupMemberRole}>{member.role === "OWNER" ? "Owner" : "Admin"}</Text> : null}
+                    {canManage ? <TouchableOpacity style={styles.groupMemberManageButton} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`Manage ${member.name}`}><Text style={styles.groupMemberManageIcon}>•••</Text></TouchableOpacity> : !member.isCurrentUser ? <Text style={styles.groupMemberChevron}>›</Text> : null}
                   </TouchableOpacity>;
                 })}
                 {!filteredGroupMembers.length ? <Text style={styles.groupMembersEmpty}>No members match your search.</Text> : null}
@@ -3314,6 +3322,8 @@ const styles = StyleSheet.create({
   groupMemberSubtext: { color: "#757C77", fontSize: 12, marginTop: 3 },
   groupMemberAddText: { color: "#118A55", fontSize: 15, fontWeight: "800" },
   groupMemberRole: { color: "#118A55", fontSize: 12, fontWeight: "700" },
+  groupMemberManageButton: { minWidth: 34, height: 34, borderRadius: 17, backgroundColor: "#EFF3EF", alignItems: "center", justifyContent: "center" },
+  groupMemberManageIcon: { color: "#66706A", fontSize: 13, fontWeight: "900", letterSpacing: -1 },
   groupMemberChevron: { color: "#8D938F", fontSize: 27, fontWeight: "300" },
   groupMembersEmpty: { color: "#767D78", fontSize: 14, textAlign: "center", paddingVertical: 24 },
   leaveGroupButton: { minHeight: 54, borderRadius: 16, borderWidth: 1, borderColor: "#F0C7CC", backgroundColor: "#FFF", alignItems: "center", justifyContent: "center" },
