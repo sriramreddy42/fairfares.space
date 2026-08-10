@@ -91,6 +91,10 @@ function reportApiDiagnostic(kind: "api_5xx" | "network_failure", message: strin
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
     .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]")
     .slice(0, 500);
+  // If browser networking/CORS is already unavailable, a second request to
+  // the same API can only create another console error. Keep the local
+  // reference and let the original GET retry instead.
+  if (Platform.OS === "web" && kind === "network_failure") return referenceId;
   void fetch(`${API_URL}/api/mobile/diagnostics`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
@@ -184,7 +188,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
-    const attempts = method === "GET" ? 2 : 1;
+    // Render deploys and upstream gateways may briefly return a proxy-generated
+    // 502 without application CORS headers. Browsers surface that as a network
+    // TypeError, so remote idempotent GETs need a slightly longer retry window.
+    const attempts = method === "GET" ? (EXPLICIT_API_URL ? 4 : 2) : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const controller = new AbortController();
       const timeoutMs = isAttachmentUpload ? 45000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
@@ -207,7 +214,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
           enrichedError.fairFaresPayload = payload;
           if ([502, 503, 504].includes(response.status) && attempt + 1 < attempts) {
             lastError = httpError.message;
-            await wait(500 * (attempt + 1));
+            await wait([500, 1250, 2500][attempt] || 2500);
             continue;
           }
           if (response.status >= 500) {
@@ -222,7 +229,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
         if (status) throw error;
         lastError = error instanceof Error ? error.message : String(error);
-        if (attempt + 1 < attempts) await wait(500 * (attempt + 1));
+        if (attempt + 1 < attempts) await wait([500, 1250, 2500][attempt] || 2500);
       } finally {
         clearTimeout(timeout);
       }
