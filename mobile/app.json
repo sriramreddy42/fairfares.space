@@ -43,7 +43,7 @@
     },
     "android": {
       "package": "com.fairfares.mobile",
-      "versionCode": 10,
+      "versionCode": 11,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
