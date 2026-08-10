@@ -193,6 +193,11 @@ function rideActionLabel(ride: RidePost) {
   return ride.role === "DRIVER" ? "Driver offer" : "Ride request";
 }
 
+function ratingTargetName(ride: RidePost) {
+  if (isIncomingRiderRequest(ride)) return ride.ownerName || "your rider";
+  return ride.acceptedDriverName || ride.ownerName || "your driver";
+}
+
 function CarOutlineIcon() {
   return (
     <View style={styles.carIconCanvas}>
@@ -712,11 +717,21 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     <Modal visible={Boolean(ratingRide)} transparent animationType="fade" onRequestClose={() => setRatingRide(null)}>
       <View style={styles.ratingBackdrop}>
         <View style={styles.ratingSheet}>
-          <Text style={styles.ratingTitle}>Rate your {ratingRide && isIncomingRiderRequest(ratingRide) ? "rider" : "driver"}</Text>
-          <Text style={styles.ratingCopy}>Your feedback is tied to this completed trip and helps build safer community reputation.</Text>
-          <View style={styles.ratingStars}>{[1, 2, 3, 4, 5].map((score) => <TouchableOpacity key={score} style={styles.ratingStarButton} onPress={() => setRatingScore(score)} accessibilityLabel={`${score} star rating`}><Text style={[styles.ratingStar, score <= ratingScore && styles.ratingStarSelected]}>★</Text></TouchableOpacity>)}</View>
-          <TextInput style={styles.ratingComment} value={ratingComment} onChangeText={setRatingComment} placeholder="Optional private feedback" placeholderTextColor={theme.colors.muted} multiline maxLength={500} />
-          <View style={styles.ratingActions}><TouchableOpacity style={styles.ratingCancel} onPress={() => setRatingRide(null)}><Text style={styles.ratingCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.ratingSubmit, !ratingScore && styles.ratingSubmitDisabled]} disabled={!ratingScore || Boolean(rideActionBusyId)} onPress={() => void submitRideRating()}><Text style={styles.ratingSubmitText}>{rideActionBusyId ? "Submitting..." : "Submit rating"}</Text></TouchableOpacity></View>
+          <TouchableOpacity style={styles.ratingClose} onPress={() => setRatingRide(null)} accessibilityLabel="Close rating"><Text style={styles.ratingCloseText}>×</Text></TouchableOpacity>
+          <ScrollView style={styles.ratingScroll} contentContainerStyle={styles.ratingContent} showsVerticalScrollIndicator={false}>
+            <Text style={styles.ratingEyebrow}>Completed carpool</Text>
+            <Text style={styles.ratingTitle}>How was your trip with {ratingRide ? ratingTargetName(ratingRide) : "this member"}?</Text>
+            <View style={styles.ratingPersonRow}><View style={styles.ratingPersonAvatar}><Text style={styles.ratingPersonAvatarText}>{ratingRide ? ratingTargetName(ratingRide).split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() : "FF"}</Text></View><View style={styles.ratingPersonCopy}><Text style={styles.ratingPersonName}>{ratingRide ? ratingTargetName(ratingRide) : "FairFares member"}</Text><Text style={styles.ratingPersonRole}>{ratingRide && isIncomingRiderRequest(ratingRide) ? "Rider" : "Driver"} · FairFares member</Text></View></View>
+            {ratingRide ? <View style={styles.ratingTripCard}><Text style={styles.ratingTripLabel}>Trip summary</Text><Text style={styles.ratingTripRoute}>{routeLabel(ratingRide)}</Text><View style={styles.ratingTripMetaRow}><Text style={styles.ratingTripMeta}>{compactDate(ratingRide.pickupDate || ratingRide.startDate, ratingRide.pickupTime)}</Text><Text style={styles.ratingTripContribution}>{ratingRide.contributionPerSeat ? `${money(ratingRide.contributionPerSeat)} agreed contribution` : "Direct agreement"}</Text></View></View> : null}
+            <View style={styles.ratingDivider} />
+            <Text style={styles.ratingSectionTitle}>Rate your trip</Text>
+            <Text style={styles.ratingCopy}>Your rating helps build a safer and more dependable FairFares community.</Text>
+            <View style={styles.ratingStars}>{[1, 2, 3, 4, 5].map((score) => <TouchableOpacity key={score} style={styles.ratingStarButton} onPress={() => setRatingScore(score)} accessibilityLabel={`${score} star rating`}><Text style={[styles.ratingStar, score <= ratingScore && styles.ratingStarSelected]}>★</Text></TouchableOpacity>)}</View>
+            <Text style={styles.ratingScoreLabel}>{ratingScore ? ["", "Poor", "Fair", "Good", "Great", "Excellent"][ratingScore] : "Tap a star to rate"}</Text>
+            <Text style={styles.ratingFeedbackLabel}>Private feedback <Text style={styles.ratingOptional}>· Optional</Text></Text>
+            <TextInput style={styles.ratingComment} value={ratingComment} onChangeText={setRatingComment} placeholder="Share anything FairFares should know" placeholderTextColor={theme.colors.muted} multiline maxLength={500} />
+          </ScrollView>
+          <TouchableOpacity style={[styles.ratingSubmit, !ratingScore && styles.ratingSubmitDisabled]} disabled={!ratingScore || Boolean(rideActionBusyId)} onPress={() => void submitRideRating()}><Text style={styles.ratingSubmitText}>{rideActionBusyId ? "Submitting..." : ratingScore ? `Submit ${ratingScore}-star rating` : "Choose a rating"}</Text></TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -766,19 +781,38 @@ const styles = StyleSheet.create({
   secondaryPillText: { color: theme.colors.text, fontWeight: "500", fontSize: 12 },
   ratedPill: { backgroundColor: "rgba(245,166,35,0.15)", borderWidth: 1, borderColor: "rgba(245,166,35,0.45)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
   ratedPillText: { color: "#F5B942", fontWeight: "800", fontSize: 12 },
-  ratingBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.72)", justifyContent: "flex-end", padding: 14 },
-  ratingSheet: { backgroundColor: theme.colors.panel, borderRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 20, paddingBottom: Platform.OS === "ios" ? 30 : 20 },
-  ratingTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
-  ratingCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 7 },
-  ratingStars: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginVertical: 19 },
-  ratingStarButton: { width: 54, height: 54, alignItems: "center", justifyContent: "center" },
-  ratingStar: { color: "#4B4F55", fontSize: 40 },
+  ratingBackdrop: { flex: 1, backgroundColor: theme.colors.bg },
+  ratingSheet: { flex: 1, backgroundColor: theme.colors.bg, paddingTop: Platform.OS === "ios" ? 52 : 18, paddingBottom: Platform.OS === "ios" ? 28 : 16 },
+  ratingClose: { width: 48, height: 48, marginLeft: 18, alignItems: "center", justifyContent: "center" },
+  ratingCloseText: { color: theme.colors.text, fontSize: 38, lineHeight: 40, fontWeight: "200" },
+  ratingScroll: { flex: 1 },
+  ratingContent: { paddingHorizontal: 22, paddingTop: 20, paddingBottom: 28 },
+  ratingEyebrow: { color: theme.colors.green, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  ratingTitle: { color: theme.colors.text, fontSize: 29, lineHeight: 36, fontWeight: "900", marginTop: 8 },
+  ratingPersonRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 24 },
+  ratingPersonAvatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: "#183B76", borderWidth: 2, borderColor: "#4E70A9", alignItems: "center", justifyContent: "center" },
+  ratingPersonAvatarText: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  ratingPersonCopy: { flex: 1 },
+  ratingPersonName: { color: theme.colors.text, fontSize: 19, fontWeight: "800" },
+  ratingPersonRole: { color: theme.colors.muted, fontSize: 13, marginTop: 3 },
+  ratingTripCard: { backgroundColor: theme.colors.panel, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, padding: 16, marginTop: 24 },
+  ratingTripLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
+  ratingTripRoute: { color: theme.colors.text, fontSize: 16, lineHeight: 22, fontWeight: "800", marginTop: 7 },
+  ratingTripMetaRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginTop: 12 },
+  ratingTripMeta: { color: theme.colors.soft, fontSize: 12, fontWeight: "600" },
+  ratingTripContribution: { color: theme.colors.green, fontSize: 12, fontWeight: "800" },
+  ratingDivider: { height: 7, backgroundColor: theme.colors.panel2, marginHorizontal: -22, marginVertical: 28 },
+  ratingSectionTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  ratingCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 7 },
+  ratingStars: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 20 },
+  ratingStarButton: { flex: 1, height: 62, alignItems: "center", justifyContent: "center" },
+  ratingStar: { color: "#4B4F55", fontSize: 46 },
   ratingStarSelected: { color: "#F5B942" },
-  ratingComment: { minHeight: 86, maxHeight: 130, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingTop: 12, textAlignVertical: "top" },
-  ratingActions: { flexDirection: "row", gap: 10, marginTop: 14 },
-  ratingCancel: { flex: 1, minHeight: 48, borderRadius: 24, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  ratingCancelText: { color: theme.colors.text, fontWeight: "800" },
-  ratingSubmit: { flex: 1.35, minHeight: 48, borderRadius: 24, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center" },
+  ratingScoreLabel: { color: "#F5B942", fontSize: 14, fontWeight: "800", textAlign: "center", minHeight: 20, marginTop: 7 },
+  ratingFeedbackLabel: { color: theme.colors.text, fontSize: 15, fontWeight: "800", marginTop: 25, marginBottom: 9 },
+  ratingOptional: { color: theme.colors.muted, fontSize: 12, fontWeight: "600" },
+  ratingComment: { minHeight: 104, maxHeight: 150, color: theme.colors.text, backgroundColor: theme.colors.panel, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingTop: 12, textAlignVertical: "top" },
+  ratingSubmit: { minHeight: 56, borderRadius: 16, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginHorizontal: 22 },
   ratingSubmitDisabled: { opacity: 0.42 },
   ratingSubmitText: { color: "#07120B", fontWeight: "900" },
   bookingCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
