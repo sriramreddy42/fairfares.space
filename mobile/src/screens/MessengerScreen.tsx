@@ -2970,14 +2970,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               </TouchableOpacity>
             </View>
             {suggestedCommunities.map((community) => (
-              <TouchableOpacity key={`suggested-${community.id}`} style={styles.suggestedGroupRow} onPress={() => void openCommunityThread(community)}>
+              <View key={`suggested-${community.id}`} style={styles.suggestedGroupRow}>
                 <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
                 <View style={styles.chatCopy}>
                   <Text style={styles.chatName}>{community.name}</Text>
                   <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
                 </View>
-                <View style={styles.suggestedJoinButton}><Text style={styles.suggestedJoinText}>Join</Text></View>
-              </TouchableOpacity>
+                <TouchableOpacity style={styles.suggestedJoinButton} onPress={() => void openCommunityThread(community)} accessibilityLabel={`Join ${community.name}`}><Text style={styles.suggestedJoinText}>Join</Text></TouchableOpacity>
+              </View>
             ))}
           </View>
         ) : null}
