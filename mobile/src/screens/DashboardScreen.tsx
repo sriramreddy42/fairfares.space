@@ -108,6 +108,15 @@ function statusCopy(ride: RidePost) {
   return titleCase(status);
 }
 
+function driverTripStatusCopy(ride: RidePost) {
+  const status = (ride.dispatchStatus || ride.status || "ACTIVE").toUpperCase();
+  if (status === "ACCEPTED") return "Rider confirmed";
+  if (status === "EN_ROUTE") return "Trip active · Location sharing";
+  if (status === "ARRIVED") return "Arrival sent to rider";
+  if (status === "IN_PROGRESS") return "Ride in progress";
+  return statusCopy(ride);
+}
+
 function riderRequestStatusCopy(ride: RidePost) {
   if (ride.isExpired) return "Expired";
   const dispatch = (ride.dispatchStatus || "").toUpperCase();
@@ -441,7 +450,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         {upcomingRides.map((ride) => (
           <View key={`ride-${ride.activityRole || "trip"}-${ride.id}`} style={[styles.rideCard, { width: upcomingCardWidth }]}>
             <View style={styles.roleRow}>
-              <Text style={styles.roleBadge}>{statusCopy(ride)}</Text>
+              <Text style={styles.roleBadge}>{isIncomingRiderRequest(ride) ? driverTripStatusCopy(ride) : statusCopy(ride)}</Text>
               <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
             </View>
             <Text style={styles.cardTitle}>{rideActionLabel(ride)}</Text>
@@ -449,7 +458,6 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             <View style={styles.metricRow}>
               {ride.pickupPin ? <Text style={styles.metricPill}>PIN {ride.pickupPin}</Text> : null}
               <Text style={styles.metricPill}>{distanceCopy(ride)}</Text>
-              <Text style={styles.metricPill}>{ride.typeLabel}</Text>
             </View>
             {latestRideChatPreview(ride) ? <Text style={styles.latestChatPreview} numberOfLines={1}>Chitthi · {latestRideChatPreview(ride)}</Text> : null}
             {!isIncomingRiderRequest(ride) && (ride.dispatchStatus || "").toUpperCase() === "ARRIVED" && ride.acceptedVehicleNumber ? (
