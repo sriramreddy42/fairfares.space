@@ -21,6 +21,12 @@ import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+import { DashboardScreen } from "./src/screens/DashboardScreen";
+import { HousingScreen } from "./src/screens/HousingScreen";
+import { MessengerScreen } from "./src/screens/MessengerScreen";
+import { ProfileScreen } from "./src/screens/ProfileScreen";
+import { ServicesScreen } from "./src/screens/ServicesScreen";
+import { StaffPickupScreen } from "./src/screens/StaffPickupScreen";
 
 declare const process: {
   env: {
@@ -57,13 +63,6 @@ const STATIC_IMAGE_SOURCES = [
   require("./assets/launch-cityscape-v2.jpg"),
   require("./assets/launch-car-mobile.png")
 ];
-
-const DashboardScreen = React.lazy(() => import("./src/screens/DashboardScreen").then((module) => ({ default: module.DashboardScreen })));
-const HousingScreen = React.lazy(() => import("./src/screens/HousingScreen").then((module) => ({ default: module.HousingScreen })));
-const MessengerScreen = React.lazy(() => import("./src/screens/MessengerScreen").then((module) => ({ default: module.MessengerScreen })));
-const ProfileScreen = React.lazy(() => import("./src/screens/ProfileScreen").then((module) => ({ default: module.ProfileScreen })));
-const StaffPickupScreen = React.lazy(() => import("./src/screens/StaffPickupScreen").then((module) => ({ default: module.StaffPickupScreen })));
-const ServicesScreen = React.lazy(() => import("./src/screens/ServicesScreen").then((module) => ({ default: module.ServicesScreen })));
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
