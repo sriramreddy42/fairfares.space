@@ -483,6 +483,8 @@ export function HousingScreen({
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
+  const [detailImageIndex, setDetailImageIndex] = useState(0);
+  const detailCarouselRef = useRef<ScrollView>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
   const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
@@ -677,6 +679,17 @@ export function HousingScreen({
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
   const detailImageWidth = Math.max(260, Math.min(viewportWidth - theme.spacing.md * 4, 620));
+
+  useEffect(() => {
+    setDetailImageIndex(0);
+  }, [detailPost?.id]);
+
+  function showNextDetailImage() {
+    if (detailImages.length < 2) return;
+    const nextIndex = (detailImageIndex + 1) % detailImages.length;
+    detailCarouselRef.current?.scrollTo({ x: nextIndex * detailImageWidth, animated: true });
+    setDetailImageIndex(nextIndex);
+  }
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -3296,19 +3309,37 @@ export function HousingScreen({
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
                 {detailImages.length ? (
                   <View style={styles.detailCarouselWrap}>
-                    <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.detailCarousel}>
+                    <ScrollView
+                      ref={detailCarouselRef}
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.detailCarousel}
+                      onMomentumScrollEnd={(event) => setDetailImageIndex(Math.round(event.nativeEvent.contentOffset.x / detailImageWidth))}
+                    >
                       {detailImages.map((image, index) => (
                         <Image key={`${image}-${index}`} source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
                       ))}
                     </ScrollView>
                     {detailImages.length > 1 ? (
-                      <View style={styles.detailImageDots}>
-                        {detailImages.map((image, index) => (
-                          <Text key={`${image}-dot-${index}`} style={styles.detailImageDot}>
-                            {index + 1}
-                          </Text>
-                        ))}
-                      </View>
+                      <>
+                        <View style={styles.detailImageDots}>
+                          {detailImages.map((image, index) => (
+                            <View key={`${image}-dot-${index}`} style={[styles.detailImageDot, index === detailImageIndex && styles.detailImageDotActive]} />
+                          ))}
+                        </View>
+                        <TouchableOpacity
+                          style={styles.detailImageNext}
+                          onPress={showNextDetailImage}
+                          activeOpacity={0.78}
+                          accessibilityRole="button"
+                          accessibilityLabel="Show next housing photo"
+                        >
+                          <BlurView intensity={55} tint="dark" style={styles.detailImageNextGlass}>
+                            <Text style={styles.detailImageNextText}>›</Text>
+                          </BlurView>
+                        </TouchableOpacity>
+                      </>
                     ) : null}
                   </View>
                 ) : (
@@ -3895,8 +3926,12 @@ const styles = StyleSheet.create({
   detailCarouselWrap: { borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
   detailCarousel: { width: "100%" },
   detailImage: { height: 190, borderRadius: theme.radius.md },
-  detailImageDots: { position: "absolute", bottom: 10, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.58)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 5 },
-  detailImageDot: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  detailImageDots: { position: "absolute", bottom: 12, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.48)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 7 },
+  detailImageDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.48)" },
+  detailImageDotActive: { width: 16, backgroundColor: "#ffffff" },
+  detailImageNext: { position: "absolute", right: 12, top: "50%", width: 44, height: 44, marginTop: -22, borderRadius: 22, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.58)", backgroundColor: "rgba(10,18,15,0.34)" },
+  detailImageNextGlass: { flex: 1, alignItems: "center", justifyContent: "center" },
+  detailImageNextText: { color: "#ffffff", fontSize: 36, lineHeight: 38, fontWeight: "500", marginTop: -3 },
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
   detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
   detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },

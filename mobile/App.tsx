@@ -2081,13 +2081,25 @@ function FairFaresApp() {
                   ))}
                 </View>
               ) : null}
-              <TextInput
-                value={searchArea}
-                onChangeText={setSearchArea}
-                placeholder="Area, building, campus, landmark"
-                placeholderTextColor={theme.colors.muted}
-                style={styles.input}
-              />
+              <View style={styles.searchInputWrap}>
+                <TextInput
+                  value={searchArea}
+                  onChangeText={setSearchArea}
+                  placeholder="Area, building, campus, landmark"
+                  placeholderTextColor={theme.colors.muted}
+                  style={[styles.input, styles.searchInputWithClear]}
+                />
+                {searchArea ? (
+                  <TouchableOpacity
+                    style={styles.searchInputClear}
+                    onPress={() => setSearchArea("")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear area search"
+                  >
+                    <Text style={styles.searchInputClearText}>×</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               <View style={styles.suggestionPanel}>
                 <Text style={styles.suggestionTitle}>
                   {searchSuggestionsLoading
@@ -2204,6 +2216,10 @@ const styles = StyleSheet.create({
   countryPickerLabel: { flex: 1, color: theme.colors.text, fontSize: 14 },
   countryPickerCode: { color: theme.colors.soft, fontSize: 14, fontWeight: "700" },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
+  searchInputWrap: { position: "relative", justifyContent: "center" },
+  searchInputWithClear: { paddingRight: 52 },
+  searchInputClear: { position: "absolute", right: 8, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },
+  searchInputClearText: { color: theme.colors.text, fontSize: 25, lineHeight: 27, fontWeight: "500", marginTop: -2 },
   validatedInput: { borderWidth: 1, borderColor: "#22c55e" },
   addressStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
   addressStatusText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
