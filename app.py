@@ -29459,6 +29459,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (int(user["id"]), token, platform, device_label, device_id, 1 if enabled else 0),
             )
+            if enabled:
+                con.execute(
+                    """
+                    INSERT INTO mobile_notification_preferences
+                    (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
+                    VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        chitthi_enabled = 1,
+                        carpool_enabled = 1,
+                        rentals_enabled = 1,
+                        housing_enabled = 1,
+                        support_enabled = 1,
+                        marketing_enabled = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (int(user["id"]),),
+                )
         self.send_json({"ok": True, "enabled": enabled})
 
     def api_mobile_notification_preferences(self) -> None:

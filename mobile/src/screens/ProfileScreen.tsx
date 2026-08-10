@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, getRideDriverProfile, MobileNotificationPreferences, setChatPhoneDiscoverability, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
+import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
@@ -30,7 +30,6 @@ type AccountHistoryItem = { id: string; title: string; meta: string; status: str
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
-const defaultNotificationPreferences: MobileNotificationPreferences = { chitthi: true, carpool: true, rentals: true, housing: true, support: true, marketing: false };
 
 function firstInitial(name = "") {
   return name.trim().slice(0, 1).toUpperCase() || "F";
@@ -79,8 +78,6 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
-  const [notificationPreferences, setNotificationPreferences] = useState(defaultNotificationPreferences);
-  const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false);
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -115,31 +112,6 @@ export function ProfileScreen({
     });
     return () => { cancelled = true; };
   }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    let cancelled = false;
-    void getMobileNotificationPreferences()
-      .then((payload) => { if (!cancelled) setNotificationPreferences(payload.preferences); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [user?.id]);
-
-  async function changeNotificationPreference(key: keyof MobileNotificationPreferences, enabled: boolean) {
-    const previous = notificationPreferences;
-    const next = { ...previous, [key]: enabled };
-    setNotificationPreferences(next);
-    setNotificationPreferencesSaving(true);
-    try {
-      const payload = await updateMobileNotificationPreferences(next);
-      setNotificationPreferences(payload.preferences);
-    } catch (error) {
-      setNotificationPreferences(previous);
-      Alert.alert("Notifications not updated", error instanceof Error ? error.message : "Please try again.");
-    } finally {
-      setNotificationPreferencesSaving(false);
-    }
-  }
 
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
@@ -393,26 +365,6 @@ export function ProfileScreen({
           </> : null}
         </View>
       )}
-
-      {user ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Notifications</Text>
-          <Text style={styles.cardCopy}>{notificationPreferencesSaving ? "Saving notification choices…" : "Choose useful updates. Account security alerts always stay on."}</Text>
-          {([
-            ["chitthi", "Chitthi messages"],
-            ["carpool", "Carpool activity"],
-            ["rentals", "Rental bookings"],
-            ["housing", "Housing matches"],
-            ["support", "Support replies"],
-            ["marketing", "Ideas and deals"]
-          ] as Array<[keyof MobileNotificationPreferences, string]>).map(([key, label]) => (
-            <View style={styles.privacyRow} key={key}>
-              <Text style={styles.label}>{label}</Text>
-              <Switch value={notificationPreferences[key]} disabled={notificationPreferencesSaving} onValueChange={(value) => void changeNotificationPreference(key, value)} />
-            </View>
-          ))}
-        </View>
-      ) : null}
 
       <View style={styles.activityCard}>
         <Text style={styles.cardTitle}>Your FairFares</Text>

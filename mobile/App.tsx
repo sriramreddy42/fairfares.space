@@ -448,6 +448,14 @@ function FairFaresApp() {
 
   useEffect(() => {
     if (Platform.OS === "web" || !data?.user) return;
+    const retry = setInterval(() => {
+      if (!pushTokenRef.current) void enableMobileNotifications(false);
+    }, 60_000);
+    return () => clearInterval(retry);
+  }, [data?.user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !data?.user) return;
     const subscription = Notifications.addPushTokenListener(() => {
       // Expo push tokens can rotate after the underlying APNs/FCM token changes.
       // Re-fetch and register the current Expo token immediately.

@@ -175,7 +175,7 @@ export async function createSecurityDepositCheckout(bookingId: number) {
   });
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: { silentNetworkFailure?: boolean; attempts?: number } = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(init.headers as Record<string, string> | undefined)
@@ -191,7 +191,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // Render deploys and upstream gateways may briefly return a proxy-generated
     // 502 without application CORS headers. Browsers surface that as a network
     // TypeError, so remote idempotent GETs need a slightly longer retry window.
-    const attempts = method === "GET" ? (EXPLICIT_API_URL ? 4 : 2) : 1;
+    const attempts = options.attempts || (method === "GET" ? (EXPLICIT_API_URL ? 4 : 2) : 1);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const controller = new AbortController();
       const timeoutMs = isAttachmentUpload ? 45000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
@@ -237,6 +237,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (isAttachmentUpload) {
     throw new Error(`The attachment upload did not finish. Check your connection and try again. ${lastError}`.trim());
+  }
+  if (options.silentNetworkFailure) {
+    throw new Error(lastError || "Background request did not finish.");
   }
   const referenceId = reportApiDiagnostic("network_failure", `${String(init.method || "GET").toUpperCase()} ${path}: ${lastError}`);
   if (EXPLICIT_API_URL) {
@@ -743,7 +746,7 @@ export async function registerMobilePushToken(token: string, platform: string, d
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, platform, deviceLabel, enabled, deviceId })
-  });
+  }, { silentNetworkFailure: true, attempts: 3 });
 }
 
 export type MobileNotificationPreferences = {
