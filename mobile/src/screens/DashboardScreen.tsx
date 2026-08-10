@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
-import { Alert, Image, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { getRentalBookings, getRideActivity, getRideDriverLocation, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
+import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { BootstrapPayload, HousingPost, RentalServiceBooking, RidePost } from "../types";
@@ -219,6 +219,9 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const [loading, setLoading] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [rideActionBusyId, setRideActionBusyId] = useState("");
+  const [ratingRide, setRatingRide] = useState<RidePost | null>(null);
+  const [ratingScore, setRatingScore] = useState(0);
+  const [ratingComment, setRatingComment] = useState("");
   const driverLocationSubscription = useRef<Location.LocationSubscription | null>(null);
   const sharingDriverRideId = useRef("");
 
@@ -270,7 +273,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       return true;
     });
   }, [travelerRides, incomingRiderRequests]);
-  const pastRides = useMemo(() => travelerRides.filter((ride) => !isUpcomingRide(ride)), [travelerRides]);
+  const pastRides = useMemo(() => [...travelerRides, ...incomingRiderRequests].filter((ride) => !isUpcomingRide(ride)), [travelerRides, incomingRiderRequests]);
   const carpoolActivityCount = driverListedRides.length + pendingRiderRequests.length;
   const upcomingBookings = useMemo(() => bookings.filter(isUpcomingBooking), [bookings]);
   const pastBookings = useMemo(() => bookings.filter((booking) => !isUpcomingBooking(booking)), [bookings]);
@@ -424,9 +427,27 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     }
   }
 
+  async function submitRideRating() {
+    if (!ratingRide || !ratingScore) return;
+    setRideActionBusyId(ratingRide.id);
+    try {
+      await rateCompletedRide(ratingRide.id, ratingScore, ratingComment);
+      setRides((current) => current.map((ride) => ride.id === ratingRide.id ? { ...ride, myRating: ratingScore } : ride));
+      setRatingRide(null);
+      setRatingScore(0);
+      setRatingComment("");
+      Alert.alert("Rating submitted", "Thanks for helping keep the FairFares carpool community trustworthy.");
+    } catch (error) {
+      Alert.alert("Rating unavailable", error instanceof Error ? error.message : "Could not save this rating.");
+    } finally {
+      setRideActionBusyId("");
+    }
+  }
+
   const upcomingCardWidth = Math.min(430, Math.max(286, windowWidth - 52));
 
   return (
+    <View style={styles.screen}>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Text style={styles.title}>Activity</Text>
 
@@ -638,9 +659,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
           <Text style={styles.cardMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
           <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.secondaryPill} onPress={() => Alert.alert("Rate", "Rating will attach to this completed ride.")}>
-              <Text style={styles.secondaryPillText}>☆ Rate</Text>
-            </TouchableOpacity>
+            {ride.myRating ? <View style={styles.ratedPill}><Text style={styles.ratedPillText}>{"★".repeat(ride.myRating)} Rated</Text></View> : <TouchableOpacity style={styles.secondaryPill} onPress={() => { setRatingRide(ride); setRatingScore(0); setRatingComment(""); }}><Text style={styles.secondaryPillText}>☆ Rate {isIncomingRiderRequest(ride) ? "rider" : "driver"}</Text></TouchableOpacity>}
             <TouchableOpacity style={styles.secondaryPill} onPress={handleReserveRide}>
               <Text style={styles.secondaryPillText}>↻ Rebook</Text>
             </TouchableOpacity>
@@ -690,6 +709,18 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </View>
       ) : null}
     </ScrollView>
+    <Modal visible={Boolean(ratingRide)} transparent animationType="fade" onRequestClose={() => setRatingRide(null)}>
+      <View style={styles.ratingBackdrop}>
+        <View style={styles.ratingSheet}>
+          <Text style={styles.ratingTitle}>Rate your {ratingRide && isIncomingRiderRequest(ratingRide) ? "rider" : "driver"}</Text>
+          <Text style={styles.ratingCopy}>Your feedback is tied to this completed trip and helps build safer community reputation.</Text>
+          <View style={styles.ratingStars}>{[1, 2, 3, 4, 5].map((score) => <TouchableOpacity key={score} style={styles.ratingStarButton} onPress={() => setRatingScore(score)} accessibilityLabel={`${score} star rating`}><Text style={[styles.ratingStar, score <= ratingScore && styles.ratingStarSelected]}>★</Text></TouchableOpacity>)}</View>
+          <TextInput style={styles.ratingComment} value={ratingComment} onChangeText={setRatingComment} placeholder="Optional private feedback" placeholderTextColor={theme.colors.muted} multiline maxLength={500} />
+          <View style={styles.ratingActions}><TouchableOpacity style={styles.ratingCancel} onPress={() => setRatingRide(null)}><Text style={styles.ratingCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.ratingSubmit, !ratingScore && styles.ratingSubmitDisabled]} disabled={!ratingScore || Boolean(rideActionBusyId)} onPress={() => void submitRideRating()}><Text style={styles.ratingSubmitText}>{rideActionBusyId ? "Submitting..." : "Submit rating"}</Text></TouchableOpacity></View>
+        </View>
+      </View>
+    </Modal>
+    </View>
   );
 }
 
@@ -733,6 +764,23 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm, marginTop: 2 },
   secondaryPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },
   secondaryPillText: { color: theme.colors.text, fontWeight: "500", fontSize: 12 },
+  ratedPill: { backgroundColor: "rgba(245,166,35,0.15)", borderWidth: 1, borderColor: "rgba(245,166,35,0.45)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
+  ratedPillText: { color: "#F5B942", fontWeight: "800", fontSize: 12 },
+  ratingBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.72)", justifyContent: "flex-end", padding: 14 },
+  ratingSheet: { backgroundColor: theme.colors.panel, borderRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 20, paddingBottom: Platform.OS === "ios" ? 30 : 20 },
+  ratingTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
+  ratingCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 7 },
+  ratingStars: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginVertical: 19 },
+  ratingStarButton: { width: 54, height: 54, alignItems: "center", justifyContent: "center" },
+  ratingStar: { color: "#4B4F55", fontSize: 40 },
+  ratingStarSelected: { color: "#F5B942" },
+  ratingComment: { minHeight: 86, maxHeight: 130, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingTop: 12, textAlignVertical: "top" },
+  ratingActions: { flexDirection: "row", gap: 10, marginTop: 14 },
+  ratingCancel: { flex: 1, minHeight: 48, borderRadius: 24, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  ratingCancelText: { color: theme.colors.text, fontWeight: "800" },
+  ratingSubmit: { flex: 1.35, minHeight: 48, borderRadius: 24, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center" },
+  ratingSubmitDisabled: { opacity: 0.42 },
+  ratingSubmitText: { color: "#07120B", fontWeight: "900" },
   bookingCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, gap: 4 },
   moneyText: { color: theme.colors.green, fontSize: 18, fontWeight: "900" },
   driverCard: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(59,130,246,0.55)", padding: theme.spacing.md, gap: theme.spacing.sm },

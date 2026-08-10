@@ -238,6 +238,7 @@ export type RidePost = {
   matchedRouteDestinationLng?: number | null;
   matchedContributionPerSeat?: number;
   pickupPin?: string;
+  myRating?: number;
 };
 
 export type RideDispatchSummary = {

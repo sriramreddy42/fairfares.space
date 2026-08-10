@@ -4846,6 +4846,21 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS ride_ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dispatch_notification_id INTEGER NOT NULL,
+                rater_user_id INTEGER NOT NULL,
+                rated_user_id INTEGER NOT NULL,
+                rater_role TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL,
+                comment TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dispatch_notification_id, rater_user_id),
+                FOREIGN KEY(dispatch_notification_id) REFERENCES ride_dispatch_notifications(id),
+                FOREIGN KEY(rater_user_id) REFERENCES users(id),
+                FOREIGN KEY(rated_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -18905,6 +18920,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
             "/api/mobile/rides/driver-location": self.api_mobile_update_ride_driver_location,
+            "/api/mobile/rides/rating": self.api_mobile_ride_rating,
             "/api/mobile/rides/driver-profile": self.api_mobile_save_ride_driver_profile,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
@@ -29252,6 +29268,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             incoming_rows = con.execute(
                 """
                 SELECT requests.*,
+                       notifications.id AS dispatch_notification_id,
                        notifications.status AS dispatch_status,
                        notifications.radius_miles AS dispatch_nearest_radius,
                        notifications.distance_miles AS dispatch_distance_miles,
@@ -29285,7 +29302,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if row_value(row, "rider_role") == "RIDER":
                     accepted = con.execute(
                         """
-                        SELECT notifications.*, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
+                        SELECT notifications.*, notifications.id AS dispatch_notification_id, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
                                driver_profiles.license_plate AS driver_license_plate,
                                driver_profiles.license_state AS driver_license_state
                         FROM ride_dispatch_notifications notifications
@@ -29323,6 +29340,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         payload["ownerUserId"] = driver_user_id
                         payload["ownerName"] = row_value(accepted, "driver_name") or "Driver"
                         payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
+                        own_rating = con.execute(
+                            "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
+                            (int(row_value(accepted, "id") or 0), user_id),
+                        ).fetchone()
+                        payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
                 public_id = str(payload.get("id") or "")
                 if public_id:
                     seen.add(public_id)
@@ -29351,6 +29373,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["matchedContributionPerSeat"] = float(row_value(row, "matched_contribution_per_seat") or 0)
                 if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
                     payload["pickupPin"] = ride_pickup_pin(public_id, user_id)
+                own_rating = con.execute(
+                    "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
+                    (int(row_value(row, "dispatch_notification_id") or 0), user_id),
+                ).fetchone()
+                payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
                 rides.append(payload)
         rides.sort(key=lambda item: str(item.get("createdAt") or item.get("dispatchNotifiedAt") or ""), reverse=True)
         self.send_json({"ok": True, "rides": rides[:100]})
@@ -29366,6 +29393,64 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(row_value(user, "id") or 0)
         status_code, response = apply_ride_dispatch_action(user_id, ride_public_id, action)
         self.send_json(response, status_code)
+
+    def api_mobile_ride_rating(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to rate a carpool member."}, 401)
+            return
+        payload = self.read_json_body()
+        ride_public_id = clean_text_value(payload.get("rideId") or payload.get("ride_id"), 40)
+        comment = clean_text_value(payload.get("comment"), 500)
+        try:
+            score = int(payload.get("score"))
+        except (TypeError, ValueError):
+            score = 0
+        if score < 1 or score > 5:
+            self.send_json({"ok": False, "error": "Choose a rating from 1 to 5 stars."}, 400)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            dispatch = con.execute(
+                """
+                SELECT notifications.id, notifications.status, notifications.driver_user_id,
+                       requests.user_id AS rider_user_id
+                FROM ride_dispatch_notifications notifications
+                JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                WHERE requests.public_id = ?
+                  AND notifications.status = 'COMPLETED'
+                  AND (requests.user_id = ? OR notifications.driver_user_id = ?)
+                ORDER BY datetime(notifications.responded_at) DESC
+                LIMIT 1
+                """,
+                (ride_public_id, user_id, user_id),
+            ).fetchone()
+            if not dispatch:
+                self.send_json({"ok": False, "error": "Ratings are available after a matched carpool is completed."}, 404)
+                return
+            rider_user_id = int(row_value(dispatch, "rider_user_id") or 0)
+            driver_user_id = int(row_value(dispatch, "driver_user_id") or 0)
+            rater_role = "RIDER" if user_id == rider_user_id else "DRIVER"
+            rated_user_id = driver_user_id if rater_role == "RIDER" else rider_user_id
+            try:
+                con.execute(
+                    """
+                    INSERT INTO ride_ratings
+                    (dispatch_notification_id, rater_user_id, rated_user_id, rater_role, score, comment)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (int(row_value(dispatch, "id") or 0), user_id, rated_user_id, rater_role, score, comment),
+                )
+            except sqlite3.IntegrityError:
+                self.send_json({"ok": False, "error": "You already rated this trip."}, 409)
+                return
+        send_mobile_push_for_users(
+            [rated_user_id],
+            "New carpool rating",
+            f"You received a {score}-star rating from a completed FairFares carpool.",
+            {"type": "CARPOOL_RATING", "rideId": ride_public_id, "target": "activity"},
+        )
+        self.send_json({"ok": True, "score": score})
 
     def api_mobile_update_ride_driver_location(self) -> None:
         user = self.current_user()
