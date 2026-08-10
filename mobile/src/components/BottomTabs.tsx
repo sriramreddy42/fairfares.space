@@ -37,7 +37,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
-          <TouchableOpacity key={tab.key} style={[styles.item, isActive && tab.key === "messenger" && styles.chittiItem]} onPress={() => onChange(tab.key)}>
+          <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.activeItem, isActive && tab.key === "messenger" && styles.chittiItem]} onPress={() => onChange(tab.key)}>
             <View style={[styles.icon, tab.key === "messenger" && styles.chittiIcon]}>
               <Image
                 source={tab.icon}
@@ -70,29 +70,41 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     height: 64,
     backgroundColor: "transparent",
-    borderRadius: 32,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: "#2e2e2f",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
-    paddingHorizontal: 6
+    paddingHorizontal: 6,
+    overflow: "hidden"
   },
   chittiBar: {
     backgroundColor: "transparent",
     borderColor: "rgba(220,171,84,0.26)"
   },
   item: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    minWidth: 48
+    borderWidth: 1,
+    borderColor: "transparent"
+  },
+  activeItem: {
+    borderColor: "rgba(255,255,255,0.30)",
+    backgroundColor: "rgba(255,255,255,0.11)",
+    shadowColor: "#FFFFFF",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 }
   },
   chittiItem: {
-    minWidth: 54,
-    paddingHorizontal: 5,
-    paddingVertical: 3,
-    borderRadius: 16,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     backgroundColor: "rgba(18,92,49,0.78)",
     borderWidth: 1,
     borderColor: "rgba(79,195,94,0.44)",
