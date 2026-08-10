@@ -490,6 +490,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [addPeopleCommunityId, setAddPeopleCommunityId] = useState("");
   const [groupDraft, setGroupDraft] = useState(blankGroup);
   const [groupPhoto, setGroupPhoto] = useState("");
+  const [feedbackCardDismissed, setFeedbackCardDismissed] = useState(false);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const activeGroup = useMemo(
@@ -538,6 +539,13 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       .then((value) => { if (value) setRecentEmojis(JSON.parse(value).slice(0, 16)); })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const storageKey = `fairfares.chitthi.feedback-card-dismissed.${data?.user?.id || "guest"}`;
+    AsyncStorage.getItem(storageKey)
+      .then((value) => setFeedbackCardDismissed(value === "1"))
+      .catch(() => setFeedbackCardDismissed(false));
+  }, [data?.user?.id]);
 
   const visibleEmojis = useMemo(() => {
     const query = emojiSearch.trim().toLowerCase();
@@ -1026,9 +1034,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     return communities.filter((community) => {
       const matchesSearch = !query || `${community.name} ${community.description} ${community.area}`.toLowerCase().includes(query);
       if (!matchesSearch) return false;
-      if (tab === "Communities") return true;
+      if (tab === "Communities") return community.kind === "COMMUNITY";
       if (tab !== "All" && tab !== "Groups") return false;
-      if (!community.joined) return false;
       if (tab === "Groups" && community.kind !== "GROUP") return false;
       return !activeCommunityIds.has(community.id);
     });
@@ -2804,7 +2811,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
       >
-        {tab === "All" ? (
+        {tab === "All" && !feedbackCardDismissed ? (
           <TouchableOpacity style={styles.feedbackChatCard} onPress={() => void openFeedbackChat()} disabled={loading}>
             <View style={styles.feedbackChatAvatar}><Text style={styles.feedbackChatAvatarText}>SR</Text></View>
             <View style={styles.chatCopy}>
@@ -2813,6 +2820,17 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               <Text style={styles.feedbackChatCopy} numberOfLines={1}>Share an issue or suggestion with FairFares.</Text>
             </View>
             <Text style={styles.feedbackChatArrow}>›</Text>
+            <TouchableOpacity
+              style={styles.feedbackChatDismiss}
+              accessibilityLabel="Dismiss issues and suggestions"
+              onPress={(event) => {
+                event.stopPropagation();
+                setFeedbackCardDismissed(true);
+                void AsyncStorage.setItem(`fairfares.chitthi.feedback-card-dismissed.${data?.user?.id || "guest"}`, "1");
+              }}
+            >
+              <Text style={styles.feedbackChatDismissText}>×</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         ) : null}
         {tab === "Contacts" ? (
@@ -3403,11 +3421,13 @@ const styles = StyleSheet.create({
   letterEmptyIcon: { fontSize: 30, marginBottom: 8 },
   letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
   letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 },
-  feedbackChatCard: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)" },
+  feedbackChatCard: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, paddingLeft: 13, paddingRight: 28, paddingVertical: 9, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)", position: "relative" },
   feedbackChatAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#D6A95F", borderWidth: 2, borderColor: "#F4D99E" },
   feedbackChatAvatarText: { color: "#173A2A", fontSize: 14, fontWeight: "800" },
   feedbackChatEyebrow: { color: "#efbd68", fontSize: 9, letterSpacing: 0.9, fontWeight: "800", marginBottom: 2 },
   feedbackChatName: { color: "#fff8e8", fontSize: 15, fontWeight: "700" },
   feedbackChatCopy: { color: "#c4cec7", fontSize: 11.5, lineHeight: 15, marginTop: 2 },
-  feedbackChatArrow: { color: "#efbd68", fontSize: 25, fontWeight: "300" }
+  feedbackChatArrow: { color: "#efbd68", fontSize: 25, fontWeight: "300" },
+  feedbackChatDismiss: { position: "absolute", top: 3, right: 5, width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(2,18,13,0.58)", zIndex: 3 },
+  feedbackChatDismissText: { color: "#f4d99e", fontSize: 18, lineHeight: 21, fontWeight: "500" }
 });
