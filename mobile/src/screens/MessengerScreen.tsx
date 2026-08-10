@@ -458,6 +458,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [richDraft, setRichDraft] = useState({ primary: "", secondary: "", tertiary: "", fourth: "" });
   const [pollMultiple, setPollMultiple] = useState(false);
   const [pollClosesInHours, setPollClosesInHours] = useState(24);
+  const [pollOptions, setPollOptions] = useState(["", ""]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
@@ -1842,7 +1843,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setAttachmentMenuOpen(false);
     setEmojiPickerOpen(false);
     setRichDraft({ primary: "", secondary: "", tertiary: "", fourth: "" });
-    if (type === "POLL") { setPollMultiple(false); setPollClosesInHours(24); }
+    if (type === "POLL") { setPollMultiple(false); setPollClosesInHours(24); setPollOptions(["", ""]); }
     setRichComposer(type);
   }
 
@@ -1864,7 +1865,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     if (!activeConversationId || !richComposer) return;
     let metadata: Record<string, unknown>;
     if (richComposer === "POLL") {
-      metadata = { question: richDraft.primary.trim(), options: richDraft.secondary.split(/\n|,/).map((value) => value.trim()).filter(Boolean) };
+      metadata = { question: richDraft.primary.trim(), options: pollOptions.map((value) => value.trim()).filter(Boolean) };
     } else if (richComposer === "EVENT") {
       metadata = { title: richDraft.primary.trim(), date: richDraft.secondary.trim(), time: richDraft.tertiary.trim(), location: richDraft.fourth.trim() };
     } else {
@@ -2552,13 +2553,24 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
 
         {richComposer ? (
           <View style={styles.richComposerPanel}>
-            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>{richComposer === "POLL" ? "Create poll" : richComposer === "EVENT" ? "Create event" : "Share contact"}</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setRichComposer("")}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
-            <TextInput style={styles.richInput} placeholder={richComposer === "POLL" ? "Ask a question" : richComposer === "EVENT" ? "Event title" : "Contact name"} placeholderTextColor="#777" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} />
-            {richComposer === "EVENT" ? <DateTimeField label="Event date" mode="date" minimumDate={todayLocalIso()} value={richDraft.secondary} onChange={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} /> : <TextInput style={[styles.richInput, richComposer === "POLL" && styles.richMultiline]} multiline={richComposer === "POLL"} placeholder={richComposer === "POLL" ? "Options, one per line" : "Phone number"} placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />}
-            {richComposer === "EVENT" ? <DateTimeField label="Event time" mode="time" value={richDraft.tertiary} onChange={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : richComposer !== "POLL" ? <TextInput style={styles.richInput} placeholder="Email address" placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : null}
-            {richComposer === "POLL" ? <><View style={styles.pollComposerSetting}><View><Text style={styles.pollComposerSettingTitle}>Allow multiple answers</Text><Text style={styles.pollComposerSettingMeta}>{pollMultiple ? "Members can select more than one" : "Members select one answer"}</Text></View><Switch value={pollMultiple} onValueChange={setPollMultiple} trackColor={{ false: "#777", true: "#1AA866" }} /></View><Text style={styles.pollComposerLabel}>Poll duration</Text><View style={styles.pollDurationRow}>{[{ value: 1, label: "1 hour" }, { value: 24, label: "24 hours" }, { value: 168, label: "7 days" }, { value: 0, label: "No end" }].map((choice) => <TouchableOpacity key={choice.value} style={[styles.pollDurationChoice, pollClosesInHours === choice.value && styles.pollDurationChoiceActive]} onPress={() => setPollClosesInHours(choice.value)}><Text style={[styles.pollDurationChoiceText, pollClosesInHours === choice.value && styles.pollDurationChoiceTextActive]}>{choice.label}</Text></TouchableOpacity>)}</View><Text style={styles.pollPrivacyNote}>◉ Voter names are hidden from members. Results sync through Chitthi's secure poll service.</Text></> : null}
-            {richComposer === "EVENT" ? <TextInput style={styles.richInput} placeholder="Location" placeholderTextColor="#777" value={richDraft.fourth} onChangeText={(fourth) => setRichDraft((current) => ({ ...current, fourth }))} /> : null}
-            <TouchableOpacity style={styles.richSubmit} onPress={() => void submitRichMessage()} disabled={threadLoading}><Text style={styles.richSubmitText}>{threadLoading ? "Sending…" : "Send"}</Text></TouchableOpacity>
+            {richComposer === "POLL" ? <>
+              <View style={styles.pollSheetHeader}><TouchableOpacity onPress={() => setRichComposer("")}><Text style={styles.pollSheetCancel}>Cancel</Text></TouchableOpacity><Text style={styles.pollSheetTitle}>Create poll</Text><TouchableOpacity disabled={threadLoading || !richDraft.primary.trim() || pollOptions.filter((value) => value.trim()).length < 2} onPress={() => void submitRichMessage()}><Text style={[styles.pollSheetSend, (threadLoading || !richDraft.primary.trim() || pollOptions.filter((value) => value.trim()).length < 2) && styles.pollSheetSendDisabled]}>{threadLoading ? "Sending…" : "Send"}</Text></TouchableOpacity></View>
+              <ScrollView style={styles.pollSheetScroll} contentContainerStyle={styles.pollSheetContent} keyboardShouldPersistTaps="handled">
+                <Text style={styles.pollComposerLabel}>Question</Text><TextInput style={styles.pollQuestionInput} placeholder="Ask a question" placeholderTextColor="#9A9E9B" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} maxLength={240} />
+                <Text style={styles.pollComposerLabel}>Options</Text><View style={styles.pollOptionsCard}>{pollOptions.map((option, index) => <View key={index} style={[styles.pollOptionInputRow, index === pollOptions.length - 1 && styles.pollOptionInputRowLast]}><TextInput style={styles.pollOptionInput} placeholder={`Option ${index + 1}`} placeholderTextColor="#9A9E9B" value={option} onChangeText={(value) => setPollOptions((current) => current.map((item, optionIndex) => optionIndex === index ? value : item))} maxLength={100} />{pollOptions.length > 2 ? <TouchableOpacity style={styles.pollRemoveOption} onPress={() => setPollOptions((current) => current.filter((_, optionIndex) => optionIndex !== index))}><Text style={styles.pollRemoveOptionText}>×</Text></TouchableOpacity> : null}</View>)}</View>
+                {pollOptions.length < 6 ? <TouchableOpacity style={styles.pollAddOption} onPress={() => setPollOptions((current) => [...current, ""])}><Text style={styles.pollAddOptionText}>＋ Add option</Text></TouchableOpacity> : null}
+                <View style={styles.pollSettingsCard}><View style={styles.pollComposerSetting}><View style={styles.pollSettingCopy}><Text style={styles.pollComposerSettingTitle}>Allow multiple answers</Text><Text style={styles.pollComposerSettingMeta}>{pollMultiple ? "Members can choose several" : "Members choose one"}</Text></View><Switch value={pollMultiple} onValueChange={setPollMultiple} trackColor={{ false: "#C5C9C6", true: "#1AA866" }} /></View><View style={[styles.pollComposerSetting, styles.pollComposerSettingLast]}><View style={styles.pollSettingCopy}><Text style={styles.pollComposerSettingTitle}>Hide voter names</Text><Text style={styles.pollComposerSettingMeta}>Always on for member privacy</Text></View><Switch value disabled trackColor={{ false: "#C5C9C6", true: "#1AA866" }} /></View></View>
+                <Text style={styles.pollComposerLabel}>End time</Text><View style={styles.pollDurationRow}>{[{ value: 1, label: "1 hour" }, { value: 24, label: "24 hours" }, { value: 168, label: "7 days" }, { value: 0, label: "No end" }].map((choice) => <TouchableOpacity key={choice.value} style={[styles.pollDurationChoice, pollClosesInHours === choice.value && styles.pollDurationChoiceActive]} onPress={() => setPollClosesInHours(choice.value)}><Text style={[styles.pollDurationChoiceText, pollClosesInHours === choice.value && styles.pollDurationChoiceTextActive]}>{choice.label}</Text></TouchableOpacity>)}</View>
+                <Text style={styles.pollPrivacyNote}>Results sync through Chitthi's secure poll service.</Text>
+              </ScrollView>
+            </> : <>
+              <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>{richComposer === "EVENT" ? "Create event" : "Share contact"}</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setRichComposer("")}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
+              <TextInput style={styles.richInput} placeholder={richComposer === "EVENT" ? "Event title" : "Contact name"} placeholderTextColor="#777" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} />
+              {richComposer === "EVENT" ? <DateTimeField label="Event date" mode="date" minimumDate={todayLocalIso()} value={richDraft.secondary} onChange={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} /> : <TextInput style={styles.richInput} placeholder="Phone number" placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />}
+              {richComposer === "EVENT" ? <DateTimeField label="Event time" mode="time" value={richDraft.tertiary} onChange={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : <TextInput style={styles.richInput} placeholder="Email address" placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} />}
+              {richComposer === "EVENT" ? <TextInput style={styles.richInput} placeholder="Location" placeholderTextColor="#777" value={richDraft.fourth} onChangeText={(fourth) => setRichDraft((current) => ({ ...current, fourth }))} /> : null}
+              <TouchableOpacity style={styles.richSubmit} onPress={() => void submitRichMessage()} disabled={threadLoading}><Text style={styles.richSubmitText}>{threadLoading ? "Sending…" : "Send"}</Text></TouchableOpacity>
+            </>}
           </View>
         ) : null}
 
@@ -3147,7 +3159,7 @@ const styles = StyleSheet.create({
   pendingAttachmentMeta: { color: "#667085", fontSize: 11, fontWeight: "700", marginTop: 3 },
   pendingAttachmentRemove: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#e6e9ef", alignItems: "center", justifyContent: "center" },
   pendingAttachmentRemoveText: { color: "#344054", fontSize: 22, lineHeight: 24, marginTop: -2 },
-  richComposerPanel: { position: "absolute", left: 8, bottom: 62, width: 340, maxWidth: "92%", backgroundColor: "#f7f3ed", borderRadius: 22, padding: 16, borderWidth: 1, borderColor: "#cbc7c0", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 14, zIndex: 21, gap: 9 },
+  richComposerPanel: { position: "absolute", left: 10, right: 10, bottom: 62, maxHeight: "78%", backgroundColor: "#ECEDEB", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "#CBCFCA", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 14, zIndex: 21, gap: 9, overflow: "hidden" },
   richInput: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#d8d3cb", borderRadius: 12, minHeight: 44, paddingHorizontal: 12, color: "#222", fontSize: 14 },
   richMultiline: { minHeight: 82, paddingTop: 12, textAlignVertical: "top" },
   richSubmit: { backgroundColor: theme.colors.blue, borderRadius: 14, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 2 },
@@ -3184,15 +3196,34 @@ const styles = StyleSheet.create({
   pollPercent: { color: "#7A827C", fontSize: 9.5, fontWeight: "700", marginTop: 3 },
   pollFooter: { color: "#727A74", fontSize: 10, fontWeight: "600", marginTop: 8 },
   pollComposerSetting: { minHeight: 62, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  pollComposerSettingTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
-  pollComposerSettingMeta: { color: theme.colors.muted, fontSize: 10.5, marginTop: 2 },
-  pollComposerLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.6, marginTop: 14, marginBottom: 8 },
+  pollComposerSettingLast: { borderBottomWidth: 0 },
+  pollSettingCopy: { flex: 1 },
+  pollComposerSettingTitle: { color: "#181B19", fontSize: 14, fontWeight: "700" },
+  pollComposerSettingMeta: { color: "#727773", fontSize: 10.5, marginTop: 2 },
+  pollComposerLabel: { color: "#656A66", fontSize: 10.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7, marginTop: 13, marginBottom: 7 },
   pollDurationRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  pollDurationChoice: { borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 12, paddingVertical: 8 },
+  pollDurationChoice: { borderRadius: 18, borderWidth: 1, borderColor: "#CED3CF", backgroundColor: "#FFF", paddingHorizontal: 12, paddingVertical: 8 },
   pollDurationChoiceActive: { borderColor: "#1AA866", backgroundColor: "rgba(26,168,102,0.18)" },
-  pollDurationChoiceText: { color: theme.colors.muted, fontSize: 11, fontWeight: "700" },
-  pollDurationChoiceTextActive: { color: "#6BE2A5" },
-  pollPrivacyNote: { color: "#7EDDA8", fontSize: 10.5, fontWeight: "600", marginTop: 12 },
+  pollDurationChoiceText: { color: "#606762", fontSize: 11, fontWeight: "700" },
+  pollDurationChoiceTextActive: { color: "#087744" },
+  pollPrivacyNote: { color: "#5D6961", fontSize: 10.5, fontWeight: "600", marginTop: 11 },
+  pollSheetHeader: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2, borderBottomWidth: 1, borderBottomColor: "#D3D6D2" },
+  pollSheetCancel: { color: "#2A302C", fontSize: 14, fontWeight: "600" },
+  pollSheetTitle: { color: "#151816", fontSize: 16, fontWeight: "900" },
+  pollSheetSend: { color: "#118A55", fontSize: 14, fontWeight: "900" },
+  pollSheetSendDisabled: { color: "#9AA09C" },
+  pollSheetScroll: { maxHeight: 540 },
+  pollSheetContent: { paddingBottom: 8 },
+  pollQuestionInput: { minHeight: 58, backgroundColor: "#FFF", borderRadius: 12, borderWidth: 1, borderColor: "#DDE0DC", paddingHorizontal: 13, color: "#171A18", fontSize: 15 },
+  pollOptionsCard: { backgroundColor: "#FFF", borderRadius: 12, borderWidth: 1, borderColor: "#DDE0DC", overflow: "hidden" },
+  pollOptionInputRow: { minHeight: 49, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#E4E6E3", paddingLeft: 13 },
+  pollOptionInputRowLast: { borderBottomWidth: 0 },
+  pollOptionInput: { flex: 1, minHeight: 48, color: "#171A18", fontSize: 14, paddingVertical: 0 },
+  pollRemoveOption: { width: 42, height: 42, alignItems: "center", justifyContent: "center" },
+  pollRemoveOptionText: { color: "#A04B55", fontSize: 24, fontWeight: "400" },
+  pollAddOption: { alignSelf: "flex-start", minHeight: 38, justifyContent: "center", paddingHorizontal: 4 },
+  pollAddOptionText: { color: "#118A55", fontSize: 13, fontWeight: "800" },
+  pollSettingsCard: { backgroundColor: "#FFF", borderRadius: 12, borderWidth: 1, borderColor: "#DDE0DC", paddingHorizontal: 13, marginTop: 8 },
   composerInput: { flex: 1, color: "#18342A", backgroundColor: "#F3E9D5", borderWidth: 1, borderColor: "rgba(214,169,95,0.62)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
   composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center" },
   composerSendText: { color: "#FFF9ED", fontSize: 18, fontWeight: "900" },
