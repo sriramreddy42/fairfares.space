@@ -704,6 +704,27 @@ export async function createSupportTicket(
   });
 }
 
+export type AccountDeletionRequest = {
+  requestId: string;
+  status: string;
+  requestedAt: string;
+  deletionDueAt: string;
+  completedAt?: string;
+  retainedDataSummary?: string;
+};
+
+export async function requestAccountDeletion(confirmation: string) {
+  return request<{ ok: boolean; message: string; request: AccountDeletionRequest }>("/api/mobile/account-deletion", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation })
+  });
+}
+
+export async function getAccountDeletionStatus() {
+  return request<{ ok: boolean; request: AccountDeletionRequest | null }>("/api/mobile/account-deletion");
+}
+
 export async function createRentalSupportTicket(bookingId: string, topic: string, message: string, urgent = false) {
   return createSupportTicket(bookingId, topic, message, urgent);
 }
@@ -1115,11 +1136,11 @@ export type MobileSocialAuthPayload = {
   continuationToken?: string;
 };
 
-export async function mobileSocialLogin(provider: "google" | "apple", identityToken: string, name = "") {
+export async function mobileSocialLogin(provider: "google" | "apple", identityToken: string, name = "", consentAccepted = false) {
   const payload = await request<MobileSocialAuthPayload>("/api/mobile/auth/oauth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, identityToken, name })
+    body: JSON.stringify({ provider, identityToken, name, consentAccepted })
   });
   if (payload.token) await setAuthToken(payload.token);
   return payload;
@@ -1135,13 +1156,13 @@ export async function completeSocialPhone(continuationToken: string, phone: stri
   return payload;
 }
 
-export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true, countryCode = "") {
+export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true, countryCode = "", consentAccepted = false) {
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, phone, countryCode, password, phoneDiscoverable })
+      body: JSON.stringify({ name, email, phone, countryCode, password, phoneDiscoverable, consentAccepted })
     }
   );
   if (payload.token) {

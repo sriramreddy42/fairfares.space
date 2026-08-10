@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverProfile, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverProfile, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
@@ -201,9 +201,40 @@ export function ProfileScreen({
     { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: () => user ? setHistorySection("rentals") : onLogin() },
     { title: "Chitthi", copy: "Current and previous conversations", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
     { title: "Report an issue", copy: "Send a tracked support or safety report", icon: appAssets.serviceSupport, onPress: () => user ? setSupportOpen(true) : onLogin() },
+    { title: "Terms of Service", copy: "Rules for using FairFares", glyph: "§", onPress: () => void Linking.openURL("https://www.fairfare.space/terms") },
+    { title: "Community Guidelines", copy: "Safety and conduct standards", glyph: "♢", onPress: () => void Linking.openURL("https://www.fairfare.space/community-guidelines") },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
-    { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
+    { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: requestAccountDeletion }
   ];
+
+  function requestAccountDeletion() {
+    if (!user) {
+      onLogin();
+      return;
+    }
+    Alert.alert(
+      "Request account deletion?",
+      "FairFares will verify the request, close access, and delete data that is not legally required for bookings, payments, safety, fraud prevention, or disputes.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Request deletion",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const result = await submitAccountDeletionRequest("DELETE");
+              Alert.alert("Deletion request received", `${result.request.requestId}\nDue by ${result.request.deletionDueAt} UTC. A confirmation was sent to your account email.`);
+            } catch (error) {
+              Alert.alert("Request not sent", error instanceof Error ? error.message : "Please try again.", [
+                { text: "Cancel", style: "cancel" },
+                { text: "Email support", onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }
+              ]);
+            }
+          }
+        }
+      ]
+    );
+  }
 
   async function choosePhoto() {
     if (!user) {

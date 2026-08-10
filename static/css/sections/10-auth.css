@@ -65,6 +65,25 @@
 }
 .auth-card p { color: #2f3541; font-size: 1.15rem; margin: 0 0 28px; }
 .auth-card form { display: grid; gap: 20px; }
+.auth-card .account-consent-field {
+  align-items: flex-start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+.auth-card .account-consent-field input {
+  height: 20px;
+  margin: 2px 0 0;
+  min-height: 20px;
+  width: 20px;
+}
+.auth-card .account-consent-field span {
+  color: #3f4653;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.auth-card .account-consent-field a { color: var(--red); font-weight: 800; }
 .auth-card button[type="submit"] { font-size: 1.1rem; margin-top: 8px; }
 .forgot-link {
   color: var(--red);

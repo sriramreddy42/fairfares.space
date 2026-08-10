@@ -75,6 +75,7 @@ class MobileAuthTest(unittest.TestCase):
                     "countryCode": "+1",
                     "password": "CorrectHorse123!",
                     "phoneDiscoverable": False,
+                    "consentAccepted": True,
                 })
             self.assertEqual(status, 201)
             self.assertTrue(signup["activationRequired"])
@@ -88,6 +89,10 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(user["name"], "Mobile Member")
             self.assertEqual(user["phone"], "+19375550199")
             self.assertEqual(int(user["chat_phone_discoverable"]), 0)
+            self.assertTrue(user["consented_at"])
+            self.assertEqual(user["terms_version"], app.TERMS_VERSION)
+            self.assertEqual(user["privacy_version"], app.PRIVACY_VERSION)
+            self.assertEqual(user["community_guidelines_version"], app.COMMUNITY_GUIDELINES_VERSION)
 
             with mock.patch.object(app, "send_activation_email", return_value=(Path(self.temp_dir.name) / "resent.txt", "sent through test provider")):
                 with self.assertRaises(urllib.error.HTTPError) as pending_error:
@@ -112,6 +117,27 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(login_status, 200)
             self.assertTrue(login["token"])
             self.assertEqual(login["user"]["email"], "mobile@example.com")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_mobile_signup_rejects_missing_policy_consent(self):
+        server, thread = self.start_server()
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as rejected:
+                self.post_json(server, "/api/mobile/signup", {
+                    "name": "No Consent Member",
+                    "email": "no-consent@example.com",
+                    "phone": "937-555-0111",
+                    "countryCode": "+1",
+                    "password": "CorrectHorse123!",
+                })
+            self.assertEqual(rejected.exception.code, 400)
+            payload = json.loads(rejected.exception.read().decode("utf-8"))
+            self.assertIn("must agree", payload["error"])
+            with app.db() as con:
+                self.assertIsNone(con.execute("SELECT id FROM users WHERE email = ?", ("no-consent@example.com",)).fetchone())
         finally:
             server.shutdown()
             server.server_close()
@@ -204,6 +230,7 @@ class MobileAuthTest(unittest.TestCase):
                     "email": "guest@example.com",
                     "phone": "+1 937 555 0101",
                     "password": "MemberPassword123!",
+                    "consentAccepted": True,
                 })
             self.assertEqual(status, 201)
             with app.db() as con:
@@ -217,6 +244,7 @@ class MobileAuthTest(unittest.TestCase):
                     "email": "different@example.com",
                     "phone": "19375550202",
                     "password": "DifferentPassword123!",
+                    "consentAccepted": True,
                 })
             self.assertEqual(duplicate_phone.exception.code, 409)
             duplicate_payload = json.loads(duplicate_phone.exception.read().decode("utf-8"))
@@ -239,6 +267,7 @@ class MobileAuthTest(unittest.TestCase):
                 status, social = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "verified-google-token",
+                    "consentAccepted": True,
                 })
             self.assertEqual(status, 200)
             self.assertTrue(social["phoneRequired"])
@@ -284,6 +313,7 @@ class MobileAuthTest(unittest.TestCase):
                 _status, social = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "another-google-token",
+                    "consentAccepted": True,
                 })
             with self.assertRaises(urllib.error.HTTPError) as duplicate_phone:
                 self.post_json(server, "/api/mobile/auth/phone/complete", {

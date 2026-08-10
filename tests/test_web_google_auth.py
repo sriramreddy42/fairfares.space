@@ -62,7 +62,7 @@ class WebGoogleAuthTest(unittest.TestCase):
     @staticmethod
     def google_post(server, csrf_cookie="matching-csrf", submitted_csrf="matching-csrf"):
         payload = urllib.parse.urlencode(
-            {"credential": "verified-google-token", "g_csrf_token": submitted_csrf}
+            {"credential": "verified-google-token", "g_csrf_token": submitted_csrf, "consent_accepted": "1"}
         ).encode("utf-8")
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}/auth/google",
@@ -268,6 +268,7 @@ class WebGoogleAuthTest(unittest.TestCase):
                 {
                     "credential": "verified-google-token",
                     "fairfares_google_csrf": "fairfares-csrf",
+                    "consent_accepted": "1",
                 }
             ).encode("utf-8")
             request = urllib.request.Request(

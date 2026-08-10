@@ -56,6 +56,14 @@ OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
+TERMS_VERSION = "2026-08-10"
+PRIVACY_VERSION = "2026-08-10"
+COMMUNITY_GUIDELINES_VERSION = "2026-08-10"
+
+
+def consent_values(payload: dict[str, object]) -> tuple[bool, str]:
+    accepted = str(payload.get("consentAccepted") or payload.get("consent_accepted") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return accepted, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S") if accepted else ""
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -4626,6 +4634,10 @@ def init_db() -> None:
                 guest_account INTEGER NOT NULL DEFAULT 0,
                 is_verified INTEGER NOT NULL DEFAULT 0,
                 verified_at TEXT,
+                consented_at TEXT,
+                terms_version TEXT,
+                privacy_version TEXT,
+                community_guidelines_version TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -5450,6 +5462,22 @@ def init_db() -> None:
                 FOREIGN KEY(ticket_id) REFERENCES support_tickets(id)
             );
 
+            CREATE TABLE IF NOT EXISTS account_deletion_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT NOT NULL UNIQUE,
+                user_id INTEGER NOT NULL,
+                email_snapshot TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'MOBILE',
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deletion_due_at TEXT NOT NULL,
+                completed_at TEXT,
+                cancelled_at TEXT,
+                retained_data_summary TEXT NOT NULL DEFAULT '',
+                admin_note TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS oncall_shifts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 shift_date TEXT NOT NULL UNIQUE,
@@ -5756,6 +5784,11 @@ def init_db() -> None:
         ensure_column(con, "users", "guest_account", "guest_account INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "verified_at", "verified_at TEXT")
+        ensure_column(con, "users", "consented_at", "consented_at TEXT")
+        ensure_column(con, "users", "terms_version", "terms_version TEXT")
+        ensure_column(con, "users", "privacy_version", "privacy_version TEXT")
+        ensure_column(con, "users", "community_guidelines_version", "community_guidelines_version TEXT")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_account_deletion_user_status ON account_deletion_requests(user_id, status, requested_at DESC)")
         ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
         con.execute(
@@ -13620,6 +13653,52 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
     }
 
 
+def account_deletion_payload(row: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
+    if not row:
+        return None
+    return {
+        "requestId": row_value(row, "request_id"),
+        "status": row_value(row, "status"),
+        "requestedAt": row_value(row, "requested_at"),
+        "deletionDueAt": row_value(row, "deletion_due_at"),
+        "completedAt": row_value(row, "completed_at"),
+        "retainedDataSummary": row_value(row, "retained_data_summary"),
+    }
+
+
+def create_account_deletion_request(user_id: int, email: str, source: str) -> dict[str, object]:
+    with db() as con:
+        existing = con.execute(
+            "SELECT * FROM account_deletion_requests WHERE user_id = ? AND status IN ('PENDING', 'IN_PROGRESS') ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if existing:
+            return account_deletion_payload(existing) or {}
+        request_id = f"DEL-{datetime.now(UTC).strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}"
+        due_at = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        con.execute(
+            "INSERT INTO account_deletion_requests (request_id, user_id, email_snapshot, source, deletion_due_at) VALUES (?, ?, ?, ?, ?)",
+            (request_id, user_id, normalize_email(email), clean_text_value(source, 20).upper() or "MOBILE", due_at),
+        )
+        row = con.execute("SELECT * FROM account_deletion_requests WHERE request_id = ?", (request_id,)).fetchone()
+    subject = f"FairFares account deletion request {request_id}"
+    text_body = (
+        f"We received your FairFares account deletion request {request_id}.\n\n"
+        f"The request is due for completion by {due_at} UTC. FairFares will delete or de-identify account data that is not legally required for bookings, payments, safety, tax, insurance, fraud prevention, or disputes.\n\n"
+        "If you did not make this request, contact hello@fairfare.space immediately."
+    )
+    html_body = "<p>" + escape(text_body).replace("\n", "<br>") + "</p>"
+    if normalize_email(email):
+        send_with_resend(normalize_email(email), subject, text_body, html_body)
+    send_operational_alert(
+        f"account-deletion:{user_id}",
+        "Account deletion request received",
+        severity="warning",
+        details=[f"Request: {request_id}", f"User ID: {user_id}", f"Source: {source}", f"Due: {due_at} UTC"],
+    )
+    return account_deletion_payload(row) or {}
+
+
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
     if not user:
         return None
@@ -19250,6 +19329,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rentals/policy":
             self.send_json({"ok": True, "policy": mobile_rental_policy_payload()})
             return
+        if parsed.path == "/api/mobile/account-deletion":
+            self.api_mobile_account_deletion_status()
+            return
         if parsed.path == "/api/mobile/admin/pickups":
             self.api_mobile_admin_pickups()
             return
@@ -19311,6 +19393,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/about": self.about_page,
             "/contact": self.contact_page,
             "/privacy": self.privacy_page,
+            "/terms": self.terms_page,
+            "/community-guidelines": self.community_guidelines_page,
+            "/account-deletion": self.account_deletion_page,
             "/robots.txt": self.robots_txt,
             "/llms.txt": self.llms_txt,
             "/sitemap.xml": self.sitemap_xml,
@@ -19511,6 +19596,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/auth/phone/verify": self.api_mobile_social_phone_verify,
             "/api/mobile/auth/phone/complete": self.api_mobile_social_phone_complete,
             "/api/mobile/logout": self.api_mobile_logout,
+            "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
@@ -19536,6 +19622,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/profile/photo": self.update_profile_photo,
             "/support/tickets": self.create_support_ticket,
             "/feedback": self.submit_app_feedback,
+            "/account-deletion": self.request_account_deletion_web,
             "/wiki/ask": self.ask_wiki_agent,
             "/accommodations/post": self.create_accommodation_post,
             "/student-verification": self.update_student_verification,
@@ -19900,6 +19987,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/about",
             "/contact",
             "/privacy",
+            "/terms",
+            "/community-guidelines",
+            "/account-deletion",
             "/deals",
             "/explorer",
         ]
@@ -20143,6 +20233,57 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
+
+    def terms_page(self) -> None:
+        user = self.current_user()
+        self.send_html(render_template(
+            "terms.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        ))
+
+    def community_guidelines_page(self) -> None:
+        user = self.current_user()
+        self.send_html(render_template(
+            "community_guidelines.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
+        ))
+
+    def account_deletion_page(self, message: str = "") -> None:
+        user = self.current_user()
+        pending = None
+        if user:
+            with db() as con:
+                pending = con.execute(
+                    "SELECT * FROM account_deletion_requests WHERE user_id = ? AND status IN ('PENDING', 'IN_PROGRESS') ORDER BY id DESC LIMIT 1",
+                    (int(user["id"]),),
+                ).fetchone()
+        if pending:
+            deletion_form = (
+                '<div class="deletion-status"><strong>Request %s</strong><p>Status: %s</p><p>Deletion due by: %s UTC</p></div>'
+                % (escape(str(pending["request_id"])), escape(str(pending["status"]).replace("_", " ").title()), escape(str(pending["deletion_due_at"])))
+            )
+        elif user:
+            deletion_form = '<form method="post" action="/account-deletion" class="deletion-request-form"><label><span>Type DELETE to confirm</span><input name="confirmation" autocomplete="off" required></label><button type="submit">Request account deletion</button></form>'
+        else:
+            deletion_form = '<p><a class="select-button" href="/login?next=/account-deletion">Sign in to request deletion</a></p>'
+        self.send_html(render_template(
+            "account_deletion.html",
+            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login?next=/account-deletion">Sign in</a>',
+            deletion_form=deletion_form,
+            message=escape(message),
+        ))
+
+    def request_account_deletion_web(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.redirect("/login?next=/account-deletion")
+            return
+        form = self.read_form()
+        if str(form.get("confirmation") or "").strip().upper() != "DELETE":
+            self.account_deletion_page("Type DELETE exactly to confirm the request.")
+            return
+        request = create_account_deletion_request(int(user["id"]), str(row_value(user, "email") or ""), "WEB")
+        self.account_deletion_page(f"Deletion request {request['requestId']} was received.")
 
     def carpool_page(self) -> None:
         user = self.current_user()
@@ -22559,6 +22700,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone",
                 password_autocomplete="current-password",
+                consent_field="",
                 google_signin=self.google_web_signin_markup(google_csrf),
             ),
             headers={
@@ -22578,7 +22720,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
               const form = document.createElement("form");
               form.method = "POST";
               form.action = "/auth/google";
-              const fields = {{credential: response.credential, fairfares_google_csrf: "{escape(csrf_token)}"}};
+              const consent = document.querySelector('input[name="consent_accepted"]');
+              if (consent && !consent.checked) {{
+                consent.focus();
+                alert("You must agree to the Terms of Service and Community Guidelines and acknowledge the Privacy Policy.");
+                return;
+              }}
+              const fields = {{credential: response.credential, fairfares_google_csrf: "{escape(csrf_token)}", consent_accepted: consent?.checked ? "1" : "0"}};
               Object.entries(fields).forEach(([name, value]) => {{
                 const input = document.createElement("input");
                 input.type = "hidden";
@@ -22625,6 +22773,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
           <input name="referral_code" autocomplete="off" placeholder="Friend referral code" value="%s">
         </label>
         """ % escape(referral_prefill)
+        consent_field = """
+        <label class="account-consent-field">
+          <input type="checkbox" name="consent_accepted" value="1" required>
+          <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and <a href="/community-guidelines" target="_blank" rel="noopener">Community Guidelines</a> and acknowledge the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+        </label>
+        """
         google_csrf = secrets.token_urlsafe(32)
         secure = "; Secure" if self.public_origin().startswith("https://") else ""
         self.send_html(
@@ -22644,6 +22798,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 identifier_autocomplete="email",
                 identifier_placeholder="Enter your email",
                 password_autocomplete="new-password",
+                consent_field=consent_field,
                 google_signin=self.google_web_signin_markup(google_csrf),
             ),
             headers={
@@ -22653,6 +22808,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def web_google_auth(self) -> None:
         form = self.read_form()
+        consented, consented_at = consent_values(form)
         action_key = auth_action_rate_limit_key(self.client_ip(), "web-google")
         if auth_action_retry_after(action_key):
             self.login_page("Too many sign-in attempts. Please wait and try again.")
@@ -22706,17 +22862,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 user = con.execute("SELECT * FROM users WHERE id = ?", (int(identity["user_id"]),)).fetchone() if identity else None
                 if not user:
                     existing = find_user_by_email(con, email)
+                    if (not existing or int(row_value(existing, "guest_account") or 0)) and not consented:
+                        self.signup_page("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account.")
+                        return
                     if existing:
                         user_id = int(existing["id"])
                         if int(row_value(existing, "guest_account") or 0):
                             con.execute(
-                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
-                                (display_name, user_id),
+                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ? WHERE id = ?",
+                                (display_name, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
                             )
                     else:
                         con.execute(
-                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)",
-                            (display_name, email, hash_password(secrets.token_urlsafe(48))),
+                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
+                            (display_name, email, hash_password(secrets.token_urlsafe(48)), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                         )
                         user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                     con.execute(
@@ -22754,6 +22913,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 next_field="", name_field="", identifier_label="Email or Phone Number",
                 identifier_type="text", identifier_autocomplete="username",
                 identifier_placeholder="Enter your email or phone", password_autocomplete="current-password",
+                consent_field="",
                 google_signin=self.google_web_signin_markup(google_csrf),
             )
             self.send_header(
@@ -22805,6 +22965,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.signup_page("Too many signup attempts. Please wait and try again.")
             return
         record_auth_action(action_key)
+        consented, consented_at = consent_values(form)
+        if not consented:
+            self.signup_page("You must agree to the Terms of Service and Community Guidelines and acknowledge the Privacy Policy.")
+            return
         password = form.get("password", "")
         name, email, phone, validation_error = validate_account_fields(
             form.get("name"), form.get("email"), form.get("phone"), password
@@ -22838,16 +23002,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             phone = COALESCE(NULLIF(?, ''), phone),
                             password_hash = ?,
                             is_verified = 0,
-                            guest_account = 0
+                            guest_account = 0,
+                            consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ?
                         WHERE id = ?
                         """,
-                        (name, email, phone, hash_password(password), guest["id"]),
+                        (name, email, phone, hash_password(password), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, guest["id"]),
                     )
                     user_id = guest["id"]
                 else:
                     con.execute(
-                        "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
-                        (name, email, phone, hash_password(password)),
+                        "INSERT INTO users (name, email, phone, password_hash, is_verified, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                        (name, email, phone, hash_password(password), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                     )
                     user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         except sqlite3.IntegrityError:
@@ -29074,6 +29239,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_social_auth(self) -> None:
         payload = self.read_json_body()
+        consented, consented_at = consent_values(payload)
         action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-social")
         retry_after = auth_action_retry_after(action_key)
         if retry_after:
@@ -29117,17 +29283,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         self.send_json({"ok": False, "error": "Share your email with the identity provider to create the account."}, 400)
                         return
                     existing = find_user_by_email(con, email)
+                    if (not existing or int(row_value(existing, "guest_account") or 0)) and not consented:
+                        self.send_json({"ok": False, "error": "Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account."}, 400)
+                        return
                     if existing:
                         user_id = int(existing["id"])
                         if int(row_value(existing, "guest_account") or 0):
                             con.execute(
-                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
-                                (display_name, user_id),
+                                "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ? WHERE id = ?",
+                                (display_name, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
                             )
                     else:
                         con.execute(
-                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)",
-                            (display_name, email, hash_password(secrets.token_urlsafe(48))),
+                            "INSERT INTO users (name, email, password_hash, is_verified, verified_at, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
+                            (display_name, email, hash_password(secrets.token_urlsafe(48)), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                         )
                         user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                     con.execute(
@@ -29363,6 +29532,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             return
         record_auth_action(action_key)
+        consented, consented_at = consent_values(payload)
+        if not consented:
+            self.send_json({"ok": False, "error": "You must agree to the Terms of Service and Community Guidelines and acknowledge the Privacy Policy."}, 400)
+            return
         submitted_phone = str(payload.get("phone") or "").strip()
         country_code = str(payload.get("countryCode") or "").strip()
         phone = canonical_e164_phone(submitted_phone, country_code)
@@ -29398,15 +29571,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     con.execute(
                         """UPDATE users
                            SET name = ?, email = ?, phone = ?, password_hash = ?, is_verified = 0,
-                               guest_account = 0, chat_phone_discoverable = ?
+                               guest_account = 0, chat_phone_discoverable = ?, consented_at = ?,
+                               terms_version = ?, privacy_version = ?, community_guidelines_version = ?
                            WHERE id = ?""",
-                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, int(guest["id"])),
+                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, int(guest["id"])),
                     )
                     user_id = int(guest["id"])
                 else:
                     con.execute(
-                        "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, ?, 0, ?)",
-                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0),
+                        "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                     )
                     user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -29440,6 +29614,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             with db() as con:
                 con.execute("DELETE FROM sessions WHERE token = ?", (token,))
         self.send_json({"ok": True})
+
+    def api_mobile_account_deletion_status(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        with db() as con:
+            row = con.execute("SELECT * FROM account_deletion_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1", (int(user["id"]),)).fetchone()
+        self.send_json({"ok": True, "request": account_deletion_payload(row)})
+
+    def api_mobile_request_account_deletion(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to request account deletion."}, 401)
+            return
+        payload = self.read_json_body()
+        if str(payload.get("confirmation") or "").strip().upper() != "DELETE":
+            self.send_json({"ok": False, "error": "Type DELETE exactly to confirm account deletion."}, 400)
+            return
+        request = create_account_deletion_request(int(user["id"]), str(row_value(user, "email") or ""), "MOBILE")
+        self.send_json({"ok": True, "message": "Your account deletion request was received.", "request": request}, 202)
 
     def api_mobile_push_token(self) -> None:
         user = self.current_user()

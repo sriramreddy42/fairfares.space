@@ -220,6 +220,7 @@ function FairFaresApp() {
   const [signupCallingCode, setSignupCallingCode] = useState("+1");
   const [signupCountryOpen, setSignupCountryOpen] = useState(false);
   const [signupPhoneDiscoverable, setSignupPhoneDiscoverable] = useState(true);
+  const [signupConsentAccepted, setSignupConsentAccepted] = useState(false);
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
@@ -1201,7 +1202,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage(`Signing in with ${provider === "google" ? "Google" : "Apple"}...`);
     try {
-      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name));
+      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name, signupConsentAccepted));
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Social sign-in failed. Please try again.");
     } finally {
@@ -1210,6 +1211,10 @@ function FairFaresApp() {
   }
 
   async function startGoogleSignIn() {
+    if (authMode === "signup" && !signupConsentAccepted) {
+      setAuthMessage("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account.");
+      return;
+    }
     if (IS_EXPO_GO && Platform.OS !== "web") {
       setAuthMessage("Google sign-in cannot run inside Expo Go. Install the FairFares development build, start Metro with npm run start:dev, and try again there.");
       return;
@@ -1224,6 +1229,10 @@ function FairFaresApp() {
 
   async function startAppleSignIn() {
     if (authBusy) return;
+    if (authMode === "signup" && !signupConsentAccepted) {
+      setAuthMessage("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account.");
+      return;
+    }
     setAuthMessage("");
     try {
       const credential = await AppleAuthentication.signInAsync({
@@ -1319,16 +1328,21 @@ function FairFaresApp() {
       setAuthMessage("Create a password with at least 8 characters.");
       return;
     }
+    if (!signupConsentAccepted) {
+      setAuthMessage("You must agree to the Terms of Service and Community Guidelines and acknowledge the Privacy Policy.");
+      return;
+    }
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupPhoneDiscoverable, signupCallingCode);
+      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupPhoneDiscoverable, signupCallingCode, signupConsentAccepted);
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
       setSignupPhone("");
       setIdentifier("");
       setPassword("");
+      setSignupConsentAccepted(false);
       if (!payload.activationRequired && payload.token) {
         if (payload.user) {
           setData((current) => current ? { ...current, user: payload.user || null } : current);
@@ -1742,6 +1756,22 @@ function FairFaresApp() {
               style={styles.input}
             />
             {authMode === "signup" ? <Text style={styles.authHint}>Use at least 8 characters. You must activate the account from the email we send.</Text> : null}
+            {authMode === "signup" ? (
+              <View style={styles.signupConsentRow}>
+                <TouchableOpacity
+                  style={[styles.signupConsentBox, signupConsentAccepted && styles.signupConsentBoxChecked]}
+                  onPress={() => setSignupConsentAccepted((accepted) => !accepted)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: signupConsentAccepted }}
+                  accessibilityLabel="Agree to Terms of Service and Community Guidelines and acknowledge Privacy Policy"
+                >
+                  <Text style={styles.signupConsentCheck}>{signupConsentAccepted ? "✓" : ""}</Text>
+                </TouchableOpacity>
+                <Text style={styles.signupConsentText}>
+                  I agree to the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/terms")}>Terms of Service</Text> and <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/community-guidelines")}>Community Guidelines</Text> and acknowledge the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/privacy")}>Privacy Policy</Text>.
+                </Text>
+              </View>
+            ) : null}
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
             <TouchableOpacity
               style={[styles.primaryButton, authBusy && styles.disabledButton]}
@@ -2271,6 +2301,12 @@ const styles = StyleSheet.create({
   signupDiscoveryCopy: { flex: 1, minWidth: 0 },
   signupDiscoveryTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   signupDiscoveryText: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  signupConsentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4, paddingVertical: 4 },
+  signupConsentBox: { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  signupConsentBoxChecked: { backgroundColor: theme.colors.green, borderColor: theme.colors.green },
+  signupConsentCheck: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  signupConsentText: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, flex: 1 },
+  signupConsentLink: { color: theme.colors.green, fontWeight: "800", textDecorationLine: "underline" },
   signupPhoneRow: { flexDirection: "row", alignItems: "stretch", gap: 8 },
   signupCallingCode: { minWidth: 86, minHeight: 49, paddingHorizontal: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: theme.colors.line },
   signupCallingCodeText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
