@@ -45,6 +45,7 @@ import {
   removeChatGroupMember,
   sendEncryptedChatMessage,
   sendEncryptedChatAttachment,
+  sendChatRichMessage,
   transferChatGroupOwnership,
   updateChatGroupPhoto,
   updateChatGroupMemberRole,
@@ -455,6 +456,8 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [recentEmojis, setRecentEmojis] = useState<string[]>(["❤️", "👍", "😂", "😊", "🙏", "🎉", "🔥", "😍"]);
   const [richComposer, setRichComposer] = useState<"POLL" | "EVENT" | "CONTACT" | "">("");
   const [richDraft, setRichDraft] = useState({ primary: "", secondary: "", tertiary: "", fourth: "" });
+  const [pollMultiple, setPollMultiple] = useState(false);
+  const [pollClosesInHours, setPollClosesInHours] = useState(24);
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
@@ -1839,6 +1842,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setAttachmentMenuOpen(false);
     setEmojiPickerOpen(false);
     setRichDraft({ primary: "", secondary: "", tertiary: "", fourth: "" });
+    if (type === "POLL") { setPollMultiple(false); setPollClosesInHours(24); }
     setRichComposer(type);
   }
 
@@ -1868,7 +1872,12 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     }
     try {
       setThreadLoading(true);
-      await sendEncryptedRichMessage(richComposer, metadata);
+      if (richComposer === "POLL") {
+        const response = await sendChatRichMessage(activeConversationId, "POLL", { ...metadata, allowMultiple: pollMultiple, anonymous: true, closesInHours: pollClosesInHours });
+        setMessages((current) => [...current.filter((item) => item.id !== response.message.id), response.message].sort((a, b) => a.id - b.id));
+      } else {
+        await sendEncryptedRichMessage(richComposer, metadata);
+      }
       setRichComposer("");
       await refreshMessenger();
     } catch (error) {
@@ -1940,10 +1949,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }
 
   async function voteOnPoll(message: ChatMessage, optionIndex: number) {
-    if (message.metadata?.encrypted) {
-      Alert.alert("Encrypted poll", "Private poll voting will be added with anonymous encrypted vote envelopes. This poll is currently view-only.");
-      return;
-    }
+    if (message.metadata?.closed) { Alert.alert("Poll ended", "Voting has closed for this poll."); return; }
     try {
       const response = await voteChatPoll(message.id, optionIndex);
       setMessages((current) => current.map((item) => item.id === message.id ? response.message : item));
@@ -2397,12 +2403,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 ) : null}
                 {message.type === "POLL" ? (
                   <View style={styles.richCard}>
-                    <Text style={styles.richEyebrow}>POLL</Text><Text style={styles.richTitle}>{message.metadata?.question || message.text}</Text>
+                    <Text style={styles.richEyebrow}>CHITTHI POLL</Text><Text style={styles.richTitle}>{message.metadata?.question || message.text}</Text>
+                    <Text style={styles.pollMeta}>{message.metadata?.allowMultiple ? "Select one or more" : "Select one"} · {message.metadata?.anonymous !== false ? "Names hidden" : "Names visible"}{message.metadata?.closed ? " · Poll ended" : message.metadata?.expiresAt ? ` · Ends ${new Date(message.metadata.expiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</Text>
                     {(message.metadata?.options || []).map((option, index) => {
                       const count = message.metadata?.voteCounts?.[index] || 0;
-                      const selected = message.metadata?.selectedOption === index;
-                      return <TouchableOpacity key={`${message.id}-${index}`} style={[styles.pollOption, selected && styles.pollOptionSelected]} onPress={() => void voteOnPoll(message, index)} accessibilityRole="button" accessibilityLabel={`Vote for ${option}. ${count} vote${count === 1 ? "" : "s"}`}><Text style={[styles.pollOptionText, selected && styles.pollOptionTextSelected]}>{option}</Text><Text style={[styles.pollCount, selected && styles.pollOptionTextSelected]}>{count}</Text></TouchableOpacity>;
+                      const selected = message.metadata?.selectedOptions?.includes(index) || message.metadata?.selectedOption === index;
+                      const percent = Math.min(100, Math.round((count / Math.max(1, message.metadata?.totalVotes || 0)) * 100));
+                      return <TouchableOpacity key={`${message.id}-${index}`} style={[styles.pollOption, selected && styles.pollOptionSelected, message.metadata?.closed && styles.pollOptionClosed]} disabled={message.metadata?.closed} onPress={() => void voteOnPoll(message, index)} accessibilityRole="button" accessibilityLabel={`Vote for ${option}. ${count} vote${count === 1 ? "" : "s"}`}><View style={[styles.pollProgress, { width: `${percent}%` }]} /><View style={[styles.pollChoiceMark, selected && styles.pollChoiceMarkSelected]}>{selected ? <Text style={styles.pollChoiceCheck}>✓</Text> : null}</View><View style={styles.pollOptionCopy}><View style={styles.pollOptionLine}><Text style={[styles.pollOptionText, selected && styles.pollOptionTextSelected]}>{option}</Text><Text style={[styles.pollCount, selected && styles.pollOptionTextSelected]}>{count}</Text></View><Text style={styles.pollPercent}>{percent}%</Text></View></TouchableOpacity>;
                     })}
+                    <Text style={styles.pollFooter}>{message.metadata?.totalVotes || 0} participant{message.metadata?.totalVotes === 1 ? "" : "s"} · Results update live</Text>
                   </View>
                 ) : null}
                 {message.type === "EVENT" ? <View style={styles.richCard}><Text style={styles.richEyebrow}>EVENT</Text><Text style={styles.richTitle}>{message.metadata?.title}</Text><Text style={styles.richDetail}>▦ {message.metadata?.date}{message.metadata?.time ? ` · ${message.metadata.time}` : ""}</Text>{message.metadata?.location ? <Text style={styles.richDetail}>⌖ {message.metadata.location}</Text> : null}</View> : null}
@@ -2547,6 +2556,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <TextInput style={styles.richInput} placeholder={richComposer === "POLL" ? "Ask a question" : richComposer === "EVENT" ? "Event title" : "Contact name"} placeholderTextColor="#777" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} />
             {richComposer === "EVENT" ? <DateTimeField label="Event date" mode="date" minimumDate={todayLocalIso()} value={richDraft.secondary} onChange={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} /> : <TextInput style={[styles.richInput, richComposer === "POLL" && styles.richMultiline]} multiline={richComposer === "POLL"} placeholder={richComposer === "POLL" ? "Options, one per line" : "Phone number"} placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />}
             {richComposer === "EVENT" ? <DateTimeField label="Event time" mode="time" value={richDraft.tertiary} onChange={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : richComposer !== "POLL" ? <TextInput style={styles.richInput} placeholder="Email address" placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : null}
+            {richComposer === "POLL" ? <><View style={styles.pollComposerSetting}><View><Text style={styles.pollComposerSettingTitle}>Allow multiple answers</Text><Text style={styles.pollComposerSettingMeta}>{pollMultiple ? "Members can select more than one" : "Members select one answer"}</Text></View><Switch value={pollMultiple} onValueChange={setPollMultiple} trackColor={{ false: "#777", true: "#1AA866" }} /></View><Text style={styles.pollComposerLabel}>Poll duration</Text><View style={styles.pollDurationRow}>{[{ value: 1, label: "1 hour" }, { value: 24, label: "24 hours" }, { value: 168, label: "7 days" }, { value: 0, label: "No end" }].map((choice) => <TouchableOpacity key={choice.value} style={[styles.pollDurationChoice, pollClosesInHours === choice.value && styles.pollDurationChoiceActive]} onPress={() => setPollClosesInHours(choice.value)}><Text style={[styles.pollDurationChoiceText, pollClosesInHours === choice.value && styles.pollDurationChoiceTextActive]}>{choice.label}</Text></TouchableOpacity>)}</View><Text style={styles.pollPrivacyNote}>◉ Voter names are hidden from members. Results sync through Chitthi's secure poll service.</Text></> : null}
             {richComposer === "EVENT" ? <TextInput style={styles.richInput} placeholder="Location" placeholderTextColor="#777" value={richDraft.fourth} onChangeText={(fourth) => setRichDraft((current) => ({ ...current, fourth }))} /> : null}
             <TouchableOpacity style={styles.richSubmit} onPress={() => void submitRichMessage()} disabled={threadLoading}><Text style={styles.richSubmitText}>{threadLoading ? "Sending…" : "Send"}</Text></TouchableOpacity>
           </View>
@@ -3158,11 +3168,31 @@ const styles = StyleSheet.create({
   richTitle: { color: "#17202d", fontSize: 16, lineHeight: 20, fontWeight: "700" },
   richDetail: { color: "#475467", fontSize: 12, lineHeight: 17, fontWeight: "700" },
   richLink: { color: "#1463d9", fontSize: 13, lineHeight: 20, fontWeight: "800" },
-  pollOption: { minHeight: 38, borderRadius: 11, borderWidth: 1, borderColor: "#cbd5e1", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  pollOptionSelected: { backgroundColor: "#1463d9", borderColor: "#1463d9" },
+  pollMeta: { color: "#68706B", fontSize: 10.5, lineHeight: 15, fontWeight: "600", marginTop: 5, marginBottom: 8 },
+  pollOption: { position: "relative", minHeight: 60, borderRadius: 13, borderWidth: 1, borderColor: "#CBD3CC", paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", alignItems: "center", overflow: "hidden" },
+  pollOptionSelected: { borderColor: "#15945A" },
+  pollOptionClosed: { opacity: 0.78 },
+  pollProgress: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: "rgba(26,168,102,0.16)" },
+  pollChoiceMark: { width: 25, height: 25, borderRadius: 13, borderWidth: 2, borderColor: "#737B75", backgroundColor: "#fff", alignItems: "center", justifyContent: "center", marginRight: 9 },
+  pollChoiceMarkSelected: { borderColor: "#15945A", backgroundColor: "#15945A" },
+  pollChoiceCheck: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  pollOptionCopy: { flex: 1 },
+  pollOptionLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   pollOptionText: { color: "#263244", fontSize: 12, fontWeight: "800", flex: 1 },
-  pollOptionTextSelected: { color: "#fff" },
+  pollOptionTextSelected: { color: "#116B43" },
   pollCount: { color: "#667085", fontSize: 11, fontWeight: "900", marginLeft: 8 },
+  pollPercent: { color: "#7A827C", fontSize: 9.5, fontWeight: "700", marginTop: 3 },
+  pollFooter: { color: "#727A74", fontSize: 10, fontWeight: "600", marginTop: 8 },
+  pollComposerSetting: { minHeight: 62, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  pollComposerSettingTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
+  pollComposerSettingMeta: { color: theme.colors.muted, fontSize: 10.5, marginTop: 2 },
+  pollComposerLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.6, marginTop: 14, marginBottom: 8 },
+  pollDurationRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  pollDurationChoice: { borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 12, paddingVertical: 8 },
+  pollDurationChoiceActive: { borderColor: "#1AA866", backgroundColor: "rgba(26,168,102,0.18)" },
+  pollDurationChoiceText: { color: theme.colors.muted, fontSize: 11, fontWeight: "700" },
+  pollDurationChoiceTextActive: { color: "#6BE2A5" },
+  pollPrivacyNote: { color: "#7EDDA8", fontSize: 10.5, fontWeight: "600", marginTop: 12 },
   composerInput: { flex: 1, color: "#18342A", backgroundColor: "#F3E9D5", borderWidth: 1, borderColor: "rgba(214,169,95,0.62)", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
   composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center" },
   composerSendText: { color: "#FFF9ED", fontSize: 18, fontWeight: "900" },

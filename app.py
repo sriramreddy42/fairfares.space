@@ -16404,8 +16404,25 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
     if (row_value(row, "message_type") or "") == "POLL":
         votes = metadata.pop("votes", {}) if isinstance(metadata.get("votes"), dict) else {}
         options = metadata.get("options") if isinstance(metadata.get("options"), list) else []
-        metadata["voteCounts"] = [sum(1 for choice in votes.values() if choice == index) for index in range(len(options))]
-        metadata["selectedOption"] = votes.get(str(current_user_id), -1)
+        allow_multiple = bool(metadata.get("allowMultiple"))
+        def selected_indices(choice: object) -> list[int]:
+            if isinstance(choice, list):
+                return [int(value) for value in choice if isinstance(value, int) or str(value).isdigit()]
+            return [int(choice)] if isinstance(choice, int) or str(choice).isdigit() else []
+        metadata["voteCounts"] = [sum(1 for choice in votes.values() if index in selected_indices(choice)) for index in range(len(options))]
+        current_choices = selected_indices(votes.get(str(current_user_id)))
+        metadata["selectedOptions"] = current_choices
+        metadata["selectedOption"] = current_choices[0] if current_choices else -1
+        metadata["totalVotes"] = len(votes)
+        expires_at = str(metadata.get("expiresAt") or "")
+        try:
+            expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) if expires_at else None
+            if expires and expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            metadata["closed"] = bool(expires and expires <= datetime.now(timezone.utc))
+        except ValueError:
+            metadata["closed"] = False
+        metadata["allowMultiple"] = allow_multiple
     if mine:
         if read_at or (seen_message_id and message_id <= seen_message_id):
             status = "seen"
@@ -20998,7 +21015,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not question or len(options) < 2 or len(options) > 6:
                 self.send_json({"ok": False, "message": "Add a poll question and 2–6 options."}, 400)
                 return
-            clean_metadata = {"question": question, "options": options, "votes": {}}
+            allow_multiple = bool(metadata.get("allowMultiple"))
+            anonymous = bool(metadata.get("anonymous", True))
+            try:
+                closes_in_hours = max(0, min(168, int(metadata.get("closesInHours") or 0)))
+            except (TypeError, ValueError):
+                closes_in_hours = 0
+            expires_at = (datetime.now(timezone.utc) + timedelta(hours=closes_in_hours)).isoformat() if closes_in_hours else ""
+            clean_metadata = {"question": question, "options": options, "votes": {}, "allowMultiple": allow_multiple, "anonymous": anonymous, "expiresAt": expires_at}
             message_text = question
         elif message_type == "EVENT":
             title = clean_text_value(metadata.get("title"), 160)
@@ -21060,8 +21084,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if option_index < 0 or option_index >= len(options):
                 self.send_json({"ok": False, "message": "Choose a valid poll option."}, 400)
                 return
+            expires_at = str(metadata.get("expiresAt") or "")
+            if expires_at:
+                try:
+                    expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=timezone.utc)
+                    if expires <= datetime.now(timezone.utc):
+                        self.send_json({"ok": False, "message": "This poll has ended."}, 409)
+                        return
+                except ValueError:
+                    pass
             votes = metadata.get("votes") if isinstance(metadata.get("votes"), dict) else {}
-            votes[str(current_user_id)] = option_index
+            if bool(metadata.get("allowMultiple")):
+                selected = votes.get(str(current_user_id)) if isinstance(votes.get(str(current_user_id)), list) else []
+                selected = [int(value) for value in selected if isinstance(value, int) or str(value).isdigit()]
+                if option_index in selected:
+                    selected = [value for value in selected if value != option_index]
+                else:
+                    selected.append(option_index)
+                if selected:
+                    votes[str(current_user_id)] = selected
+                else:
+                    votes.pop(str(current_user_id), None)
+            else:
+                votes[str(current_user_id)] = option_index
             metadata["votes"] = votes
             con.execute("UPDATE chat_messages SET metadata_json = ? WHERE id = ?", (json.dumps(metadata), message_id))
             row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (message_id,)).fetchone()

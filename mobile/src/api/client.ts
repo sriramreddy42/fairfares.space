@@ -860,6 +860,14 @@ export async function openCommunityChat(communityId: string) {
   });
 }
 
+export async function sendChatRichMessage(conversationId: string, type: "POLL" | "EVENT" | "CONTACT", metadata: Record<string, unknown>) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/rich-messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, type, metadata, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
+  });
+}
+
 export async function voteChatPoll(messageId: number, optionIndex: number) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/polls/vote", {
     method: "POST",

@@ -105,6 +105,11 @@ export type ChatMessage = {
     options?: string[];
     voteCounts?: number[];
     selectedOption?: number;
+    selectedOptions?: number[];
+    allowMultiple?: boolean;
+    anonymous?: boolean;
+    closed?: boolean;
+    totalVotes?: number;
     title?: string;
     date?: string;
     time?: string;
