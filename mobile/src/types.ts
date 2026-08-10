@@ -39,6 +39,7 @@ export type FairFaresUser = {
   name: string;
   email: string;
   phone: string;
+  dateOfBirth?: string;
   role: string;
   isAdmin: boolean;
   isVerified: boolean;

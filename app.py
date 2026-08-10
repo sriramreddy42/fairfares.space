@@ -13622,6 +13622,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "name": row_value(user, "name"),
         "email": row_value(user, "email"),
         "phone": row_value(user, "phone"),
+        "dateOfBirth": row_value(user, "date_of_birth"),
         "role": row_value(user, "role") or "CUSTOMER",
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
@@ -29507,6 +29508,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name = clean_text_value(payload.get("name") if "name" in payload else row_value(user, "name"), 120)
         email = normalize_email(payload.get("email") if "email" in payload else row_value(user, "email"))
         phone = clean_text_value(payload.get("phone") if "phone" in payload else row_value(user, "phone"), 40)
+        date_of_birth = clean_text_value(payload.get("dateOfBirth") if "dateOfBirth" in payload else row_value(user, "date_of_birth"), 10)
         clean_phone = normalize_phone(phone)
         current_password = str(payload.get("currentPassword") or "")
         current_email = normalize_email(row_value(user, "email"))
@@ -29522,6 +29524,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if len(clean_phone) < 7:
             self.send_json({"ok": False, "error": "Use a valid phone number."}, 400)
             return
+        if date_of_birth:
+            try:
+                birthday = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
+            except ValueError:
+                self.send_json({"ok": False, "error": "Use a valid birthday."}, 400)
+                return
+            today = date.today()
+            if birthday > today or birthday.year < today.year - 120:
+                self.send_json({"ok": False, "error": "Use a valid birthday."}, 400)
+                return
         if (email_changed or phone_changed) and not verify_password(current_password, row_value(user, "password_hash")):
             self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
             return
@@ -29565,13 +29577,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
             if photo is None:
                 con.execute(
-                    "UPDATE users SET name = ?, email = ?, phone = ?, is_verified = ? WHERE id = ?",
-                    (name, email, phone, verified_value, user["id"]),
+                    "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ? WHERE id = ?",
+                    (name, email, phone, date_of_birth or None, verified_value, user["id"]),
                 )
             else:
                 con.execute(
-                    "UPDATE users SET name = ?, email = ?, phone = ?, is_verified = ?, profile_photo_url = ? WHERE id = ?",
-                    (name, email, phone, verified_value, photo, user["id"]),
+                    "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ? WHERE id = ?",
+                    (name, email, phone, date_of_birth or None, verified_value, photo, user["id"]),
                 )
             if email_changed:
                 con.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))

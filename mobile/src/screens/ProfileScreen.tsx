@@ -4,6 +4,7 @@ import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleShe
 import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, getRideDriverProfile, MobileNotificationPreferences, setChatPhoneDiscoverability, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
+import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RideDriverProfile, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -59,6 +60,7 @@ export function ProfileScreen({
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
+  const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [saving, setSaving] = useState(false);
@@ -87,11 +89,12 @@ export function ProfileScreen({
     setName(user?.name || "");
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
+    setDateOfBirth(user?.dateOfBirth || "");
     setProfilePhoto(user?.profilePhotoUrl || "");
     setPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.profilePhotoUrl]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.profilePhotoUrl]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -99,10 +102,11 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; profilePhoto?: string };
+        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string; profilePhoto?: string };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
+        setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
         setProfilePhoto(draft.profilePhoto ?? user.profilePhotoUrl ?? "");
         setProfileDirty(true);
       } catch {
@@ -140,10 +144,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, profilePhoto }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth, profilePhoto }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [email, name, phone, profileDirty, profilePhoto, user?.id]);
+  }, [dateOfBirth, email, name, phone, profileDirty, profilePhoto, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,11 +257,12 @@ export function ProfileScreen({
     setSaving(true);
     try {
       const phoneChanged = phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "");
-      const payload = await updateMobileProfile({ name, email, phone, profilePhoto, currentPassword });
+      const payload = await updateMobileProfile({ name, email, phone, dateOfBirth, profilePhoto, currentPassword });
       draftUserIdRef.current = payload.user?.id ?? user.id;
       setName(payload.user?.name || "");
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
+      setDateOfBirth(payload.user?.dateOfBirth || "");
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
       onProfileUpdated(payload.user);
       setProfileDirty(false);
@@ -360,6 +365,9 @@ export function ProfileScreen({
             <TextInput value={email} onChangeText={(value) => { setEmail(value); setProfileDirty(true); }} style={styles.input} placeholder="Email" placeholderTextColor={theme.colors.muted} autoCapitalize="none" keyboardType="email-address" />
             <Text style={styles.label}>Phone</Text>
             <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" />
+            <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
+            <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
+            {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
             {sensitiveChanged ? (
             <>
               <Text style={styles.securityNote}>Current password is required to change email or phone. Email changes require activation before the next login.</Text>

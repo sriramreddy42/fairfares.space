@@ -1214,6 +1214,7 @@ export type MobileProfileInput = {
   name?: string;
   email?: string;
   phone?: string;
+  dateOfBirth?: string;
   profilePhoto?: string;
   currentPassword?: string;
 };

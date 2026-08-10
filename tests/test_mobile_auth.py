@@ -156,6 +156,35 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_mobile_profile_can_save_and_clear_optional_birthday(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Birthday Member", "birthday@example.com", "+13035550100", app.hash_password("BirthdayPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {"identifier": "birthday@example.com", "password": "BirthdayPassword123!"})
+            def update_birthday(value):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                    data=json.dumps({"dateOfBirth": value}).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            saved = update_birthday("1995-08-10")
+            self.assertEqual(saved["user"]["dateOfBirth"], "1995-08-10")
+            cleared = update_birthday("")
+            self.assertEqual(cleared["user"]["dateOfBirth"], "")
+            with app.db() as con:
+                self.assertIsNone(con.execute("SELECT date_of_birth FROM users WHERE email = 'birthday@example.com'").fetchone()["date_of_birth"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_preserves_guest_profile_and_rejects_member_phone_reuse(self):
         with app.db() as con:
             con.execute(
