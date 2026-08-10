@@ -56,6 +56,22 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNone(joined)
         self.assertIn("private", error.lower())
 
+    def test_public_group_suggestions_follow_supported_city(self):
+        menlo_groups = app.get_chat_communities_for_user(self.outsider, "Menlo Park, CA")
+        menlo_names = {row["name"] for row in menlo_groups}
+        self.assertIn("Menlo Park Housing & Roommates", menlo_names)
+        self.assertIn("Menlo Park Ride Share", menlo_names)
+        self.assertIn("Menlo Park Community", menlo_names)
+        self.assertNotIn("Denver Roommates", menlo_names)
+
+        local_group = next(row for row in menlo_groups if row["name"] == "Menlo Park Ride Share")
+        joined, error = app.join_chat_community(local_group["id"], self.outsider)
+        self.assertFalse(error)
+        self.assertTrue(joined["joined"])
+        # Joined groups stay available even after the member browses another city.
+        denver_groups = app.get_chat_communities_for_user(self.outsider, "Denver, CO")
+        self.assertIn(local_group["id"], {row["id"] for row in denver_groups})
+
     def test_invite_is_hashed_and_joins_once(self):
         group = self.create_group()
         token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)

@@ -510,7 +510,7 @@ ACCOMMODATION_METRO_GROUPS = {
         "zips": ("80219", "80231", "80229", "80221", "80211", "80206", "80124", "80111", "80014"),
     },
     "Bay Area": {
-        "suggested": ("San Jose, CA", "San Francisco, CA", "Fremont, CA", "Sunnyvale, CA", "Santa Clara, CA"),
+        "suggested": ("San Jose, CA", "San Francisco, CA", "Fremont, CA", "Sunnyvale, CA", "Santa Clara, CA", "Menlo Park, CA"),
         "zips": ("95112", "94105", "94538", "94086", "95050"),
     },
     "Austin Metro Area": {
@@ -15304,8 +15304,59 @@ def seed_chat_communities(con: sqlite3.Connection) -> None:
         )
 
 
-def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, object]]:
+def chat_suggestion_city(value: str) -> str:
+    """Return a canonical supported city label for local group suggestions."""
+    clean = " ".join((value or "").split()).strip()[:80]
+    if not clean:
+        return ""
+    supported = {
+        str(city).lower(): str(city)
+        for metro in ACCOMMODATION_METRO_GROUPS.values()
+        for city in metro.get("suggested", ())
+    }
+    lowered = clean.lower()
+    if lowered in supported:
+        return supported[lowered]
+    city_only = lowered.split(",", 1)[0].strip()
+    matches = [label for key, label in supported.items() if key.split(",", 1)[0].strip() == city_only]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def ensure_location_chat_communities(con: sqlite3.Connection, city: str) -> str:
+    """Create the standard public discovery groups for a supported city on demand."""
+    canonical = chat_suggestion_city(city)
+    if not canonical or canonical.lower() == "denver, co":
+        return canonical
+    city_name = canonical.split(",", 1)[0].strip()
+    location_key = hashlib.sha256(canonical.lower().encode("utf-8")).hexdigest()[:10].upper()
+    suggestions = (
+        (f"FFG-LOCAL-{location_key}-HOUSING", "GROUP", f"{city_name} Housing & Roommates", f"Housing, rooms, and roommate leads around {city_name}."),
+        (f"FFG-LOCAL-{location_key}-RIDES", "GROUP", f"{city_name} Ride Share", f"Local carpools and ride coordination around {city_name}."),
+        (f"FFC-LOCAL-{location_key}", "COMMUNITY", f"{city_name} Community", f"Meet nearby FairFares members and share local information."),
+    )
+    for public_id, kind, name, description in suggestions:
+        con.execute(
+            """
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility)
+            VALUES (?, ?, ?, ?, ?, 'PUBLIC')
+            ON CONFLICT(public_id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                area_label = excluded.area_label,
+                visibility = 'PUBLIC',
+                created_by_user_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (public_id, kind, name, description, canonical),
+        )
+    return canonical
+
+
+def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: str = "") -> list[dict[str, object]]:
+    canonical_city = chat_suggestion_city(suggestion_city)
     with db() as con:
+        if canonical_city:
+            canonical_city = ensure_location_chat_communities(con, canonical_city)
         rows = con.execute(
             """
             SELECT communities.*,
@@ -15314,7 +15365,11 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
                    MAX(CASE WHEN members.user_id = ? THEN members.role ELSE '' END) AS member_role
             FROM chat_communities communities
             LEFT JOIN chat_community_members members ON members.community_id = communities.id
-            WHERE communities.visibility = 'PUBLIC'
+            WHERE (communities.visibility = 'PUBLIC' AND (
+                       ? = ''
+                       OR LOWER(communities.area_label) = LOWER(?)
+                       OR LOWER(communities.area_label) = 'united states'
+                   ))
                OR EXISTS (
                    SELECT 1 FROM chat_community_members mine
                    WHERE mine.community_id = communities.id AND mine.user_id = ?
@@ -15322,7 +15377,7 @@ def get_chat_communities_for_user(user_id: int | None = None) -> list[dict[str, 
             GROUP BY communities.id
             ORDER BY CASE communities.kind WHEN 'GROUP' THEN 0 ELSE 1 END, communities.name
             """,
-            (int(user_id or 0), int(user_id or 0), int(user_id or 0)),
+            (int(user_id or 0), int(user_id or 0), canonical_city, canonical_city, int(user_id or 0)),
         ).fetchall()
     return [
         {
@@ -19959,7 +20014,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_chat_communities(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         user_id = int(user["id"]) if user else None
-        communities = get_chat_communities_for_user(user_id)
+        params = urllib.parse.parse_qs(parsed.query)
+        city = (params.get("city", [""])[0] or "").strip()
+        communities = get_chat_communities_for_user(user_id, city)
         for community in communities:
             if community.get("visibility") == "PUBLIC":
                 community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
@@ -28989,7 +29046,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "suggested": metro_context.get("suggested_location") or "",
                 },
                 "housing": housing_posts,
-                "communities": get_chat_communities_for_user(user_id if user_id else None),
+                "communities": get_chat_communities_for_user(user_id if user_id else None, city),
                 "chat": {
                     "unreadCount": sum(int(item.get("unread") or 0) for item in chats),
                     "conversations": chats[:10],

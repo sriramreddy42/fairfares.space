@@ -80,6 +80,7 @@ type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
+const groupSuggestionsStorageKey = (userId: number | undefined, city: string) => `fairfares.chitthi.group-suggestions-dismissed.${userId || "guest"}.${city.trim().toLowerCase() || "nearby"}`;
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#061713", accent: "#176B4A" },
   { id: "ocean", label: "Ocean", color: "#071E24", accent: "#147D78" },
@@ -492,6 +493,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [groupPhoto, setGroupPhoto] = useState("");
   const [feedbackCardDismissed, setFeedbackCardDismissed] = useState(false);
   const [groupSuggestionsDismissed, setGroupSuggestionsDismissed] = useState(false);
+  const [suggestionCity, setSuggestionCity] = useState(data?.location.city || "");
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const activeGroup = useMemo(
@@ -549,11 +551,34 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }, [data?.user?.id]);
 
   useEffect(() => {
-    const storageKey = `fairfares.chitthi.group-suggestions-dismissed.${data?.user?.id || "guest"}`;
+    const storageKey = groupSuggestionsStorageKey(data?.user?.id, suggestionCity);
     AsyncStorage.getItem(storageKey)
       .then((value) => setGroupSuggestionsDismissed(value === "1"))
       .catch(() => setGroupSuggestionsDismissed(false));
-  }, [data?.user?.id]);
+  }, [data?.user?.id, suggestionCity]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fallbackCity = data?.location.city || "";
+    setSuggestionCity(fallbackCity);
+    if (Platform.OS === "web") return () => { cancelled = true; };
+    void (async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted || cancelled) return;
+        const position = await Location.getLastKnownPositionAsync() || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!position || cancelled) return;
+        const [address] = await Location.reverseGeocodeAsync(position.coords);
+        const localCity = String(address?.city || address?.district || address?.subregion || "").trim();
+        if (!localCity || cancelled) return;
+        setSuggestionCity(localCity);
+        setCommunities(await getChatCommunities(localCity));
+      } catch {
+        // The selected FairFares city remains the privacy-friendly fallback.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [data?.location.city]);
 
   const visibleEmojis = useMemo(() => {
     const query = emojiSearch.trim().toLowerCase();
@@ -1080,7 +1105,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
       setLoading(true);
     }
     try {
-      const [conversationPayload, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities()]);
+      const [conversationPayload, nextCommunities] = await Promise.all([getChatConversations(), getChatCommunities(suggestionCity || data?.location.city || "")]);
       const immediateConversations = conversationPayload.map((conversation) => ({
         ...conversation,
         lastMessage: safeConversationPreview(conversation)
@@ -2858,14 +2883,14 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <View style={styles.groupSuggestionsHeader}>
               <View style={styles.groupSuggestionsCopy}>
                 <Text style={styles.groupSuggestionsTitle}>Suggested groups</Text>
-                <Text style={styles.groupSuggestionsSubtitle}>Public FairFares groups you can join</Text>
+                <Text style={styles.groupSuggestionsSubtitle}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
               </View>
               <TouchableOpacity
                 style={styles.groupSuggestionsDismiss}
                 accessibilityLabel="Dismiss suggested groups"
                 onPress={() => {
                   setGroupSuggestionsDismissed(true);
-                  void AsyncStorage.setItem(`fairfares.chitthi.group-suggestions-dismissed.${data?.user?.id || "guest"}`, "1");
+                  void AsyncStorage.setItem(groupSuggestionsStorageKey(data?.user?.id, suggestionCity), "1");
                 }}
               >
                 <Text style={styles.groupSuggestionsDismissText}>×</Text>

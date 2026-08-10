@@ -733,8 +733,9 @@ export async function registerMobilePushToken(token: string, platform: string, d
   });
 }
 
-export async function getChatCommunities() {
-  const payload = await request<{ ok: boolean; communities: Community[] }>("/api/chat/communities");
+export async function getChatCommunities(city = "") {
+  const query = city.trim() ? `?city=${encodeURIComponent(city.trim())}` : "";
+  const payload = await request<{ ok: boolean; communities: Community[] }>(`/api/chat/communities${query}`);
   return payload.communities || [];
 }
 
