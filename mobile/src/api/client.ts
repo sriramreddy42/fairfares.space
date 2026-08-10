@@ -746,6 +746,27 @@ export async function registerMobilePushToken(token: string, platform: string, d
   });
 }
 
+export type MobileNotificationPreferences = {
+  chitthi: boolean;
+  carpool: boolean;
+  rentals: boolean;
+  housing: boolean;
+  support: boolean;
+  marketing: boolean;
+};
+
+export async function getMobileNotificationPreferences() {
+  return request<{ ok: boolean; preferences: MobileNotificationPreferences }>("/api/mobile/notification-preferences");
+}
+
+export async function updateMobileNotificationPreferences(preferences: MobileNotificationPreferences) {
+  return request<{ ok: boolean; preferences: MobileNotificationPreferences }>("/api/mobile/notification-preferences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preferences)
+  });
+}
+
 export async function getChatCommunities(city = "") {
   const query = city.trim() ? `?city=${encodeURIComponent(city.trim())}` : "";
   const payload = await request<{ ok: boolean; communities: Community[] }>(`/api/chat/communities${query}`);

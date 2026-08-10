@@ -68,10 +68,12 @@ type Props = {
   pendingPost: HousingPost | null;
   pendingRide: RidePost | null;
   pendingGroupInvite?: string;
+  notificationConversationId?: string;
   onRequireLogin: () => void;
   onClearPendingPost?: () => void;
   onClearPendingRide?: () => void;
   onClearPendingGroupInvite?: () => void;
+  onClearNotificationConversation?: () => void;
   onThreadModeChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
 };
@@ -418,7 +420,7 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onThreadModeChange, onUnreadCountChange }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
@@ -859,6 +861,31 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     void confirmGroupInvitation(pendingGroupInvite);
   }, [pendingGroupInvite, signedIn]);
+
+  useEffect(() => {
+    if (!notificationConversationId || !signedIn) return;
+    let cancelled = false;
+    onThreadModeChange?.(true);
+    setThreadLoading(true);
+    void getChatMessages(notificationConversationId)
+      .then(async (payload) => {
+        if (cancelled) return;
+        const conversation = payload.conversation;
+        setActiveConversationId(notificationConversationId);
+        setActiveConversation(conversation);
+        setActiveSubject(conversation.subject || "Chitthi");
+        setMessages(await decryptMessages(notificationConversationId, payload.messages || []));
+        setConversations((current) => current.map((item) => item.id === notificationConversationId ? { ...item, unread: 0 } : item));
+        onClearNotificationConversation?.();
+      })
+      .catch((error) => {
+        if (!cancelled) Alert.alert("Could not open Chitthi", error instanceof Error ? error.message : "Please try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setThreadLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [notificationConversationId, signedIn]);
 
   useEffect(() => {
     if (pendingPost) {

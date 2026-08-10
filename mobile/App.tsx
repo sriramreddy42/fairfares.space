@@ -237,6 +237,7 @@ function FairFaresApp() {
   const [pendingPost, setPendingPost] = useState<HousingPost | null>(null);
   const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
+  const [notificationConversationId, setNotificationConversationId] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
@@ -502,15 +503,18 @@ function FairFaresApp() {
     const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
       const type = String(response?.notification.request.content.data?.type || "");
       if (type === "FCHAT_MESSAGE") {
+        setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
         setPendingPost(null);
         setPendingRide(null);
         setActiveTab("messenger");
       } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
         setPendingPost(null);
         setPendingRide(null);
-        setRideOwnerOpenToken(0);
-        setRideOwnerReturnTab(null);
-        setActiveTab("activity");
+        setRideOwnerOpenTarget(type === "CARPOOL_REQUEST" ? "requests" : "workspace");
+        setRideOwnerReturnTab("activity");
+        setSelectedNeed("ride_offer");
+        setActiveTab("housing");
+        setRideOwnerOpenToken((value) => value + 1);
       } else if (type === "RENTAL_BOOKING") {
         setPendingPost(null);
         setPendingRide(null);
@@ -1366,10 +1370,12 @@ function FairFaresApp() {
         pendingPost={pendingPost}
         pendingRide={pendingRide}
         pendingGroupInvite={pendingGroupInvite}
+        notificationConversationId={notificationConversationId}
         onRequireLogin={() => setLoginOpen(true)}
         onClearPendingPost={() => setPendingPost(null)}
         onClearPendingRide={() => setPendingRide(null)}
         onClearPendingGroupInvite={() => setPendingGroupInvite("")}
+        onClearNotificationConversation={() => setNotificationConversationId("")}
         onThreadModeChange={setBottomTabsHidden}
         onUnreadCountChange={(unreadCount) => setData((current) => current ? {
           ...current,

@@ -116,6 +116,7 @@ _OPERATIONAL_ALERTS_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
+_PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
 _MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
@@ -5085,6 +5086,39 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS mobile_push_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                token TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                data_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expo_ticket_id TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                accepted_at TEXT,
+                delivered_at TEXT,
+                UNIQUE(token, idempotency_key),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS mobile_notification_preferences (
+                user_id INTEGER PRIMARY KEY,
+                chitthi_enabled INTEGER NOT NULL DEFAULT 1,
+                carpool_enabled INTEGER NOT NULL DEFAULT 1,
+                rentals_enabled INTEGER NOT NULL DEFAULT 1,
+                housing_enabled INTEGER NOT NULL DEFAULT 1,
+                support_enabled INTEGER NOT NULL DEFAULT 1,
+                marketing_enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS mobile_promo_push_sends (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 campaign_key TEXT NOT NULL,
@@ -6043,6 +6077,8 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_outbox_due ON mobile_push_outbox(status, next_attempt_at, id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_outbox_ticket ON mobile_push_outbox(expo_ticket_id, status)")
         # High-traffic mobile lookup indexes. Keep these beside the schema
         # migrations so existing installations receive them on the next start.
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
@@ -16792,10 +16828,11 @@ def chat_notification_avatar_url(origin: str, user_id: int, lifetime_seconds: in
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
 
 
-def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> None:
+def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> dict[str, dict[str, str]]:
     valid_tokens = [token for token in dict.fromkeys(tokens) if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")]
     if not valid_tokens:
-        return
+        return {}
+    results: dict[str, dict[str, str]] = {}
     notification_data = data or {}
     notification_type = str(notification_data.get("type") or "")
     image_url = str(notification_data.get("imageUrl") or "").strip()
@@ -16849,6 +16886,14 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                     details = ticket.get("details") if isinstance(ticket, dict) else {}
                     if isinstance(details, dict) and details.get("error") == "DeviceNotRegistered":
                         invalid_tokens.append(token)
+                        results[token] = {"status": "DISABLED", "error": "DeviceNotRegistered", "ticketId": ""}
+                    elif isinstance(ticket, dict) and ticket.get("status") == "ok" and ticket.get("id"):
+                        results[token] = {"status": "ACCEPTED", "error": "", "ticketId": str(ticket.get("id") or "")}
+                    else:
+                        error = str(details.get("error") or ticket.get("message") or "Expo rejected notification") if isinstance(ticket, dict) else "Missing Expo ticket"
+                        results[token] = {"status": "RETRY", "error": error[:500], "ticketId": ""}
+            for token in token_batch:
+                results.setdefault(token, {"status": "RETRY", "error": "Missing Expo ticket", "ticketId": ""})
             if invalid_tokens:
                 placeholders = ",".join("?" for _ in invalid_tokens)
                 with db() as con:
@@ -16858,6 +16903,213 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                     )
         except Exception as exc:
             print(f"Expo push notification failed: {exc}")
+            for token in token_batch:
+                results[token] = {"status": "RETRY", "error": str(exc)[:500], "ticketId": ""}
+    return results
+
+
+def push_idempotency_key(data: dict[str, object], title: str, body: str) -> str:
+    notification_type = str(data.get("type") or "GENERIC")
+    stable_id = next((str(data.get(key) or "").strip() for key in (
+        "messageId", "bookingId", "requestId", "rideId", "campaign", "supportId", "listingId", "eventId"
+    ) if str(data.get(key) or "").strip()), "")
+    event = str(data.get("event") or data.get("status") or data.get("action") or "")
+    if not stable_id:
+        return uuid.uuid4().hex
+    material = json.dumps([notification_type, stable_id, event, title, body], separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def mobile_push_category(data: dict[str, object] | None) -> str:
+    notification_type = str((data or {}).get("type") or "").upper()
+    if notification_type == "FCHAT_MESSAGE" or notification_type.startswith("FCHAT_"):
+        return "chitthi"
+    if notification_type.startswith("CARPOOL_"):
+        return "carpool"
+    if notification_type.startswith("RENTAL_"):
+        return "rentals"
+    if notification_type.startswith("HOUSING_"):
+        return "housing"
+    if notification_type.startswith("SUPPORT_"):
+        return "support"
+    if notification_type == "FAIRFARES_PROMO":
+        return "marketing"
+    return "mandatory"
+
+
+def notification_preferences_payload(row: sqlite3.Row | dict[str, object] | None) -> dict[str, bool]:
+    return {
+        "chitthi": bool(int(row_value(row, "chitthi_enabled") if row is not None else 1)),
+        "carpool": bool(int(row_value(row, "carpool_enabled") if row is not None else 1)),
+        "rentals": bool(int(row_value(row, "rentals_enabled") if row is not None else 1)),
+        "housing": bool(int(row_value(row, "housing_enabled") if row is not None else 1)),
+        "support": bool(int(row_value(row, "support_enabled") if row is not None else 1)),
+        "marketing": bool(int(row_value(row, "marketing_enabled") if row is not None else 0)),
+    }
+
+
+def enqueue_mobile_pushes(
+    targets: list[tuple[int | None, str]],
+    title: str,
+    body: str,
+    data: dict[str, object] | None = None,
+) -> int:
+    notification_data = data or {}
+    event_key = push_idempotency_key(notification_data, title, body)
+    rows = [
+        (user_id, token, event_key, title[:120], body[:240], json.dumps(notification_data, separators=(",", ":"), ensure_ascii=False))
+        for user_id, token in dict.fromkeys(targets)
+        if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")
+    ]
+    if not rows:
+        return 0
+    with db() as con:
+        before = con.total_changes
+        con.executemany(
+            """
+            INSERT OR IGNORE INTO mobile_push_outbox
+            (user_id, token, idempotency_key, title, body, data_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        inserted = con.total_changes - before
+    if inserted:
+        threading.Thread(target=process_mobile_push_outbox, args=(), daemon=True, name="fairfares-mobile-push").start()
+    return inserted
+
+
+def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
+    summary = {"accepted": 0, "retried": 0, "failed": 0, "disabled": 0}
+    if not _PUSH_OUTBOX_WORKER_LOCK.acquire(blocking=False):
+        return summary
+    try:
+        with db() as con:
+            con.execute("DELETE FROM mobile_push_outbox WHERE status = 'DELIVERED' AND datetime(delivered_at) < datetime('now', '-30 days')")
+            con.execute("DELETE FROM mobile_push_outbox WHERE status IN ('FAILED', 'DISABLED') AND datetime(updated_at) < datetime('now', '-90 days')")
+            con.execute(
+                """
+                UPDATE mobile_push_outbox
+                SET status = 'RETRY', next_attempt_at = CURRENT_TIMESTAMP,
+                    last_error = 'Recovered interrupted delivery', updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'PROCESSING' AND datetime(updated_at) < datetime('now', '-5 minutes')
+                """
+            )
+            pending = con.execute(
+                """
+                SELECT * FROM mobile_push_outbox
+                WHERE status IN ('PENDING', 'RETRY') AND datetime(next_attempt_at) <= CURRENT_TIMESTAMP
+                ORDER BY id ASC LIMIT ?
+                """,
+                (max(1, min(int(limit or 100), 500)),),
+            ).fetchall()
+        for row in pending:
+            outbox_id = int(row_value(row, "id") or 0)
+            with db() as con:
+                claimed = con.execute(
+                    """
+                    UPDATE mobile_push_outbox SET status = 'PROCESSING', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND status IN ('PENDING', 'RETRY')
+                    """,
+                    (outbox_id,),
+                ).rowcount
+            if not claimed:
+                continue
+            token = str(row_value(row, "token") or "")
+            try:
+                notification_data = json.loads(str(row_value(row, "data_json") or "{}"))
+            except json.JSONDecodeError:
+                notification_data = {}
+            delivery = send_expo_push([token], str(row_value(row, "title") or ""), str(row_value(row, "body") or ""), notification_data).get(token, {})
+            status = str(delivery.get("status") or "RETRY")
+            attempt_count = int(row_value(row, "attempt_count") or 0) + 1
+            if status == "ACCEPTED":
+                with db() as con:
+                    con.execute(
+                        """
+                        UPDATE mobile_push_outbox
+                        SET status = 'ACCEPTED', attempt_count = ?, expo_ticket_id = ?, last_error = '',
+                            accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (attempt_count, str(delivery.get("ticketId") or ""), outbox_id),
+                    )
+                summary["accepted"] += 1
+            elif status == "DISABLED":
+                with db() as con:
+                    con.execute("UPDATE mobile_push_outbox SET status = 'DISABLED', attempt_count = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (attempt_count, str(delivery.get("error") or "DeviceNotRegistered")[:500], outbox_id))
+                summary["disabled"] += 1
+            elif attempt_count >= 6:
+                with db() as con:
+                    con.execute("UPDATE mobile_push_outbox SET status = 'FAILED', attempt_count = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (attempt_count, str(delivery.get("error") or "Delivery failed")[:500], outbox_id))
+                summary["failed"] += 1
+            else:
+                delay_seconds = min(15 * (2 ** (attempt_count - 1)), 15 * 60)
+                with db() as con:
+                    con.execute(
+                        """
+                        UPDATE mobile_push_outbox
+                        SET status = 'RETRY', attempt_count = ?, last_error = ?,
+                            next_attempt_at = datetime('now', ?), updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (attempt_count, str(delivery.get("error") or "Temporary delivery failure")[:500], f"+{delay_seconds} seconds", outbox_id),
+                    )
+                summary["retried"] += 1
+        return summary
+    finally:
+        _PUSH_OUTBOX_WORKER_LOCK.release()
+
+
+def check_expo_push_receipts(limit: int = 300) -> dict[str, int]:
+    summary = {"delivered": 0, "failed": 0, "disabled": 0, "pending": 0}
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT id, token, expo_ticket_id FROM mobile_push_outbox
+            WHERE status = 'ACCEPTED' AND expo_ticket_id != ''
+              AND datetime(accepted_at) <= datetime('now', '-15 seconds')
+            ORDER BY id ASC LIMIT ?
+            """,
+            (max(1, min(int(limit or 300), 1000)),),
+        ).fetchall()
+    if not rows:
+        return summary
+    request = urllib.request.Request(
+        "https://exp.host/--/api/v2/push/getReceipts",
+        data=json.dumps({"ids": [str(row_value(row, "expo_ticket_id") or "") for row in rows]}).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except Exception as exc:
+        print(f"Expo receipt check failed: {exc}")
+        summary["pending"] = len(rows)
+        return summary
+    receipts = payload.get("data") if isinstance(payload, dict) else {}
+    receipts = receipts if isinstance(receipts, dict) else {}
+    with db() as con:
+        for row in rows:
+            ticket_id = str(row_value(row, "expo_ticket_id") or "")
+            receipt = receipts.get(ticket_id)
+            if not isinstance(receipt, dict):
+                summary["pending"] += 1
+                continue
+            details = receipt.get("details") if isinstance(receipt.get("details"), dict) else {}
+            error = str(details.get("error") or receipt.get("message") or "")
+            if receipt.get("status") == "ok":
+                con.execute("UPDATE mobile_push_outbox SET status = 'DELIVERED', delivered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (int(row_value(row, "id") or 0),))
+                summary["delivered"] += 1
+            elif error == "DeviceNotRegistered":
+                con.execute("UPDATE mobile_push_outbox SET status = 'DISABLED', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (error, int(row_value(row, "id") or 0)))
+                con.execute("UPDATE mobile_push_tokens SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE token = ?", (str(row_value(row, "token") or ""),))
+                summary["disabled"] += 1
+            else:
+                con.execute("UPDATE mobile_push_outbox SET status = 'FAILED', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", ((error or "Expo receipt rejected")[:500], int(row_value(row, "id") or 0)))
+                summary["failed"] += 1
+    return summary
 
 
 def send_mobile_push_for_users(
@@ -16871,24 +17123,42 @@ def send_mobile_push_for_users(
         return
     placeholders = ",".join("?" for _ in unique_user_ids)
     with db() as con:
+        category = mobile_push_category(data)
         rows = con.execute(
             f"""
-            SELECT token
-            FROM mobile_push_tokens
-            WHERE enabled = 1 AND user_id IN ({placeholders})
+            SELECT tokens.user_id, tokens.token,
+                   preferences.user_id AS preference_user_id,
+                   preferences.chitthi_enabled, preferences.carpool_enabled,
+                   preferences.rentals_enabled, preferences.housing_enabled,
+                   preferences.support_enabled, preferences.marketing_enabled
+            FROM mobile_push_tokens tokens
+            LEFT JOIN mobile_notification_preferences preferences ON preferences.user_id = tokens.user_id
+            WHERE tokens.enabled = 1 AND tokens.user_id IN ({placeholders})
             ORDER BY datetime(last_seen_at) DESC
             """,
             tuple(unique_user_ids),
         ).fetchall()
-    tokens = [str(row_value(row, "token") or "") for row in rows]
-    if not tokens:
-        return
-    threading.Thread(
-        target=send_expo_push,
-        args=(tokens, title, body, data or {}),
-        daemon=True,
-        name="fairfares-mobile-push",
-    ).start()
+    preference_column = f"{category}_enabled"
+    rows = [row for row in rows if category == "mandatory" or not row_value(row, "preference_user_id") or bool(int(row_value(row, preference_column) or 0))]
+    enqueue_mobile_pushes(
+        [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or "")) for row in rows],
+        title,
+        body,
+        data,
+    )
+
+
+def start_mobile_push_scheduler() -> None:
+    def worker() -> None:
+        while True:
+            try:
+                process_mobile_push_outbox(250)
+                check_expo_push_receipts(500)
+            except Exception as exc:
+                print(f"Mobile push worker failed: {exc}")
+            threading.Event().wait(15)
+
+    threading.Thread(target=worker, daemon=True, name="fairfares-mobile-push-worker").start()
 
 
 FESTIVAL_MOVING_DATES: dict[int, dict[str, tuple[int, int]]] = {
@@ -18925,6 +19195,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/bootstrap":
             self.api_mobile_bootstrap(parsed)
             return
+        if parsed.path == "/api/mobile/notification-preferences":
+            self.api_mobile_notification_preferences()
+            return
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
             return
@@ -19214,6 +19487,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/push-token": self.api_mobile_push_token,
+            "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
@@ -20590,7 +20864,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
             recipient_id = int(row_value(recipient, "id") or 0)
-            if not row_value(recipient, "chat_muted_at") and recipient_id:
+            preference = con.execute("SELECT chitthi_enabled FROM mobile_notification_preferences WHERE user_id = ?", (recipient_id,)).fetchone() if recipient_id else None
+            chitthi_enabled = preference is None or bool(int(row_value(preference, "chitthi_enabled") or 0))
+            if not row_value(recipient, "chat_muted_at") and recipient_id and chitthi_enabled:
                 unread_badge = int(con.execute(
                     """
                     SELECT COUNT(*) AS unread_count
@@ -20652,29 +20928,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             sender_id = int(row_value(sender, "id") or 0)
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
             conversation_name = str(row_value(conversation, "subject") or "FChat group") if is_group else ""
-            def deliver_chat_pushes() -> None:
-                common_data = {
-                    "type": "FCHAT_MESSAGE",
-                    "conversationId": row_value(conversation, "public_id"),
-                    "messageId": int(row_value(message, "id") or 0),
-                    "senderId": sender_id,
-                    "senderName": row_value(sender, "name") or "FairFares member",
-                    "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
-                    "conversationName": conversation_name,
-                    "isGroup": is_group,
-                }
-                for token, encrypted_preview in push_jobs:
-                    send_expo_push(
-                    [token],
+            common_data = {
+                "type": "FCHAT_MESSAGE",
+                "conversationId": row_value(conversation, "public_id"),
+                "messageId": int(row_value(message, "id") or 0),
+                "senderId": sender_id,
+                "senderName": row_value(sender, "name") or "FairFares member",
+                "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
+                "conversationName": conversation_name,
+                "isGroup": is_group,
+            }
+            for token, encrypted_preview in push_jobs:
+                enqueue_mobile_pushes(
+                    [(int(encrypted_preview.get("recipientUserId") or 0), token)],
                     row_value(sender, "name") or "New FChat message",
                     notification_preview,
                     {**common_data, **encrypted_preview},
                 )
-            threading.Thread(
-                target=deliver_chat_pushes,
-                daemon=True,
-                name="fairfares-fchat-push",
-            ).start()
 
     def api_create_chat_conversation(self) -> None:
         user = self.current_user()
@@ -29177,6 +29447,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         self.send_json({"ok": True, "enabled": enabled})
 
+    def api_mobile_notification_preferences(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
+            return
+        with db() as con:
+            row = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (int(row_value(user, "id") or 0),)).fetchone()
+        self.send_json({"ok": True, "preferences": notification_preferences_payload(row)})
+
+    def api_mobile_update_notification_preferences(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        current_user_id = int(row_value(user, "id") or 0)
+        values = {key: 1 if bool(payload.get(key, True)) else 0 for key in ("chitthi", "carpool", "rentals", "housing", "support")}
+        values["marketing"] = 1 if bool(payload.get("marketing", False)) else 0
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO mobile_notification_preferences
+                (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    chitthi_enabled = excluded.chitthi_enabled,
+                    carpool_enabled = excluded.carpool_enabled,
+                    rentals_enabled = excluded.rentals_enabled,
+                    housing_enabled = excluded.housing_enabled,
+                    support_enabled = excluded.support_enabled,
+                    marketing_enabled = excluded.marketing_enabled,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (current_user_id, values["chitthi"], values["carpool"], values["rentals"], values["housing"], values["support"], values["marketing"]),
+            )
+            row = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (current_user_id,)).fetchone()
+        self.send_json({"ok": True, "preferences": notification_preferences_payload(row)})
+
     def api_mobile_update_profile(self) -> None:
         user = self.current_user()
         if not user:
@@ -31058,6 +31366,7 @@ if __name__ == "__main__":
     log_explorer_config_status()
     init_db()
     auto_backup_on_startup()
+    start_mobile_push_scheduler()
     start_promotional_push_scheduler()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))

@@ -32,6 +32,15 @@ class ImmediateThread:
         self.target(*self.args)
 
 
+class DeferredThread:
+    def __init__(self, target, args=(), **_kwargs):
+        self.target = target
+        self.args = args
+
+    def start(self):
+        return None
+
+
 class PushNotificationTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -157,6 +166,47 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(mock_open.call_count, 2)
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
         self.assertEqual(message["channelId"], "rentals-v2")
+
+    def test_outbox_persists_and_deduplicates_same_event_for_token(self):
+        token = "ExpoPushToken[outbox-device]"
+        self.add_token(token)
+        payload = {"type": "CARPOOL_STATUS", "rideId": "ride-dedupe", "status": "ACCEPTED"}
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Ride accepted", "Your ride was accepted", payload)
+            app.send_mobile_push_for_users([self.user_id], "Ride accepted", "Your ride was accepted", payload)
+        with app.db() as con:
+            rows = con.execute("SELECT status, attempt_count FROM mobile_push_outbox").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "PENDING")
+
+    def test_category_preference_prevents_carpool_enqueue(self):
+        token = "ExpoPushToken[preference-device]"
+        self.add_token(token)
+        with app.db() as con:
+            con.execute("INSERT INTO mobile_notification_preferences (user_id, carpool_enabled) VALUES (?, 0)", (self.user_id,))
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "New request", "A rider requested your trip", {"type": "CARPOOL_REQUEST", "rideId": "ride-muted"})
+        with app.db() as con:
+            count = int(con.execute("SELECT COUNT(*) AS count FROM mobile_push_outbox").fetchone()["count"])
+        self.assertEqual(count, 0)
+
+    def test_outbox_records_ticket_then_receipt_delivery(self):
+        token = "ExpoPushToken[receipt-device]"
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.enqueue_mobile_pushes([(self.user_id, token)], "New message", "Hello", {"type": "FCHAT_MESSAGE", "messageId": 88})
+        with patch.object(app, "send_expo_push", return_value={token: {"status": "ACCEPTED", "ticketId": "ticket-88", "error": ""}}):
+            result = app.process_mobile_push_outbox()
+        self.assertEqual(result["accepted"], 1)
+        with app.db() as con:
+            con.execute("UPDATE mobile_push_outbox SET accepted_at = datetime('now', '-1 minute')")
+        response = FakeResponse({"data": {"ticket-88": {"status": "ok"}}})
+        with patch.object(app.urllib.request, "urlopen", return_value=response):
+            receipts = app.check_expo_push_receipts()
+        self.assertEqual(receipts["delivered"], 1)
+        with app.db() as con:
+            row = con.execute("SELECT status, delivered_at FROM mobile_push_outbox").fetchone()
+        self.assertEqual(row["status"], "DELIVERED")
+        self.assertTrue(row["delivered_at"])
 
     def test_fchat_avatar_urls_are_short_lived_and_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
