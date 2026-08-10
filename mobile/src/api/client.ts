@@ -806,7 +806,7 @@ export async function getChatMessages(conversationId: string) {
 export async function registerChatDeviceKey(deviceId: string, publicKey: string, signingPublicKey = "") {
   return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey, signingPublicKey })
-  });
+  }, { attempts: 3 });
 }
 
 export async function relayEncryptedChatMessage(bundle: Record<string, unknown>) {
