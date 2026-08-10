@@ -12907,17 +12907,17 @@ def cached_accommodation_metro_for_place(place: str) -> str:
             if exact:
                 return row_value(exact, "name")
             city = place.split(",")[0].strip()
-            fuzzy = con.execute(
+            city_match = con.execute(
                 """
                 SELECT metro.name
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
-                WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                WHERE lower(area.city) = lower(?)
                 LIMIT 1
                 """,
-                (f"%{city}%", city),
+                (city,),
             ).fetchone()
-            return row_value(fuzzy, "name") if fuzzy else ""
+            return row_value(city_match, "name") if city_match else ""
     except sqlite3.Error:
         return ""
 
@@ -13241,9 +13241,8 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                 """,
                 (query, query),
             ).fetchone()
-            # Broad city-name matching is only safe for an unqualified search.
-            # A state/address-qualified query must remain exact or be geocoded;
-            # otherwise names such as Miami and Miamisburg can collide.
+            # For an unqualified search, match the structured city field only.
+            # Substring matching makes Miami collide with Miamisburg.
             if not row and "," not in query and not re.search(r"\b\d{5}(?:-\d{4})?\b", query):
                 city = query.split(",")[0].strip()
                 row = con.execute(
@@ -13251,11 +13250,11 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                     SELECT area.name, area.city, area.zip_code, area.lat, area.lng, metro.name AS metro_name, metro.lat AS metro_lat, metro.lng AS metro_lng
                     FROM accommodation_local_areas area
                     JOIN accommodation_metros metro ON metro.id = area.metro_id
-                    WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                    WHERE lower(area.city) = lower(?)
                     ORDER BY CASE WHEN area.lat != 0 AND area.lng != 0 THEN 0 ELSE 1 END
                     LIMIT 1
                     """,
-                    (f"%{city}%", city),
+                    (city,),
                 ).fetchone()
             if row and float(row["lat"] or 0) and float(row["lng"] or 0):
                 return {
@@ -15332,6 +15331,14 @@ def chat_suggestion_city(value: str) -> str:
     lowered = clean.lower()
     if lowered in supported:
         return supported[lowered]
+    common_city_states = {
+        "atlanta": "Atlanta, GA", "boston": "Boston, MA", "houston": "Houston, TX",
+        "las vegas": "Las Vegas, NV", "los angeles": "Los Angeles, CA", "miami": "Miami, FL",
+        "new york": "New York, NY", "phoenix": "Phoenix, AZ", "portland": "Portland, OR",
+        "san diego": "San Diego, CA", "seattle": "Seattle, WA", "washington": "Washington, DC",
+    }
+    if lowered in common_city_states:
+        return common_city_states[lowered]
     city_only = lowered.split(",", 1)[0].strip()
     matches = [label for key, label in supported.items() if key.split(",", 1)[0].strip() == city_only]
     if len(matches) == 1:

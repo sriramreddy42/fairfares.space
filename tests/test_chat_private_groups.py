@@ -96,6 +96,17 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         invalid_groups = app.get_chat_communities_for_user(self.outsider, "somewhere near the airport")
         self.assertNotIn("Somewhere Near The Airport Community", {row["name"] for row in invalid_groups})
 
+    def test_joining_all_denver_groups_does_not_hide_miami_suggestions(self):
+        for community in app.get_chat_communities_for_user(self.outsider, "Denver, CO"):
+            if community["visibility"] == "PUBLIC":
+                joined, error = app.join_chat_community(community["id"], self.outsider)
+                self.assertFalse(error)
+                self.assertTrue(joined["joined"])
+
+        miami_groups = app.get_chat_communities_for_user(self.outsider, "Miami")
+        suggestions = {row["name"] for row in miami_groups if not row["joined"]}
+        self.assertEqual(suggestions, {"Miami Housing & Roommates", "Miami Ride Share", "Miami Community"})
+
     def test_existing_public_group_replaces_matching_virtual_suggestion(self):
         with app.db() as con:
             con.execute(

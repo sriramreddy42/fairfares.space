@@ -54,6 +54,11 @@ class HousingLocationSearchTest(unittest.TestCase):
                 (public_id, self.user_id, title, city, f"{city}, 45420", area, lat, lng),
             )
 
+    def test_plain_miami_does_not_resolve_to_miamisburg(self):
+        options = app.accommodation_location_options("Miami")
+        self.assertNotIn("Miamisburg", options["selectedLocation"])
+        self.assertNotEqual(app.cached_accommodation_metro_for_place("Miami"), "Dayton Metro Area")
+
     @patch.object(
         app,
         "accommodation_location_point",
