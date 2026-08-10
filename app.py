@@ -13036,6 +13036,63 @@ def keep_mobile_accommodation_suggestion(label: str) -> bool:
     )
 
 
+def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
+    """Return verified U.S. city/state autocomplete labels from Places and cache."""
+    query = normalize_accommodation_place_label(query)
+    if len(query) < 2:
+        return []
+    limit = max(1, min(int(limit or 8), 12))
+    suggestions: list[str] = []
+    seen: set[str] = set()
+
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    if api_key:
+        params = urllib.parse.urlencode({"input": query, "types": "(cities)", "components": "country:us", "key": api_key})
+        try:
+            payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{params}")
+        except Exception:
+            payload = {}
+        if payload.get("status") in {"OK", "ZERO_RESULTS"}:
+            for prediction in payload.get("predictions") or []:
+                if not isinstance(prediction, dict):
+                    continue
+                label = clean_google_place_prediction(str(prediction.get("description") or ""))
+                if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,49},\s*[A-Za-z]{2}", label):
+                    continue
+                key = label.lower()
+                if key not in seen:
+                    seen.add(key)
+                    suggestions.append(label)
+                if len(suggestions) >= limit:
+                    return suggestions
+
+    try:
+        with db() as con:
+            cached = con.execute(
+                """
+                SELECT DISTINCT area.city, area.state
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE LOWER(area.city) LIKE LOWER(?)
+                  AND UPPER(COALESCE(metro.country, 'US')) IN ('US', 'USA')
+                  AND LENGTH(TRIM(area.state)) = 2
+                ORDER BY CASE WHEN LOWER(area.city) = LOWER(?) THEN 0 ELSE 1 END, area.city
+                LIMIT ?
+                """,
+                (f"{query.split(',', 1)[0].strip()}%", query.split(",", 1)[0].strip(), limit),
+            ).fetchall()
+        for row in cached:
+            label = f"{str(row['city']).strip()}, {str(row['state']).strip().upper()}"
+            if label.lower() not in seen:
+                seen.add(label.lower())
+                suggestions.append(label)
+            if len(suggestions) >= limit:
+                break
+    except sqlite3.Error:
+        pass
+    return suggestions
+
+
 def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> str:
     query = normalize_accommodation_place_label(query)
     if not query:
@@ -15047,6 +15104,7 @@ def accommodation_location_options(query: str, area: str = "", limit: int = 18) 
         "ok": True,
         "metro": metro_name,
         "selectedLocation": dedupe_repeated_location_label(str(point.get("label") or query or metro_name)),
+        "cities": accommodation_city_suggestions(query),
         "suggested": suggested[:limit],
         "zips": zips[:12],
         "googlePlacesEnabled": google_enabled,

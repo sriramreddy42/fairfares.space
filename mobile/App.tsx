@@ -250,6 +250,7 @@ function FairFaresApp() {
   const [searchRadius, setSearchRadius] = useState("10");
   const [searchNeed, setSearchNeed] = useState("need_place");
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
+  const [searchCitySuggestions, setSearchCitySuggestions] = useState<string[]>([]);
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
@@ -624,11 +625,13 @@ function FairFaresApp() {
     const timer = setTimeout(() => {
       getAccommodationLocationOptions(cleanCity, searchArea)
         .then((options) => {
+          setSearchCitySuggestions((options?.cities || []).filter(Boolean).slice(0, 8));
           const suggested = (options?.suggested || []).filter(Boolean).slice(0, 8);
           setSearchSuggestions(suggested);
           setSearchSuggestionMetro(options?.metro || "");
         })
         .catch(() => {
+          setSearchCitySuggestions([]);
           setSearchSuggestions([]);
           setSearchSuggestionMetro("");
         })
@@ -2049,11 +2052,25 @@ function FairFaresApp() {
               </View>
               <TextInput
                 value={searchCity}
-                onChangeText={setSearchCity}
+                onChangeText={(value) => { setSearchCity(value); setSearchCitySuggestions([]); }}
                 placeholder="City, e.g. Denver, CO"
                 placeholderTextColor={theme.colors.muted}
                 style={styles.input}
               />
+              {searchCitySuggestions.length ? (
+                <View style={styles.citySuggestionDropdown} accessibilityLabel="City suggestions">
+                  {searchCitySuggestions.map((cityOption) => (
+                    <TouchableOpacity
+                      key={cityOption}
+                      style={styles.citySuggestionOption}
+                      onPress={() => { setSearchCity(cityOption); setSearchArea(""); setSearchCitySuggestions([]); }}
+                    >
+                      <Text style={styles.citySuggestionPin}>⌖</Text>
+                      <Text style={styles.citySuggestionText}>{cityOption}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
               <TextInput
                 value={searchArea}
                 onChangeText={setSearchArea}
@@ -2230,5 +2247,9 @@ const styles = StyleSheet.create({
   suggestionListContent: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 4 },
   suggestionTitle: { width: "100%", color: theme.colors.soft, fontWeight: "900", marginBottom: 2 },
   suggestionHint: { color: theme.colors.muted, fontWeight: "800", lineHeight: 20 },
+  citySuggestionDropdown: { marginTop: -10, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 14, backgroundColor: theme.colors.panel, overflow: "hidden" },
+  citySuggestionOption: { minHeight: 44, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.line },
+  citySuggestionPin: { color: theme.colors.accent, fontSize: 17, fontWeight: "900" },
+  citySuggestionText: { color: theme.colors.text, fontSize: 14, fontWeight: "800", flex: 1 },
   switchText: { color: theme.colors.muted, textAlign: "center", fontWeight: "900", paddingVertical: 8 }
 });

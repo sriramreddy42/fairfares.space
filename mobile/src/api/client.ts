@@ -461,6 +461,7 @@ export type AccommodationLocationOptions = {
   ok: boolean;
   metro: string;
   selectedLocation: string;
+  cities: string[];
   suggested: string[];
   zips: string[];
   source: string;

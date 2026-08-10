@@ -79,6 +79,22 @@ class HousingLocationSearchTest(unittest.TestCase):
         names = {row["name"] for row in app.get_chat_communities_for_user(self.user_id, "Boise")}
         self.assertIn("Boise Community", names)
 
+    def test_city_autocomplete_combines_verified_places_and_cache(self):
+        with app.db() as con:
+            metro_id = app.upsert_accommodation_metro(con, "St. Louis Metro Area", country="US", state="MO", center_city="St. Louis")
+            app.upsert_accommodation_local_area(con, metro_id, "St. Louis, MO", city="St. Louis", state="MO")
+        google_payload = {
+            "status": "OK",
+            "predictions": [{"description": "St. Petersburg, FL, USA", "types": ["locality", "political"]}],
+        }
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "google_api_get", return_value=google_payload
+        ):
+            suggestions = app.accommodation_city_suggestions("St", limit=8)
+
+        self.assertEqual(suggestions[0], "St. Petersburg, FL")
+        self.assertIn("St. Louis, MO", suggestions)
+
     @patch.object(
         app,
         "accommodation_location_point",
