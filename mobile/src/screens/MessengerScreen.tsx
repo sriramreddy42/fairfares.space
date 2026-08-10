@@ -568,6 +568,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const fallbackCity = searchedCity || data?.location.city || "";
     setSuggestionCity(fallbackCity);
     if (searchedCity) {
+      // Keep joined/private groups available, but never display unjoined
+      // suggestions from the previous city while the searched city loads.
+      setCommunities((current) => current.filter((community) => community.joined || community.visibility === "PRIVATE"));
       void getChatCommunities(searchedCity)
         .then((nextCommunities) => { if (isCurrentRequest()) setCommunities(nextCommunities); })
         .catch(() => undefined);
@@ -1091,14 +1094,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   const suggestedCommunities = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const targetCity = suggestionCity.split(",", 1)[0].trim().toLowerCase();
     if (groupSuggestionsDismissed || (tab !== "All" && tab !== "Groups" && tab !== "Communities")) return [];
     return communities.filter((community) => {
       if (community.joined || community.visibility !== "PUBLIC") return false;
+      const communityCity = String(community.suggestionCity || community.area || "").split(",", 1)[0].trim().toLowerCase();
+      if (!targetCity || communityCity !== targetCity) return false;
       if (tab === "Groups" && community.kind !== "GROUP") return false;
       if (tab === "Communities" && community.kind !== "COMMUNITY") return false;
       return !query || `${community.name} ${community.description} ${community.area}`.toLowerCase().includes(query);
     });
-  }, [communities, groupSuggestionsDismissed, search, tab]);
+  }, [communities, groupSuggestionsDismissed, search, suggestionCity, tab]);
 
   function communityGlyph(name: string) {
     const value = name.toLowerCase();
