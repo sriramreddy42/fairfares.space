@@ -1360,10 +1360,9 @@ def db() -> sqlite3.Connection:
     # every connection. Keep invalid references from entering the database.
     connection.execute("PRAGMA foreign_keys = ON")
     # journal_mode is persistent database configuration and is set once by
-    # init_db(). Re-running PRAGMA journal_mode=WAL on every request can wait
-    # behind an active writer and turn a millisecond lookup into a multi-second
-    # request. Per-connection synchronous remains safe and non-exclusive.
-    connection.execute("PRAGMA synchronous = NORMAL")
+    # init_db(). Do not change journal or synchronous settings while opening a
+    # request connection: those PRAGMAs can contend with an active transaction
+    # and make otherwise read-only endpoints wait behind a writer.
     return connection
 
 
@@ -17456,7 +17455,9 @@ def render_dashboard_chat_rows(conversations: list[dict[str, object]]) -> str:
 
 
 def get_accommodation_posts_for_user(user_id: int) -> list[sqlite3.Row]:
-    expire_accommodation_posts()
+    # Account/activity loads are latency-sensitive reads. Expiry housekeeping
+    # is throttled so concurrent mobile refreshes do not each open a writer.
+    expire_accommodation_posts(force=False)
     with db() as con:
         return con.execute(
             """
@@ -20160,7 +20161,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def accommodations_page(self) -> None:
         user = self.current_user()
-        expire_accommodation_posts()
+        expire_accommodation_posts(force=False)
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         raw_search_need = (params.get("need", [""])[0] or "").strip()
