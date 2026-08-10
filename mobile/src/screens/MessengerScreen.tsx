@@ -2886,36 +2886,6 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             </TouchableOpacity>
           </TouchableOpacity>
         ) : null}
-        {suggestedCommunities.length ? (
-          <View style={styles.groupSuggestionsSection}>
-            <View style={styles.groupSuggestionsHeader}>
-              <View style={styles.groupSuggestionsCopy}>
-                <Text style={styles.groupSuggestionsTitle}>Suggested groups</Text>
-                <Text style={styles.groupSuggestionsSubtitle}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.groupSuggestionsDismiss}
-                accessibilityLabel="Dismiss suggested groups"
-                onPress={() => {
-                  setGroupSuggestionsDismissed(true);
-                  void AsyncStorage.setItem(groupSuggestionsStorageKey(data?.user?.id, suggestionCity), "1");
-                }}
-              >
-                <Text style={styles.groupSuggestionsDismissText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            {suggestedCommunities.map((community) => (
-              <TouchableOpacity key={`suggested-${community.id}`} style={styles.suggestedGroupRow} onPress={() => void openCommunityThread(community)}>
-                <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
-                <View style={styles.chatCopy}>
-                  <Text style={styles.chatName}>{community.name}</Text>
-                  <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
-                </View>
-                <View style={styles.suggestedJoinButton}><Text style={styles.suggestedJoinText}>Join</Text></View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -2978,6 +2948,37 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <Text style={styles.letterEmptyIcon}>📬</Text>
             <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
             <Text style={styles.letterEmptyCopy}>{tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
+          </View>
+        ) : null}
+
+        {suggestedCommunities.length ? (
+          <View style={styles.groupSuggestionsSection}>
+            <View style={styles.groupSuggestionsHeader}>
+              <View style={styles.groupSuggestionsCopy}>
+                <Text style={styles.groupSuggestionsTitle}>Suggested groups</Text>
+                <Text style={styles.groupSuggestionsSubtitle}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.groupSuggestionsDismiss}
+                accessibilityLabel="Dismiss suggested groups"
+                onPress={() => {
+                  setGroupSuggestionsDismissed(true);
+                  void AsyncStorage.setItem(groupSuggestionsStorageKey(data?.user?.id, suggestionCity), "1");
+                }}
+              >
+                <Text style={styles.groupSuggestionsDismissText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            {suggestedCommunities.map((community) => (
+              <TouchableOpacity key={`suggested-${community.id}`} style={styles.suggestedGroupRow} onPress={() => void openCommunityThread(community)}>
+                <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
+                <View style={styles.chatCopy}>
+                  <Text style={styles.chatName}>{community.name}</Text>
+                  <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
+                </View>
+                <View style={styles.suggestedJoinButton}><Text style={styles.suggestedJoinText}>Join</Text></View>
+              </TouchableOpacity>
+            ))}
           </View>
         ) : null}
       </ScrollView>
