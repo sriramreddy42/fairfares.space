@@ -494,6 +494,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [feedbackCardDismissed, setFeedbackCardDismissed] = useState(false);
   const [groupSuggestionsDismissed, setGroupSuggestionsDismissed] = useState(false);
   const [suggestionCity, setSuggestionCity] = useState(data?.location.city || "");
+  const suggestionRequestId = useRef(0);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const activeGroup = useMemo(
@@ -515,8 +516,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     setConversations(data?.chat.conversations || []);
     setHasMoreConversations((data?.chat.conversations || []).length >= 30);
-    setCommunities(data?.communities || []);
-  }, [data?.chat.conversations, data?.communities]);
+    // A later bootstrap refresh may contain the default/current-city groups.
+    // Do not let that stale payload replace an explicit searched-city result.
+    if (!String(preferredSuggestionCity || "").trim()) setCommunities(data?.communities || []);
+  }, [data?.chat.conversations, data?.communities, preferredSuggestionCity]);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -558,12 +561,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   useEffect(() => {
     let cancelled = false;
+    const requestId = suggestionRequestId.current + 1;
+    suggestionRequestId.current = requestId;
+    const isCurrentRequest = () => !cancelled && suggestionRequestId.current === requestId;
     const searchedCity = String(preferredSuggestionCity || "").trim();
     const fallbackCity = searchedCity || data?.location.city || "";
     setSuggestionCity(fallbackCity);
     if (searchedCity) {
       void getChatCommunities(searchedCity)
-        .then((nextCommunities) => { if (!cancelled) setCommunities(nextCommunities); })
+        .then((nextCommunities) => { if (isCurrentRequest()) setCommunities(nextCommunities); })
         .catch(() => undefined);
       return () => { cancelled = true; };
     }
@@ -571,14 +577,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     void (async () => {
       try {
         const permission = await Location.getForegroundPermissionsAsync();
-        if (!permission.granted || cancelled) return;
+        if (!permission.granted || !isCurrentRequest()) return;
         const position = await Location.getLastKnownPositionAsync() || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (!position || cancelled) return;
+        if (!position || !isCurrentRequest()) return;
         const [address] = await Location.reverseGeocodeAsync(position.coords);
         const localCity = String(address?.city || address?.district || address?.subregion || "").trim();
-        if (!localCity || cancelled) return;
+        if (!localCity || !isCurrentRequest()) return;
+        const nextCommunities = await getChatCommunities(localCity);
+        if (!isCurrentRequest()) return;
         setSuggestionCity(localCity);
-        setCommunities(await getChatCommunities(localCity));
+        setCommunities(nextCommunities);
       } catch {
         // The selected FairFares city remains the privacy-friendly fallback.
       }
@@ -1085,7 +1093,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const query = search.trim().toLowerCase();
     if (groupSuggestionsDismissed || (tab !== "All" && tab !== "Groups" && tab !== "Communities")) return [];
     return communities.filter((community) => {
-      if (community.joined) return false;
+      if (community.joined || community.visibility !== "PUBLIC") return false;
       if (tab === "Groups" && community.kind !== "GROUP") return false;
       if (tab === "Communities" && community.kind !== "COMMUNITY") return false;
       return !query || `${community.name} ${community.description} ${community.area}`.toLowerCase().includes(query);
