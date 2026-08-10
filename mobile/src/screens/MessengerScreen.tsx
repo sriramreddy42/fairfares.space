@@ -470,6 +470,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [chatOptionsOpen, setChatOptionsOpen] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
+  const [groupMemberSearch, setGroupMemberSearch] = useState("");
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
   const [encryptionReady, setEncryptionReady] = useState(false);
   const [wallpaper, setWallpaper] = useState("midnight");
@@ -487,6 +488,17 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   const [groupPhoto, setGroupPhoto] = useState("");
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
+  const activeGroup = useMemo(
+    () => communities.find((item) => item.id === activeConversation?.communityId) || null,
+    [communities, activeConversation?.communityId]
+  );
+  const filteredGroupMembers = useMemo(() => {
+    const query = groupMemberSearch.trim().toLowerCase();
+    const roleRank: Record<ChatGroupMember["role"], number> = { OWNER: 0, ADMIN: 1, MEMBER: 2 };
+    return [...groupMembers]
+      .sort((left, right) => Number(right.isCurrentUser) - Number(left.isCurrentUser) || roleRank[left.role] - roleRank[right.role] || left.name.localeCompare(right.name))
+      .filter((member) => !query || member.name.toLowerCase().includes(query));
+  }, [groupMembers, groupMemberSearch]);
 
   useEffect(() => {
     if (activeConversationId) messageCache.current.set(activeConversationId, messages);
@@ -1635,6 +1647,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     try {
       const response = await getChatGroupMembers(communityId);
       setGroupMembers(response.members || []);
+      setGroupMemberSearch("");
       setGroupMembersOpen(true);
     } catch (error) {
       Alert.alert("Members unavailable", error instanceof Error ? error.message : "Could not load group members.");
@@ -1668,6 +1681,21 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     } catch (error) {
       Alert.alert("Transfer failed", error instanceof Error ? error.message : "Could not transfer ownership.");
     }
+  }
+
+  function showGroupMemberActions(member: ChatGroupMember) {
+    const currentRole = groupMembers.find((item) => item.isCurrentUser)?.role || "MEMBER";
+    const canChangeRole = currentRole === "OWNER" && !member.isCurrentUser && member.role !== "OWNER";
+    const canRemove = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
+    if (!canChangeRole && !canRemove) return;
+    Alert.alert(member.name, member.role === "MEMBER" ? "Group member" : member.role === "ADMIN" ? "Group admin" : "Group owner", [
+      ...(canChangeRole ? [
+        { text: "Make owner", onPress: () => void transferGroupTo(member) },
+        { text: member.role === "ADMIN" ? "Remove as admin" : "Make admin", onPress: () => void changeGroupMember(member, "ROLE") }
+      ] : []),
+      ...(canRemove ? [{ text: "Remove from group", style: "destructive" as const, onPress: () => void changeGroupMember(member, "REMOVE") }] : []),
+      { text: "Cancel", style: "cancel" }
+    ]);
   }
 
   async function leaveActiveGroup() {
@@ -2152,6 +2180,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
     setChatOptionsOpen(false);
     setGroupMembersOpen(false);
     setGroupMembers([]);
+    setGroupMemberSearch("");
     setAttachmentStatus("");
     setPendingAttachment(null);
     setPendingImages([]);
@@ -2185,7 +2214,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
-          <View style={styles.threadAvatar}>
+          <TouchableOpacity style={styles.threadAvatar} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
             {chatPhotoUrl(activeConversation?.otherPhotoUrl) ? (
               <Image source={{ uri: chatPhotoUrl(activeConversation?.otherPhotoUrl) }} style={styles.threadAvatarImage} />
             ) : (
@@ -2194,15 +2223,15 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               </Text>
             )}
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
-          </View>
-          <View style={styles.threadHeaderCopy}>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.threadHeaderCopy} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
             <Text style={styles.threadHeaderTitle} numberOfLines={1}>
               {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
               {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending"}`}
             </Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </BlurView>
 
@@ -2222,7 +2251,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <View style={styles.chatOptionsPanel}>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
-            {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>♙</Text><Text style={styles.chatOptionText}>Group members</Text></TouchableOpacity> : null}
+            {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Group info</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group && (group.visibility === "PUBLIC" || group.canManageMembers)); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
@@ -2232,17 +2261,56 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
         ) : null}
 
         {groupMembersOpen ? (
-          <View style={styles.groupMembersPanel}>
-            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>Group members</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setGroupMembersOpen(false)}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
-            <ScrollView style={styles.groupMembersList}>
-              {groupMembers.map((member) => {
-                const currentRole = groupMembers.find((item) => item.isCurrentUser)?.role || "MEMBER";
-                const canChangeRole = currentRole === "OWNER" && !member.isCurrentUser && member.role !== "OWNER";
-                const canRemove = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
-                return <View key={member.id} style={styles.groupMemberRow}><View style={styles.groupMemberAvatar}><Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text></View><View style={styles.groupMemberCopy}><Text style={styles.groupMemberName}>{member.name}{member.isCurrentUser ? " · You" : ""}</Text><Text style={styles.groupMemberRole}>{member.role.toLowerCase()}</Text></View>{canChangeRole ? <View><TouchableOpacity onPress={() => void transferGroupTo(member)}><Text style={styles.groupMemberAction}>Make owner</Text></TouchableOpacity><TouchableOpacity onPress={() => void changeGroupMember(member, "ROLE")}><Text style={styles.groupMemberAction}>{member.role === "ADMIN" ? "Remove admin" : "Make admin"}</Text></TouchableOpacity></View> : null}{canRemove ? <TouchableOpacity onPress={() => void changeGroupMember(member, "REMOVE")}><Text style={[styles.groupMemberAction, styles.groupMemberRemove]}>Remove</Text></TouchableOpacity> : null}</View>;
-              })}
+          <View style={styles.groupInfoPanel}>
+            <View style={styles.groupInfoHeader}>
+              <TouchableOpacity style={styles.groupInfoHeaderButton} onPress={() => setGroupMembersOpen(false)} accessibilityLabel="Close group info"><Text style={styles.groupInfoHeaderButtonText}>‹</Text></TouchableOpacity>
+              <Text style={styles.groupInfoHeaderTitle}>Group info</Text>
+              <TouchableOpacity style={styles.groupInfoDoneButton} onPress={() => setGroupMembersOpen(false)}><Text style={styles.groupInfoDoneText}>Done</Text></TouchableOpacity>
+            </View>
+            <ScrollView style={styles.groupInfoScroll} contentContainerStyle={styles.groupInfoContent}>
+              <View style={styles.groupInfoHero}>
+                <TouchableOpacity style={styles.groupInfoAvatar} disabled={!activeGroup?.canManageMembers} onPress={() => void changeActiveGroupPhoto()} accessibilityLabel={activeGroup?.canManageMembers ? "Change group image" : "Group image"}>
+                  {chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl) }} style={styles.groupInfoAvatarImage} /> : <Text style={styles.groupInfoAvatarText}>{initials(activeGroup?.name || activeConversation?.otherName || "Group")}</Text>}
+                  {activeGroup?.canManageMembers ? <View style={styles.groupInfoEditBadge}><Text style={styles.groupInfoEditBadgeText}>✎</Text></View> : null}
+                </TouchableOpacity>
+                <Text style={styles.groupInfoTitle}>{activeGroup?.name || activeConversation?.otherName || "Chitthi group"}</Text>
+                <Text style={styles.groupInfoMeta}>{activeGroup?.visibility === "PRIVATE" ? "Private group" : "Community"} · {groupMembers.length || activeGroup?.memberCount || 0} members</Text>
+              </View>
+
+              <View style={styles.groupInfoActions}>
+                <TouchableOpacity style={styles.groupInfoAction} onPress={() => void toggleMute()}><Text style={styles.groupInfoActionIcon}>♩</Text><Text style={styles.groupInfoActionLabel}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text></TouchableOpacity>
+                {activeGroup?.canManageMembers ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => { setGroupMembersOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation?.communityId || ""); }}><Text style={styles.groupInfoActionIcon}>＋</Text><Text style={styles.groupInfoActionLabel}>Add</Text></TouchableOpacity> : null}
+                {activeGroup && (activeGroup.visibility === "PUBLIC" || activeGroup.canManageMembers) ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => void inviteToActiveGroup()}><Text style={styles.groupInfoActionIcon}>↗</Text><Text style={styles.groupInfoActionLabel}>Invite</Text></TouchableOpacity> : null}
+              </View>
+
+              <View style={styles.groupInfoCard}>
+                <Text style={styles.groupInfoDescription}>{activeGroup?.description || "A Chitthi group for members to connect, share updates, and help each other."}</Text>
+                {activeGroup?.area ? <Text style={styles.groupInfoDescriptionMeta}>⌖ {activeGroup.area}</Text> : null}
+              </View>
+
+              <View style={styles.groupInfoCard}>
+                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => void toggleMute()}><Text style={styles.groupInfoSettingIcon}>♩</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Notifications</Text><Text style={styles.groupInfoSettingMeta}>{activeConversation?.mutedAt ? "Muted" : "On"}</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => { setGroupMembersOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.groupInfoSettingIcon}>◉</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Chat theme</Text><Text style={styles.groupInfoSettingMeta}>Choose a Chitthi wallpaper</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
+                <View style={[styles.groupInfoSettingRow, styles.groupInfoSettingRowLast]}><Text style={styles.groupInfoSettingIcon}>▢</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Encryption</Text><Text style={styles.groupInfoSettingMeta}>Messages are end-to-end encrypted</Text></View></View>
+              </View>
+
+              <View style={styles.groupMembersSection}>
+                <Text style={styles.groupMembersHeading}>{groupMembers.length} members</Text>
+                <View style={styles.groupMembersSearch}><Text style={styles.groupMembersSearchIcon}>⌕</Text><TextInput value={groupMemberSearch} onChangeText={setGroupMemberSearch} placeholder="Search members" placeholderTextColor="#7B817D" style={styles.groupMembersSearchInput} autoCapitalize="none" /></View>
+                {activeGroup?.canManageMembers ? <TouchableOpacity style={styles.groupMemberRow} onPress={() => { setGroupMembersOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation?.communityId || ""); }}><View style={[styles.groupMemberAvatar, styles.groupMemberAddAvatar]}><Text style={styles.groupMemberAddIcon}>＋</Text></View><View style={styles.groupMemberCopy}><Text style={styles.groupMemberAddText}>Add members</Text><Text style={styles.groupMemberSubtext}>Invite people to this group</Text></View><Text style={styles.groupMemberChevron}>›</Text></TouchableOpacity> : null}
+                {filteredGroupMembers.map((member) => {
+                  const currentRole = groupMembers.find((item) => item.isCurrentUser)?.role || "MEMBER";
+                  const canManage = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
+                  return <TouchableOpacity key={member.id} style={styles.groupMemberRow} activeOpacity={canManage ? 0.65 : 1} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`${member.name}, ${member.role.toLowerCase()}`}>
+                    <View style={styles.groupMemberAvatar}>{chatPhotoUrl(member.photoUrl) ? <Image source={{ uri: chatPhotoUrl(member.photoUrl) }} style={styles.groupMemberAvatarImage} /> : <Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text>}</View>
+                    <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? "Add a member tag" : member.role === "MEMBER" ? "Group member" : member.role === "ADMIN" ? "Group admin" : "Group owner"}</Text></View>
+                    {member.role !== "MEMBER" ? <Text style={styles.groupMemberRole}>{member.role === "OWNER" ? "Owner" : "Admin"}</Text> : null}{canManage ? <Text style={styles.groupMemberChevron}>›</Text> : null}
+                  </TouchableOpacity>;
+                })}
+                {!filteredGroupMembers.length ? <Text style={styles.groupMembersEmpty}>No members match your search.</Text> : null}
+              </View>
+              <TouchableOpacity style={styles.leaveGroupButton} onPress={() => Alert.alert("Leave this group?", "You will stop receiving messages from this group.", [{ text: "Cancel", style: "cancel" }, { text: "Leave group", style: "destructive", onPress: () => void leaveActiveGroup() }])}><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
             </ScrollView>
-            <TouchableOpacity style={styles.leaveGroupButton} onPress={() => void leaveActiveGroup()}><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
           </View>
         ) : null}
 
@@ -3197,18 +3265,59 @@ const styles = StyleSheet.create({
   unread: { minWidth: 24, height: 24, lineHeight: 24, textAlign: "center", backgroundColor: "#287d39", color: "#fff", borderRadius: 12, overflow: "hidden", paddingHorizontal: 6, fontWeight: "700", fontSize: 12 },
   memberCount: { color: theme.colors.muted, fontWeight: "600" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
-  groupMembersPanel: { position: "absolute", top: 78, right: 10, width: 360, maxWidth: "94%", maxHeight: 430, zIndex: 30, backgroundColor: "#111827", borderWidth: 1, borderColor: theme.colors.line, borderRadius: 20, padding: 14, elevation: 20, shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18 },
-  groupMembersList: { maxHeight: 310 },
-  groupMemberRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
-  groupMemberAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#233253", alignItems: "center", justifyContent: "center" },
-  groupMemberAvatarText: { color: theme.colors.text, fontSize: 12, fontWeight: "700" },
-  groupMemberCopy: { flex: 1 },
-  groupMemberName: { color: theme.colors.text, fontSize: 14, fontWeight: "600" },
-  groupMemberRole: { color: theme.colors.muted, fontSize: 11, marginTop: 2, textTransform: "capitalize" },
-  groupMemberAction: { color: "#78a5ff", fontSize: 11, fontWeight: "600", padding: 5 },
-  groupMemberRemove: { color: "#ff7c8c" },
-  leaveGroupButton: { minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: "#843444", alignItems: "center", justifyContent: "center", marginTop: 12 },
-  leaveGroupText: { color: "#ff8b99", fontSize: 13, fontWeight: "600" },
+  groupInfoPanel: { ...StyleSheet.absoluteFillObject, zIndex: 40, backgroundColor: "#F3F4F1", elevation: 30 },
+  groupInfoHeader: { minHeight: 62, paddingHorizontal: 15, paddingTop: 4, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#D9DDD8", backgroundColor: "rgba(250,251,249,0.98)" },
+  groupInfoHeaderButton: { width: 44, height: 44, alignItems: "flex-start", justifyContent: "center" },
+  groupInfoHeaderButtonText: { color: "#118A55", fontSize: 38, lineHeight: 40, fontWeight: "300" },
+  groupInfoHeaderTitle: { flex: 1, color: "#121513", fontSize: 18, fontWeight: "800", textAlign: "center" },
+  groupInfoDoneButton: { minWidth: 44, height: 44, alignItems: "flex-end", justifyContent: "center" },
+  groupInfoDoneText: { color: "#118A55", fontSize: 15, fontWeight: "800" },
+  groupInfoScroll: { flex: 1 },
+  groupInfoContent: { paddingHorizontal: 14, paddingTop: 24, paddingBottom: 48 },
+  groupInfoHero: { alignItems: "center", paddingBottom: 22 },
+  groupInfoAvatar: { width: 104, height: 104, borderRadius: 52, backgroundColor: "#D8F0E3", borderWidth: 2, borderColor: "#A8DDBF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  groupInfoAvatarImage: { width: "100%", height: "100%" },
+  groupInfoAvatarText: { color: "#117248", fontSize: 30, fontWeight: "800" },
+  groupInfoEditBadge: { position: "absolute", right: 2, bottom: 2, width: 28, height: 28, borderRadius: 14, backgroundColor: "#118A55", borderWidth: 2, borderColor: "#F3F4F1", alignItems: "center", justifyContent: "center" },
+  groupInfoEditBadgeText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  groupInfoTitle: { color: "#101311", fontSize: 25, fontWeight: "800", textAlign: "center", marginTop: 14 },
+  groupInfoMeta: { color: "#6D736F", fontSize: 15, fontWeight: "500", textAlign: "center", marginTop: 5 },
+  groupInfoActions: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  groupInfoAction: { flex: 1, minHeight: 76, borderRadius: 16, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E0E3DE", alignItems: "center", justifyContent: "center" },
+  groupInfoActionIcon: { color: "#10935A", fontSize: 25, fontWeight: "500", marginBottom: 5 },
+  groupInfoActionLabel: { color: "#171A18", fontSize: 13, fontWeight: "700" },
+  groupInfoCard: { borderRadius: 16, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E0E3DE", paddingHorizontal: 16, marginBottom: 14, overflow: "hidden" },
+  groupInfoDescription: { color: "#202421", fontSize: 15, lineHeight: 22, paddingTop: 15, paddingBottom: 10 },
+  groupInfoDescriptionMeta: { color: "#118A55", fontSize: 13, fontWeight: "700", paddingBottom: 15 },
+  groupInfoSettingRow: { minHeight: 64, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#E4E6E2" },
+  groupInfoSettingRowLast: { borderBottomWidth: 0 },
+  groupInfoSettingIcon: { width: 36, color: "#118A55", fontSize: 22, textAlign: "center", marginRight: 8 },
+  groupInfoSettingCopy: { flex: 1 },
+  groupInfoSettingTitle: { color: "#191C1A", fontSize: 15, fontWeight: "700" },
+  groupInfoSettingMeta: { color: "#777D79", fontSize: 12, marginTop: 2 },
+  groupInfoChevron: { color: "#969C98", fontSize: 28, fontWeight: "300" },
+  groupMembersSection: { borderRadius: 16, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E0E3DE", paddingHorizontal: 14, marginBottom: 14, overflow: "hidden" },
+  groupMembersHeading: { color: "#555C57", fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7, paddingTop: 16, paddingBottom: 11 },
+  groupMembersSearch: { height: 42, flexDirection: "row", alignItems: "center", backgroundColor: "#EFF1EE", borderRadius: 12, paddingHorizontal: 12, marginBottom: 8 },
+  groupMembersSearchIcon: { color: "#68706B", fontSize: 21, marginRight: 7 },
+  groupMembersSearchInput: { flex: 1, height: 42, color: "#151816", fontSize: 15, paddingVertical: 0 },
+  groupMemberRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, borderBottomWidth: 1, borderBottomColor: "#E6E8E4" },
+  groupMemberAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#DDEFE5", borderWidth: 1, borderColor: "#B8DCC7", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  groupMemberAvatarImage: { width: "100%", height: "100%" },
+  groupMemberAvatarText: { color: "#0E7547", fontSize: 14, fontWeight: "800" },
+  groupMemberAddAvatar: { backgroundColor: "#118A55", borderColor: "#118A55" },
+  groupMemberAddIcon: { color: "#fff", fontSize: 26, fontWeight: "400" },
+  groupMemberCopy: { flex: 1, minWidth: 0 },
+  groupMemberNameLine: { flexDirection: "row", alignItems: "center", gap: 7 },
+  groupMemberName: { color: "#171A18", fontSize: 15, fontWeight: "700", flexShrink: 1 },
+  groupMemberCurrentTag: { color: "#118A55", backgroundColor: "#E5F5EC", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, fontSize: 10, fontWeight: "800" },
+  groupMemberSubtext: { color: "#757C77", fontSize: 12, marginTop: 3 },
+  groupMemberAddText: { color: "#118A55", fontSize: 15, fontWeight: "800" },
+  groupMemberRole: { color: "#118A55", fontSize: 12, fontWeight: "700" },
+  groupMemberChevron: { color: "#8D938F", fontSize: 27, fontWeight: "300" },
+  groupMembersEmpty: { color: "#767D78", fontSize: 14, textAlign: "center", paddingVertical: 24 },
+  leaveGroupButton: { minHeight: 54, borderRadius: 16, borderWidth: 1, borderColor: "#F0C7CC", backgroundColor: "#FFF", alignItems: "center", justifyContent: "center" },
+  leaveGroupText: { color: "#C83343", fontSize: 15, fontWeight: "800" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg },
   letterEmptyCard: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 24, borderRadius: 22, borderWidth: 1, borderColor: "rgba(219,180,107,0.24)", backgroundColor: "rgba(7,24,22,0.78)", alignItems: "center" },
