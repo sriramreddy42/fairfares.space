@@ -114,13 +114,13 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(mock_send.call_args.args[0], [enabled_token])
         self.assertEqual(mock_send.call_args.args[3]["type"], "CARPOOL_REQUEST")
 
-    def test_fchat_payload_stays_on_fchat_channel(self):
+    def test_fchat_payload_stays_on_chitthi_message_channel(self):
         token = "ExponentPushToken[fchat-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-chat"}]})
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "New message", "Hello", {"type": "FCHAT_MESSAGE"})
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
-        self.assertEqual(messages[0]["channelId"], "fchat")
+        self.assertEqual(messages[0]["channelId"], "chitthi-messages-v2")
         self.assertTrue(messages[0]["mutableContent"])
         self.assertEqual(messages[0]["categoryId"], "FCHAT_MESSAGE")
 

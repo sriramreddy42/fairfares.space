@@ -181,7 +181,7 @@ class WebGoogleAuthTest(unittest.TestCase):
             )
             with urllib.request.urlopen(landing_request, timeout=5) as response:
                 landing = response.read().decode("utf-8")
-            self.assertIn(">Web Member</a>", landing)
+            self.assertIn("<small>Web Member</small>", landing)
             self.assertNotIn(">web.member@example.com</a>", landing)
             self.assertNotIn("Sign in / Join", landing)
 

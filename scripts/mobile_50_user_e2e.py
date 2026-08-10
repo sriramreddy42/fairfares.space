@@ -121,22 +121,20 @@ def main():
             for index in range(USERS)
         ]
 
-        signups = workload.parallel("signup", [
-            lambda row=row: workload.call("signup", "/api/mobile/signup", method="POST", payload=row, expect=(201,))[1]
-            for row in user_rows
-        ])
-        assert all(row.get("activationRequired") is True for row in signups)
-
-        # Production signup links are delivered out-of-band and deliberately
-        # are not returned by the API. This isolated load harness verifies its
-        # temporary users directly so it can exercise authenticated workloads
-        # without depending on an email provider or exposing activation links.
+        # Signup is intentionally protected by a per-IP abuse limiter, so 50
+        # localhost signups would test the limiter rather than 50 distinct
+        # clients. Seed verified test identities directly, then load-test the
+        # same login and authenticated HTTP paths used by the mobile app.
+        password_hash = app.hash_password(PASSWORD)
         with app.db() as con:
-            placeholders = ",".join("?" for _ in user_rows)
-            con.execute(
-                f"UPDATE users SET is_verified = 1 WHERE email IN ({placeholders})",
-                tuple(row["email"] for row in user_rows),
+            con.executemany(
+                """
+                INSERT INTO users (name, email, phone, password_hash, is_verified, verified_at)
+                VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                """,
+                [(row["name"], row["email"], row["phone"], password_hash) for row in user_rows],
             )
+            placeholders = ",".join("?" for _ in user_rows)
             verified_count = con.execute(
                 f"SELECT COUNT(*) AS count FROM users WHERE is_verified = 1 AND email IN ({placeholders})",
                 tuple(row["email"] for row in user_rows),

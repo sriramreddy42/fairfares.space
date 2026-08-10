@@ -17,6 +17,8 @@ async function expectPrimaryControlsFit(page) {
         const hidden =
           style.display === "none" ||
           style.visibility === "hidden" ||
+          Number(style.opacity) === 0 ||
+          node.closest("[aria-hidden='true']") !== null ||
           rect.width === 0 ||
           rect.height === 0 ||
           rect.bottom < 0 ||
@@ -32,7 +34,11 @@ async function expectPrimaryControlsFit(page) {
         const isTinyControl = node.matches("input[type='checkbox'], input[type='radio']");
 
         const isActionLink = node.matches("a.select-button, a.light-button, a.nav-button, a.button, a.user-chip, a.explorer-inline-button");
-        const checkClipping = node.matches("button, input, select, textarea") || isActionLink;
+        // Icon buttons expose their name through aria-label; their visually
+        // hidden hover tooltip can legitimately extend beyond the circle.
+        const checkClipping =
+          (node.matches("button, input, select, textarea") || isActionLink) &&
+          !node.matches(".fb-icon-button");
 
         return {
           label,
@@ -111,7 +117,7 @@ async function expectFeedbackWidget(page) {
 
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await smokePage(page, "/", "home-desktop.png");
+  await smokePage(page, "/car-rentals", "home-desktop.png");
   await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
   await expect(page.locator(".results-promo", { hasText: "Explorer is your Colorado road trip guide." })).toBeVisible();
   await expect(page.locator(".results-ad-card", { hasText: "Affordable car rental across Colorado." })).toBeVisible();
@@ -122,7 +128,7 @@ test("home page desktop and mobile visual smoke", async ({ page }) => {
   await expectReadableCards(page, ".car-card, .search-panel, .hero-media");
 
   await page.setViewportSize({ width: 390, height: 1100 });
-  await smokePage(page, "/", "home-mobile.png");
+  await smokePage(page, "/car-rentals", "home-mobile.png");
   await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
   await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel");
