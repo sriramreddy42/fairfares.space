@@ -3105,7 +3105,14 @@ const styles = StyleSheet.create({
   wallpaperChoice: { width: 96, height: 78, borderRadius: 14, overflow: "hidden", justifyContent: "flex-end", padding: 8, borderWidth: 2, borderColor: "transparent" },
   wallpaperChoiceSelected: { borderColor: theme.colors.blue },
   wallpaperChoiceGlow: { position: "absolute", width: 72, height: 72, borderRadius: 36, top: -28, right: -18, opacity: 0.65 },
-  wallpaperChoiceLabel: { color: "#fff", fontSize: 11, fontWeight: "900", textShadowColor: "rgba(0,0,0,0.7)", textShadowRadius: 4 },
+  wallpaperChoiceLabel: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "900",
+    ...(Platform.OS === "web"
+      ? ({ textShadow: "0 0 4px rgba(0,0,0,0.7)" } as object)
+      : { textShadowColor: "rgba(0,0,0,0.7)", textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 4 })
+  },
   customWallpaperChoice: { backgroundColor: "#5d5b58", alignItems: "center", justifyContent: "center" },
   customWallpaperPreview: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   customWallpaperPlus: { color: "#fff", fontSize: 28, fontWeight: "500", marginBottom: 2 },
