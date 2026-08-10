@@ -147,10 +147,10 @@ export function ProfileScreen({
   const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
   const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
-    { title: "Housing", copy: "Listings and roommate searches", icon: appAssets.serviceHome, onPress: onOpenHousing },
-    { title: "Carpool", copy: "Driver profile, routes and requests", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenRide },
-    { title: "Rental Cars", copy: "Bookings, invoices and support", glyph: "🔑", onPress: onOpenServices },
-    { title: "Chitthi", copy: "Messages and communities", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
+    { title: "Housing", copy: "Current and previous housing activity", icon: appAssets.serviceHome, onPress: onOpenActivity },
+    { title: "Carpool", copy: "Current requests and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: onOpenActivity },
+    { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: onOpenActivity },
+    { title: "Chitthi", copy: "Current and previous conversations", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
     { title: "Report an issue", copy: "Send a tracked support or safety report", icon: appAssets.serviceSupport, onPress: () => user ? setSupportOpen(true) : onLogin() },
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
     { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: () => void Linking.openURL("mailto:hello@fairfare.space?subject=FairFares%20account%20deletion%20request") }

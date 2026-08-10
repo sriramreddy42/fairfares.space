@@ -542,3 +542,14 @@ export type BootstrapPayload = {
     message: string;
   }>;
 };
+
+export type HousingActivityPost = {
+  id: string;
+  title: string;
+  status: string;
+  expiryLabel: string;
+  modeLabel: string;
+  categoryLabel: string;
+  location: string;
+  rent: string;
+};

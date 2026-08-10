@@ -142,6 +142,15 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["rides"], [])
+            housing_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing/activity",
+                headers={"Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(housing_request, timeout=5) as housing_response:
+                housing_payload = json.loads(housing_response.read().decode("utf-8"))
+            self.assertEqual(housing_response.status, 200)
+            self.assertTrue(housing_payload["ok"])
+            self.assertEqual(housing_payload["posts"], [])
         finally:
             server.shutdown()
             server.server_close()

@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import { getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
+import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
-import { BootstrapPayload, HousingPost, RentalServiceBooking, RidePost } from "../types";
+import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -221,6 +221,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const { width: windowWidth } = useWindowDimensions();
   const [rides, setRides] = useState<RidePost[]>([]);
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
+  const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [rideActionBusyId, setRideActionBusyId] = useState("");
@@ -236,12 +237,13 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       if (!data?.user) {
         setRides([]);
         setBookings([]);
+        setHousingActivity([]);
         setRefreshError("");
         return;
       }
       setLoading(true);
       setRefreshError("");
-      const [rideResult, bookingResult] = await Promise.allSettled([getRideActivity(), getRentalBookings()]);
+      const [rideResult, bookingResult, housingResult] = await Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]);
       if (cancelled) return;
       if (rideResult.status === "fulfilled") {
         setRides(rideResult.value);
@@ -254,6 +256,12 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       } else {
         setBookings([]);
         setRefreshError((current) => current || (bookingResult.reason instanceof Error ? bookingResult.reason.message : "Rental bookings could not be refreshed."));
+      }
+      if (housingResult.status === "fulfilled") {
+        setHousingActivity(housingResult.value);
+      } else {
+        setHousingActivity([]);
+        setRefreshError((current) => current || (housingResult.reason instanceof Error ? housingResult.reason.message : "Housing activity could not be refreshed."));
       }
       setLoading(false);
     }
@@ -282,7 +290,8 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const carpoolActivityCount = driverListedRides.length + pendingRiderRequests.length;
   const upcomingBookings = useMemo(() => bookings.filter(isUpcomingBooking), [bookings]);
   const pastBookings = useMemo(() => bookings.filter((booking) => !isUpcomingBooking(booking)), [bookings]);
-  const recentHousing = (data?.housing || []).slice(0, 3);
+  const activeHousing = useMemo(() => housingActivity.filter((post) => post.status === "ACTIVE" && post.expiryLabel !== "Expired"), [housingActivity]);
+  const pastHousing = useMemo(() => housingActivity.filter((post) => post.status !== "ACTIVE" || post.expiryLabel === "Expired"), [housingActivity]);
 
   const liveDriverRide = useMemo(
     () => incomingRiderRequests.find((ride) => ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
@@ -550,6 +559,26 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       ))}
 
       <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Housing</Text>
+        <Text style={styles.sectionMeta}>{activeHousing.length} current · {pastHousing.length} previous</Text>
+      </View>
+      {activeHousing.length ? activeHousing.slice(0, 4).map((post) => (
+        <TouchableOpacity key={`active-housing-${post.id}`} style={styles.historyRow} onPress={onOpenHousing}>
+          <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>{post.title}</Text>
+            <Text style={styles.rowMeta}>{post.location} · {post.expiryLabel}</Text>
+          </View>
+          <Text style={styles.rebookText}>Current</Text>
+        </TouchableOpacity>
+      )) : (
+        <TouchableOpacity style={styles.emptyPast} onPress={onOpenHousing}>
+          <Text style={styles.emptyTitle}>No current housing posts</Text>
+          <Text style={styles.emptyCopy}>Your active housing listings and roommate searches will appear here.</Text>
+        </TouchableOpacity>
+      )}
+
+      <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Carpool</Text>
         <Text style={styles.sectionMeta}>{driverListedRides.length} listings · {pendingRiderRequests.length} requests</Text>
       </View>
@@ -696,7 +725,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </TouchableOpacity>
       ))}
 
-      {recentHousing.map((post: HousingPost) => (
+      {pastHousing.slice(0, 4).map((post) => (
         <TouchableOpacity key={`housing-${post.id}`} style={styles.historyRow} onPress={onOpenHousing}>
           <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
           <View style={styles.rowText}>
@@ -707,7 +736,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </TouchableOpacity>
       ))}
 
-      {!pastRides.length && !pastBookings.length && !recentHousing.length ? (
+      {!pastRides.length && !pastBookings.length && !pastHousing.length ? (
         <View style={styles.emptyPast}>
           <Text style={styles.emptyTitle}>No past activity yet</Text>
           <Text style={styles.emptyCopy}>Completed rides, rental bookings, and housing actions will collect here.</Text>

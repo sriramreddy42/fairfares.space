@@ -18858,6 +18858,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
             return
+        if parsed.path == "/api/mobile/housing/activity":
+            self.api_mobile_housing_activity()
+            return
         if parsed.path == "/api/mobile/rides":
             self.api_mobile_rides(parsed)
             return
@@ -29449,6 +29452,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
             }
         )
+
+    def api_mobile_housing_activity(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login required."}, 401)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        posts = [mobile_housing_post_summary(post) for post in get_accommodation_posts_for_user(user_id)]
+        self.send_json({"ok": True, "posts": posts})
 
     def api_mobile_rides(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)

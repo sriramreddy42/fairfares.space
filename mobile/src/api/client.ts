@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { NativeModules, Platform } from "react-native";
@@ -623,6 +623,11 @@ export async function startRentalSecurityDeposit(bookingId: string) {
       body: JSON.stringify({ bookingId })
     }
   );
+}
+
+export async function getHousingActivity() {
+  const payload = await request<{ ok: boolean; posts: HousingActivityPost[] }>("/api/mobile/housing/activity");
+  return payload.posts || [];
 }
 
 export async function getRentalBookings() {
