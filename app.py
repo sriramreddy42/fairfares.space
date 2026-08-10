@@ -1358,11 +1358,11 @@ def db() -> sqlite3.Connection:
     # SQLite does not enforce declared relationships unless this is enabled on
     # every connection. Keep invalid references from entering the database.
     connection.execute("PRAGMA foreign_keys = ON")
-    try:
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = NORMAL")
-    except sqlite3.OperationalError:
-        pass
+    # journal_mode is persistent database configuration and is set once by
+    # init_db(). Re-running PRAGMA journal_mode=WAL on every request can wait
+    # behind an active writer and turn a millisecond lookup into a multi-second
+    # request. Per-connection synchronous remains safe and non-exclusive.
+    connection.execute("PRAGMA synchronous = NORMAL")
     return connection
 
 
@@ -4597,6 +4597,12 @@ def init_db() -> None:
     DATA_DIR.mkdir(exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
+        try:
+            con.execute("PRAGMA journal_mode = WAL")
+        except sqlite3.OperationalError:
+            # Another process may already be initializing the same persistent
+            # database. WAL is persistent, so the established mode is usable.
+            pass
         con.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
