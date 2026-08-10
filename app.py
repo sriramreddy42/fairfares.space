@@ -4211,8 +4211,8 @@ def automation_event_already_reserved(
     email: str,
     subject: str,
 ) -> bool:
-    booking_id = int(booking_id or 0)
-    user_id = int(user_id or 0)
+    booking_id = int(booking_id) if booking_id else None
+    user_id = int(user_id) if user_id else None
     try:
         con.execute(
             """
@@ -4541,7 +4541,11 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
         if not user_has_active_booking(user_id):
             last_trip_end = latest_customer_trip_end(user_id)
             if last_trip_end:
-                inactive_days = (now - last_trip_end).days
+                # Re-engagement thresholds are calendar-day rules. Using a
+                # timedelta against the default 10:00 AM booking time made a
+                # customer 90 calendar days inactive appear as 89 days when
+                # automation ran earlier in the morning.
+                inactive_days = (now.date() - last_trip_end.date()).days
                 reengagement = None
                 if inactive_days >= 90:
                     reengagement = (90, "Ready for another fair ride?", "Come back and save.")
@@ -6079,6 +6083,15 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_outbox_due ON mobile_push_outbox(status, next_attempt_at, id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_outbox_ticket ON mobile_push_outbox(expo_ticket_id, status)")
+        # SQLite treats NULL values as distinct in a table UNIQUE constraint.
+        # User-level automations intentionally have no booking_id, so use a
+        # null-safe expression index for real once-only delivery semantics.
+        con.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_email_automation_sends_dedupe
+            ON email_automation_sends(event_key, COALESCE(booking_id, 0), COALESCE(user_id, 0), email)
+            """
+        )
         # High-traffic mobile lookup indexes. Keep these beside the schema
         # migrations so existing installations receive them on the next start.
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
