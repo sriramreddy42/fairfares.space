@@ -36,7 +36,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
   useEffect(() => {
     if (!barWidth) return;
     const slotWidth = (barWidth - 12) / tabs.length;
-    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 58) / 2;
+    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 64) / 2;
     Animated.parallel([
       Animated.spring(indicatorX, {
         toValue: targetX,
@@ -56,7 +56,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
     const width = event.nativeEvent.layout.width;
     setBarWidth(width);
     const slotWidth = (width - 12) / tabs.length;
-    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 58) / 2);
+    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 64) / 2);
   };
 
   if (hidden) {
@@ -106,10 +106,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    marginHorizontal: 20,
+    marginHorizontal: 12,
     marginTop: 4,
     marginBottom: 8,
-    height: 64,
+    height: 72,
     backgroundColor: "transparent",
     borderRadius: 999,
     borderWidth: 1,
@@ -125,8 +125,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(220,171,84,0.26)"
   },
   item: {
-    width: 52,
-    height: 52,
+    width: 60,
+    height: 60,
     borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
@@ -137,8 +137,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 9,
-    width: 58,
-    height: 46
+    width: 64,
+    height: 54
   },
   liquidIndicator: {
     flex: 1,
