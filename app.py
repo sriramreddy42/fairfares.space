@@ -15289,13 +15289,15 @@ def seed_chat_communities(con: sqlite3.Connection) -> None:
     for public_id, kind, name, description, area_label in DEFAULT_CHAT_COMMUNITIES:
         con.execute(
             """
-            INSERT INTO chat_communities (public_id, kind, name, description, area_label)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility)
+            VALUES (?, ?, ?, ?, ?, 'PUBLIC')
             ON CONFLICT(public_id) DO UPDATE SET
                 kind = excluded.kind,
                 name = excluded.name,
                 description = excluded.description,
                 area_label = excluded.area_label,
+                visibility = 'PUBLIC',
+                created_by_user_id = NULL,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (public_id, kind, name, description, area_label),

@@ -2810,7 +2810,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
             <View style={styles.chatCopy}>
               <Text style={styles.feedbackChatEyebrow}>ISSUES &amp; SUGGESTIONS</Text>
               <Text style={styles.feedbackChatName}>Sriram Reddy Bandari</Text>
-              <Text style={styles.feedbackChatCopy}>Share a problem, an idea, or something FairFares can improve.</Text>
+              <Text style={styles.feedbackChatCopy} numberOfLines={1}>Share an issue or suggestion with FairFares.</Text>
             </View>
             <Text style={styles.feedbackChatArrow}>›</Text>
           </TouchableOpacity>
@@ -2850,7 +2850,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
           <TouchableOpacity key={community.id} style={[styles.chatRow, styles.communityRow]} onPress={() => openCommunityThread(community)}>
             <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
             <View style={styles.chatCopy}>
-              <Text style={styles.chatKind}>COMMUNITY</Text>
+              <Text style={styles.chatKind}>{community.kind === "GROUP" ? "PUBLIC GROUP" : "COMMUNITY"}</Text>
               <Text style={styles.chatName}>{community.name}</Text>
               <Text style={styles.chatLast}>{community.description || community.area || "FairFares community"}</Text>
             </View>
@@ -2861,7 +2861,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
                 community.joined ? shareCommunity(community) : openCommunityThread(community);
               }}
             >
-              <Text style={styles.memberCount}>{community.joined ? (community.canManageMembers || community.visibility === "PUBLIC" ? "Invite" : "Joined") : "Join"} · {community.memberCount}</Text>
+              <Text style={[styles.memberCount, !community.joined && styles.joinCommunityText]}>{community.joined ? "Joined" : "Join"} · {community.memberCount}</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         ))}
@@ -3333,6 +3333,7 @@ const styles = StyleSheet.create({
   chatTimeUnread: { color: "#4fc35e" },
   unread: { minWidth: 24, height: 24, lineHeight: 24, textAlign: "center", backgroundColor: "#287d39", color: "#fff", borderRadius: 12, overflow: "hidden", paddingHorizontal: 6, fontWeight: "700", fontSize: 12 },
   memberCount: { color: theme.colors.muted, fontWeight: "600" },
+  joinCommunityText: { color: "#65D889", fontWeight: "800" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },
   groupInfoPanel: { ...StyleSheet.absoluteFillObject, zIndex: 40, backgroundColor: "#F3F4F1", elevation: 30 },
   groupInfoHeader: { minHeight: 62, paddingHorizontal: 15, paddingTop: 4, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#D9DDD8", backgroundColor: "rgba(250,251,249,0.98)" },
@@ -3395,11 +3396,11 @@ const styles = StyleSheet.create({
   letterEmptyIcon: { fontSize: 30, marginBottom: 8 },
   letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
   letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 },
-  feedbackChatCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 13, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 22, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)" },
-  feedbackChatAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center", backgroundColor: "#D6A95F", borderWidth: 2, borderColor: "#F4D99E" },
-  feedbackChatAvatarText: { color: "#173A2A", fontSize: 16, fontWeight: "800" },
+  feedbackChatCard: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)" },
+  feedbackChatAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#D6A95F", borderWidth: 2, borderColor: "#F4D99E" },
+  feedbackChatAvatarText: { color: "#173A2A", fontSize: 14, fontWeight: "800" },
   feedbackChatEyebrow: { color: "#efbd68", fontSize: 9, letterSpacing: 0.9, fontWeight: "800", marginBottom: 2 },
-  feedbackChatName: { color: "#fff8e8", fontSize: 16, fontWeight: "700" },
-  feedbackChatCopy: { color: "#c4cec7", fontSize: 12, lineHeight: 17, marginTop: 3 },
-  feedbackChatArrow: { color: "#efbd68", fontSize: 30, fontWeight: "300" }
+  feedbackChatName: { color: "#fff8e8", fontSize: 15, fontWeight: "700" },
+  feedbackChatCopy: { color: "#c4cec7", fontSize: 11.5, lineHeight: 15, marginTop: 2 },
+  feedbackChatArrow: { color: "#efbd68", fontSize: 25, fontWeight: "300" }
 });
