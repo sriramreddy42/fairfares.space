@@ -13,6 +13,7 @@ data/outbox/
 data/backups/
 data/uploads/
 data/.fairfares-app-secret
+artifacts/k6/*.json
 dev-pdf-extracted.txt
 mobile/dist/
 mobile/dist-visual/
