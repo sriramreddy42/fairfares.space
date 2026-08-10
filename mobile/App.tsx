@@ -251,6 +251,7 @@ function FairFaresApp() {
   const [searchNeed, setSearchNeed] = useState("need_place");
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
   const [searchCitySuggestions, setSearchCitySuggestions] = useState<string[]>([]);
+  const selectedCitySuggestionRef = useRef("");
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
@@ -620,24 +621,33 @@ function FairFaresApp() {
 
   useEffect(() => {
     if (!searchOpen) return;
+    let cancelled = false;
     const cleanCity = normalizeCityInput(searchCity);
     setSearchSuggestionsLoading(true);
     const timer = setTimeout(() => {
       getAccommodationLocationOptions(cleanCity, searchArea)
         .then((options) => {
-          setSearchCitySuggestions((options?.cities || []).filter(Boolean).slice(0, 8));
+          if (cancelled) return;
+          const selectedCity = selectedCitySuggestionRef.current.trim().toLowerCase();
+          setSearchCitySuggestions(
+            selectedCity && selectedCity === cleanCity.trim().toLowerCase()
+              ? []
+              : (options?.cities || []).filter(Boolean).slice(0, 8)
+          );
           const suggested = (options?.suggested || []).filter(Boolean).slice(0, 8);
           setSearchSuggestions(suggested);
           setSearchSuggestionMetro(options?.metro || "");
         })
         .catch(() => {
+          if (cancelled) return;
           setSearchCitySuggestions([]);
           setSearchSuggestions([]);
           setSearchSuggestionMetro("");
         })
-        .finally(() => setSearchSuggestionsLoading(false));
+        .finally(() => { if (!cancelled) setSearchSuggestionsLoading(false); });
     }, 300);
     return () => {
+      cancelled = true;
       clearTimeout(timer);
     };
   }, [searchOpen, searchCity, searchArea]);
@@ -2052,7 +2062,7 @@ function FairFaresApp() {
               </View>
               <TextInput
                 value={searchCity}
-                onChangeText={(value) => { setSearchCity(value); setSearchCitySuggestions([]); }}
+                onChangeText={(value) => { selectedCitySuggestionRef.current = ""; setSearchCity(value); setSearchCitySuggestions([]); }}
                 placeholder="City, e.g. Denver, CO"
                 placeholderTextColor={theme.colors.muted}
                 style={styles.input}
@@ -2063,7 +2073,7 @@ function FairFaresApp() {
                     <TouchableOpacity
                       key={cityOption}
                       style={styles.citySuggestionOption}
-                      onPress={() => { setSearchCity(cityOption); setSearchArea(""); setSearchCitySuggestions([]); }}
+                      onPress={() => { selectedCitySuggestionRef.current = cityOption; setSearchCity(cityOption); setSearchArea(""); setSearchCitySuggestions([]); }}
                     >
                       <Text style={styles.citySuggestionPin}>⌖</Text>
                       <Text style={styles.citySuggestionText}>{cityOption}</Text>
