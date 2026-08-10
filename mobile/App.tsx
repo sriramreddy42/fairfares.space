@@ -288,11 +288,14 @@ function FairFaresApp() {
   const launchPromiseOffset = useRef(new Animated.Value(10)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
+  const pushRegistrationRunningRef = useRef(false);
   const notificationPermissionPromptShownRef = useRef(false);
   async function enableMobileNotifications(requestPermission = true) {
     if (Platform.OS === "web" || !Device.isDevice) {
       return false;
     }
+    if (pushRegistrationRunningRef.current) return false;
+    pushRegistrationRunningRef.current = true;
     try {
       if (Platform.OS === "android") {
         await Promise.all([
@@ -353,6 +356,8 @@ function FairFaresApp() {
       return true;
     } catch {
       return false;
+    } finally {
+      pushRegistrationRunningRef.current = false;
     }
   }
 

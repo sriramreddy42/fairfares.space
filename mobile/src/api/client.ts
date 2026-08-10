@@ -746,7 +746,7 @@ export async function registerMobilePushToken(token: string, platform: string, d
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, platform, deviceLabel, enabled, deviceId })
-  }, { silentNetworkFailure: true, attempts: 3 });
+  }, { silentNetworkFailure: true, attempts: 1 });
 }
 
 export type MobileNotificationPreferences = {

@@ -117,6 +117,7 @@ _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
+_PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
 _MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
 _MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
@@ -19363,13 +19364,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         try:
             with db() as con:
                 con.execute("SELECT 1").fetchone()
-            self.send_json({
-                "ok": True,
-                "status": "healthy",
-                "database": "available",
-                "service": "fairfares-api",
-                "time": datetime.now(UTC).isoformat(),
-            })
         except Exception as exc:
             send_operational_alert(
                 "health:database-unavailable",
@@ -19383,6 +19377,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "database": "unavailable",
                 "service": "fairfares-api",
             }, 503)
+            return
+        # Keep transport writes outside the database exception boundary. A
+        # health-check client that disconnects while receiving a valid response
+        # raises BrokenPipeError, but that does not mean the database failed.
+        self.send_json({
+            "ok": True,
+            "status": "healthy",
+            "database": "available",
+            "service": "fairfares-api",
+            "time": datetime.now(UTC).isoformat(),
+        })
 
     def api_mobile_diagnostics(self) -> None:
         """Accept a small, privacy-filtered diagnostic event from released apps."""
@@ -29449,40 +29454,66 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
             self.send_json({"ok": False, "error": "A valid Expo push token is required."}, 400)
             return
-        with db() as con:
-            con.execute(
-                """
-                INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, device_id, enabled)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(token) DO UPDATE SET
-                    user_id = excluded.user_id,
-                    platform = excluded.platform,
-                    device_label = excluded.device_label,
-                    device_id = excluded.device_id,
-                    enabled = excluded.enabled,
-                    updated_at = CURRENT_TIMESTAMP,
-                    last_seen_at = CURRENT_TIMESTAMP
-                """,
-                (int(user["id"]), token, platform, device_label, device_id, 1 if enabled else 0),
-            )
-            if enabled:
-                con.execute(
+        current_user_id = int(user["id"])
+        with _PUSH_TOKEN_REGISTRATION_LOCK:
+            with db() as con:
+                existing = con.execute(
                     """
-                    INSERT INTO mobile_notification_preferences
-                    (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
-                    VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        chitthi_enabled = 1,
-                        carpool_enabled = 1,
-                        rentals_enabled = 1,
-                        housing_enabled = 1,
-                        support_enabled = 1,
-                        marketing_enabled = 1,
-                        updated_at = CURRENT_TIMESTAMP
+                    SELECT tokens.user_id, tokens.platform, tokens.device_label, tokens.device_id, tokens.enabled,
+                           preferences.chitthi_enabled, preferences.carpool_enabled, preferences.rentals_enabled,
+                           preferences.housing_enabled, preferences.support_enabled, preferences.marketing_enabled
+                    FROM mobile_push_tokens tokens
+                    LEFT JOIN mobile_notification_preferences preferences ON preferences.user_id = tokens.user_id
+                    WHERE tokens.token = ? LIMIT 1
                     """,
-                    (int(user["id"]),),
+                    (token,),
+                ).fetchone()
+                already_current = bool(
+                    existing
+                    and int(row_value(existing, "user_id") or 0) == current_user_id
+                    and str(row_value(existing, "platform") or "") == platform
+                    and str(row_value(existing, "device_label") or "") == device_label
+                    and str(row_value(existing, "device_id") or "") == device_id
+                    and bool(int(row_value(existing, "enabled") or 0)) == enabled
+                    and (not enabled or all(bool(int(row_value(existing, f"{category}_enabled") or 0)) for category in ("chitthi", "carpool", "rentals", "housing", "support", "marketing")))
                 )
-        self.send_json({"ok": True, "enabled": enabled})
+                if not already_current:
+                    con.execute(
+                        """
+                        INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, device_id, enabled)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(token) DO UPDATE SET
+                            user_id = excluded.user_id,
+                            platform = excluded.platform,
+                            device_label = excluded.device_label,
+                            device_id = excluded.device_id,
+                            enabled = excluded.enabled,
+                            updated_at = CURRENT_TIMESTAMP,
+                            last_seen_at = CURRENT_TIMESTAMP
+                        """,
+                        (current_user_id, token, platform, device_label, device_id, 1 if enabled else 0),
+                    )
+                    if enabled:
+                        con.execute(
+                            """
+                            INSERT INTO mobile_notification_preferences
+                            (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
+                            VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
+                            ON CONFLICT(user_id) DO UPDATE SET
+                                chitthi_enabled = 1,
+                                carpool_enabled = 1,
+                                rentals_enabled = 1,
+                                housing_enabled = 1,
+                                support_enabled = 1,
+                                marketing_enabled = 1,
+                                updated_at = CURRENT_TIMESTAMP
+                            """,
+                            (current_user_id,),
+                        )
+        response = {"ok": True, "enabled": enabled}
+        if already_current:
+            response["unchanged"] = True
+        self.send_json(response)
 
     def api_mobile_notification_preferences(self) -> None:
         user = self.current_user()
