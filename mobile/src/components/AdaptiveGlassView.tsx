@@ -1,7 +1,18 @@
 import React, { ReactNode, useEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleProp, View, ViewStyle } from "react-native";
 import { BlurView } from "expo-blur";
-import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from "expo-glass-effect";
+import { requireOptionalNativeModule } from "expo-modules-core";
+
+type GlassEffectPackage = typeof import("expo-glass-effect");
+
+let glassEffectPackage: GlassEffectPackage | null = null;
+if (Platform.OS === "ios" && requireOptionalNativeModule("ExpoGlassEffect")) {
+  try {
+    glassEffectPackage = require("expo-glass-effect") as GlassEffectPackage;
+  } catch {
+    glassEffectPackage = null;
+  }
+}
 
 type Props = {
   children: ReactNode;
@@ -21,9 +32,10 @@ export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fall
     return () => subscription.remove();
   }, []);
 
-  const nativeGlassAvailable = Platform.OS === "ios" && isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
-  if (nativeGlassAvailable && !reduceTransparency) {
-    return <GlassView style={style} glassEffectStyle="regular" tintColor={tintColor} isInteractive={interactive}>{children}</GlassView>;
+  const NativeGlassView = glassEffectPackage?.GlassView;
+  const nativeGlassAvailable = Boolean(NativeGlassView && glassEffectPackage?.isLiquidGlassAvailable() && glassEffectPackage?.isGlassEffectAPIAvailable());
+  if (NativeGlassView && nativeGlassAvailable && !reduceTransparency) {
+    return <NativeGlassView style={style} glassEffectStyle="regular" tintColor={tintColor} isInteractive={interactive}>{children}</NativeGlassView>;
   }
   if (reduceTransparency) {
     return <View style={[style, { backgroundColor: fallbackColor }]}>{children}</View>;
