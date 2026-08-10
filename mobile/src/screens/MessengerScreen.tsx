@@ -80,7 +80,6 @@ type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
-const groupSuggestionsStorageKey = (userId: number | undefined, city: string) => `fairfares.chitthi.group-suggestions-dismissed.${userId || "guest"}.${city.trim().toLowerCase() || "nearby"}`;
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#061713", accent: "#176B4A" },
   { id: "ocean", label: "Ocean", color: "#071E24", accent: "#147D78" },
@@ -551,10 +550,9 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
   }, [data?.user?.id]);
 
   useEffect(() => {
-    const storageKey = groupSuggestionsStorageKey(data?.user?.id, suggestionCity);
-    AsyncStorage.getItem(storageKey)
-      .then((value) => setGroupSuggestionsDismissed(value === "1"))
-      .catch(() => setGroupSuggestionsDismissed(false));
+    // Dismissal is intentionally session-only. A new account or detected city
+    // should always get a fresh chance to discover its local public groups.
+    setGroupSuggestionsDismissed(false);
   }, [data?.user?.id, suggestionCity]);
 
   useEffect(() => {
@@ -2961,10 +2959,7 @@ export function MessengerScreen({ data, pendingPost, pendingRide, pendingGroupIn
               <TouchableOpacity
                 style={styles.groupSuggestionsDismiss}
                 accessibilityLabel="Dismiss suggested groups"
-                onPress={() => {
-                  setGroupSuggestionsDismissed(true);
-                  void AsyncStorage.setItem(groupSuggestionsStorageKey(data?.user?.id, suggestionCity), "1");
-                }}
+                onPress={() => setGroupSuggestionsDismissed(true)}
               >
                 <Text style={styles.groupSuggestionsDismissText}>×</Text>
               </TouchableOpacity>
