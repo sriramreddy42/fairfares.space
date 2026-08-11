@@ -1259,9 +1259,11 @@ export function HousingScreen({
 
   function formatRideTotalDetour(ride: RidePost) {
     const miles = formatRideMiles(ride.routeDeviationMiles);
-    if (!miles) return "Total detour calculating";
+    if (!miles) return "Total detour: road check pending";
     const minutes = ride.routeDeviationMinutes === null || ride.routeDeviationMinutes === undefined ? null : Number(ride.routeDeviationMinutes);
-    return Number.isFinite(minutes) ? `Total detour ${miles} / ${Math.max(0, Math.round(minutes || 0))} min` : `Total detour ${miles}`;
+    return Number.isFinite(minutes)
+      ? `Total detour: ${Math.max(0, Math.round(minutes || 0))} min · ${miles} added`
+      : `Total detour: ${miles} added · time pending`;
   }
 
   function formatRidePickupDropDetail(ride: RidePost) {

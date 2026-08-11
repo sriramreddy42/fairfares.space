@@ -138,9 +138,11 @@ function isIncomingRiderRequest(ride: RidePost) {
 function detourCopy(ride: RidePost) {
   const miles = ride.routeDeviationMiles;
   const minutes = ride.routeDeviationMinutes;
-  if (miles === null || miles === undefined) return "Total detour calculating";
+  if (miles === null || miles === undefined) return "Total detour: road check pending";
   const mileLabel = `${Number(miles).toFixed(Number(miles) % 1 ? 1 : 0)} mi`;
-  return minutes === null || minutes === undefined ? `Total detour ${mileLabel}` : `Total detour ${mileLabel} · ${Math.round(Number(minutes))} min`;
+  return minutes === null || minutes === undefined
+    ? `Total detour: ${mileLabel} added · time pending`
+    : `Total detour: ${Math.round(Number(minutes))} min · ${mileLabel} added`;
 }
 
 function firstName(data: BootstrapPayload | null) {

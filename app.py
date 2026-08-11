@@ -14580,6 +14580,7 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
     notified_count = 0
     nearest_radius = 0
     notified_driver_user_ids: list[int] = []
+    driver_detours: dict[int, dict[str, object]] = {}
     for radius in (10, 20, 30, 50):
         bucket_count = 0
         for driver in driver_rows:
@@ -14610,7 +14611,12 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
             )
             if cursor.rowcount:
                 bucket_count += 1
-                notified_driver_user_ids.append(int(row_value(driver, "user_id") or 0))
+                driver_user_id = int(row_value(driver, "user_id") or 0)
+                notified_driver_user_ids.append(driver_user_id)
+                driver_detours[driver_user_id] = {
+                    "minutes": route_deviation_minutes,
+                    "miles": round(route_deviation, 1),
+                }
         if bucket_count and not nearest_radius:
             nearest_radius = radius
         notified_count += bucket_count
@@ -14622,6 +14628,7 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
         "nearestRadius": nearest_radius,
         "radiusBuckets": buckets,
         "driverUserIds": [user_id for user_id in dict.fromkeys(notified_driver_user_ids) if user_id],
+        "driverDetours": driver_detours,
     }
 
 
@@ -31543,15 +31550,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
             dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
         notified_driver_user_ids = list(dispatch.pop("driverUserIds", []))
+        driver_detours = dict(dispatch.pop("driverDetours", {}))
         if notified_driver_user_ids:
             requester_name = clean_text_value(row_value(user, "name"), 80) or "A FairFares rider"
             route_label = " → ".join(value for value in (origin_label, destination_label) if value)
-            send_mobile_push_for_users(
-                notified_driver_user_ids,
-                "New carpool request",
-                f"{requester_name}: {route_label}"[:240],
-                {"type": "CARPOOL_REQUEST", "rideId": public_id, "target": "requests"},
-            )
+            for driver_user_id in notified_driver_user_ids:
+                detour = driver_detours.get(driver_user_id, {})
+                detour_minutes = int(detour.get("minutes") or 0)
+                detour_miles = float(detour.get("miles") or 0)
+                detour_copy = f"Total detour: {detour_minutes} min · {detour_miles:g} mi added."
+                send_mobile_push_for_users(
+                    [driver_user_id],
+                    "New carpool request",
+                    f"{requester_name}: {route_label}. {detour_copy}"[:240],
+                    {"type": "CARPOOL_REQUEST", "rideId": public_id, "target": "requests"},
+                )
         self.send_json(
             {
                 "ok": True,
