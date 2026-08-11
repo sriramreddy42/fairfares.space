@@ -264,6 +264,28 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(metrics["routeDeviationMinutes"], 16)
         self.assertEqual(metrics["routeDeviationSource"], "GOOGLE_DIRECTIONS")
 
+    def test_long_interstate_search_keeps_valid_intermediate_city_corridor(self):
+        denver = {"lat": 39.7392, "lng": -104.9903}
+        nashville = {"lat": 36.1627, "lng": -86.7816}
+        denver_to_huntsville = {
+            "origin_lat": denver["lat"],
+            "origin_lng": denver["lng"],
+            "destination_lat": 34.7304,
+            "destination_lng": -86.5861,
+            "max_detour_minutes": 35,
+            "max_pickup_distance_miles": 20,
+        }
+
+        metrics = app.ride_route_match_metrics(
+            denver_to_huntsville,
+            denver,
+            nashville,
+            allow_google=False,
+        )
+
+        self.assertGreater(metrics["routeDeviationMiles"], app.ride_allowed_detour_miles(denver_to_huntsville))
+        self.assertTrue(app.ride_route_match_is_valid(denver_to_huntsville, metrics))
+
     @patch.object(app, "google_route_totals")
     def test_ride_search_does_not_call_google_directions_per_candidate(self, mock_route):
         with app.db() as con:

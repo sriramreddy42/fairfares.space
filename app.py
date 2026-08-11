@@ -13138,7 +13138,7 @@ def clean_google_place_prediction(description: str) -> str:
     return dedupe_repeated_location_label(description)
 
 
-def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10) -> list[str]:
+def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[str]:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     city = normalize_accommodation_place_label(city)
     area = normalize_accommodation_place_label(area)
@@ -13157,7 +13157,7 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
     }
     geometry = geocode.get("geometry") if isinstance(geocode, dict) else {}
     location = geometry.get("location") if isinstance(geometry, dict) else {}
-    if isinstance(location, dict) and location.get("lat") and location.get("lng"):
+    if use_city_bias and isinstance(location, dict) and location.get("lat") and location.get("lng"):
         params["location"] = f"{location.get('lat')},{location.get('lng')}"
         params["radius"] = "96560"
     try:
@@ -13919,7 +13919,7 @@ def ride_place_icon_source(label: str) -> str:
     return "place"
 
 
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[dict[str, object]]:
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
@@ -13940,7 +13940,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10) -> list[
 
     google_query = query
     if google_query:
-        for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2):
+        for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias):
             add_label(label, "google")
 
     fallback_places = [
@@ -14221,9 +14221,31 @@ def ride_route_match_is_valid(
     if maximum_miles is not None:
         allowed_miles = min(allowed_miles, max(0.0, float(maximum_miles)))
     try:
-        return float(route_deviation) <= allowed_miles
+        deviation_miles = float(route_deviation)
     except (TypeError, ValueError):
         return False
+    if deviation_miles <= allowed_miles:
+        return True
+    # Search shortlisting uses a fast great-circle estimate. On long interstate
+    # trips that estimate can falsely reject a legitimate intermediate stop
+    # because the real highway bends substantially away from the straight line
+    # (for example Denver -> Huntsville commonly passes through Nashville).
+    # Permit a narrow, distance-scaled corridor only for same-direction trips
+    # whose pickup is already close to the driver's route. Detailed dispatch
+    # matching still prefers Google road-route totals when available.
+    if str(metrics.get("routeDeviationSource") or "").upper() == "ESTIMATE":
+        driver_miles = distance_miles_between(
+            ride_coordinate_value(row, "origin_lat", "originLat"),
+            ride_coordinate_value(row, "origin_lng", "originLng"),
+            ride_coordinate_value(row, "destination_lat", "destinationLat"),
+            ride_coordinate_value(row, "destination_lng", "destinationLng"),
+        )
+        pickup_distance = metrics.get("pickupDistanceMiles")
+        pickup_is_close = pickup_distance is not None and float(pickup_distance) <= max(allowed_miles, 25.0)
+        estimated_long_route_allowance = min(75.0, max(allowed_miles, driver_miles * 0.06))
+        if driver_miles >= 300 and pickup_is_close and deviation_miles <= estimated_long_route_allowance:
+            return True
+    return False
 
 
 def ride_effective_trip_date(row: sqlite3.Row | dict[str, object]) -> date | None:
@@ -30116,12 +30138,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             limit = int(params.get("limit", ["10"])[0] or 10)
         except ValueError:
             limit = 10
+        use_city_bias = str(params.get("cityBias", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
         self.send_json(
             {
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit),
+                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias),
                 "placesEnabled": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
             }
         )

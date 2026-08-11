@@ -380,8 +380,8 @@ export type RidePlaceSuggestion = {
   source: string;
 };
 
-export async function getRidePlaceSuggestions(city: string, query = "") {
-  const params = new URLSearchParams({ city, q: query, limit: "12" });
+export async function getRidePlaceSuggestions(city: string, query = "", useCityBias = true) {
+  const params = new URLSearchParams({ city, q: query, limit: "12", cityBias: useCityBias ? "1" : "0" });
   const payload = await request<{ ok: boolean; suggestions: RidePlaceSuggestion[] }>(`/api/mobile/ride-places?${params.toString()}`);
   return payload.suggestions || [];
 }

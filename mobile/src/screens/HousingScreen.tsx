@@ -892,7 +892,7 @@ export function HousingScreen({
     }
     const timer = setTimeout(() => {
       setRideSuggestionsBusy(true);
-      getRidePlaceSuggestions(rideForm.city || data?.location.city || "Denver, CO", query)
+      getRidePlaceSuggestions(rideForm.city || data?.location.city || "Denver, CO", query, rideFocusedField === "origin")
         .then(setRideSuggestions)
         .catch(() => setRideSuggestions([]))
         .finally(() => setRideSuggestionsBusy(false));
@@ -3615,14 +3615,14 @@ const styles = StyleSheet.create({
     padding: 2
   },
   topTagHole: { width: 4, height: 4, borderRadius: 2 },
-  stickySearch: { backgroundColor: "rgba(10,10,12,0.68)", paddingVertical: theme.spacing.sm, borderBottomWidth: 1, borderBottomColor: theme.colors.line, overflow: "visible", zIndex: 20 },
+  stickySearch: { backgroundColor: "rgba(10,10,12,0.68)", paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: theme.colors.line, overflow: "visible", zIndex: 20 },
   stickySearchRaised: { borderBottomColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 9 },
   stickySearchBlur: { ...StyleSheet.absoluteFillObject },
   stickySearchUnderBlur: { position: "absolute", left: 0, right: 0, bottom: -16, height: 18, opacity: 0.72 },
-  searchBar: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", borderRadius: theme.radius.pill, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9, overflow: "hidden" },
-  searchIcon: { width: 23, height: 23 },
-  searchText: { color: theme.colors.soft, flex: 1, fontSize: 15, fontWeight: "800" },
-  later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 11, paddingVertical: 7, fontWeight: "900", fontSize: 13 },
+  searchBar: { backgroundColor: "#272729", borderWidth: 1.5, borderColor: "#4a4a4f", borderRadius: theme.radius.pill, minHeight: 60, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.26, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
+  searchIcon: { width: 25, height: 25 },
+  searchText: { color: theme.colors.soft, flex: 1, fontSize: 16, fontWeight: "800" },
+  later: { color: theme.colors.text, backgroundColor: "#151517", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, fontWeight: "900", fontSize: 13, overflow: "hidden" },
   segment: {
     backgroundColor: "transparent",
     borderRadius: 0,
@@ -3633,12 +3633,12 @@ const styles = StyleSheet.create({
   },
   segmentButton: {
     flex: 1,
-    minHeight: 58,
+    minHeight: 50,
     borderRadius: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 10,
-    paddingBottom: 9,
+    paddingTop: 5,
+    paddingBottom: 5,
     paddingHorizontal: 6,
     borderBottomWidth: 3,
     borderBottomColor: "transparent",
