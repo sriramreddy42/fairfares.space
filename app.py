@@ -14233,7 +14233,24 @@ def ride_route_match_is_valid(
     # Permit a narrow, distance-scaled corridor only for same-direction trips
     # whose pickup is already close to the driver's route. Detailed dispatch
     # matching still prefers Google road-route totals when available.
+    if ride_uses_long_distance_corridor(row, metrics, allowed_miles=allowed_miles):
+        return True
+    return False
+
+
+def ride_uses_long_distance_corridor(
+    row: sqlite3.Row | dict[str, object],
+    metrics: dict[str, object],
+    *,
+    allowed_miles: float | None = None,
+) -> bool:
+    """Identify provisional interstate matches that still need road-route verification."""
     if str(metrics.get("routeDeviationSource") or "").upper() == "ESTIMATE":
+        configured_allowance = ride_allowed_detour_miles(row) if allowed_miles is None else allowed_miles
+        try:
+            deviation_miles = float(metrics.get("routeDeviationMiles"))
+        except (TypeError, ValueError):
+            return False
         driver_miles = distance_miles_between(
             ride_coordinate_value(row, "origin_lat", "originLat"),
             ride_coordinate_value(row, "origin_lng", "originLng"),
@@ -14241,8 +14258,8 @@ def ride_route_match_is_valid(
             ride_coordinate_value(row, "destination_lng", "destinationLng"),
         )
         pickup_distance = metrics.get("pickupDistanceMiles")
-        pickup_is_close = pickup_distance is not None and float(pickup_distance) <= max(allowed_miles, 25.0)
-        estimated_long_route_allowance = min(75.0, max(allowed_miles, driver_miles * 0.06))
+        pickup_is_close = pickup_distance is not None and float(pickup_distance) <= max(configured_allowance, 25.0)
+        estimated_long_route_allowance = min(75.0, max(configured_allowance, driver_miles * 0.06))
         if driver_miles >= 300 and pickup_is_close and deviation_miles <= estimated_long_route_allowance:
             return True
     return False
@@ -14492,6 +14509,13 @@ def mobile_ride_posts(
                 # A two-ended search is only a match when its route can actually
                 # be evaluated. Missing metrics must not become an automatic hit.
                 if ride_route_match_is_valid(item, item):
+                    if ride_uses_long_distance_corridor(item, item):
+                        # The great-circle value is useful for shortlisting but
+                        # is not a road detour or ETA. Avoid presenting a false
+                        # 30-mph operational estimate until Routes verifies it.
+                        item["routeDeviationMiles"] = None
+                        item["routeDeviationMinutes"] = None
+                        item["routeDeviationSource"] = "ROAD_ROUTE_PENDING"
                     route_filtered.append(item)
             payloads = route_filtered
         payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("routeDeviationMiles") or 9999), float(item.get("distanceMiles") or 9999)))
