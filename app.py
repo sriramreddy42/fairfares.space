@@ -17253,6 +17253,18 @@ def chat_notification_avatar_url(origin: str, user_id: int, lifetime_seconds: in
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
 
 
+def chat_notification_group_avatar_signature(community_id: int, expires_at: int) -> str:
+    value = f"fchat-group-avatar:{int(community_id)}:{int(expires_at)}".encode("utf-8")
+    return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
+
+
+def chat_notification_group_avatar_url(origin: str, community_id: int, lifetime_seconds: int = 15 * 60) -> str:
+    expires_at = int(time.time()) + max(60, min(int(lifetime_seconds or 0), 60 * 60))
+    signature = chat_notification_group_avatar_signature(community_id, expires_at)
+    query = urllib.parse.urlencode({"community": int(community_id), "expires": expires_at, "signature": signature})
+    return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
+
+
 def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> dict[str, dict[str, str]]:
     valid_tokens = [token for token in dict.fromkeys(tokens) if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")]
     if not valid_tokens:
@@ -17261,6 +17273,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     notification_data = data or {}
     notification_type = str(notification_data.get("type") or "")
     image_url = str(notification_data.get("imageUrl") or "").strip()
+    subtitle = str(notification_data.get("subtitle") or "").strip()
     rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
     channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
     try:
@@ -17275,6 +17288,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "sound": "default",
                 "title": title[:120],
                 "body": body[:240],
+                **({"subtitle": subtitle[:120]} if subtitle else {}),
                 "data": notification_data,
                 "channelId": channel_id,
                 **({"badge": badge_count} if badge_count else {}),
@@ -21446,15 +21460,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             sender_id = int(row_value(sender, "id") or 0)
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
             conversation_name = str(row_value(conversation, "subject") or "FChat group") if is_group else ""
+            community_id = int(row_value(conversation, "community_id") or 0)
+            notification_avatar_url = (
+                chat_notification_group_avatar_url(self.public_origin(), community_id)
+                if is_group and community_id
+                else chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
+            )
             common_data = {
                 "type": "FCHAT_MESSAGE",
                 "conversationId": row_value(conversation, "public_id"),
                 "messageId": int(row_value(message, "id") or 0),
                 "senderId": sender_id,
                 "senderName": row_value(sender, "name") or "FairFares member",
-                "senderAvatarUrl": chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else "",
+                "senderAvatarUrl": notification_avatar_url,
                 "conversationName": conversation_name,
                 "isGroup": is_group,
+                "subtitle": conversation_name,
             }
             for token, encrypted_preview in push_jobs:
                 enqueue_mobile_pushes(
@@ -22225,13 +22246,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         try:
             user_id = int((query.get("user") or ["0"])[0])
+            community_id = int((query.get("community") or ["0"])[0])
             expires_at = int((query.get("expires") or ["0"])[0])
         except (TypeError, ValueError):
             self.send_error(404)
             return
         signature = str((query.get("signature") or [""])[0]).strip().lower()
         now = int(time.time())
-        expected = chat_notification_avatar_signature(user_id, expires_at) if user_id > 0 and expires_at > 0 else ""
+        expected = (
+            chat_notification_group_avatar_signature(community_id, expires_at)
+            if community_id > 0 and expires_at > 0
+            else chat_notification_avatar_signature(user_id, expires_at) if user_id > 0 and expires_at > 0 else ""
+        )
         if (
             not expected
             or not signature
@@ -22242,11 +22268,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         with db() as con:
-            user = con.execute("SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1", (user_id,)).fetchone()
-        photo = str(row_value(user, "profile_photo_url") or "").strip() if user else ""
+            avatar_row = (
+                con.execute("SELECT photo_url FROM chat_communities WHERE id = ? LIMIT 1", (community_id,)).fetchone()
+                if community_id > 0
+                else con.execute("SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1", (user_id,)).fetchone()
+            )
+        photo_column = "photo_url" if community_id > 0 else "profile_photo_url"
+        photo = str(row_value(avatar_row, photo_column) or "").strip() if avatar_row else ""
         upload = data_url_upload_parts(
             photo,
-            f"fchat-avatar-{user_id}",
+            f"fchat-group-avatar-{community_id}" if community_id > 0 else f"fchat-avatar-{user_id}",
             allowed_mime_types=ALLOWED_CHAT_IMAGE_MIME_TYPES,
             max_bytes=2_000_000,
         )

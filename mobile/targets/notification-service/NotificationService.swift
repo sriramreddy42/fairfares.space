@@ -45,6 +45,10 @@ final class NotificationService: UNNotificationServiceExtension {
         let isGroup = boolValue(payload["isGroup"])
         let avatarUrl = URL(string: stringValue(payload["senderAvatarUrl"]))
 
+        if isGroup && !conversationName.isEmpty {
+            content.subtitle = conversationName
+        }
+
         if let preview = decryptPreview(payload), !preview.isEmpty {
             content.body = preview
         } else if isEncryptedPlaceholder(content.body) {

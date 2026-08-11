@@ -128,11 +128,12 @@ class PushNotificationTest(unittest.TestCase):
         token = "ExponentPushToken[fchat-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-chat"}]})
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
-            app.send_expo_push([token], "New message", "Hello", {"type": "FCHAT_MESSAGE"})
+            app.send_expo_push([token], "Vinay Reddy", "Hello", {"type": "FCHAT_MESSAGE", "subtitle": "Dayton Rides & Community"})
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(messages[0]["channelId"], "chitthi-messages-v2")
         self.assertTrue(messages[0]["mutableContent"])
         self.assertEqual(messages[0]["categoryId"], "FCHAT_MESSAGE")
+        self.assertEqual(messages[0]["subtitle"], "Dayton Rides & Community")
 
     def test_promotional_payload_includes_rich_image_for_android_and_ios(self):
         token = "ExpoPushToken[promo-rich-device]"
@@ -220,6 +221,17 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(expires_at, 2_000_000_900)
         self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id, expires_at)))
         self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id + 1, expires_at)))
+
+    def test_fchat_group_avatar_urls_are_short_lived_and_tamper_evident(self):
+        with patch.object(app.time, "time", return_value=2_000_000_000):
+            url = app.chat_notification_group_avatar_url("https://www.fairfare.space", 42)
+        parsed = app.urllib.parse.urlparse(url)
+        query = app.urllib.parse.parse_qs(parsed.query)
+        expires_at = int(query["expires"][0])
+        signature = query["signature"][0]
+        self.assertEqual(int(query["community"][0]), 42)
+        self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(42, expires_at)))
+        self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(43, expires_at)))
 
     def test_rental_payload_uses_rental_channel_and_booking_context(self):
         token = "ExpoPushToken[rental-device]"
