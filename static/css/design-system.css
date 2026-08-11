@@ -15,6 +15,27 @@
   --ff-content: 1280px;
 }
 
+::selection { background: rgba(230, 0, 35, .16); color: var(--ff-brand); }
+.ff-hero-eyebrow { color: var(--ff-action); font-size: .72rem; font-weight: 850; letter-spacing: .13em; margin: 0 0 10px; text-transform: uppercase; }
+.ff-hero-lede { color: var(--ff-muted); font-size: 1rem; line-height: 1.55; margin: -8px 0 22px; max-width: 560px; }
+.ff-value-grid { display: grid; gap: 1px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 auto; max-width: var(--ff-content); padding: 28px 32px; }
+.ff-value-grid article { align-items: flex-start; background: var(--ff-surface); border: 1px solid var(--ff-border); display: flex; gap: 16px; min-height: 132px; padding: 27px; }
+.ff-value-grid article:first-child { border-radius: var(--ff-radius-card) 0 0 var(--ff-radius-card); }
+.ff-value-grid article:last-child { border-radius: 0 var(--ff-radius-card) var(--ff-radius-card) 0; }
+.ff-value-grid article > span { color: var(--ff-action); font-size: .7rem; font-weight: 900; letter-spacing: .1em; padding-top: 5px; }
+.ff-value-grid h2 { color: var(--ff-brand); font-size: 1.05rem; letter-spacing: -.01em; margin: 0 0 7px; }
+.ff-value-grid p { color: var(--ff-muted); font-size: .88rem; line-height: 1.5; margin: 0; }
+.fairfares-home .booking-hero { background: var(--ff-bg); min-height: 610px; padding: 22px 30px 0; }
+.fairfares-home .search-panel { align-self: center; border: 1px solid var(--ff-border); border-radius: 22px 22px 0 0; box-shadow: var(--ff-shadow); padding: clamp(28px, 4vw, 48px); }
+.fairfares-home .search-panel h1 { font-size: clamp(2.25rem, 4vw, 4rem); letter-spacing: -.055em; line-height: .98; margin: 0 0 20px; max-width: 560px; text-transform: none; }
+.fairfares-home .hero-poster { border-radius: 22px 22px 0 0; box-shadow: var(--ff-shadow); min-height: 588px; overflow: hidden; }
+.housing-value-grid { padding-left: 0; padding-right: 0; }
+.carpool-value-grid { padding-left: 0; padding-right: 0; }
+@media (hover:hover) {
+  .ff-value-grid article { transition: transform 180ms ease, box-shadow 180ms ease; }
+  .ff-value-grid article:hover { box-shadow: var(--ff-shadow); position: relative; transform: translateY(-3px); z-index: 2; }
+}
+
 .ff-site-header {
   align-items: center;
   background: var(--ff-surface);
@@ -57,4 +78,10 @@
   .ff-site-brand img { height: 36px; width: 112px; }
   .ff-site-actions { gap: 6px; }
   .ff-site-actions .nav-button, .ff-site-actions .carpool-account, .ff-account-action { font-size: .82rem; min-height: 38px; max-width: 88px; padding: 0 10px; }
+  .ff-value-grid { gap: 10px; grid-template-columns: 1fr; padding: 16px 12px 22px; }
+  .ff-value-grid article, .ff-value-grid article:first-child, .ff-value-grid article:last-child { border-radius: 14px; min-height: 0; padding: 20px; }
+  .fairfares-home .booking-hero { min-height: 0; padding: 12px 12px 0; }
+  .fairfares-home .search-panel { border-radius: 16px; padding: 24px 18px; }
+  .fairfares-home .search-panel h1 { font-size: 2.25rem; }
+  .fairfares-home .hero-poster { display: none; }
 }
