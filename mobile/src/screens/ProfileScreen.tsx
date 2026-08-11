@@ -16,7 +16,7 @@ type Props = {
   onLogout: () => void;
   onProfileUpdated: (user: BootstrapPayload["user"]) => void;
   onOpenHousing?: () => void;
-  onOpenRide?: () => void;
+  onOpenRide?: (target?: "workspace" | "requests" | "listings") => void;
   onOpenServices?: () => void;
   onOpenMessenger?: () => void;
   onOpenActivity?: () => void;
@@ -26,6 +26,7 @@ type Props = {
 const DRIVER_VERIFICATION_DAYS = 30;
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
 type AccountHistorySection = "housing" | "carpool" | "rentals";
+type CarpoolHistoryView = "listings" | "requests";
 type AccountHistoryItem = { id: string; title: string; meta: string; status: string; current: boolean };
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
@@ -70,6 +71,7 @@ export function ProfileScreen({
   const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
   const [rentalActivity, setRentalActivity] = useState<RentalServiceBooking[]>([]);
   const [historySection, setHistorySection] = useState<AccountHistorySection | null>(null);
+  const [carpoolHistoryView, setCarpoolHistoryView] = useState<CarpoolHistoryView>("listings");
   const [carpoolLoading, setCarpoolLoading] = useState(false);
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
   const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
@@ -169,12 +171,16 @@ export function ProfileScreen({
       status: post.expiryLabel,
       current: post.status === "ACTIVE" && post.expiryLabel !== "Expired"
     }));
-    if (historySection === "carpool") return rideActivity.map((ride) => {
+    if (historySection === "carpool") return rideActivity.filter((ride) => carpoolHistoryView === "listings"
+      ? ride.activityRole === "MINE" && ride.role === "DRIVER"
+      : !(ride.activityRole === "MINE" && ride.role === "DRIVER")
+    ).map((ride) => {
       const status = String(ride.dispatchStatus || ride.status || "Active").replaceAll("_", " ");
+      const requestType = ride.activityRole === "DRIVER_NOTIFICATION" ? "Received request" : "Your request";
       return {
         id: `${ride.activityRole || "ride"}-${ride.id}`,
         title: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
-        meta: [ride.pickupDate || ride.startDate, ride.pickupTime].filter(Boolean).join(" · ") || "Timing open",
+        meta: [carpoolHistoryView === "requests" ? requestType : "Seat listing", ride.pickupDate || ride.startDate, ride.pickupTime].filter(Boolean).join(" · ") || "Timing open",
         status,
         current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired
       };
@@ -190,14 +196,14 @@ export function ProfileScreen({
       };
     });
     return [];
-  }, [historySection, housingActivity, rentalActivity, rideActivity]);
+  }, [carpoolHistoryView, historySection, housingActivity, rentalActivity, rideActivity]);
   const currentHistoryItems = accountHistoryItems.filter((item) => item.current);
   const previousHistoryItems = accountHistoryItems.filter((item) => !item.current);
   const historyTitle = historySection === "housing" ? "Housing history" : historySection === "carpool" ? "Carpool history" : "Rental car history";
   const historyAction = historySection === "housing" ? onOpenHousing : historySection === "carpool" ? onOpenRide : onOpenServices;
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
     { title: "Housing", copy: "Current and previous housing activity", icon: appAssets.serviceHome, onPress: () => user ? setHistorySection("housing") : onLogin() },
-    { title: "Carpool", copy: "Current requests and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: () => user ? setHistorySection("carpool") : onLogin() },
+    { title: "Carpool", copy: "Your listings, requests, and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: () => { if (!user) return onLogin(); setCarpoolHistoryView("listings"); setHistorySection("carpool"); } },
     { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: () => user ? setHistorySection("rentals") : onLogin() },
     { title: "Chitthi", copy: "Current and previous conversations", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
     { title: "Report an issue", copy: "Send a tracked support or safety report", icon: appAssets.serviceSupport, onPress: () => user ? setSupportOpen(true) : onLogin() },
@@ -429,7 +435,7 @@ export function ProfileScreen({
             <View style={styles.metric}><Text style={styles.metricValue}>{daysLeft ?? "—"}</Text><Text style={styles.metricLabel}>Days valid</Text></View>
           </View>
           <View style={styles.linkRow}>
-            <TouchableOpacity style={styles.miniButton} onPress={onOpenRide}>
+            <TouchableOpacity style={styles.miniButton} onPress={() => onOpenRide?.("workspace")}>
               <Text style={styles.miniButtonText}>{carpoolReady ? "List / manage ride" : "Finish profile"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.miniButton} onPress={onOpenActivity}>
@@ -475,6 +481,21 @@ export function ProfileScreen({
                 <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
             </View>
+            {historySection === "carpool" ? (
+              <View style={styles.historyTabs} accessibilityRole="tablist">
+                {(["listings", "requests"] as CarpoolHistoryView[]).map((view) => {
+                  const active = carpoolHistoryView === view;
+                  const count = view === "listings"
+                    ? rideActivity.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER").length
+                    : rideActivity.filter((ride) => !(ride.activityRole === "MINE" && ride.role === "DRIVER")).length;
+                  return (
+                    <TouchableOpacity key={view} style={[styles.historyTab, active && styles.historyTabActive]} onPress={() => setCarpoolHistoryView(view)} accessibilityRole="tab" accessibilityState={{ selected: active }}>
+                      <Text style={[styles.historyTabText, active && styles.historyTabTextActive]}>{view === "listings" ? "Listings" : "Requests"} · {count}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
             <ScrollView style={styles.historyScroll} contentContainerStyle={styles.historyContent} showsVerticalScrollIndicator={false}>
               <Text style={styles.historySectionTitle}>Current · {currentHistoryItems.length}</Text>
               {currentHistoryItems.length ? currentHistoryItems.map((item) => (
@@ -491,8 +512,8 @@ export function ProfileScreen({
                 </View>
               )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}
             </ScrollView>
-            <TouchableOpacity style={styles.historyManageButton} onPress={() => { setHistorySection(null); historyAction?.(); }}>
-              <Text style={styles.primaryButtonText}>Manage {historySection === "rentals" ? "rentals" : historySection}</Text>
+            <TouchableOpacity style={styles.historyManageButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); }}>
+              <Text style={styles.primaryButtonText}>Manage {historySection === "carpool" ? carpoolHistoryView : historySection === "rentals" ? "rentals" : historySection}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -609,6 +630,11 @@ const styles = StyleSheet.create({
   supportSheet: { backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 11, maxHeight: "90%" },
   historySheet: { height: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 14 },
   historyScroll: { flex: 1 },
+  historyTabs: { flexDirection: "row", padding: 4, gap: 4, borderRadius: theme.radius.pill, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  historyTab: { flex: 1, minHeight: 40, borderRadius: theme.radius.pill, alignItems: "center", justifyContent: "center" },
+  historyTabActive: { backgroundColor: theme.colors.blue },
+  historyTabText: { color: theme.colors.muted, fontSize: 13, fontWeight: "800" },
+  historyTabTextActive: { color: theme.colors.text },
   historyContent: { gap: 9, paddingBottom: 16 },
   historySectionTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 6 },
   historyRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },

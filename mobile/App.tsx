@@ -1453,8 +1453,8 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
-        onOpenRide={() => {
-          setRideOwnerOpenTarget("workspace");
+        onOpenRide={(target = "workspace") => {
+          setRideOwnerOpenTarget(target);
           setRideOwnerReturnTab("profile");
           setSelectedNeed("ride_offer");
           setActiveTab("housing");
