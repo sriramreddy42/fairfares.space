@@ -414,10 +414,10 @@ function EncryptedChatImage({ attachmentUrl, keyPayload, compact = false }: { at
   return <AdaptiveChatImage uri={uri} compact={compact} />;
 }
 
-function PendingPhotoPreview({ uri, compact = false }: { uri: string; compact?: boolean }) {
+function PendingPhotoPreview({ uri, compact = false, full = false }: { uri: string; compact?: boolean; full?: boolean }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return <View style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, styles.pendingPreviewFallback]}><Text style={styles.pendingPreviewFallbackText}>No preview</Text></View>;
-  return <Image source={{ uri }} style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage]} resizeMode="cover" onError={() => setFailed(true)} />;
+  if (failed) return <View style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, full && styles.pendingFullPreviewImage, styles.pendingPreviewFallback]}><Text style={styles.pendingPreviewFallbackText}>No preview</Text></View>;
+  return <Image source={{ uri }} style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, full && styles.pendingFullPreviewImage]} resizeMode={full ? "contain" : "cover"} onError={() => setFailed(true)} />;
 }
 
 function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
@@ -486,6 +486,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
+  const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -1393,6 +1394,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const sentKind = attachments[0].kind;
         setPendingAttachment(null);
         setPendingImages([]);
+        setPendingPhotoPreviewOpen(false);
         setMessageText("");
         setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : "File sent");
         setTimeout(() => setAttachmentStatus(""), 1600);
@@ -2726,6 +2728,35 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
 
+        <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={() => setPendingPhotoPreviewOpen(false)}>
+          <View style={styles.pendingFullPreview}>
+            <View style={styles.pendingFullPreviewHeader}>
+              <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={() => setPendingPhotoPreviewOpen(false)} accessibilityLabel="Close selected photo preview"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
+              <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} photo{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
+              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected photos"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading ? "…" : "Send"}</Text></TouchableOpacity>
+            </View>
+            <ScrollView style={styles.pendingFullPreviewScroll} contentContainerStyle={styles.pendingFullPreviewContent} showsVerticalScrollIndicator={false}>
+              {pendingImages.map((photo, index) => <View key={`${photo.uri}-${index}`} style={styles.pendingFullPreviewPhotoCard}>
+                <PendingPhotoPreview uri={photo.uri} full />
+                <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}</Text></View>
+                <TouchableOpacity
+                  style={styles.pendingFullPreviewRemove}
+                  onPress={() => setPendingImages((current) => {
+                    const next = current.filter((_, photoIndex) => photoIndex !== index);
+                    if (!next.length) setPendingPhotoPreviewOpen(false);
+                    return next;
+                  })}
+                  accessibilityLabel={`Remove photo ${index + 1}`}
+                ><Text style={styles.pendingFullPreviewRemoveText}>×</Text></TouchableOpacity>
+              </View>)}
+            </ScrollView>
+            <View style={styles.pendingFullPreviewFooter}>
+              <Text style={styles.pendingFullPreviewFooterText}>{messageText.trim() ? "Your caption will be attached to the first photo." : "Add an optional caption from the message box."}</Text>
+              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading ? "Sending…" : `Send ${pendingImages.length} photo${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
         <Modal visible={attachmentPreviewGroup.length > 0} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreviewGroup([])}>
           <View style={styles.attachmentPreviewBackdrop}>
             <View style={styles.attachmentPreviewHeader}>
@@ -2861,13 +2892,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text></View> : null}
 
         {pendingImages.length ? (
-          <View style={styles.pendingAttachmentCard}>
+          <TouchableOpacity style={styles.pendingAttachmentCard} onPress={() => setPendingPhotoPreviewOpen(true)} activeOpacity={0.84} accessibilityLabel={`Preview ${pendingImages.length} selected photos`}>
             <View style={styles.pendingCollagePreview}>
               {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}><PendingPhotoPreview uri={image.uri} compact />{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
             </View>
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} photos selected</Text><Text style={styles.pendingAttachmentMeta}>Collage ready to send</Text></View>
             <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => setPendingImages([])} accessibilityLabel="Remove selected photos"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
             {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
@@ -3487,6 +3518,27 @@ const styles = StyleSheet.create({
   pendingAttachmentMeta: { color: "#667085", fontSize: 11, fontWeight: "700", marginTop: 3 },
   pendingAttachmentRemove: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#e6e9ef", alignItems: "center", justifyContent: "center" },
   pendingAttachmentRemoveText: { color: "#344054", fontSize: 22, lineHeight: 24, marginTop: -2 },
+  pendingFullPreview: { flex: 1, backgroundColor: "#080a0d", paddingTop: Platform.OS === "ios" ? 48 : 20 },
+  pendingFullPreviewHeader: { minHeight: 64, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(255,255,255,0.16)" },
+  pendingFullPreviewClose: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" },
+  pendingFullPreviewCloseText: { color: "#fff", fontSize: 34, lineHeight: 36, fontWeight: "400", marginTop: -3 },
+  pendingFullPreviewTitleWrap: { flex: 1, minWidth: 0 },
+  pendingFullPreviewTitle: { color: "#fff", fontSize: 17, fontWeight: "800", textAlign: "center" },
+  pendingFullPreviewSubtitle: { color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: "700", textAlign: "center", marginTop: 2 },
+  pendingFullPreviewSendTop: { minWidth: 52, minHeight: 38, borderRadius: 19, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  pendingFullPreviewSendTopText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  pendingFullPreviewScroll: { flex: 1 },
+  pendingFullPreviewContent: { paddingHorizontal: 12, paddingVertical: 12, gap: 12 },
+  pendingFullPreviewPhotoCard: { width: "100%", minHeight: 480, borderRadius: 18, overflow: "hidden", position: "relative", backgroundColor: "#11151a", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  pendingFullPreviewImage: { width: "100%", height: 560, maxHeight: 560, borderRadius: 0, backgroundColor: "#080a0d" },
+  pendingFullPreviewNumber: { position: "absolute", left: 12, top: 12, minWidth: 30, height: 30, borderRadius: 15, paddingHorizontal: 8, backgroundColor: "rgba(0,0,0,0.66)", alignItems: "center", justifyContent: "center" },
+  pendingFullPreviewNumberText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  pendingFullPreviewRemove: { position: "absolute", right: 12, top: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(0,0,0,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", alignItems: "center", justifyContent: "center" },
+  pendingFullPreviewRemoveText: { color: "#fff", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
+  pendingFullPreviewFooter: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 28 : 14, gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(10,13,17,0.98)" },
+  pendingFullPreviewFooterText: { color: "rgba(255,255,255,0.62)", fontSize: 11, lineHeight: 16, fontWeight: "700", textAlign: "center" },
+  pendingFullPreviewSend: { minHeight: 52, borderRadius: 26, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center" },
+  pendingFullPreviewSendText: { color: "#fff", fontSize: 16, fontWeight: "900" },
   richComposerPanel: { position: "absolute", left: 10, right: 10, bottom: 62, maxHeight: "78%", backgroundColor: "#ECEDEB", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "#CBCFCA", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 14, zIndex: 21, gap: 9, overflow: "hidden" },
   richInput: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#d8d3cb", borderRadius: 12, minHeight: 44, paddingHorizontal: 12, color: "#222", fontSize: 14 },
   richMultiline: { minHeight: 82, paddingTop: 12, textAlignVertical: "top" },
