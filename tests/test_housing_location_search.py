@@ -54,6 +54,33 @@ class HousingLocationSearchTest(unittest.TestCase):
                 (public_id, self.user_id, title, city, f"{city}, 45420", area, lat, lng),
             )
 
+    def insert_filter_post(
+        self,
+        public_id,
+        *,
+        mode="HAVE_PLACE",
+        category="single_room",
+        city="Denver, CO",
+        gender="open",
+        rent_min=900,
+        rent_max=0,
+        description="Housing listing",
+        status="ACTIVE",
+        expires_at="2099-12-31 23:59:59",
+    ):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description, city, city_area_zip,
+                 area_or_apartment, lat, lng, rent_min, rent_max, gender_preference,
+                 contact_name, contact_phone, contact_email, visibility_status, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Central', 39.7392, -104.9903, ?, ?, ?,
+                        'Poster', '3035550100', 'poster@example.com', ?, ?)
+                """,
+                (public_id, self.user_id, mode, category, public_id, description, city, city, rent_min, rent_max, gender, status, expires_at),
+            )
+
     def test_plain_miami_does_not_resolve_to_miamisburg(self):
         options = app.accommodation_location_options("Miami")
         self.assertNotIn("Miamisburg", options["selectedLocation"])
@@ -167,6 +194,48 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in results))
         self.assertTrue(all(int(item["rentValue"]) <= 600 for item in results))
 
+    def test_housing_filter_matrix_returns_only_compatible_real_posts(self):
+        self.insert_filter_post("OPEN-SINGLE", gender="open", rent_min=900)
+        self.insert_filter_post("FEMALE-SHARED", category="shared_room", gender="female", rent_min=1100)
+        self.insert_filter_post("MALE-SINGLE", gender="male", rent_min=850)
+        self.insert_filter_post("OVER-BUDGET", gender="open", rent_min=1500, rent_max=1800)
+        self.insert_filter_post("TENANT-REQUEST", mode="NEED_PLACE", gender="open", rent_min=800)
+        self.insert_filter_post("WRONG-CITY", city="Dayton, OH", description="Moving from Denver and looking locally")
+        self.insert_filter_post("EXPIRED", expires_at="2020-01-01 00:00:00")
+
+        female_single_results = app.mobile_housing_posts(
+            city="Denver, CO",
+            need="need_place",
+            category="single_room",
+            gender="female",
+            budget="1000",
+            limit=30,
+        )
+        controlled_ids = {"OPEN-SINGLE", "FEMALE-SHARED", "MALE-SINGLE", "OVER-BUDGET", "TENANT-REQUEST", "WRONG-CITY", "EXPIRED"}
+        real_ids = {item["id"] for item in female_single_results} & controlled_ids
+        self.assertEqual(real_ids, {"OPEN-SINGLE"})
+        self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in female_single_results))
+        self.assertTrue(all(item["category"] == "single_room" for item in female_single_results))
+        self.assertTrue(all(int(item["rentValue"]) <= 1000 for item in female_single_results))
+
+        female_results = app.mobile_housing_posts(
+            city="Denver, CO",
+            need="need_place",
+            gender="female",
+            limit=30,
+        )
+        female_real_ids = {item["id"] for item in female_results} & controlled_ids
+        self.assertIn("OPEN-SINGLE", female_real_ids)
+        self.assertIn("FEMALE-SHARED", female_real_ids)
+        self.assertNotIn("MALE-SINGLE", female_real_ids)
+        self.assertNotIn("WRONG-CITY", female_real_ids)
+        self.assertNotIn("EXPIRED", female_real_ids)
+
+        tenant_requests = app.mobile_housing_posts(city="Denver, CO", need="have_place", limit=30)
+        request_real_ids = {item["id"] for item in tenant_requests} & controlled_ids
+        self.assertEqual(request_real_ids, {"TENANT-REQUEST"})
+        self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in tenant_requests))
+
     def test_full_address_and_uploaded_photo_feed_website_map_and_cards(self):
         with app.db() as con:
             cursor = con.execute(
@@ -224,7 +293,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         post_without_image["preview_image_url"] = ""
         desktop_without_image = app.render_accommodation_posts([post_without_image])
         mobile_without_image = app.render_mobile_accommodation_cards([post_without_image])
-        self.assertIn("No image found", desktop_without_image)
+        self.assertIn("Photos coming soon", desktop_without_image)
         self.assertIn("housing-post-media-empty", desktop_without_image)
         self.assertIn("No image found", mobile_without_image)
         self.assertIn("housing-mobile-card-image-empty", mobile_without_image)

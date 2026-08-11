@@ -15044,6 +15044,15 @@ def mobile_housing_posts(
         "primary_neighborhood",
         "apartment_name",
     )
+    city_search_fields = (
+        "city_area_zip",
+        "area_or_apartment",
+        "street_address",
+        "city",
+        "zip_code",
+        "primary_neighborhood",
+        "apartment_name",
+    )
     def row_matches_terms(row: sqlite3.Row, terms: list[str]) -> bool:
         if not terms:
             return False
@@ -15054,8 +15063,8 @@ def mobile_housing_posts(
         term_clauses = []
         for term in group:
             pattern = f"%{term}%"
-            term_clauses.append("(" + " OR ".join(f"{field} LIKE ?" for field in search_fields) + ")")
-            values.extend([pattern] * len(search_fields))
+            term_clauses.append("(" + " OR ".join(f"{field} LIKE ?" for field in city_search_fields) + ")")
+            values.extend([pattern] * len(city_search_fields))
         clauses.append("(" + " OR ".join(term_clauses) + ")")
     limit = max(1, min(int(limit or 30), 50))
     offset = max(0, int(offset or 0))

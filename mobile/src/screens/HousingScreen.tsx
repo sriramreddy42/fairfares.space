@@ -664,13 +664,19 @@ export function HousingScreen({
   const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
   const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
   const sortedPosts = useMemo(() => {
-    const distanceValue = (post: HousingPost) => (post.distanceMiles === null ? Number.MAX_SAFE_INTEGER : post.distanceMiles);
+    const compareOptionalNumber = (a: number | null | undefined, b: number | null | undefined, descending = false) => {
+      const aKnown = a !== null && a !== undefined && Number.isFinite(Number(a));
+      const bKnown = b !== null && b !== undefined && Number.isFinite(Number(b));
+      if (aKnown !== bKnown) return aKnown ? -1 : 1;
+      if (!aKnown || !bKnown) return 0;
+      return descending ? Number(b) - Number(a) : Number(a) - Number(b);
+    };
     return [...posts].sort((a, b) => {
       if (Boolean(a.sample) !== Boolean(b.sample)) return a.sample ? 1 : -1;
-      if (selectedSort === "distanceDesc") return distanceValue(b) - distanceValue(a);
-      if (selectedSort === "rentAsc") return (a.rentValue || Number.MAX_SAFE_INTEGER) - (b.rentValue || Number.MAX_SAFE_INTEGER);
-      if (selectedSort === "rentDesc") return (b.rentValue || 0) - (a.rentValue || 0);
-      return distanceValue(a) - distanceValue(b);
+      if (selectedSort === "distanceDesc") return compareOptionalNumber(a.distanceMiles, b.distanceMiles, true);
+      if (selectedSort === "rentAsc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null);
+      if (selectedSort === "rentDesc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null, true);
+      return compareOptionalNumber(a.distanceMiles, b.distanceMiles);
     });
   }, [posts, selectedSort]);
   const localities = useMemo(() => {
