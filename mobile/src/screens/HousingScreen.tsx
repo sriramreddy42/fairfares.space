@@ -74,6 +74,34 @@ const quickLinks: Array<{
   }
 ];
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
+const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
+
+function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const slideWidth = Math.max(280, viewportWidth - 28);
+  const [activeSlide, setActiveSlide] = useState(0);
+  return (
+    <View style={styles.rentalCarouselShell}>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        decelerationRate="fast"
+        snapToInterval={slideWidth}
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={(event) => setActiveSlide(Math.round(event.nativeEvent.contentOffset.x / slideWidth))}
+      >
+        {rentalPromoSlides.map((source, index) => (
+          <TouchableOpacity key={index} activeOpacity={0.9} onPress={onPress} style={[styles.rentalCarouselSlide, { width: slideWidth }]} accessibilityLabel={index === 0 ? "How FairFares car rentals work" : "FairFares price match guarantee"}>
+            <Image source={source} style={styles.rentalCarouselImage} resizeMode="cover" />
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <View style={styles.rentalCarouselDots} accessibilityLabel={`Slide ${activeSlide + 1} of ${rentalPromoSlides.length}`}>
+        {rentalPromoSlides.map((_, index) => <View key={index} style={[styles.rentalCarouselDot, index === activeSlide && styles.rentalCarouselDotActive]} />)}
+      </View>
+    </View>
+  );
+}
 
 const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string; bg: string; tint: string }> = [
   { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place", bg: "#f5e5ff", tint: "#8f3fe7" },
@@ -2065,9 +2093,7 @@ export function HousingScreen({
   function renderRentalCarsOnly() {
     return (
       <>
-        <TouchableOpacity style={styles.rentalPromoPoster} activeOpacity={0.9} onPress={searchRentalCars}>
-          <Image source={appAssets.housingRentalPromo} style={styles.rentalPromoImage} resizeMode="contain" />
-        </TouchableOpacity>
+        <RentalPromoCarousel onPress={searchRentalCars} />
         <View style={styles.carSearchPanel}>
           <Text style={styles.carSearchTitle}>Search rental cars</Text>
           <Text style={styles.carFieldLabel}>Pickup location</Text>
@@ -2894,7 +2920,7 @@ export function HousingScreen({
 
   function renderTopNavIcon(item: string, active: boolean) {
     const color = active ? theme.colors.text : "rgba(255,255,255,0.64)";
-    if (item === "Housing") {
+    if (item === "Home") {
       return renderSegmentIcon("housing", active);
     }
     if (item === "Explorer") {
@@ -3007,13 +3033,13 @@ export function HousingScreen({
           </View>
 
           <View style={styles.topTabs}>
-            {["Housing", "Explorer", "Deals"].map((item) => {
-              const active = item === "Housing";
+            {["Home", "Explorer", "Deals"].map((item) => {
+              const active = item === "Home";
               return (
                 <TouchableOpacity
                   key={item}
                   onPress={() => {
-                    if (item === "Housing") {
+                    if (item === "Home") {
                       setMode("housing");
                       return;
                     }
@@ -3311,13 +3337,17 @@ export function HousingScreen({
           </ScrollView>
         </>
       ) : null}
-      <TouchableOpacity
-        style={styles.housingRentalPromo}
-        activeOpacity={0.88}
-        onPress={() => setMode("cheapCars")}
-      >
-        <Image source={appAssets.housingRentalPromo} style={styles.housingRentalPromoImage} resizeMode="contain" />
-      </TouchableOpacity>
+      <View style={styles.rentalSectionHeader}>
+        <View>
+          <Text style={styles.rentalSectionEyebrow}>FairFares car rentals</Text>
+          <Text style={styles.rentalSectionTitle}>Book confidently. Pay less.</Text>
+        </View>
+        <TouchableOpacity style={styles.rentalSectionAction} onPress={() => setMode("cheapCars")}>
+          <Text style={styles.rentalSectionActionText}>View cars</Text>
+          <Text style={styles.rentalSectionArrow}>→</Text>
+        </TouchableOpacity>
+      </View>
+      <RentalPromoCarousel onPress={() => setMode("cheapCars")} />
       <SectionHeader title="Exports & Imports" />
       <View style={styles.exportsImportsCard}>
         <View style={styles.exportsImportsImageFrame}>
@@ -3548,27 +3578,29 @@ const styles = StyleSheet.create({
   searchText: { color: theme.colors.soft, flex: 1, fontSize: 15, fontWeight: "800" },
   later: { color: theme.colors.soft, backgroundColor: theme.colors.bg, borderRadius: theme.radius.pill, paddingHorizontal: 11, paddingVertical: 7, fontWeight: "900", fontSize: 13 },
   segment: {
-    backgroundColor: "rgba(80,92,255,0.30)",
-    borderRadius: theme.radius.pill,
+    backgroundColor: "transparent",
+    borderRadius: 0,
     flexDirection: "row",
-    padding: 5,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)"
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.13)"
   },
   segmentButton: {
     flex: 1,
-    borderRadius: theme.radius.pill,
+    minHeight: 58,
+    borderRadius: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: 9,
     paddingHorizontal: 6,
-    borderWidth: 1,
-    borderColor: "transparent",
+    borderBottomWidth: 3,
+    borderBottomColor: "transparent",
     flexDirection: "row",
-    gap: 6
+    gap: 7
   },
-  segmentActive: { backgroundColor: "rgba(255,255,255,0.14)", borderColor: "rgba(255,255,255,0.58)" },
-  segmentText: { color: theme.colors.soft, fontSize: 14, fontWeight: "900" },
+  segmentActive: { backgroundColor: "transparent", borderBottomColor: "#ffffff" },
+  segmentText: { color: theme.colors.soft, fontSize: 14, fontWeight: "800" },
   segmentTextActive: { color: theme.colors.text },
   segmentHouseIcon: { width: 20, height: 20, alignItems: "center", justifyContent: "flex-end" },
   segmentHouseRoof: {
@@ -3850,6 +3882,51 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%"
   },
+  rentalSectionHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+    gap: 12
+  },
+  rentalSectionEyebrow: { color: "#6ee7b7", fontSize: 10, lineHeight: 13, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase" },
+  rentalSectionTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 27, fontWeight: "800", marginTop: 2 },
+  rentalSectionAction: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.09)", borderColor: "rgba(255,255,255,0.16)", borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 6, minHeight: 42, paddingHorizontal: 13 },
+  rentalSectionActionText: { color: theme.colors.text, fontSize: 12, fontWeight: "800" },
+  rentalSectionArrow: { color: "#6ee7b7", fontSize: 20, lineHeight: 21, fontWeight: "500" },
+  rentalCarouselShell: {
+    width: "100%",
+    borderRadius: 18,
+    overflow: "hidden",
+    backgroundColor: "#07090d",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6
+  },
+  rentalCarouselSlide: {
+    aspectRatio: 2.8,
+    overflow: "hidden",
+    backgroundColor: "#07090d"
+  },
+  rentalCarouselImage: { width: "100%", height: "100%" },
+  rentalCarouselDots: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(7,29,73,0.82)",
+    borderRadius: 999,
+    bottom: 8,
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    position: "absolute"
+  },
+  rentalCarouselDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.45)" },
+  rentalCarouselDotActive: { width: 18, backgroundColor: "#ffffff" },
   rentalPromoPoster: {
     width: "100%",
     aspectRatio: 1522 / 440,
