@@ -16,7 +16,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TMP = tempfile.TemporaryDirectory(prefix="fairfares-mobile-50-")
+USERS = max(2, int(os.environ.get("FAIRFARES_LOAD_USERS", "50") or "50"))
+WORKERS = max(1, int(os.environ.get("FAIRFARES_LOAD_WORKERS", str(min(USERS, 24))) or min(USERS, 24)))
+TMP = tempfile.TemporaryDirectory(prefix=f"fairfares-mobile-{USERS}-")
 os.environ["FAIRFARES_DB_PATH"] = str(Path(TMP.name) / "fairfares.sqlite3")
 os.environ["FAIRFARES_BACKUP_DIR"] = str(Path(TMP.name) / "backups")
 os.environ["FAIRFARES_SEED_DEFAULTS"] = "1"
@@ -30,7 +32,6 @@ sys.path.insert(0, str(ROOT))
 import app  # noqa: E402
 
 
-USERS = 50
 PASSWORD = "FairFares50!"
 
 
@@ -76,7 +77,7 @@ class Workload:
         except json.JSONDecodeError:
             return status, raw
 
-    def parallel(self, label: str, jobs, workers=24):
+    def parallel(self, label: str, jobs, workers=WORKERS):
         results = [None] * len(jobs)
         errors = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -193,7 +194,9 @@ def main():
             lambda token=token: workload.call("housing-search", "/api/mobile/housing?city=Denver%2C%20CO&area=Capitol%20Hill&radius=60&limit=50", token=token)[1]
             for token in tokens
         ])
-        assert all(len(result.get("posts", [])) >= 25 for result in housing_searches)
+        expected_housing_matches = min(50, max(1, USERS // 2))
+        housing_counts = [len(result.get("posts", [])) for result in housing_searches]
+        assert all(count >= expected_housing_matches for count in housing_counts), f"housing search returned too few posts: {housing_counts}"
 
         driver_indexes = list(range(0, USERS, 2))
         workload.parallel("driver-profile", [
@@ -218,11 +221,12 @@ def main():
         assert len({result["ride"]["id"] for result in ride_results}) == USERS
 
         ride_searches = workload.parallel("ride-search", [
-            lambda token=token: workload.call("ride-search", f"/api/mobile/rides?city=Denver%2C%20CO&type=CARPOOL_OFFER&origin=Denver%2C%20CO&destination=Colorado%20Springs%2C%20CO&pickup_date={pickup_date}", token=token)[1]
+            lambda token=token: workload.call("ride-search", f"/api/mobile/rides?city=Denver%2C%20CO&type=CARPOOL_OFFER&origin=Denver%2C%20CO&destination=Colorado%20Springs%2C%20CO&pickup_date={pickup_date}&limit=50", token=token)[1]
             for token in tokens
         ])
+        expected_ride_matches = min(50, len(driver_indexes))
         ride_counts = [len(result.get("rides", [])) for result in ride_searches]
-        assert all(count >= 25 for count in ride_counts), f"ride search returned too few offers: {ride_counts}"
+        assert all(count >= expected_ride_matches for count in ride_counts), f"ride search returned too few offers: {ride_counts}"
 
         rental_lists = workload.parallel("rental-search", [
             lambda token=token: workload.call("rental-search", "/api/mobile/rentals?location=Denver", token=token)[1]
@@ -236,37 +240,41 @@ def main():
         ])
         assert all(result.get("quote") for result in rental_quotes)
 
+        booking_user_count = min(4, USERS, len(rental_lists[0]["cars"]))
         rental_bookings = workload.parallel("rental-book", [
             lambda index=index, token=tokens[index], selected_car=rental_lists[0]["cars"][index]["id"]: workload.call(
                 "rental-book", "/api/mobile/rentals/book", method="POST", token=token,
                 payload={"carId": selected_car, "days": 7, "pickupDate": pickup_date, "returnDate": return_date, "pickupTime": "10:00 AM", "returnTime": "10:00 AM", "pickupLocation": "Denver International Airport (DEN)", "returnLocation": "Denver International Airport (DEN)"},
             )[1]
-            for index in range(4)
-        ], workers=4)
+            for index in range(booking_user_count)
+        ], workers=booking_user_count)
         assert all(result.get("booking") for result in rental_bookings)
         booking_views = workload.parallel("rental-bookings", [
             lambda index=index, token=tokens[index]: workload.call("rental-bookings", "/api/mobile/rentals/bookings", token=token)[1]
-            for index in range(4)
-        ], workers=4)
+            for index in range(booking_user_count)
+        ], workers=booking_user_count)
         # Reservations are persisted immediately, but intentionally stay out of
         # the customer Activity/bookings feed until payment confirms them.
         assert all(len(result.get("bookings", [])) == 0 for result in booking_views)
 
+        owner_listing_count = min(10, USERS)
         owner_listings = workload.parallel("rental-owner-list", [
             lambda index=index, token=tokens[index]: workload.call("rental-owner-list", "/api/mobile/rentals/listing", method="POST", token=token, payload={"brand": "Toyota", "model": f"LoadCar {index}", "year": 2024, "category": "Compact", "location": "Denver, CO", "dailyPrice": 45 + index, "seats": 5, "bags": 2, "doors": 4, "licensePlate": f"RENT{index:02d}", "availableFrom": pickup_date, "availableTo": return_date})[1]
-            for index in range(10)
+            for index in range(owner_listing_count)
         ])
-        assert len(owner_listings) == 10
+        assert len(owner_listings) == owner_listing_count
 
+        chat_start = USERS // 2
+        chat_count = USERS - chat_start
         conversations = workload.parallel("chat-open", [
-            lambda index=index, token=tokens[index]: workload.call("chat-open", "/api/chat/conversations", method="POST", token=token, payload={"postId": housing_ids[index - 25], "message": f"Housing question from user {index}", "clientMessageId": f"open-{index}"})[1]
-            for index in range(25, 50)
+            lambda index=index, token=tokens[index]: workload.call("chat-open", "/api/chat/conversations", method="POST", token=token, payload={"postId": housing_ids[index - chat_start], "message": f"Housing question from user {index}", "clientMessageId": f"open-{index}"})[1]
+            for index in range(chat_start, USERS)
         ])
         conversation_ids = [result["conversation"]["id"] for result in conversations]
-        assert len(conversation_ids) == 25
+        assert len(conversation_ids) == chat_count
         workload.parallel("chat-send", [
-            lambda index=index, token=tokens[index], conversation_id=conversation_ids[index - 25]: workload.call("chat-send", "/api/chat/messages", method="POST", token=token, form=True, payload={"conversation_id": conversation_id, "message": f"Second concurrent message {index}", "client_message_id": f"second-{index}"})[1]
-            for index in range(25, 50)
+            lambda index=index, token=tokens[index], conversation_id=conversation_ids[index - chat_start]: workload.call("chat-send", "/api/chat/messages", method="POST", token=token, form=True, payload={"conversation_id": conversation_id, "message": f"Second concurrent message {index}", "client_message_id": f"second-{index}"})[1]
+            for index in range(chat_start, USERS)
         ])
 
         workload.parallel("push-token", [
@@ -276,7 +284,7 @@ def main():
 
         workload.parallel("support-ticket", [
             lambda index=index, token=tokens[index]: workload.call("support-ticket", "/api/mobile/rentals/support-ticket", method="POST", token=token, payload={"topic": "Load test support", "message": f"Routine support validation {index}", "urgent": False})[1]
-            for index in range(10)
+            for index in range(owner_listing_count)
         ])
 
         workload.parallel("logout", [lambda token=token: workload.call("logout", "/api/mobile/logout", method="POST", token=token)[1] for token in tokens])
@@ -300,10 +308,20 @@ def main():
             }
             integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
             foreign_keys = con.execute("PRAGMA foreign_key_check").fetchall()
-        expected = {"users": 50, "sessions": 50, "housing": 50, "rides": 50, "ownerCars": 10, "bookings": 4, "messages": 50, "pushTokens": 50, "supportTickets": 10}
+        expected = {
+            "users": USERS,
+            "sessions": USERS,
+            "housing": USERS,
+            "rides": USERS,
+            "ownerCars": owner_listing_count,
+            "bookings": booking_user_count,
+            "messages": chat_count * 2,
+            "pushTokens": USERS,
+            "supportTickets": owner_listing_count,
+        }
         assert counts == expected, (counts, expected)
         assert integrity == "ok" and not foreign_keys
-        print(json.dumps({"ok": True, "users": USERS, "counts": counts, "elapsedSeconds": round(time.perf_counter() - started, 2), "timings": workload.report()}, indent=2))
+        print(json.dumps({"ok": True, "users": USERS, "workers": WORKERS, "counts": counts, "elapsedSeconds": round(time.perf_counter() - started, 2), "timings": workload.report()}, indent=2))
     finally:
         server.shutdown()
         server.server_close()
