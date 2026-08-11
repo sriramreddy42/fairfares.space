@@ -121,7 +121,8 @@
         }
       ],
       "@bacons/apple-targets",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-video"
     ],
     "extra": {
       "apiUrl": "https://www.fairfare.space",

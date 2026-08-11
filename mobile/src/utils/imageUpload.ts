@@ -93,6 +93,40 @@ export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76)
   ));
 }
 
+export async function pickChatMedia(limit = 4, maxWidth = 1600, quality = 0.76) {
+  const selectionLimit = Math.max(1, Math.min(limit, 4));
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) throw new Error("Allow photo access to upload pictures or videos.");
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsMultipleSelection: selectionLimit > 1,
+    base64: false,
+    mediaTypes: ["images", "videos"],
+    quality,
+    selectionLimit,
+    videoMaxDuration: 120
+  });
+  if (result.canceled || !result.assets.length) return [];
+  const selectedVideo = result.assets.find((asset) => asset.type === "video");
+  if (selectedVideo) {
+    const blob = Platform.OS === "web" ? await fetch(selectedVideo.uri).then((response) => response.blob()) : undefined;
+    const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(selectedVideo.uri);
+    const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(selectedVideo.fileSize || 0));
+    if (size > 14_000_000) throw new Error("Choose a video smaller than 14 MB.");
+    const mimeType = selectedVideo.mimeType || "video/mp4";
+    return [{
+      uri: selectedVideo.uri,
+      blob,
+      name: selectedVideo.fileName || `fchat-video-${Date.now()}.mp4`,
+      mimeType,
+      size,
+      kind: "VIDEO" as const
+    }];
+  }
+  return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
+    compressedUpload(asset, index, "fchat", maxWidth, quality)
+  ));
+}
+
 export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) throw new Error("Allow camera access to take a photo.");

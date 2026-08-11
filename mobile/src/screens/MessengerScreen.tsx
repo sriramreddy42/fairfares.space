@@ -5,6 +5,7 @@ import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Alert, Image, Keyboard, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
@@ -54,7 +55,7 @@ import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
-import { pickChatImages, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
+import { pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
@@ -430,6 +431,11 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
+function ChitthiVideoPlayer({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (instance) => { instance.loop = false; });
+  return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" allowsFullscreen />;
+}
+
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
@@ -490,7 +496,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [composerFocused, setComposerFocused] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
@@ -1945,10 +1951,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const images = await pickChatImages(4, 1600, 0.76);
-      if (!images.length) return;
-      setPendingAttachment(null);
-      setPendingImages(images);
+      const media = await pickChatMedia(4, 1600, 0.76);
+      if (!media.length) return;
+      if (media[0].kind === "VIDEO") {
+        setPendingImages([]);
+        setPendingAttachment(media[0]);
+      } else {
+        setPendingAttachment(null);
+        setPendingImages(media);
+      }
     } catch (error) {
       setAttachmentStatus("");
       Alert.alert("Image failed", error instanceof Error ? error.message : "Could not send this image.");
@@ -2191,7 +2202,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setAttachmentStatus("Preparing attachment…");
       const item = await materializeAttachment(message);
       if (!item) return;
-      if (message.type === "IMAGE") setAttachmentPreview(item);
+      if (message.type === "IMAGE" || message.type === "VIDEO") setAttachmentPreview({ ...item, messageId: message.id, type: message.type, createdAt: message.createdAt });
       else await downloadAttachment(item);
     } catch (error) {
       Alert.alert("Attachment unavailable", error instanceof Error ? error.message : "Could not open this attachment.");
@@ -2657,7 +2668,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {message.attachmentUrl ? (
-                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}{!selectedMessageIds.length && !["pending", "relayed", "failed"].includes(message.status) ? <TouchableOpacity style={[styles.photoForwardAction, message.mine && styles.photoForwardActionMine]} onPress={() => showMessageActions(message)} accessibilityLabel="Photo actions and forward"><Text style={styles.photoForwardActionText}>↗</Text></TouchableOpacity> : null}</View> : (
+                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}{!selectedMessageIds.length && !["pending", "relayed", "failed"].includes(message.status) ? <TouchableOpacity style={[styles.photoForwardAction, message.mine && styles.photoForwardActionMine]} onPress={() => showMessageActions(message)} accessibilityLabel="Photo actions and forward"><Text style={styles.photoForwardActionText}>↗</Text></TouchableOpacity> : null}</View> : message.type === "VIDEO" ? (
+                    <TouchableOpacity style={styles.videoMessageCard} onPress={() => void openAttachment(message)} accessibilityLabel="Play video">
+                      <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
+                      <Text style={styles.videoMessageTitle}>Video</Text>
+                      <Text style={styles.videoMessageMeta}>Tap to play securely</Text>
+                    </TouchableOpacity>
+                  ) : (
                     <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "Chitthi file")}`}>
                       <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.fileCardBadge}>{chatFileBadge(String(message.metadata?.fileName || ""), String(message.metadata?.mimeType || ""))}</Text></View>
                       <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "Chitthi file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB · Tap to open or save</Text></View>
@@ -2718,13 +2735,28 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </ScrollView>
 
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
-          <View style={styles.attachmentPreviewBackdrop}>
-            <View style={styles.attachmentPreviewHeader}>
-              <Text style={styles.attachmentPreviewName} numberOfLines={1}>{attachmentPreview?.name || "Chitthi photo"}</Text>
-              <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Close photo preview"><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
+          <View style={styles.mediaViewerBackdrop}>
+            <View style={styles.mediaViewerHeader}>
+              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Back to conversation"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
+              <View style={styles.mediaViewerPerson}>
+                <View style={styles.mediaViewerAvatar}>{chatPhotoUrl(activeConversation?.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(activeConversation?.otherPhotoUrl) }} style={styles.mediaViewerAvatarImage} /> : <Text style={styles.mediaViewerAvatarText}>{initials(activeConversation?.otherName || "F")}</Text>}</View>
+                <Text style={styles.mediaViewerName} numberOfLines={1}>{activeConversation?.otherName || "Chitthi"}</Text>
+                <Text style={styles.mediaViewerDate}>{attachmentPreview ? chatDayLabel(attachmentPreview.createdAt) : ""}</Text>
+              </View>
+              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => void savePreviewAttachment()} accessibilityLabel="Share or save media"><Text style={styles.mediaViewerMenuText}>•••</Text></TouchableOpacity>
             </View>
-            {attachmentPreview ? <Image source={{ uri: attachmentPreview.uri }} style={styles.attachmentPreviewImage} resizeMode="contain" /> : null}
-            <TouchableOpacity style={styles.attachmentPreviewSave} onPress={() => void savePreviewAttachment()}><Text style={styles.attachmentPreviewSaveText}>Save or share original</Text></TouchableOpacity>
+            <View style={styles.mediaViewerStage}>
+              {attachmentPreview?.type === "VIDEO" ? <ChitthiVideoPlayer uri={attachmentPreview.uri} /> : attachmentPreview ? <Image source={{ uri: attachmentPreview.uri }} style={styles.mediaViewerImage} resizeMode="contain" /> : null}
+            </View>
+            <View style={styles.mediaViewerBottom}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaViewerThumbnails}>
+                {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl)).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
+              </ScrollView>
+              <View style={styles.mediaViewerActions}>
+                <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()}><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Share or save</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.mediaViewerAction} onPress={() => { const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId); if (source) showMessageActions(source); }}><Text style={styles.mediaViewerActionGlyph}>→</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
+              </View>
+            </View>
           </View>
         </Modal>
 
@@ -2901,8 +2933,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
-            {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
-            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text></View>
+            {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}><Text style={styles.pendingVideoPreviewText}>▶</Text></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
+            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" || pendingAttachment.kind === "VIDEO" ? "Ready to send" : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text></View>
             <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => setPendingAttachment(null)} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </View>
         ) : null}
@@ -3480,6 +3512,30 @@ const styles = StyleSheet.create({
   groupPreviewPhoto: { width: "100%", height: 560 },
   attachmentPreviewSave: { minHeight: 50, borderRadius: 25, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 12 },
   attachmentPreviewSaveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  mediaViewerBackdrop: { flex: 1, backgroundColor: "#000", paddingTop: Platform.OS === "ios" ? 48 : 20 },
+  mediaViewerHeader: { minHeight: 92, paddingHorizontal: 14, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", zIndex: 2 },
+  mediaViewerRoundButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", alignItems: "center", justifyContent: "center" },
+  mediaViewerBackText: { color: "#fff", fontSize: 39, lineHeight: 41, fontWeight: "300", marginTop: -4 },
+  mediaViewerMenuText: { color: "#fff", fontSize: 16, letterSpacing: 2, fontWeight: "900" },
+  mediaViewerPerson: { flex: 1, minWidth: 0, alignItems: "center", paddingHorizontal: 8, marginTop: -5 },
+  mediaViewerAvatar: { width: 58, height: 58, borderRadius: 29, overflow: "hidden", backgroundColor: "#283145", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
+  mediaViewerAvatarImage: { width: "100%", height: "100%" },
+  mediaViewerAvatarText: { color: "#fff", fontSize: 18, fontWeight: "900" },
+  mediaViewerName: { maxWidth: 210, color: "#fff", fontSize: 16, lineHeight: 21, fontWeight: "800", marginTop: 5 },
+  mediaViewerDate: { color: "rgba(255,255,255,0.54)", fontSize: 10, fontWeight: "700", marginTop: 1 },
+  mediaViewerStage: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
+  mediaViewerImage: { width: "100%", height: "100%", maxHeight: 680 },
+  attachmentPreviewVideo: { width: "100%", height: "100%", maxHeight: 680, backgroundColor: "#000" },
+  mediaViewerBottom: { paddingTop: 8, paddingBottom: Platform.OS === "ios" ? 28 : 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.12)", backgroundColor: "#000", gap: 10 },
+  mediaViewerThumbnails: { minHeight: 66, paddingHorizontal: 12, alignItems: "center", gap: 7 },
+  mediaViewerThumbnail: { width: 52, height: 62, borderRadius: 7, overflow: "hidden", backgroundColor: "#17191d", borderWidth: 2, borderColor: "transparent" },
+  mediaViewerThumbnailActive: { borderColor: "#fff" },
+  mediaViewerVideoThumb: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#1c2026" },
+  mediaViewerVideoThumbText: { color: "#fff", fontSize: 19 },
+  mediaViewerActions: { flexDirection: "row", justifyContent: "center", gap: 12, paddingHorizontal: 14 },
+  mediaViewerAction: { minWidth: 126, minHeight: 45, paddingHorizontal: 14, borderRadius: 23, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(35,35,38,0.92)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
+  mediaViewerActionGlyph: { color: "#fff", fontSize: 20, fontWeight: "800" },
+  mediaViewerActionText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   forwardPickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.76)", paddingHorizontal: 16, justifyContent: "center" },
   forwardPickerCard: { width: "100%", maxWidth: 540, maxHeight: "78%", alignSelf: "center", ...theme.depth.card, paddingBottom: 14, overflow: "hidden" },
   forwardPickerHeader: { minHeight: 72, paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
@@ -3505,6 +3561,8 @@ const styles = StyleSheet.create({
   contactSharePrivacy: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingTop: 12 },
   pendingAttachmentCard: { minHeight: 68, borderRadius: 16, backgroundColor: "rgba(247,249,253,0.97)", borderWidth: 1, borderColor: "#d6dce7", padding: 8, marginTop: 6, marginHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 10 },
   pendingAttachmentImage: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#dde3ec" },
+  pendingVideoPreview: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#20252d", alignItems: "center", justifyContent: "center" },
+  pendingVideoPreviewText: { color: "#fff", fontSize: 27, marginLeft: 3 },
   pendingCollagePreview: { width: 76, height: 76, flexDirection: "row", flexWrap: "wrap", gap: 2, overflow: "hidden", borderRadius: 12, backgroundColor: "#d7dde7" },
   pendingCollageCell: { width: 37, height: 37, overflow: "hidden", position: "relative" },
   pendingCollageImage: { width: "100%", height: "100%", borderRadius: 0 },
@@ -3685,6 +3743,11 @@ const styles = StyleSheet.create({
   photoForwardAction: { position: "absolute", right: -47, bottom: 10, width: 39, height: 39, borderRadius: 20, backgroundColor: "rgba(37,41,40,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   photoForwardActionMine: { right: undefined, left: -47 },
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
+  videoMessageCard: { width: 246, minHeight: 180, borderRadius: 15, backgroundColor: "#181c22", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 4 },
+  videoMessagePlay: { width: 58, height: 58, borderRadius: 29, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", paddingLeft: 4 },
+  videoMessagePlayText: { color: "#fff", fontSize: 25 },
+  videoMessageTitle: { color: "#fff", fontSize: 15, fontWeight: "900" },
+  videoMessageMeta: { color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: "700" },
   myBubbleText: { color: "#FFF9ED" },
   theirBubbleText: { color: "#18342A" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },
