@@ -31133,7 +31133,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
         ticket_id = make_ticket_id()
         topic = str(payload.get("topic") or "Rental support").strip()[:120]
-        message = str(payload.get("message") or "").strip()[:1200]
+        message = str(payload.get("message") or "").strip()[:1500]
         urgent = bool(payload.get("urgent"))
         priority = classify_support_priority(topic, urgent, message)
         due_at = support_due_at(priority)

@@ -455,7 +455,7 @@ export function ProfileScreen({
         </View>
       </Modal>
       <Modal visible={supportOpen} transparent animationType="slide" onRequestClose={() => setSupportOpen(false)}>
-        <View style={styles.modalBackdrop}>
+        <View style={[styles.modalBackdrop, styles.supportModalBackdrop]}>
           <View style={styles.supportSheet}>
             <View style={styles.supportHeader}>
               <View style={styles.supportHeaderCopy}>
@@ -466,36 +466,38 @@ export function ProfileScreen({
                 <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.label}>What is this about?</Text>
-            <View style={styles.topicRow}>
-              {SUPPORT_TOPICS.map((topic) => (
-                <TouchableOpacity key={topic} style={[styles.topicChip, topic === supportTopic && styles.topicChipActive]} onPress={() => setSupportTopic(topic)}>
-                  <Text style={[styles.topicText, topic === supportTopic && styles.topicTextActive]}>{topic}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.label}>What happened?</Text>
-            <TextInput
-              style={styles.supportInput}
-              value={supportMessage}
-              onChangeText={setSupportMessage}
-              placeholder="Include the screen, action, error message, and what you expected."
-              placeholderTextColor={theme.colors.muted}
-              multiline
-              maxLength={1500}
-              textAlignVertical="top"
-            />
-            <Text style={styles.characterCount}>{supportMessage.length}/1500</Text>
-            <View style={styles.urgentRow}>
-              <View style={styles.privacyCopy}>
-                <Text style={styles.supportUrgentTitle}>Urgent safety concern</Text>
-                <Text style={styles.cardCopy}>Use only for an immediate safety or active-trip issue.</Text>
+            <ScrollView style={styles.supportScroll} contentContainerStyle={styles.supportContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <Text style={styles.label}>What is this about?</Text>
+              <View style={styles.topicRow}>
+                {SUPPORT_TOPICS.map((topic) => (
+                  <TouchableOpacity key={topic} style={[styles.topicChip, topic === supportTopic && styles.topicChipActive]} onPress={() => setSupportTopic(topic)}>
+                    <Text style={[styles.topicText, topic === supportTopic && styles.topicTextActive]}>{topic}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-              <Switch value={supportUrgent} onValueChange={setSupportUrgent} />
-            </View>
-            <TouchableOpacity style={[styles.primaryButton, (supportSending || supportMessage.trim().length < 10) && styles.disabled]} disabled={supportSending || supportMessage.trim().length < 10} onPress={() => void submitIssue()}>
-              <Text style={styles.primaryButtonText}>{supportSending ? "Sending…" : "Send issue report"}</Text>
-            </TouchableOpacity>
+              <Text style={styles.label}>What happened?</Text>
+              <TextInput
+                style={styles.supportInput}
+                value={supportMessage}
+                onChangeText={setSupportMessage}
+                placeholder="Include the screen, action, error message, and what you expected."
+                placeholderTextColor={theme.colors.muted}
+                multiline
+                maxLength={1500}
+                textAlignVertical="top"
+              />
+              <Text style={styles.characterCount}>{supportMessage.length}/1500</Text>
+              <View style={styles.urgentRow}>
+                <View style={styles.privacyCopy}>
+                  <Text style={styles.supportUrgentTitle}>Urgent safety concern</Text>
+                  <Text style={styles.cardCopy}>Use only for an immediate safety or active-trip issue.</Text>
+                </View>
+                <Switch value={supportUrgent} onValueChange={setSupportUrgent} />
+              </View>
+              <TouchableOpacity style={[styles.primaryButton, (supportSending || supportMessage.trim().length < 10) && styles.disabled]} disabled={supportSending || supportMessage.trim().length < 10} onPress={() => void submitIssue()}>
+                <Text style={styles.primaryButtonText}>{supportSending ? "Sending…" : "Send issue report"}</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -563,7 +565,10 @@ const styles = StyleSheet.create({
   menuCopy: { color: theme.colors.muted, ...theme.typography.caption, marginTop: 2 },
   menuChevron: { color: theme.colors.soft, fontSize: 24, fontWeight: "500" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.68)" },
-  supportSheet: { backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 11, maxHeight: "90%" },
+  supportModalBackdrop: { justifyContent: "flex-start" },
+  supportSheet: { flex: 1, width: "100%", backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, paddingTop: 52, paddingHorizontal: 18, paddingBottom: 18, gap: 14 },
+  supportScroll: { flex: 1 },
+  supportContent: { gap: 11, paddingBottom: 28 },
   historySheet: { height: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 14 },
   historyScroll: { flex: 1 },
   historyTabs: { flexDirection: "row", padding: 4, gap: 4, borderRadius: theme.radius.pill, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
