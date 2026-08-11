@@ -39,10 +39,6 @@
 .ff-site-nav a.active::after { background: var(--ff-action); border-radius: 4px 4px 0 0; bottom: 0; content: ""; height: 3px; left: 0; position: absolute; right: 0; }
 .ff-site-actions { align-items: center; display: flex; gap: 9px; justify-self: end; }
 .ff-site-actions a, .ff-site-actions button { font-weight: 750; text-decoration: none; white-space: nowrap; }
-.ff-post-action { background: var(--ff-action); border: 0; border-radius: 10px; color: #fff !important; min-height: 42px; padding: 0 18px; }
-a.ff-post-action { align-items: center; display: inline-flex; }
-.ff-post-action:hover { background: var(--ff-action-hover); }
-.ff-icon-action { align-items: center; background: transparent; border: 1px solid var(--ff-border); border-radius: 50%; color: var(--ff-brand) !important; display: inline-flex; font-size: 1.15rem; height: 42px; justify-content: center; padding: 0; width: 42px; }
 .ff-account-action, .ff-site-actions .nav-button, .ff-site-actions .carpool-account { background: #fff; border: 1px solid var(--ff-border); border-radius: 10px; color: var(--ff-brand); min-height: 42px; padding: 0 14px; }
 .ff-site-actions a.nav-button, .ff-site-actions a.carpool-account { align-items: center; display: inline-flex; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 
@@ -60,7 +56,5 @@ a.ff-post-action { align-items: center; display: inline-flex; }
   .ff-site-header { gap: 10px; height: 64px; min-height: 64px; padding: 0 14px; }
   .ff-site-brand img { height: 36px; width: 112px; }
   .ff-site-actions { gap: 6px; }
-  .ff-site-actions .ff-icon-action { display: none; }
-  .ff-post-action { min-height: 38px; padding: 0 13px; }
   .ff-site-actions .nav-button, .ff-site-actions .carpool-account, .ff-account-action { font-size: .82rem; min-height: 38px; max-width: 88px; padding: 0 10px; }
 }

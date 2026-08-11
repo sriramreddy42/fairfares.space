@@ -149,7 +149,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260809-original-colors-restored"
+ASSET_VERSION = "20260810-header-cleanup"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -20274,7 +20274,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             commercial_live=escape("1" if commercial and commercial["is_live"] else "0"),
             commercial_badge=escape("Live now" if commercial and commercial["is_live"] else "Play feature"),
             auth_link=(
-                f'<a class="nav-button" href="/dashboard" title="Open your FairFares profile">{escape(user["name"] or user["email"])}</a>'
+                '<a class="nav-button" href="/dashboard" title="Open your FairFares profile">Profile</a>'
                 if user else '<a href="/login">Sign in / Join</a>'
             ),
             guest_offer_modal="" if user else guest_offer_modal(),
