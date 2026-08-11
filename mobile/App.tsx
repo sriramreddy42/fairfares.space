@@ -1465,7 +1465,6 @@ function FairFaresApp() {
           setActiveTab("services");
         }}
         onOpenMessenger={() => setActiveTab("messenger")}
-        onOpenActivity={() => setActiveTab("activity")}
         onOpenStaffPickup={() => setStaffPickupOpen(true)}
       />
     ) : activeTab === "services" ? (

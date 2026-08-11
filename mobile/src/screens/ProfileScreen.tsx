@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverProfile, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
-import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RideDriverProfile, RidePost } from "../types";
+import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { syncChatIdentityRecovery } from "../utils/chatRecovery";
 
@@ -19,29 +19,19 @@ type Props = {
   onOpenRide?: (target?: "workspace" | "requests" | "listings") => void;
   onOpenServices?: () => void;
   onOpenMessenger?: () => void;
-  onOpenActivity?: () => void;
   onOpenStaffPickup?: () => void;
 };
 
-const DRIVER_VERIFICATION_DAYS = 30;
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
 type AccountHistorySection = "housing" | "carpool" | "rentals";
 type CarpoolHistoryView = "listings" | "requests";
-type AccountHistoryItem = { id: string; title: string; meta: string; status: string; current: boolean };
+type AccountHistoryItem = { id: string; title: string; meta: string; status: string; current: boolean; kind: string };
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
 
 function firstInitial(name = "") {
   return name.trim().slice(0, 1).toUpperCase() || "F";
-}
-
-function verificationDaysLeft(profile: RideDriverProfile | null) {
-  if (!profile?.readyForOffers) return null;
-  const updated = profile.updatedAt ? new Date(profile.updatedAt) : null;
-  if (!updated || Number.isNaN(updated.getTime())) return DRIVER_VERIFICATION_DAYS;
-  const expiresAt = updated.getTime() + DRIVER_VERIFICATION_DAYS * 24 * 60 * 60 * 1000;
-  return Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
 }
 
 export function ProfileScreen({
@@ -53,7 +43,6 @@ export function ProfileScreen({
   onOpenRide,
   onOpenServices,
   onOpenMessenger,
-  onOpenActivity,
   onOpenStaffPickup
 }: Props) {
   const user = data?.user;
@@ -66,13 +55,11 @@ export function ProfileScreen({
   const [saving, setSaving] = useState(false);
   const [profileDirty, setProfileDirty] = useState(false);
   const draftUserIdRef = useRef<number | null>(null);
-  const [rideProfile, setRideProfile] = useState<RideDriverProfile | null>(null);
   const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
   const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
   const [rentalActivity, setRentalActivity] = useState<RentalServiceBooking[]>([]);
   const [historySection, setHistorySection] = useState<AccountHistorySection | null>(null);
   const [carpoolHistoryView, setCarpoolHistoryView] = useState<CarpoolHistoryView>("listings");
-  const [carpoolLoading, setCarpoolLoading] = useState(false);
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
   const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
   const [supportOpen, setSupportOpen] = useState(false);
@@ -127,20 +114,16 @@ export function ProfileScreen({
     let cancelled = false;
     async function loadAccountActivity() {
       if (!user) {
-        setRideProfile(null);
         setRideActivity([]);
         setHousingActivity([]);
         setRentalActivity([]);
         return;
       }
-      setCarpoolLoading(true);
-      const [profileResult, activityResult, housingResult, rentalResult] = await Promise.allSettled([getRideDriverProfile(), getRideActivity(), getHousingActivity(), getRentalBookings()]);
+      const [activityResult, housingResult, rentalResult] = await Promise.allSettled([getRideActivity(), getHousingActivity(), getRentalBookings()]);
       if (cancelled) return;
-      setRideProfile(profileResult.status === "fulfilled" ? profileResult.value : null);
       setRideActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
       setHousingActivity(housingResult.status === "fulfilled" ? housingResult.value : []);
       setRentalActivity(rentalResult.status === "fulfilled" ? rentalResult.value : []);
-      setCarpoolLoading(false);
     }
     void loadAccountActivity();
     return () => {
@@ -152,24 +135,14 @@ export function ProfileScreen({
   const displayName = user?.name || "FairFares Guest";
   const sensitiveChanged = Boolean(user && (email.trim().toLowerCase() !== user.email.toLowerCase() || phone.trim() !== (user.phone || "")));
   const canSaveProfile = Boolean(user && profileDirty && name.trim() && email.trim() && (!sensitiveChanged || currentPassword.trim()) && !saving);
-  const listedRoutes = useMemo(
-    () => rideActivity.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER"),
-    [rideActivity]
-  );
-  const riderRequests = useMemo(
-    () => Array.from(new Map(rideActivity.filter((ride) => ride.activityRole === "DRIVER_NOTIFICATION").map((ride) => [ride.id, ride])).values()),
-    [rideActivity]
-  );
-  const daysLeft = verificationDaysLeft(rideProfile);
-  const carpoolReady = Boolean(rideProfile?.readyForOffers && daysLeft !== 0);
-  const missingProfileItems = rideProfile?.missing?.length ? rideProfile.missing.join(", ") : "vehicle, insurance, and service details";
   const accountHistoryItems = useMemo<AccountHistoryItem[]>(() => {
     if (historySection === "housing") return housingActivity.map((post) => ({
       id: post.id,
       title: post.title,
       meta: `${post.location} · ${post.modeLabel}`,
       status: post.expiryLabel,
-      current: post.status === "ACTIVE" && post.expiryLabel !== "Expired"
+      current: post.status === "ACTIVE" && post.expiryLabel !== "Expired",
+      kind: /need|looking|request/i.test(post.modeLabel) ? "Request" : "Listing"
     }));
     if (historySection === "carpool") return rideActivity.filter((ride) => carpoolHistoryView === "listings"
       ? ride.activityRole === "MINE" && ride.role === "DRIVER"
@@ -182,7 +155,8 @@ export function ProfileScreen({
         title: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
         meta: [carpoolHistoryView === "requests" ? requestType : "Seat listing", ride.pickupDate || ride.startDate, ride.pickupTime].filter(Boolean).join(" · ") || "Timing open",
         status,
-        current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired
+        current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired,
+        kind: carpoolHistoryView === "listings" ? "Listing" : "Request"
       };
     });
     if (historySection === "rentals") return rentalActivity.map((booking) => {
@@ -192,7 +166,8 @@ export function ProfileScreen({
         title: booking.carName || "Rental car",
         meta: [booking.pickupDate, booking.pickupLocation].filter(Boolean).join(" · "),
         status,
-        current: !PAST_RENTAL_STATUSES.has(String(booking.status || "").toUpperCase())
+        current: !PAST_RENTAL_STATUSES.has(String(booking.status || "").toUpperCase()),
+        kind: "Booking"
       };
     });
     return [];
@@ -403,51 +378,6 @@ export function ProfileScreen({
         </View>
       )}
 
-      <View style={styles.activityCard}>
-        <Text style={styles.cardTitle}>Your FairFares</Text>
-        <Text style={styles.cardCopy}>Track housing posts, carpool activity, rental bookings, and Chitthi conversations from one account.</Text>
-        <View style={styles.metricRow}>
-          <View style={styles.metric}><Text style={styles.metricValue}>{data?.dashboard.housingPosts || 0}</Text><Text style={styles.metricLabel}>Housing posts</Text></View>
-          <View style={styles.metric}><Text style={styles.metricValue}>{data?.chat.unreadCount || 0}</Text><Text style={styles.metricLabel}>Unread messages</Text></View>
-        </View>
-      </View>
-
-      {user ? (
-        <View style={styles.statusCard}>
-          <View style={styles.statusTop}>
-            <View style={styles.statusCopy}>
-              <Text style={styles.cardTitle}>Carpool lister</Text>
-              <Text style={styles.cardCopy}>
-                {carpoolLoading
-                  ? "Refreshing your driver profile and route activity."
-                  : carpoolReady
-                    ? `Verified to list carpool seats. Valid for ${daysLeft} day${daysLeft === 1 ? "" : "s"} from your latest profile update.`
-                    : `Not ready yet. Add ${missingProfileItems} before listing routes.`}
-              </Text>
-            </View>
-            <View style={[styles.statusBadge, carpoolReady && styles.statusBadgeReady]}>
-              <Text style={styles.statusBadgeText}>{carpoolReady ? "Verified" : "Pending"}</Text>
-            </View>
-          </View>
-          <View style={styles.metricRow}>
-            <View style={styles.metric}><Text style={styles.metricValue}>{listedRoutes.length}</Text><Text style={styles.metricLabel}>Listed routes</Text></View>
-            <View style={styles.metric}><Text style={styles.metricValue}>{riderRequests.length}</Text><Text style={styles.metricLabel}>Rider requests</Text></View>
-            <View style={styles.metric}><Text style={styles.metricValue}>{daysLeft ?? "—"}</Text><Text style={styles.metricLabel}>Days valid</Text></View>
-          </View>
-          <View style={styles.linkRow}>
-            <TouchableOpacity style={styles.miniButton} onPress={() => onOpenRide?.("workspace")}>
-              <Text style={styles.miniButtonText}>{carpoolReady ? "List / manage ride" : "Finish profile"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.miniButton} onPress={onOpenActivity}>
-              <Text style={styles.miniButtonText}>Activity</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.miniButton} onPress={onOpenMessenger}>
-              <Text style={styles.miniButtonText}>Chitthi</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
-
       {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
         <TouchableOpacity key={title} style={styles.menuRow} onPress={onPress}>
           <View style={[styles.menuIconCircle, danger && styles.menuDangerIconCircle]}>
@@ -500,14 +430,14 @@ export function ProfileScreen({
               <Text style={styles.historySectionTitle}>Current · {currentHistoryItems.length}</Text>
               {currentHistoryItems.length ? currentHistoryItems.map((item) => (
                 <View key={`current-${item.id}`} style={styles.historyRow}>
-                  <View style={styles.historyRowCopy}><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
-                  <Text style={styles.historyCurrentBadge}>{item.status}</Text>
+                  <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Current</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
+                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); }}><Text style={styles.historyEditText}>Edit</Text></TouchableOpacity></View>
                 </View>
               )) : <Text style={styles.historyEmpty}>No current records.</Text>}
-              <Text style={styles.historySectionTitle}>Previous · {previousHistoryItems.length}</Text>
+              <Text style={styles.historySectionTitle}>Expired / completed · {previousHistoryItems.length}</Text>
               {previousHistoryItems.length ? previousHistoryItems.map((item) => (
                 <View key={`previous-${item.id}`} style={styles.historyRow}>
-                  <View style={styles.historyRowCopy}><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
+                  <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Expired</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
                   <Text style={styles.historyPreviousBadge}>{item.status}</Text>
                 </View>
               )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}
@@ -639,6 +569,10 @@ const styles = StyleSheet.create({
   historySectionTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 6 },
   historyRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   historyRowCopy: { flex: 1, minWidth: 0, gap: 3 },
+  historyKind: { color: theme.colors.blue, fontSize: 10, lineHeight: 14, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
+  historyRowActions: { alignItems: "flex-end", gap: 7 },
+  historyEditButton: { minHeight: 30, minWidth: 54, paddingHorizontal: 12, borderRadius: theme.radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.blue },
+  historyEditText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   historyItemTitle: { color: theme.colors.text, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   historyItemMeta: { color: theme.colors.muted, fontSize: 12, lineHeight: 17 },
   historyCurrentBadge: { maxWidth: 100, color: "#4ade80", fontSize: 11, fontWeight: "800", textTransform: "capitalize" },
