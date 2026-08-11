@@ -10,17 +10,12 @@
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
 <body class="carpool-page" data-authenticated="$is_authenticated" data-user-id="$current_user_id">
-  <header class="carpool-nav">
-    <a class="carpool-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
-    <nav aria-label="Main navigation">
-      <a class="active" href="/carpool">Carpool</a>
-      <a href="/accommodations">Housing</a>
-      <a href="/car-rentals">Car Rentals</a>
-      <a href="/deals">Deals</a>
-      <a href="/explorer">Explorer</a>
-      <a href="/contact">Contact</a>
+  <header class="ff-site-header carpool-nav">
+    <a class="ff-site-brand carpool-brand" href="/" aria-label="FairFares home"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
+    <nav class="ff-site-nav" aria-label="Main navigation">
+      <a href="/accommodations">Housing</a><a class="active" href="/carpool">Carpool</a><a href="/car-rentals">Car Rentals</a><a href="/explorer">Explore</a><a href="/deals">Deals</a>
     </nav>
-    $auth_link
+    <div class="ff-site-actions"><button class="ff-post-action" type="button" data-carpool-open="CARPOOL_OFFER">Post</button><a class="ff-icon-action" href="/dashboard" aria-label="Messages">♡</a>$auth_link<button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button></div>
   </header>
 
   <main>
@@ -30,8 +25,8 @@
         <h1>Going the same way?</h1>
         <p>Find a ride or share your open seats with people headed along your route.</p>
         <div class="carpool-hero-actions">
-          <button type="button" data-carpool-open="CARPOOL_REQUEST">I need a ride</button>
-          <button type="button" data-carpool-open="CARPOOL_OFFER">I can drive</button>
+          <button type="button" data-carpool-open="CARPOOL_REQUEST">Find a ride</button>
+          <button type="button" data-carpool-open="CARPOOL_OFFER">Offer a ride</button>
         </div>
       </div>
       <div class="carpool-route-art" aria-hidden="true"><span>A</span><i></i><b>🚘</b><i></i><span>B</span></div>

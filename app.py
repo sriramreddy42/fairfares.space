@@ -708,7 +708,10 @@ PAGE_STYLESHEETS = {
     "index.html": [f"/static/css/booking-form.min.css?v={ASSET_VERSION}"],
     "wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
 }
-SHARED_STYLESHEETS = [f"/static/css/app-feedback.min.css?v={ASSET_VERSION}"]
+SHARED_STYLESHEETS = [
+    f"/static/css/design-system.css?v={ASSET_VERSION}",
+    f"/static/css/app-feedback.min.css?v={ASSET_VERSION}",
+]
 
 
 def refresh_storage_paths() -> None:

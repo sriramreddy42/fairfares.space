@@ -16,28 +16,12 @@
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
 <body class="public-header-compact accommodations-page" data-authenticated="$is_authenticated" data-user-id="$current_user_id">
-  <header class="housing-topbar">
-    <a class="housing-brand" href="/"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
-    <div class="housing-top-location-search">
-      <button class="housing-top-location" type="button" data-open-location><span>⌖</span>$selected_location</button>
-      <button class="housing-top-search" type="button" aria-label="Search housing"><img src="/static/img/icons8-magnifying-glass.png" alt="" aria-hidden="true"></button>
-    </div>
-    <div class="housing-top-links">
-      <a href="/carpool">Carpool</a>
-      <a href="/car-rentals">Car Rentals</a>
-      <a href="/deals">Deals</a>
-      <a class="active" href="/accommodations">Housing</a>
-      <a href="/explorer">Explorer</a>
-      <a href="/blog">Blog</a>
-      <a href="/wiki">FAQ</a>
-      <a href="/about">About Us</a>
-      <a href="/contact">Contact Us</a>
-    </div>
-    <div class="housing-top-actions">
-      <button class="housing-device-button" type="button" aria-label="Mobile app">▯</button>
-      <button class="housing-post-button" type="button" data-open-housing-post>✎ Post your Need</button>
-      <button class="menu-button housing-menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
-    </div>
+  <header class="ff-site-header housing-topbar">
+    <a class="ff-site-brand housing-brand" href="/" aria-label="FairFares home"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
+    <nav class="ff-site-nav" aria-label="Main navigation">
+      <a class="active" href="/accommodations">Housing</a><a href="/carpool">Carpool</a><a href="/car-rentals">Car Rentals</a><a href="/explorer">Explore</a><a href="/deals">Deals</a>
+    </nav>
+    <div class="ff-site-actions housing-top-actions"><button class="ff-post-action housing-post-button" type="button" data-open-housing-post>Post</button><button class="ff-icon-action" type="button" data-chat-open aria-label="Messages">♡</button><button class="ff-account-action" type="button" data-profile-drawer-open aria-label="Open profile">Profile</button><button class="menu-button housing-menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button></div>
   </header>
 
   <div class="housing-market-nav">

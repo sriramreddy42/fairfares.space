@@ -16,37 +16,13 @@
   <script defer src="/static/js/app.js?v=54"></script>
 </head>
 <body class="fairfares-home">
-  <header class="top-brand">
-    <a class="logo-lockup" href="/">
-      <img src="/static/img/fairfares-logo-20260708.webp" alt="$brand logo" width="820" height="360" decoding="async" fetchpriority="high">
-    </a>
-    <div class="top-benefits">$services</div>
-    <section class="price-match-scroll" aria-label="FairFares price match guarantee">
-      <div class="price-match-track">
-        <img src="/static/img/price-match-guarantee-poster-1200.webp?v=$asset_version" alt="Price match guarantee. Found a lower price from a major rental company? We'll match it and give an additional 10% off." width="1200" height="397" decoding="async">
-      </div>
-    </section>
+  <header class="ff-site-header">
+    <a class="ff-site-brand" href="/" aria-label="$brand home"><img src="/static/img/fairfares-logo-20260708.webp" alt="$brand"></a>
+    <nav class="ff-site-nav" aria-label="Main navigation">
+      <a href="/accommodations">Housing</a><a href="/carpool">Carpool</a><a class="active" href="/car-rentals">Car Rentals</a><a href="/explorer">Explore</a><a href="/deals">Deals</a>
+    </nav>
+    <div class="ff-site-actions"><a class="ff-post-action" href="/dashboard">Post</a><a class="ff-icon-action" href="/dashboard" aria-label="Messages">♡</a>$auth_link<button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button></div>
   </header>
-
-  <nav class="main-nav">
-    <div class="nav-links">
-      <a class="active" href="/car-rentals">Book</a>
-      <a href="/manage-booking">Manage Booking</a>
-      <a href="/deals">Deals</a>
-      <a href="/accommodations">Housing</a>
-      <a href="/carpool">Carpool</a>
-      <a href="/blog">Blog</a>
-      <a href="/wiki">FAQ</a>
-      <a href="/about">About Us</a>
-      <a href="/contact">Contact Us</a>
-      <a href="/explorer">Explorer</a>
-    </div>
-    <div class="nav-actions">
-      <span>EN</span>
-      $auth_link
-      <button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button>
-    </div>
-  </nav>
 
   <main>
     <section class="booking-hero">

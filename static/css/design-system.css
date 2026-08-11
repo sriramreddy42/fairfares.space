@@ -1,0 +1,63 @@
+:root {
+  --ff-brand: #071d49;
+  --ff-brand-hover: #0d2b63;
+  --ff-action: #e60023;
+  --ff-action-hover: #c9001e;
+  --ff-success: #16845b;
+  --ff-bg: #f6f7f9;
+  --ff-surface: #fff;
+  --ff-text: #102044;
+  --ff-muted: #657086;
+  --ff-border: #dfe3ea;
+  --ff-shadow: 0 8px 30px rgba(7, 29, 73, .08);
+  --ff-radius-card: 16px;
+  --ff-radius-control: 12px;
+  --ff-content: 1280px;
+}
+
+.ff-site-header {
+  align-items: center;
+  background: var(--ff-surface);
+  border-bottom: 1px solid var(--ff-border);
+  box-shadow: 0 1px 0 rgba(7, 29, 73, .02);
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(132px, 1fr) auto minmax(220px, 1fr);
+  height: 72px;
+  padding: 0 clamp(16px, 3vw, 32px);
+  position: sticky;
+  top: 0;
+  width: 100%;
+  z-index: 80;
+}
+.ff-site-brand { align-items: center; display: inline-flex; justify-self: start; }
+.ff-site-brand img { display: block; height: 42px; object-fit: contain; width: 132px; }
+.ff-site-nav { align-items: stretch; display: flex; gap: clamp(18px, 2.4vw, 34px); height: 100%; }
+.ff-site-nav a { align-items: center; color: #35405a; display: inline-flex; font-size: .94rem; font-weight: 750; position: relative; white-space: nowrap; }
+.ff-site-nav a:hover, .ff-site-nav a.active { color: var(--ff-brand); }
+.ff-site-nav a.active::after { background: var(--ff-action); border-radius: 4px 4px 0 0; bottom: 0; content: ""; height: 3px; left: 0; position: absolute; right: 0; }
+.ff-site-actions { align-items: center; display: flex; gap: 9px; justify-self: end; }
+.ff-site-actions a, .ff-site-actions button { font-weight: 750; text-decoration: none; white-space: nowrap; }
+.ff-post-action { background: var(--ff-action); border: 0; border-radius: 10px; color: #fff !important; min-height: 42px; padding: 0 18px; }
+a.ff-post-action { align-items: center; display: inline-flex; }
+.ff-post-action:hover { background: var(--ff-action-hover); }
+.ff-icon-action { align-items: center; background: transparent; border: 1px solid var(--ff-border); border-radius: 50%; color: var(--ff-brand) !important; display: inline-flex; font-size: 1.15rem; height: 42px; justify-content: center; padding: 0; width: 42px; }
+.ff-account-action, .ff-site-actions .nav-button, .ff-site-actions .carpool-account { background: #fff; border: 1px solid var(--ff-border); border-radius: 10px; color: var(--ff-brand); min-height: 42px; padding: 0 14px; }
+.ff-site-actions a.nav-button, .ff-site-actions a.carpool-account { align-items: center; display: inline-flex; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+
+body.fairfares-home { padding-top: 0 !important; }
+.fairfares-home .ff-site-header { position: sticky; }
+
+@media (max-width: 960px) {
+  .ff-site-header { grid-template-columns: 1fr auto; }
+  .ff-site-nav { display: none; }
+  .ff-site-actions .menu-button { display: grid; }
+}
+@media (max-width: 600px) {
+  .ff-site-header { gap: 10px; height: 64px; padding: 0 14px; }
+  .ff-site-brand img { height: 36px; width: 112px; }
+  .ff-site-actions { gap: 6px; }
+  .ff-site-actions .ff-icon-action { display: none; }
+  .ff-post-action { min-height: 38px; padding: 0 13px; }
+  .ff-site-actions .nav-button, .ff-site-actions .carpool-account, .ff-account-action { font-size: .82rem; min-height: 38px; max-width: 88px; padding: 0 10px; }
+}
