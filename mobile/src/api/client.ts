@@ -797,9 +797,14 @@ export async function getChatCommunities(city = "") {
   return payload.communities || [];
 }
 
-export async function getChatMessages(conversationId: string) {
+export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30) {
+  const params = new URLSearchParams({
+    conversation_id: conversationId,
+    limit: String(Math.max(1, Math.min(50, Math.floor(limit || 30))))
+  });
+  if (beforeMessageId > 0) params.set("before", String(Math.floor(beforeMessageId)));
   return request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; hasMore: boolean; nextBefore: number }>(
-    `/api/chat/messages?conversation_id=${encodeURIComponent(conversationId)}`
+    `/api/chat/messages?${params.toString()}`
   );
 }
 

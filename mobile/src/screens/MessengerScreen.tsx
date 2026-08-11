@@ -423,6 +423,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
+  const activeConversationIdRef = useRef("");
+  const messagesContentHeightRef = useRef(0);
+  const messagesViewportHeightRef = useRef(0);
+  const messagesScrollOffsetRef = useRef(0);
+  const prependScrollAnchorRef = useRef<{ height: number; offset: number } | null>(null);
+  const loadingOlderMessagesRef = useRef(false);
+  const messagesUserDraggingRef = useRef(false);
+  const shouldAutoScrollToEndRef = useRef(true);
   const outboxFlushRunning = useRef(false);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
@@ -445,6 +453,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [nextBeforeMessageId, setNextBeforeMessageId] = useState(0);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [messageText, setMessageText] = useState("");
   const [typingPeople, setTypingPeople] = useState<Array<{ userId: number; name: string }>>([]);
   const [sharingLocation, setSharingLocation] = useState(false);
@@ -607,6 +618,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         : [...(emojiGroups.find((group) => group.id === emojiGroup)?.emojis || [])];
     return query ? source.filter((emoji) => `${emoji} ${emojiSearchTerms[emoji] || ""}`.toLowerCase().includes(query)) : source;
   }, [emojiGroup, emojiSearch, recentEmojis]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+    if (activeConversationId) shouldAutoScrollToEndRef.current = true;
+  }, [activeConversationId]);
 
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
@@ -828,6 +844,51 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
+  function updateMessagePagination(payload: { hasMore?: boolean; nextBefore?: number }) {
+    const nextBefore = Math.max(0, Number(payload.nextBefore || 0));
+    setHasMoreMessages(Boolean(payload.hasMore) && nextBefore > 0);
+    setNextBeforeMessageId(nextBefore);
+  }
+
+  async function loadOlderMessages() {
+    const conversationId = activeConversationIdRef.current;
+    if (!conversationId || !hasMoreMessages || !nextBeforeMessageId || loadingOlderMessagesRef.current) return;
+    loadingOlderMessagesRef.current = true;
+    setLoadingOlderMessages(true);
+    const scrollAnchor = {
+      height: messagesContentHeightRef.current,
+      offset: messagesScrollOffsetRef.current
+    };
+    try {
+      const [payload, preparedDecryption] = await Promise.all([
+        getChatMessages(conversationId, nextBeforeMessageId),
+        prepareMessageDecryption(conversationId)
+          .then((context) => ({ context }))
+          .catch(() => ({ context: null }))
+      ]);
+      if (activeConversationIdRef.current !== conversationId) return;
+      const olderMessages = preparedDecryption.context
+        ? await decryptMessages(conversationId, payload.messages || [], Promise.resolve(preparedDecryption.context))
+        : payload.messages || [];
+      if (activeConversationIdRef.current !== conversationId) return;
+      prependScrollAnchorRef.current = scrollAnchor;
+      shouldAutoScrollToEndRef.current = false;
+      setMessages((current) => {
+        const byId = new Map<number, ChatMessage>();
+        [...olderMessages, ...current].forEach((message) => byId.set(Number(message.id), message));
+        const merged = [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
+        messageCache.current.set(conversationId, merged);
+        return merged;
+      });
+      updateMessagePagination(payload);
+    } catch (error) {
+      Alert.alert("Could not load earlier messages", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      loadingOlderMessagesRef.current = false;
+      setLoadingOlderMessages(false);
+    }
+  }
+
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
     if (!userId || !activeConversationId || !deviceIdentity) return;
@@ -874,6 +935,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setActiveConversation(conversation);
         setActiveSubject(conversation.subject || "Chitthi");
         setMessages(await decryptMessages(notificationConversationId, payload.messages || []));
+        updateMessagePagination(payload);
         setConversations((current) => current.map((item) => item.id === notificationConversationId ? { ...item, unread: 0 } : item));
         onClearNotificationConversation?.();
       })
@@ -892,6 +954,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setActiveConversation(null);
       setActiveSubject(pendingPost.title);
       setMessages([]);
+      setHasMoreMessages(false);
+      setNextBeforeMessageId(0);
       setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
       let cancelled = false;
       setThreadLoading(true);
@@ -906,6 +970,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (cancelled) return;
           setActiveConversation(payload.conversation || conversation);
           setMessages(await decryptMessages(conversation.id, payload.messages || []));
+          updateMessagePagination(payload);
         })
         .catch((error) => {
           if (!cancelled) Alert.alert("Chitthi unavailable", error instanceof Error ? error.message : "Could not verify this listing owner.");
@@ -925,6 +990,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setActiveConversation(null);
       setActiveSubject(rideContextLabel(pendingRide));
       setMessages([]);
+      setHasMoreMessages(false);
+      setNextBeforeMessageId(0);
       setMessageText(`Hi, I am interested in this ride from ${pendingRide.origin} to ${pendingRide.destination}. Is it still available?`);
       let cancelled = false;
       setThreadLoading(true);
@@ -939,6 +1006,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (cancelled) return;
           setActiveConversation(payload.conversation || conversation);
           setMessages(await decryptMessages(conversation.id, payload.messages || []));
+          updateMessagePagination(payload);
         })
         .catch((error) => {
           if (!cancelled) {
@@ -1211,11 +1279,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     onThreadModeChange?.(true);
+    shouldAutoScrollToEndRef.current = true;
     setActiveConversationId(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
     const cachedMessages = messageCache.current.get(conversation.id);
     setMessages(cachedMessages || []);
+    setHasMoreMessages(false);
+    setNextBeforeMessageId(0);
     setThreadLoading(!cachedMessages);
     try {
       // Message metadata and encrypted envelopes are independent requests. Running
@@ -1246,6 +1317,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       if (!preparedDecryption.context) setEncryptionReady(false);
       messageCache.current.set(conversation.id, decryptedMessages);
       setMessages(decryptedMessages);
+      updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
         setConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, unread: 0 } : item));
@@ -1262,6 +1334,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
+    shouldAutoScrollToEndRef.current = true;
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
     let queuedOffline = false;
     if (!signedIn) {
@@ -1518,6 +1591,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Contact not found", error instanceof Error ? error.message : "Could not find this FairFares member.");
@@ -1537,6 +1611,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Could not open chat", error instanceof Error ? error.message : "Try again shortly.");
@@ -1568,6 +1643,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Could not open this Chitthi", error instanceof Error ? error.message : "Please try again.");
@@ -1687,6 +1763,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setThreadLoading(true);
       const payload = await getChatMessages(response.conversation.id);
       setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
         void refreshMessenger({ showLoader: false, showError: false });
@@ -2277,6 +2354,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setActiveConversation(null);
     setActiveSubject("");
     setMessages([]);
+    setHasMoreMessages(false);
+    setNextBeforeMessageId(0);
+    setLoadingOlderMessages(false);
+    loadingOlderMessagesRef.current = false;
+    prependScrollAnchorRef.current = null;
+    messagesContentHeightRef.current = 0;
+    messagesViewportHeightRef.current = 0;
+    messagesScrollOffsetRef.current = 0;
+    shouldAutoScrollToEndRef.current = true;
     setMessageText("");
     setTypingPeople([]);
     setEditingMessageId(null);
@@ -2436,8 +2522,50 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           contentContainerStyle={styles.threadMessagesContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-          onContentSizeChange={() => messagesScrollRef.current?.scrollToEnd({ animated: false })}
+          scrollEventThrottle={32}
+          onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
+          onScrollBeginDrag={(event) => {
+            messagesUserDraggingRef.current = true;
+            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+            messagesScrollOffsetRef.current = offset;
+            if (offset <= 140) void loadOlderMessages();
+          }}
+          onScrollEndDrag={(event) => {
+            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+            messagesScrollOffsetRef.current = offset;
+            if (offset <= 140) void loadOlderMessages();
+            messagesUserDraggingRef.current = false;
+          }}
+          onMomentumScrollEnd={(event) => {
+            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+            messagesScrollOffsetRef.current = offset;
+            if (offset <= 140) void loadOlderMessages();
+            messagesUserDraggingRef.current = false;
+          }}
+          onScroll={(event) => {
+            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+            messagesScrollOffsetRef.current = offset;
+            const distanceFromBottom = messagesContentHeightRef.current - (offset + messagesViewportHeightRef.current);
+            shouldAutoScrollToEndRef.current = distanceFromBottom <= 120;
+            if (messagesUserDraggingRef.current && offset <= 140) void loadOlderMessages();
+          }}
+          onContentSizeChange={(_width, height) => {
+            const anchor = prependScrollAnchorRef.current;
+            messagesContentHeightRef.current = height;
+            if (anchor) {
+              prependScrollAnchorRef.current = null;
+              messagesScrollRef.current?.scrollTo({ y: Math.max(0, height - anchor.height + anchor.offset), animated: false });
+              return;
+            }
+            if (shouldAutoScrollToEndRef.current) messagesScrollRef.current?.scrollToEnd({ animated: false });
+          }}
         >
+          {loadingOlderMessages ? <Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text> : null}
+          {!loadingOlderMessages && hasMoreMessages ? (
+            <TouchableOpacity style={styles.olderMessagesButton} onPress={() => void loadOlderMessages()}>
+              <Text style={styles.olderMessagesButtonText}>Load earlier messages</Text>
+            </TouchableOpacity>
+          ) : null}
           {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
           {!threadLoading && !messages.length ? (
             <View style={styles.emptyThread}>
@@ -3176,6 +3304,9 @@ const styles = StyleSheet.create({
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#D6A95F" },
   threadMessages: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2, flexGrow: 1, justifyContent: "flex-end" },
+  olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingVertical: 10 },
+  olderMessagesButton: { alignSelf: "center", minHeight: 38, justifyContent: "center", paddingHorizontal: 16, marginBottom: 8, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.06)" },
+  olderMessagesButtonText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
