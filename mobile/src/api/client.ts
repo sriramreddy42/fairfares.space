@@ -175,7 +175,13 @@ export async function createSecurityDepositCheckout(bookingId: number) {
   });
 }
 
-async function request<T>(path: string, init: RequestInit = {}, options: { silentNetworkFailure?: boolean; attempts?: number } = {}): Promise<T> {
+type RequestOptions = {
+  silentNetworkFailure?: boolean;
+  silentServerFailure?: boolean;
+  attempts?: number;
+};
+
+async function request<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(init.headers as Record<string, string> | undefined)
@@ -217,7 +223,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: { silen
             await wait([500, 1250, 2500][attempt] || 2500);
             continue;
           }
-          if (response.status >= 500) {
+          if (response.status >= 500 && !options.silentServerFailure) {
             const referenceId = reportApiDiagnostic("api_5xx", `${method} ${path}: ${httpError.message}`, requestId);
             enrichedError.message = `FairFares is temporarily unavailable. Please try again. Reference: ${referenceId}`;
           }
@@ -874,7 +880,9 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
   const query = new URLSearchParams({
     conversation_id: conversationId,
     after: String(Math.max(0, Math.floor(afterMessageId || 0))),
-    wait: "7"
+    // Keep the hold comfortably below common mobile/proxy idle thresholds.
+    // A completed empty response immediately starts the next poll.
+    wait: "5"
   });
   return request<{
     ok: boolean;
@@ -882,7 +890,14 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
     typing: Array<{ userId: number; name: string }>;
     cursor: number;
-  }>(`/api/chat/events?${query}`);
+  }>(`/api/chat/events?${query}`, {}, {
+    // Long polls are background transport. The messenger loop reconnects after
+    // transient gateway/network failures, so do not create a critical mobile
+    // diagnostic for a recoverable 502/503/504 or brief connection drop.
+    silentNetworkFailure: true,
+    silentServerFailure: true,
+    attempts: 2
+  });
 }
 
 export async function updateChatTyping(conversationId: string, active: boolean) {

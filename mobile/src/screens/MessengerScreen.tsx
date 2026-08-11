@@ -1088,7 +1088,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             Alert.alert("Group access ended", "You are no longer a member of this group, so its messages are no longer available.");
             return;
           }
-          if (!cancelled) await new Promise((resolve) => setTimeout(resolve, 1200));
+          // A long-poll can be closed by a mobile network or upstream gateway.
+          // Reconnect quietly with a small backoff; message history remains the
+          // source of truth, so the cursor cannot lose messages between polls.
+          if (!cancelled) await new Promise((resolve) => setTimeout(resolve, 1500));
         }
       }
     };
