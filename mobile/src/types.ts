@@ -139,6 +139,8 @@ export type ChatMessage = {
   contextSubtitle?: string;
   contextOwnerUserId?: number;
   contextOwnerName?: string;
+  replyToMessageId?: number;
+  reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
   createdAt: string;
   deliveredAt: string;
   readAt: string;

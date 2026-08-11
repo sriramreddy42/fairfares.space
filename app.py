@@ -5253,6 +5253,18 @@ def init_db() -> None:
                 FOREIGN KEY(recipient_user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_message_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_id, user_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_key_backups (
                 user_id INTEGER PRIMARY KEY,
                 encrypted_payload TEXT NOT NULL,
@@ -6351,6 +6363,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_posts_visibility_created ON workspace_posts(visibility, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_comments_post_created ON workspace_post_comments(post_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_reactions_post_user ON workspace_post_reactions(post_id, user_id, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_reactions_message ON chat_message_reactions(message_id, emoji)")
         con.execute(
             """
             UPDATE chat_conversations
@@ -16520,7 +16533,7 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
     return keys, "" if keyed_users == participant_count else "Every participant must open the latest FairFares app before encryption can start."
 
 
-def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str) -> tuple[sqlite3.Row | None, str]:
+def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str, reply_to_message_id: int = 0) -> tuple[sqlite3.Row | None, str]:
     participant_ids = {int(row["user_id"]) for row in con.execute("SELECT user_id FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchall()}
     active_keys = {(int(row["user_id"]), str(row["device_id"])): str(row["public_key"]) for row in con.execute(
         "SELECT user_id, device_id, public_key FROM chat_device_keys WHERE revoked_at IS NULL AND user_id IN (%s)" % ",".join("?" * len(participant_ids)), tuple(participant_ids)
@@ -16536,7 +16549,14 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
         if (len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000
                 or len(str(item.get("previewNonce") or "")) > 100 or len(str(item.get("previewCiphertext") or "")) > 1000):
             return None, "Encrypted message is invalid."
-    message = save_chat_message(con, int(conversation["id"]), sender, "🔒 End-to-end encrypted message", client_message_id)
+    if reply_to_message_id:
+        reply_target = con.execute(
+            "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL LIMIT 1",
+            (reply_to_message_id, int(conversation["id"])),
+        ).fetchone()
+        if not reply_target:
+            return None, "The message you replied to is no longer available."
+    message = save_chat_message(con, int(conversation["id"]), sender, "🔒 End-to-end encrypted message", client_message_id, reply_to_message_id=reply_to_message_id)
     for item in envelopes:
         recipient_user_id = int(item.get("recipientUserId") or 0)
         recipient_device_id = str(item.get("recipientDeviceId") or "")
@@ -17134,6 +17154,7 @@ def save_chat_message(
     message_text: str,
     client_message_id: str = "",
     context: dict[str, str] | None = None,
+    reply_to_message_id: int = 0,
 ) -> sqlite3.Row:
     sender_id = int(row_value(sender, "id") or 0)
     if client_message_id:
@@ -17155,8 +17176,8 @@ def save_chat_message(
         f"""
         {insert_verb} INTO chat_messages
         (conversation_id, sender_id, message_text, context_type, context_public_id,
-         context_title, context_subtitle, context_owner_user_id, context_owner_name, client_message_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         context_title, context_subtitle, context_owner_user_id, context_owner_name, client_message_id, reply_to_message_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             conversation_id,
@@ -17169,6 +17190,7 @@ def save_chat_message(
             int(message_context.get("ownerUserId", "0") or 0) or None,
             message_context.get("ownerName", ""),
             client_message_id,
+            reply_to_message_id or None,
         ),
     )
     if client_message_id and cursor.rowcount == 0:
@@ -17257,6 +17279,12 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
             status = "delivered"
         else:
             status = "sent"
+    with db() as reaction_con:
+        reaction_rows = reaction_con.execute(
+            "SELECT emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id = ? GROUP BY emoji ORDER BY MIN(id)",
+            (current_user_id, message_id),
+        ).fetchall()
+    reactions = [{"emoji": row_value(item, "emoji"), "count": int(row_value(item, "total") or 0), "mine": bool(int(row_value(item, "mine") or 0))} for item in reaction_rows]
     return {
         "id": message_id,
         "senderId": sender_id,
@@ -17273,6 +17301,8 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
         "contextSubtitle": row_value(row, "context_subtitle"),
         "contextOwnerUserId": int(row_value(row, "context_owner_user_id") or 0),
         "contextOwnerName": row_value(row, "context_owner_name"),
+        "replyToMessageId": int(row_value(row, "reply_to_message_id") or 0),
+        "reactions": reactions,
         "createdAt": row_value(row, "created_at"),
         "deliveredAt": delivered_at,
         "readAt": read_at,
@@ -20056,6 +20086,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/messages/edit": self.api_edit_chat_message,
             "/api/chat/messages/delete": self.api_delete_chat_message,
             "/api/chat/messages/report": self.api_report_chat_message,
+            "/api/chat/messages/react": self.api_react_chat_message,
             "/api/mobile/diagnostics": self.api_mobile_diagnostics,
             "/api/chat/read": self.api_mark_chat_read,
             "/api/chat/typing": self.api_chat_typing,
@@ -21360,6 +21391,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         messages: list[sqlite3.Row] = []
         receipts: list[dict[str, object]] = []
         typing: list[dict[str, object]] = []
+        reaction_updates: list[dict[str, object]] = []
         while True:
             with db() as con:
                 messages = con.execute(
@@ -21422,6 +21454,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        WHERE participants.conversation_id = ? AND participants.user_id != ?""",
                     (conversation_id, current_user_id),
                 ).fetchall()
+                recent_message_ids = [int(row["id"]) for row in con.execute(
+                    "SELECT id FROM chat_messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100",
+                    (conversation_id,),
+                ).fetchall()]
+                reaction_updates = []
+                if recent_message_ids:
+                    placeholders = ",".join("?" for _ in recent_message_ids)
+                    reaction_rows = con.execute(
+                        f"SELECT message_id, emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(id)",
+                        (current_user_id, *recent_message_ids),
+                    ).fetchall()
+                    grouped: dict[int, list[dict[str, object]]] = {message_id: [] for message_id in recent_message_ids}
+                    for reaction in reaction_rows:
+                        grouped[int(reaction["message_id"])].append({"emoji": reaction["emoji"], "count": int(reaction["total"] or 0), "mine": bool(int(reaction["mine"] or 0))})
+                    reaction_updates = [{"messageId": message_id, "reactions": grouped[message_id]} for message_id in recent_message_ids]
             now_monotonic = time.monotonic()
             with _CHAT_TYPING_LOCK:
                 expired = [key for key, expires_at in _CHAT_TYPING.items() if expires_at <= now_monotonic]
@@ -21441,6 +21488,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "messages": [chat_message_payload(message, current_user_id) for message in messages],
                 "receipts": receipts,
                 "typing": typing,
+                "reactionUpdates": reaction_updates,
                 "cursor": max([after_message_id, *[int(row_value(message, "id") or 0) for message in messages]]),
             }
         )
@@ -21991,7 +22039,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
                 return
-            message, error = save_encrypted_chat_message(con, conversation, user, envelopes, str(form.get("clientMessageId") or ""))
+            message, error = save_encrypted_chat_message(con, conversation, user, envelopes, str(form.get("clientMessageId") or ""), int(float_from_value(form.get("replyToMessageId")) or 0))
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
@@ -21999,6 +22047,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_react_chat_message(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to react to messages."}, 401)
+            return
+        payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId"), 80)
+        message_id = int(float_from_value(payload.get("messageId")) or 0)
+        emoji = clean_text_value(payload.get("emoji"), 12)
+        allowed = {"👍", "❤️", "😂", "😮", "😢", "🙏", "👏", "🎉"}
+        if emoji not in allowed:
+            self.send_json({"ok": False, "message": "Choose a supported reaction."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            message = con.execute(
+                "SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ? AND messages.conversation_id = ? AND messages.deleted_at IS NULL LIMIT 1",
+                (message_id, int(conversation["id"])),
+            ).fetchone()
+            if not message:
+                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                return
+            existing = con.execute("SELECT emoji FROM chat_message_reactions WHERE message_id = ? AND user_id = ?", (message_id, current_user_id)).fetchone()
+            if existing and str(row_value(existing, "emoji") or "") == emoji:
+                con.execute("DELETE FROM chat_message_reactions WHERE message_id = ? AND user_id = ?", (message_id, current_user_id))
+            else:
+                con.execute(
+                    "INSERT INTO chat_message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?) ON CONFLICT(message_id, user_id) DO UPDATE SET emoji = excluded.emoji, updated_at = CURRENT_TIMESTAMP",
+                    (message_id, current_user_id, emoji),
+                )
+        self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)})
 
     def api_relay_encrypted_chat_message(self) -> None:
         relay_user = self.current_user()

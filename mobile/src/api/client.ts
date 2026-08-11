@@ -877,10 +877,16 @@ export async function getChatEncryptedPreviewEnvelopes(messageIds: number[], dev
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/preview-envelopes?${params.toString()}`);
 }
 
-export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false) {
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent })
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId })
+  });
+}
+
+export async function reactToChatMessage(conversationId: string, messageId: number, emoji: string) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages/react", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId, messageId, emoji })
   });
 }
 
@@ -914,6 +920,7 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     messages: ChatMessage[];
     receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
     typing: Array<{ userId: number; name: string }>;
+    reactionUpdates: Array<{ messageId: number; reactions: Array<{ emoji: string; count: number; mine: boolean }> }>;
     cursor: number;
   }>(`/api/chat/events?${query}`, {}, {
     // Long polls are background transport. The messenger loop reconnects after

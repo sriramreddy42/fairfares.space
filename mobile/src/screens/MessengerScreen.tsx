@@ -6,7 +6,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { Alert, Image, Keyboard, Linking, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Animated, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
@@ -42,6 +42,7 @@ import {
   pollChatEvents,
   reportChatMessage,
   registerChatDeviceKey,
+  reactToChatMessage,
   removeChatGroupMember,
   sendEncryptedChatMessage,
   sendEncryptedChatAttachment,
@@ -266,6 +267,20 @@ function websiteCardDetails(value: string) {
   }
 }
 
+function SwipeToReply({ children, onReply }: { children: React.ReactNode; onReply: () => void }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.18,
+    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.min(82, Math.max(0, gesture.dx * 0.62))),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dx >= 58) onReply();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 5 }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start()
+  }), [onReply, translateX]);
+  return <View style={styles.swipeReplyWrap}><View style={styles.swipeReplyHint}><Text style={styles.swipeReplyHintText}>↩</Text></View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
+}
+
 function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
   const details = websiteCardDetails(url);
   const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
@@ -458,6 +473,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const messagesScrollRef = useRef<ScrollView>(null);
+  const composerRef = useRef<TextInput>(null);
   const activeConversationIdRef = useRef("");
   const messagesContentHeightRef = useRef(0);
   const messagesViewportHeightRef = useRef(0);
@@ -517,6 +533,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
   const [selectedForwardConversationIds, setSelectedForwardConversationIds] = useState<string[]>([]);
   const [forwardingMessages, setForwardingMessages] = useState(false);
@@ -756,7 +774,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       deletedAt: "",
       canEdit: false,
       status: item.relayedAt ? "relayed" : "pending",
-      localClientMessageId: item.clientMessageId
+      localClientMessageId: item.clientMessageId,
+      replyToMessageId: item.replyToMessageId || 0
     };
   }
 
@@ -781,7 +800,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
           const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys);
           await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
-          const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId);
+          const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId, false, item.replyToMessageId || 0);
           await removeEncryptedOutboxItem(userId, item.clientMessageId);
           if (activeConversationId === item.conversationId) {
             setMessages((current) => {
@@ -1078,11 +1097,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           cursor = Math.max(cursor, Number(payload.cursor || 0));
           const incomingMessages = await decryptMessages(activeConversationId, payload.messages || []);
           const receiptById = new Map((payload.receipts || []).map((receipt) => [Number(receipt.id), receipt]));
+          const reactionsById = new Map((payload.reactionUpdates || []).map((update) => [Number(update.messageId), update.reactions || []]));
           setMessages((current) => {
             const byId = new Map<number, ChatMessage>();
             current.forEach((message) => {
               const receipt = receiptById.get(Number(message.id));
-              byId.set(Number(message.id), receipt ? { ...message, ...receipt } : message);
+              const reactions = reactionsById.get(Number(message.id));
+              byId.set(Number(message.id), { ...message, ...(receipt || {}), ...(reactions ? { reactions } : {}) });
             });
             incomingMessages.forEach((message) => byId.set(Number(message.id), message));
             return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
@@ -1464,8 +1485,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
         const clientMessageId = createOutboxClientMessageId(identity.deviceId);
         try {
-          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId);
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyingTo?.id || 0);
           setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }]);
+          setReplyingTo(null);
         } catch (error) {
           if (!isRetryableChatNetworkError(error)) throw error;
           const createdAt = new Date().toISOString();
@@ -1477,11 +1499,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             localMessageId: -Date.now(),
             createdAt,
             envelopes,
+            replyToMessageId: replyingTo?.id || 0,
             attempts: 0,
             lastAttemptAt: ""
           };
           await enqueueEncryptedMessage(outboxItem);
           setMessages((current) => [...current, queuedMessage(outboxItem, identity)]);
+          setReplyingTo(null);
           queuedOffline = true;
         }
         onClearPendingPost?.();
@@ -2317,17 +2341,25 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function showMessageActions(message: ChatMessage) {
-    const actions: Array<{ text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }> = [];
-    actions.push({ text: "Select messages", onPress: () => setSelectedMessageIds([messageSelectionKey(message)]) });
-    if (message.mine && message.canEdit) {
-      actions.push({ text: "Edit message", onPress: () => editMessage(message) });
-      actions.push({ text: "Delete message", style: "destructive", onPress: () => void deleteMessage(message) });
+    setActionMessage(message);
+  }
+
+  function beginReply(message: ChatMessage) {
+    if (["pending", "relayed", "failed"].includes(message.status)) return;
+    setReplyingTo(message);
+    setActionMessage(null);
+    setTimeout(() => composerRef.current?.focus(), 80);
+  }
+
+  async function reactToMessage(message: ChatMessage, emoji: string) {
+    if (!activeConversationId || message.id <= 0) return;
+    setActionMessage(null);
+    try {
+      const response = await reactToChatMessage(activeConversationId, message.id, emoji);
+      setMessages((current) => current.map((item) => item.id === message.id ? { ...item, reactions: response.message.reactions || [] } : item));
+    } catch (error) {
+      Alert.alert("Reaction failed", error instanceof Error ? error.message : "Could not react to this message.");
     }
-    if (!message.mine) {
-      actions.push({ text: "Report message", style: "destructive", onPress: () => void reportMessage(message) });
-    }
-    actions.push({ text: "Cancel", style: "cancel" });
-    Alert.alert("Message options", undefined, actions);
   }
 
   function toggleMessageSelection(message: ChatMessage) {
@@ -2646,10 +2678,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const discoveredUrl = message.text ? firstDiscoveredUrl(message.text) : "";
             const isPhotoMessage = message.type === "IMAGE" && Boolean(message.attachmentUrl);
             const messageRunEnds = mediaGroup.length > 1 || endsMessageRun(visibleMessages, index);
+            const replyTarget = message.replyToMessageId ? messages.find((item) => item.id === message.replyToMessageId) : null;
             return (
             <React.Fragment key={message.id}>
             {index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt) ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
-            <View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
+            <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
                   {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(message.senderPhotoUrl) }} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
@@ -2658,7 +2691,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
-                onLongPress={() => toggleMessageSelection(message)}
+                onLongPress={() => showMessageActions(message)}
                 onPress={() => { if (selectedMessageIds.length) toggleMessageSelection(message); }}
                 style={[styles.bubble, isPhotoMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isPhotoMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
@@ -2672,6 +2705,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
+                {message.replyToMessageId ? <View style={[styles.quotedReply, message.mine ? styles.myQuotedReply : styles.theirQuotedReply]}><Text style={styles.quotedReplyName}>{replyTarget ? (replyTarget.mine ? "You" : replyTarget.senderName) : "Original message"}</Text><Text style={styles.quotedReplyText} numberOfLines={2}>{replyTarget ? (shareableMessageText({ ...replyTarget, senderName: "" }) || "Attachment") : "Message unavailable"}</Text></View> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -2749,11 +2783,38 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   {message.mine && messageReceipt(message.status) ? <Text style={[styles.receiptMark, message.status === "seen" && styles.receiptSeen, message.status === "failed" && styles.receiptFailed]}>{messageReceipt(message.status)}</Text> : null}
                 </View> : null}
               </TouchableOpacity>
-            </View>
+              {(message.reactions || []).length ? <View style={[styles.messageReactions, message.mine && styles.messageReactionsMine]}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text><Text style={styles.messageReactionCount}>{reaction.count}</Text></TouchableOpacity>)}</View> : null}
+            </View></SwipeToReply>
             </React.Fragment>
             );
           })}
         </ScrollView>
+
+        <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setActionMessage(null)}>
+          <View style={styles.messageActionBackdrop}>
+            <TouchableOpacity activeOpacity={1} style={styles.messageActionDismissLayer} onPress={() => setActionMessage(null)} accessibilityLabel="Close message actions" />
+            <View style={[styles.messageReactionTray, actionMessage?.mine && styles.messageReactionTrayMine]}>
+              {["👍", "❤️", "😂", "😮", "😢", "🙏", "👏"].map((emoji) => (
+                <TouchableOpacity key={emoji} style={styles.messageReactionChoice} onPress={() => actionMessage && void reactToMessage(actionMessage, emoji)} accessibilityRole="button" accessibilityLabel={`React ${emoji}`}>
+                  <Text style={styles.messageReactionChoiceText}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.messageReactionMore} onPress={() => Alert.alert("More reactions", "Use one of these quick reactions for now.")} accessibilityRole="button" accessibilityLabel="More reactions">
+                <Text style={styles.messageReactionMoreText}>＋</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.messageActionSheet, actionMessage?.mine && styles.messageActionSheetMine]}>
+              <TouchableOpacity style={styles.messageActionRow} onPress={() => actionMessage && beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); setTimeout(openForwardPicker, 0); }}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
+              {actionMessage?.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
+              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; void Share.share({ message: shareableMessageText(actionMessage) || "Chitthi message" }); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>⇧</Text><Text style={styles.messageActionLabel}>Share</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
+              {actionMessage?.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }}><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
+              {actionMessage?.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
+              {actionMessage && !actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
+            </View>
+          </View>
+        </Modal>
 
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
           <View style={styles.mediaViewerBackdrop}>
@@ -2996,10 +3057,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </ScrollView>
         ) : null}
 
+        {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View><TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
         <View style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
+            ref={composerRef}
             placeholder={editingMessageId ? "Edit message" : "Write a message…"}
             placeholderTextColor="#a7a08d"
             style={styles.composerInput}
@@ -3437,6 +3500,10 @@ const styles = StyleSheet.create({
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
+  swipeReplyWrap: { position: "relative", overflow: "visible" },
+  swipeReplyBody: { overflow: "visible" },
+  swipeReplyHint: { position: "absolute", left: 10, top: 0, bottom: 0, width: 42, alignItems: "center", justifyContent: "center", opacity: 0.92 },
+  swipeReplyHintText: { width: 32, height: 32, borderRadius: 16, textAlign: "center", lineHeight: 31, color: "#E7D3A7", fontSize: 21, fontWeight: "800", backgroundColor: "rgba(7,45,35,0.92)", overflow: "hidden" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
@@ -3452,6 +3519,12 @@ const styles = StyleSheet.create({
   paperclipIcon: { color: "#D6A95F", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
   composerEmojiText: { color: "#D6A95F", fontSize: 25, lineHeight: 28 },
+  replyComposerPreview: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(7,38,30,0.98)" },
+  replyComposerBar: { width: 4, alignSelf: "stretch", borderRadius: 2, backgroundColor: "#D6A95F" },
+  replyComposerCopy: { flex: 1, minWidth: 0 },
+  replyComposerName: { color: "#F4D99E", fontSize: 12, fontWeight: "900", marginBottom: 2 },
+  replyComposerText: { color: "#E7E1D2", fontSize: 13, fontWeight: "600" },
+  replyComposerClose: { width: 32, height: 32, color: "#D8DDDC", fontSize: 26, lineHeight: 31, textAlign: "center" },
   emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   emojiSearchIcon: { color: "#62676e", fontSize: 24 },
@@ -3732,6 +3805,11 @@ const styles = StyleSheet.create({
   messageContextSubtitle: { fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: "700" },
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
+  quotedReply: { borderLeftWidth: 3, borderRadius: 9, paddingHorizontal: 9, paddingVertical: 7, marginBottom: 7, minWidth: 190 },
+  myQuotedReply: { borderLeftColor: "#F4D99E", backgroundColor: "rgba(255,255,255,0.14)" },
+  theirQuotedReply: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
+  quotedReplyName: { color: "#D6A95F", fontSize: 12, fontWeight: "900", marginBottom: 2 },
+  quotedReplyText: { color: "#776E5B", fontSize: 12, lineHeight: 16, fontWeight: "600" },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
@@ -3781,6 +3859,26 @@ const styles = StyleSheet.create({
   receiptMark: { color: "#66756a", fontSize: 12, lineHeight: 14, fontWeight: "700", letterSpacing: -2 },
   receiptSeen: { color: "#1689d8" },
   receiptFailed: { color: "#dc2626", letterSpacing: 0 },
+  messageReactions: { alignSelf: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: -5, marginLeft: 34, marginBottom: 5, zIndex: 4 },
+  messageReactionsMine: { alignSelf: "flex-end", marginLeft: 0, marginRight: 4 },
+  messageReactionChip: { minHeight: 25, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, borderRadius: 13, borderWidth: 1, borderColor: "rgba(214,169,95,0.34)", backgroundColor: "rgba(15,23,22,0.92)" },
+  messageReactionChipMine: { backgroundColor: "rgba(9,48,36,0.96)", borderColor: "rgba(214,169,95,0.48)" },
+  messageReactionEmoji: { fontSize: 14 },
+  messageReactionCount: { color: "#F0E4CA", fontSize: 11, fontWeight: "800" },
+  messageActionBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "rgba(5,10,18,0.42)" },
+  messageActionDismissLayer: { ...StyleSheet.absoluteFillObject },
+  messageReactionTray: { alignSelf: "flex-start", maxWidth: "96%", minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 29, backgroundColor: "rgba(28,31,34,0.97)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.08)", shadowColor: "#000", shadowOpacity: 0.30, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 18, zIndex: 3 },
+  messageReactionTrayMine: { alignSelf: "flex-end" },
+  messageReactionChoice: { width: 38, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  messageReactionChoiceText: { fontSize: 28 },
+  messageReactionMore: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.13)" },
+  messageReactionMoreText: { color: "#D8DDE5", fontSize: 28, lineHeight: 31, fontWeight: "300" },
+  messageActionSheet: { width: 286, maxWidth: "86%", alignSelf: "flex-start", marginTop: 10, borderRadius: 28, paddingVertical: 12, backgroundColor: "rgba(54,59,66,0.98)", shadowColor: "#000", shadowOpacity: 0.34, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 20, overflow: "hidden", zIndex: 3 },
+  messageActionSheetMine: { alignSelf: "flex-end" },
+  messageActionRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 18, paddingHorizontal: 24 },
+  messageActionGlyph: { width: 28, color: "#F5F7FA", fontSize: 25, lineHeight: 30, textAlign: "center", fontWeight: "400" },
+  messageActionLabel: { color: "#F5F7FA", fontSize: 18, fontWeight: "500" },
+  messageActionDanger: { color: "#FF687D" },
   messageBox: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-end" },
   messageInput: { flex: 1, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, paddingHorizontal: 12, minHeight: 46, maxHeight: 110 },
   send: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, minHeight: 46, justifyContent: "center" },
