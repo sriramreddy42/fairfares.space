@@ -2639,7 +2639,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </TouchableOpacity>
                   </View>
                 ) : null}
-                {!message.mine && (Boolean(activeConversation?.communityId) || isPhotoMessage) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text>{!isPhotoMessage ? <Text style={styles.senderTime}>· {chatClock(message.createdAt)}</Text> : null}</View> : null}
+                {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text>{!isPhotoMessage ? <Text style={styles.senderTime}>· {chatClock(message.createdAt)}</Text> : null}</View> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
