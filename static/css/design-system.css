@@ -24,6 +24,7 @@
   gap: 24px;
   grid-template-columns: minmax(132px, 1fr) auto minmax(220px, 1fr);
   height: 72px;
+  min-height: 72px;
   padding: 0 clamp(16px, 3vw, 32px);
   position: sticky;
   top: 0;
@@ -45,7 +46,9 @@ a.ff-post-action { align-items: center; display: inline-flex; }
 .ff-account-action, .ff-site-actions .nav-button, .ff-site-actions .carpool-account { background: #fff; border: 1px solid var(--ff-border); border-radius: 10px; color: var(--ff-brand); min-height: 42px; padding: 0 14px; }
 .ff-site-actions a.nav-button, .ff-site-actions a.carpool-account { align-items: center; display: inline-flex; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 
-body.fairfares-home { padding-top: 0 !important; }
+@media (min-width: 861px) {
+  body.fairfares-home:not(.admin-screen):not(.login-screen):not(.auth-page) { padding-top: 0 !important; }
+}
 .fairfares-home .ff-site-header { position: sticky; }
 
 @media (max-width: 960px) {
@@ -54,7 +57,7 @@ body.fairfares-home { padding-top: 0 !important; }
   .ff-site-actions .menu-button { display: grid; }
 }
 @media (max-width: 600px) {
-  .ff-site-header { gap: 10px; height: 64px; padding: 0 14px; }
+  .ff-site-header { gap: 10px; height: 64px; min-height: 64px; padding: 0 14px; }
   .ff-site-brand img { height: 36px; width: 112px; }
   .ff-site-actions { gap: 6px; }
   .ff-site-actions .ff-icon-action { display: none; }
