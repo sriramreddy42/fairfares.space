@@ -24,6 +24,7 @@ import {
   getChatEncryptedEnvelopes,
   getChatEncryptedPreviewEnvelopes,
   getChatGroupMembers,
+  getChatLinkPreview,
   getChatConversations,
   getChatMessages,
   getAuthenticatedAssetDataUrl,
@@ -51,6 +52,7 @@ import {
   updateChatTyping,
   voteChatPoll
 } from "../api/client";
+import type { ChatLinkPreview } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
@@ -266,18 +268,34 @@ function websiteCardDetails(value: string) {
 
 function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
   const details = websiteCardDetails(url);
+  const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
+  const isFairFaresInvitation = url.startsWith("fairfares:") || /fairfare\.space\/(?:fchat\/)?(?:invite|group)/i.test(url);
+  useEffect(() => {
+    let cancelled = false;
+    if (isFairFaresInvitation) return () => { cancelled = true; };
+    void getChatLinkPreview(url)
+      .then((payload) => { if (!cancelled) setPreview(payload.preview || null); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [url, isFairFaresInvitation]);
+  const cardTitle = preview?.title || details.label;
+  const cardHost = preview?.siteName || preview?.host || details.host;
+  const cardDetail = preview?.description || details.detail;
   return (
     <TouchableOpacity
       style={[styles.websitePreviewCard, mine ? styles.myWebsitePreviewCard : styles.theirWebsitePreviewCard]}
       onPress={onOpen}
       accessibilityRole="link"
-      accessibilityLabel={`Open ${details.label}`}
+      accessibilityLabel={`Open ${cardTitle}`}
     >
-      <View style={styles.websitePreviewIcon}><Text style={styles.websitePreviewIconText}>↗</Text></View>
-      <View style={styles.websitePreviewCopy}>
-        <Text style={[styles.websitePreviewHost, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{details.host}</Text>
-        <Text style={[styles.websitePreviewTitle, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{details.label}</Text>
-        <Text style={[styles.websitePreviewDetail, mine && styles.myWebsitePreviewDetail]} numberOfLines={1}>{details.detail}</Text>
+      {preview?.imageUrl ? <Image source={{ uri: preview.imageUrl }} style={styles.websitePreviewImage} resizeMode="cover" /> : null}
+      <View style={styles.websitePreviewContent}>
+        <Text style={[styles.websitePreviewTitle, mine && styles.myWebsitePreviewText]} numberOfLines={2}>{cardTitle}</Text>
+        {cardDetail ? <Text style={[styles.websitePreviewDetail, mine && styles.myWebsitePreviewDetail]} numberOfLines={2}>{cardDetail}</Text> : null}
+        <View style={styles.websitePreviewSource}>
+          {preview?.faviconUrl ? <Image source={{ uri: preview.faviconUrl }} style={styles.websitePreviewFavicon} resizeMode="contain" /> : <View style={styles.websitePreviewIcon}><Text style={styles.websitePreviewIconText}>↗</Text></View>}
+          <Text style={[styles.websitePreviewHost, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{cardHost}</Text>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -3718,15 +3736,18 @@ const styles = StyleSheet.create({
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
   theirDiscoveredLink: { color: "#176A55" },
-  websitePreviewCard: { minWidth: 210, maxWidth: 290, marginTop: 7, marginBottom: 3, borderRadius: 11, borderWidth: 1, padding: 9, flexDirection: "row", alignItems: "center", gap: 9 },
+  websitePreviewCard: { width: 286, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
   myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
   theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
-  websitePreviewIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: "#237458", alignItems: "center", justifyContent: "center" },
-  websitePreviewIconText: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  websitePreviewCopy: { flex: 1, minWidth: 0 },
-  websitePreviewHost: { color: "#526074", fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4 },
-  websitePreviewTitle: { color: "#17202d", fontSize: 13, lineHeight: 17, fontWeight: "700", marginTop: 1 },
-  websitePreviewDetail: { color: "#667085", fontSize: 10.5, lineHeight: 14, marginTop: 1 },
+  websitePreviewImage: { width: "100%", height: 154, backgroundColor: "#D7D8D4" },
+  websitePreviewContent: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 11 },
+  websitePreviewSource: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 },
+  websitePreviewIcon: { width: 22, height: 22, borderRadius: 6, backgroundColor: "#237458", alignItems: "center", justifyContent: "center" },
+  websitePreviewIconText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  websitePreviewFavicon: { width: 22, height: 22, borderRadius: 5 },
+  websitePreviewHost: { flex: 1, color: "#526074", fontSize: 11.5, fontWeight: "600" },
+  websitePreviewTitle: { color: "#17202d", fontSize: 14, lineHeight: 19, fontWeight: "700" },
+  websitePreviewDetail: { color: "#667085", fontSize: 11.5, lineHeight: 16, marginTop: 4 },
   myWebsitePreviewText: { color: "#16334a" },
   myWebsitePreviewDetail: { color: "#526474" },
   photoMediaWrap: { position: "relative", borderRadius: 15, overflow: "visible" },

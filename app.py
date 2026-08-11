@@ -14,6 +14,8 @@ import threading
 import time
 import base64
 import mimetypes
+import ipaddress
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +29,7 @@ from email.parser import BytesParser
 from email.policy import default as EMAIL_POLICY
 from http import cookies
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from html.parser import HTMLParser
 from pathlib import Path
 from string import Template
 from zoneinfo import ZoneInfo
@@ -16389,6 +16392,108 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
     return ""
 
 
+class ChatLinkMetadataParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.metadata: dict[str, str] = {}
+        self.title_parts: list[str] = []
+        self.in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {str(key).lower(): str(value or "").strip() for key, value in attrs}
+        if tag.lower() == "title":
+            self.in_title = True
+        elif tag.lower() == "meta":
+            key = (values.get("property") or values.get("name") or "").lower()
+            content = values.get("content") or ""
+            if key and content and key not in self.metadata:
+                self.metadata[key] = content
+        elif tag.lower() == "link":
+            relations = values.get("rel", "").lower().split()
+            href = values.get("href") or ""
+            if href and ("icon" in relations or "shortcut" in relations) and "icon" not in self.metadata:
+                self.metadata["icon"] = href
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self.in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_title and data.strip():
+            self.title_parts.append(data.strip())
+
+
+def safe_chat_preview_url(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlparse((value or "").strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            return ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        for info in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM):
+            address = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+            if not address.is_global:
+                return ""
+        return urllib.parse.urlunparse(parsed._replace(fragment=""))
+    except (OSError, TypeError, ValueError):
+        return ""
+
+
+class SafeChatPreviewRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        safe_url = safe_chat_preview_url(urllib.parse.urljoin(req.full_url, newurl))
+        if not safe_url:
+            raise urllib.error.HTTPError(req.full_url, code, "Unsafe redirect", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, safe_url)
+
+
+def chat_link_preview(value: str) -> tuple[dict[str, str] | None, str]:
+    safe_url = safe_chat_preview_url(value)
+    if not safe_url:
+        return None, "This link cannot be previewed."
+    try:
+        request = urllib.request.Request(
+            safe_url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; FairFares-LinkPreview/1.0)", "Accept": "text/html,application/xhtml+xml"},
+        )
+        opener = urllib.request.build_opener(SafeChatPreviewRedirectHandler())
+        with opener.open(request, timeout=6) as response:
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                return None, "This website did not provide preview metadata."
+            # Open Graph tags live in the document head. Read only a bounded
+            # prefix so large articles can preview without downloading them.
+            raw = response.read(524_288)
+            final_url = safe_chat_preview_url(response.geturl())
+            if not final_url:
+                return None, "This website redirected to an unsafe address."
+            charset = response.headers.get_content_charset() or "utf-8"
+        parser = ChatLinkMetadataParser()
+        parser.feed(raw.decode(charset, errors="replace"))
+        metadata = parser.metadata
+        title = metadata.get("og:title") or metadata.get("twitter:title") or " ".join(parser.title_parts)
+        description = metadata.get("og:description") or metadata.get("twitter:description") or metadata.get("description") or ""
+        image = metadata.get("og:image:secure_url") or metadata.get("og:image") or metadata.get("twitter:image") or ""
+        icon = metadata.get("icon") or "/favicon.ico"
+        parsed_final = urllib.parse.urlparse(final_url)
+        absolute_image = urllib.parse.urljoin(final_url, image) if image else ""
+        absolute_icon = urllib.parse.urljoin(final_url, icon) if icon else ""
+        if absolute_image and not safe_chat_preview_url(absolute_image):
+            absolute_image = ""
+        if absolute_icon and not safe_chat_preview_url(absolute_icon):
+            absolute_icon = ""
+        return {
+            "url": final_url,
+            "host": (parsed_final.hostname or "Website").removeprefix("www."),
+            "title": html.unescape(title).strip()[:180],
+            "description": html.unescape(description).strip()[:280],
+            "imageUrl": absolute_image,
+            "faviconUrl": absolute_icon,
+            "siteName": html.unescape(metadata.get("og:site_name") or "").strip()[:100],
+        }, ""
+    except Exception:
+        return None, "This website preview is temporarily unavailable."
+
+
 def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
     with db() as con:
         conversation = get_chat_conversation_by_public_id(con, conversation_public_id, user_id)
@@ -19714,6 +19819,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/e2ee/keys":
             self.api_chat_e2ee_keys(parsed)
             return
+        if parsed.path == "/api/chat/link-preview":
+            self.api_chat_link_preview(parsed)
+            return
         if parsed.path == "/api/chat/e2ee/envelopes":
             self.api_chat_e2ee_envelopes(parsed)
             return
@@ -21796,6 +21904,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": warning}, 404)
             return
         self.send_json({"ok": True, "keys": keys, "ready": not warning, "warning": warning})
+
+    def api_chat_link_preview(self, parsed: urllib.parse.ParseResult) -> None:
+        if not self.current_user():
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to preview links."}, 401)
+            return
+        url = str((urllib.parse.parse_qs(parsed.query).get("url") or [""])[0]).strip()[:2048]
+        preview, error = chat_link_preview(url)
+        if not preview:
+            self.send_json({"ok": False, "message": error or "Preview unavailable."}, 422)
+            return
+        self.send_json({"ok": True, "preview": preview})
 
     def api_chat_e2ee_envelopes(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()

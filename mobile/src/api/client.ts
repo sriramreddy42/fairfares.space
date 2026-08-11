@@ -823,6 +823,24 @@ export async function getChatMessages(conversationId: string, beforeMessageId = 
   );
 }
 
+export type ChatLinkPreview = {
+  url: string;
+  host: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  faviconUrl: string;
+  siteName: string;
+};
+
+export async function getChatLinkPreview(url: string) {
+  return request<{ ok: boolean; preview: ChatLinkPreview }>(`/api/chat/link-preview?url=${encodeURIComponent(url)}`, {}, {
+    silentNetworkFailure: true,
+    silentServerFailure: true,
+    attempts: 1
+  });
+}
+
 export async function registerChatDeviceKey(deviceId: string, publicKey: string, signingPublicKey = "") {
   return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey, signingPublicKey })
