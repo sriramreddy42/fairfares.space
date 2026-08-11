@@ -14026,6 +14026,55 @@ def ride_coordinate_value(row: sqlite3.Row | dict[str, object], *keys: str) -> f
     return 0.0
 
 
+def ride_route_direction_compatible(
+    row: sqlite3.Row | dict[str, object],
+    origin_point: dict[str, object],
+    destination_point: dict[str, object],
+) -> bool:
+    """Reject reverse/perpendicular trips before they can become route matches."""
+    driver_origin_lat = ride_coordinate_value(row, "origin_lat", "originLat")
+    driver_origin_lng = ride_coordinate_value(row, "origin_lng", "originLng")
+    driver_dest_lat = ride_coordinate_value(row, "destination_lat", "destinationLat")
+    driver_dest_lng = ride_coordinate_value(row, "destination_lng", "destinationLng")
+    query_origin_lat = float(origin_point.get("lat") or 0)
+    query_origin_lng = float(origin_point.get("lng") or 0)
+    query_dest_lat = float(destination_point.get("lat") or 0)
+    query_dest_lng = float(destination_point.get("lng") or 0)
+    if not all((driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng, query_origin_lat, query_origin_lng, query_dest_lat, query_dest_lng)):
+        return False
+
+    reference_lat = math.radians((driver_origin_lat + driver_dest_lat + query_origin_lat + query_dest_lat) / 4.0)
+    longitude_scale = max(0.2, math.cos(reference_lat))
+
+    def projected(lat: float, lng: float) -> tuple[float, float]:
+        return (lng * longitude_scale, lat)
+
+    driver_start = projected(driver_origin_lat, driver_origin_lng)
+    driver_end = projected(driver_dest_lat, driver_dest_lng)
+    rider_start = projected(query_origin_lat, query_origin_lng)
+    rider_end = projected(query_dest_lat, query_dest_lng)
+    driver_vector = (driver_end[0] - driver_start[0], driver_end[1] - driver_start[1])
+    rider_vector = (rider_end[0] - rider_start[0], rider_end[1] - rider_start[1])
+    driver_length = math.hypot(*driver_vector)
+    rider_length = math.hypot(*rider_vector)
+    if driver_length <= 1e-6 or rider_length <= 1e-6:
+        return False
+    direction_cosine = (driver_vector[0] * rider_vector[0] + driver_vector[1] * rider_vector[1]) / (driver_length * rider_length)
+    driver_miles = distance_miles_between(driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng)
+    rider_miles = distance_miles_between(query_origin_lat, query_origin_lng, query_dest_lat, query_dest_lng)
+    # Local trips can turn through a street grid. Longer trips must still move
+    # broadly in the same direction as the listed route.
+    if min(driver_miles, rider_miles) >= 20 and direction_cosine < 0.25:
+        return False
+    denominator = driver_length * driver_length
+    start_progress = ((rider_start[0] - driver_start[0]) * driver_vector[0] + (rider_start[1] - driver_start[1]) * driver_vector[1]) / denominator
+    end_progress = ((rider_end[0] - driver_start[0]) * driver_vector[0] + (rider_end[1] - driver_start[1]) * driver_vector[1]) / denominator
+    # Permit a small pickup-navigation backtrack, but never enough to turn a
+    # reversed local trip into a valid match.
+    progress_tolerance = max(0.05, min(0.25, 2.0 / max(driver_miles, 1.0)))
+    return end_progress + progress_tolerance >= start_progress
+
+
 def ride_route_detour_details(
     row: sqlite3.Row | dict[str, object],
     origin_point: dict[str, object],
@@ -14046,20 +14095,27 @@ def ride_route_detour_details(
     driver_destination = {"lat": driver_dest_lat, "lng": driver_dest_lng}
     query_origin = {"lat": query_origin_lat, "lng": query_origin_lng}
     query_destination = {"lat": query_dest_lat, "lng": query_dest_lng}
-    if allow_google:
-        direct_route = google_route_totals([driver_origin, driver_destination])
-        route_with_rider = google_route_totals([driver_origin, query_origin, query_destination, driver_destination])
-        if direct_route and route_with_rider:
-            extra_miles = round(max(0.0, route_with_rider[0] - direct_route[0]), 1)
-            extra_minutes = max(0, int(route_with_rider[1] - direct_route[1]))
-            return {"miles": extra_miles, "minutes": extra_minutes, "source": "GOOGLE_DIRECTIONS"}
-    direct_driver_route = distance_miles_between(driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng)
-    route_with_rider = (
+    direct_driver_distance = distance_miles_between(driver_origin_lat, driver_origin_lng, driver_dest_lat, driver_dest_lng)
+    straight_route_with_rider = (
         distance_miles_between(driver_origin_lat, driver_origin_lng, query_origin_lat, query_origin_lng)
         + distance_miles_between(query_origin_lat, query_origin_lng, query_dest_lat, query_dest_lng)
         + distance_miles_between(query_dest_lat, query_dest_lng, driver_dest_lat, driver_dest_lng)
     )
-    extra_miles = round(max(0.0, route_with_rider - direct_driver_route), 1)
+    straight_extra_miles = round(max(0.0, straight_route_with_rider - direct_driver_distance), 1)
+    if allow_google:
+        direct_route = google_route_totals([driver_origin, driver_destination])
+        route_with_rider = google_route_totals([driver_origin, query_origin, query_destination, driver_destination])
+        if direct_route and route_with_rider:
+            google_extra_miles = round(max(0.0, route_with_rider[0] - direct_route[0]), 1)
+            # The waypoint path cannot be shorter than its three great-circle
+            # legs. Compare that lower bound with the actual direct road route;
+            # comparing it with the straight direct leg would overstate detours
+            # when the direct road itself must bend around terrain.
+            geometry_lower_bound = round(max(0.0, straight_route_with_rider - direct_route[0]), 1)
+            extra_miles = max(google_extra_miles, geometry_lower_bound)
+            extra_minutes = max(0, int(route_with_rider[1] - direct_route[1]), ride_detour_minutes_from_miles(geometry_lower_bound) or 0)
+            return {"miles": extra_miles, "minutes": extra_minutes, "source": "GOOGLE_DIRECTIONS"}
+    extra_miles = straight_extra_miles
     return {"miles": extra_miles, "minutes": ride_detour_minutes_from_miles(extra_miles), "source": "ESTIMATE"}
 
 
@@ -14145,7 +14201,26 @@ def ride_route_match_metrics(
         "routeDeviationMiles": route_deviation,
         "routeDeviationMinutes": route_deviation_minutes,
         "routeDeviationSource": route_deviation_details.get("source"),
+        "directionCompatible": ride_route_direction_compatible(row, origin_point, destination_point),
     }
+
+
+def ride_route_match_is_valid(
+    row: sqlite3.Row | dict[str, object],
+    metrics: dict[str, object],
+    maximum_miles: float | None = None,
+) -> bool:
+    """Apply one route acceptance rule everywhere a carpool match is made."""
+    route_deviation = metrics.get("routeDeviationMiles")
+    if route_deviation is None or not bool(metrics.get("directionCompatible")):
+        return False
+    allowed_miles = ride_allowed_detour_miles(row)
+    if maximum_miles is not None:
+        allowed_miles = min(allowed_miles, max(0.0, float(maximum_miles)))
+    try:
+        return float(route_deviation) <= allowed_miles
+    except (TypeError, ValueError):
+        return False
 
 
 def ride_effective_trip_date(row: sqlite3.Row | dict[str, object]) -> date | None:
@@ -14229,6 +14304,7 @@ def mobile_ride_payload(
         "routeDeviationMiles": route_metrics.get("routeDeviationMiles"),
         "routeDeviationMinutes": route_metrics.get("routeDeviationMinutes"),
         "routeDeviationSource": route_metrics.get("routeDeviationSource"),
+        "directionCompatible": bool(route_metrics.get("directionCompatible")),
         "matchScore": ride_score(row, origin_point, destination_point, allow_google=allow_google_routes),
         "createdAt": row_value(row, "created_at"),
     }
@@ -14388,12 +14464,9 @@ def mobile_ride_posts(
         if route_search:
             route_filtered = []
             for item in payloads:
-                route_deviation = item.get("routeDeviationMiles")
-                max_detour = ride_allowed_detour_miles(item)
                 # A two-ended search is only a match when its route can actually
                 # be evaluated. Missing metrics must not become an automatic hit.
-                detour_ok = route_deviation is not None and float(route_deviation) <= max_detour
-                if detour_ok:
+                if ride_route_match_is_valid(item, item):
                     route_filtered.append(item)
             payloads = route_filtered
         payloads.sort(key=lambda item: (-int(item.get("matchScore") or 0), float(item.get("routeDeviationMiles") or 9999), float(item.get("distanceMiles") or 9999)))
@@ -14465,8 +14538,7 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
             pickup_distance = float(metrics.get("pickupDistanceMiles") or 0)
             route_deviation_raw = metrics.get("routeDeviationMiles")
             route_deviation = float(route_deviation_raw) if route_deviation_raw is not None else 9999.0
-            allowed_route_deviation = ride_allowed_detour_miles(driver)
-            if route_deviation > min(float(radius), allowed_route_deviation):
+            if not ride_route_match_is_valid(driver, metrics, maximum_miles=float(radius)):
                 continue
             dropoff_distance = float(metrics.get("dropoffDistanceMiles") or 0)
             route_deviation_minutes = int(metrics.get("routeDeviationMinutes") or 0)
