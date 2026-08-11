@@ -176,3 +176,24 @@ Do not commit `.env`; keep production secrets in the hosting provider's environm
 ## Deferred TODO
 
 - Create a Google Cloud Storage bucket for private FairFares uploads, then move sensitive app files there instead of normal Google Drive service-account storage. This should cover driver licenses, insurance documents, rental agreements, pickup/return photos, invoices/receipts, ROI files, support attachments, purchase receipts, and maintenance/repair receipts.
+# Private Chitthi attachment storage (Cloudflare R2)
+
+Create a private R2 bucket named `fairfares-attachments`, then create an R2 API token scoped only to that bucket with Object Read & Write permission. Configure the backend—not the mobile app—with:
+
+```text
+CLOUDFLARE_R2_ACCOUNT_ID=...
+CLOUDFLARE_R2_ACCESS_KEY_ID=...
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=...
+CLOUDFLARE_R2_BUCKET=fairfares-attachments
+CLOUDFLARE_R2_PREFIX=fairfares
+```
+
+When all credentials are present, new Chitthi attachments are written to R2 and SQLite stores only a private `r2://` reference. Downloads continue through FairFares' authenticated attachment endpoint, so the bucket must remain private. Without these variables, local development continues using `data/uploads/chat`.
+
+After configuring R2, migrate existing local attachments in a safe first pass:
+
+```bash
+python3 scripts/migrate_chat_attachments_to_r2.py --limit 500
+```
+
+Once the migrated files have been verified, rerun with `--delete-local` to remove each local source only after its R2 reference commits successfully.

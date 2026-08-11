@@ -32,6 +32,13 @@ from string import Template
 from zoneinfo import ZoneInfo
 
 try:
+    import boto3
+    from botocore.config import Config as BotoConfig
+except ImportError:  # Local development can continue with filesystem storage.
+    boto3 = None
+    BotoConfig = None
+
+try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -90,6 +97,14 @@ ALLOWED_CHAT_FILE_MIME_TYPES = {
 }
 MAX_CHAT_FILE_BYTES = 8_000_000
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 15_000_000
+R2_ACCOUNT_ID = os.environ.get("CLOUDFLARE_R2_ACCOUNT_ID", "").strip()
+R2_ACCESS_KEY_ID = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "").strip()
+R2_BUCKET_NAME = os.environ.get("CLOUDFLARE_R2_BUCKET", "fairfares-attachments").strip()
+R2_ENDPOINT_URL = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "").strip()
+R2_OBJECT_PREFIX = os.environ.get("CLOUDFLARE_R2_PREFIX", "fairfares").strip().strip("/")
+_R2_CLIENT = None
+_R2_CLIENT_LOCK = threading.Lock()
 DEFAULT_ADMIN_EMAIL = "admin@fairfares.com"
 DEFAULT_ADMIN_PASSWORD = ""
 CHITTHI_FEEDBACK_EMAIL = os.environ.get(
@@ -1060,6 +1075,88 @@ def save_file_payload_locally(
     return f"local://uploads/{folder_name}/{safe_name}"
 
 
+def r2_storage_configured() -> bool:
+    return bool(R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_BUCKET_NAME)
+
+
+def r2_storage_client():
+    global _R2_CLIENT
+    if not r2_storage_configured():
+        return None
+    if boto3 is None or BotoConfig is None:
+        raise RuntimeError("Cloudflare R2 is configured but boto3 is not installed.")
+    with _R2_CLIENT_LOCK:
+        if _R2_CLIENT is None:
+            endpoint = R2_ENDPOINT_URL or f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+            _R2_CLIENT = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                aws_access_key_id=R2_ACCESS_KEY_ID,
+                aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+                region_name="auto",
+                config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+            )
+    return _R2_CLIENT
+
+
+def save_file_payload_to_r2(
+    *,
+    folder_name: str,
+    file_data: dict[str, object] | None,
+    fallback_name: str,
+    allowed_mime_types: set[str] | None = None,
+    max_bytes: int = MAX_DRIVE_UPLOAD_BYTES,
+) -> str:
+    if not file_data or not r2_storage_configured():
+        return ""
+    payload = file_data.get("payload")
+    mime_type = str(file_data.get("mime_type") or "").lower()
+    if not isinstance(payload, bytes) or not payload or len(payload) > max_bytes:
+        return ""
+    if allowed_mime_types is not None and mime_type not in allowed_mime_types:
+        return ""
+    filename = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(file_data.get("filename") or fallback_name)).strip("-") or fallback_name
+    extension = Path(filename).suffix or mimetypes.guess_extension(mime_type) or ".bin"
+    date_path = datetime.now(UTC).strftime("%Y/%m/%d")
+    prefix = "/".join(part for part in (R2_OBJECT_PREFIX, folder_name, date_path) if part)
+    object_key = f"{prefix}/{Path(filename).stem[:80]}-{secrets.token_hex(12)}{extension}"
+    client = r2_storage_client()
+    if client is None:
+        return ""
+    client.put_object(
+        Bucket=R2_BUCKET_NAME,
+        Key=object_key,
+        Body=payload,
+        ContentType=mime_type or "application/octet-stream",
+        Metadata={"original-name": filename[:200]},
+    )
+    return f"r2://{R2_BUCKET_NAME}/{object_key}"
+
+
+def save_chat_file_payload(
+    *,
+    file_data: dict[str, object] | None,
+    fallback_name: str,
+    allowed_mime_types: set[str] | None = None,
+    max_bytes: int = MAX_DRIVE_UPLOAD_BYTES,
+) -> str:
+    if r2_storage_configured():
+        return save_file_payload_to_r2(
+            folder_name="chat",
+            file_data=file_data,
+            fallback_name=fallback_name,
+            allowed_mime_types=allowed_mime_types,
+            max_bytes=max_bytes,
+        )
+    return save_file_payload_locally(
+        folder_name="chat",
+        file_data=file_data,
+        fallback_name=fallback_name,
+        allowed_mime_types=allowed_mime_types,
+        max_bytes=max_bytes,
+    )
+
+
 def save_data_url_payload_locally(
     *,
     folder_name: str,
@@ -1100,6 +1197,76 @@ def local_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     filename = target.name
     mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return filename, mime_type, payload
+
+
+def r2_upload_parts(value: str, max_bytes: int = MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024) -> tuple[str, str, bytes] | None:
+    if not value.startswith("r2://") or not r2_storage_configured():
+        return None
+    location = value.replace("r2://", "", 1)
+    bucket, separator, object_key = location.partition("/")
+    if not separator or bucket != R2_BUCKET_NAME or not object_key:
+        return None
+    response = r2_storage_client().get_object(Bucket=bucket, Key=object_key)
+    declared_size = int(response.get("ContentLength") or 0)
+    if declared_size <= 0 or declared_size > max_bytes:
+        return None
+    payload = response["Body"].read(max_bytes + 1)
+    if not payload or len(payload) > max_bytes:
+        return None
+    filename = Path(object_key).name
+    mime_type = str(response.get("ContentType") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return filename, mime_type, payload
+
+
+def stored_upload_parts(value: str) -> tuple[str, str, bytes] | None:
+    if value.startswith("r2://"):
+        return r2_upload_parts(value)
+    return local_upload_parts(value)
+
+
+def migrate_local_chat_attachments_to_r2(limit: int = 500, delete_local: bool = False) -> dict[str, int]:
+    if not r2_storage_configured():
+        raise RuntimeError("Cloudflare R2 credentials are not configured.")
+    scanned = migrated = missing = failed = deleted = 0
+    migrated_local_references: list[str] = []
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, attachment_url FROM chat_messages WHERE attachment_url LIKE 'local://uploads/chat/%' ORDER BY id ASC LIMIT ?",
+            (max(1, min(int(limit or 500), 5000)),),
+        ).fetchall()
+        for row in rows:
+            scanned += 1
+            parts = local_upload_parts(row_value(row, "attachment_url"))
+            if not parts:
+                missing += 1
+                continue
+            filename, mime_type, payload = parts
+            try:
+                reference = save_file_payload_to_r2(
+                    folder_name="chat",
+                    file_data={"filename": filename, "mime_type": mime_type, "payload": payload},
+                    fallback_name=filename,
+                    allowed_mime_types=ALLOWED_CHAT_IMAGE_MIME_TYPES | ALLOWED_CHAT_FILE_MIME_TYPES | {"application/octet-stream"},
+                    max_bytes=MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
+                )
+                if not reference:
+                    failed += 1
+                    continue
+                con.execute("UPDATE chat_messages SET attachment_url = ? WHERE id = ?", (reference, int(row["id"])))
+                migrated += 1
+                migrated_local_references.append(row_value(row, "attachment_url"))
+            except Exception:
+                failed += 1
+        con.commit()
+    if delete_local:
+        upload_root = (DB_PATH.parent / "uploads").resolve()
+        for reference in migrated_local_references:
+            relative = reference.replace("local://uploads/", "", 1)
+            target = (upload_root / relative).resolve()
+            if target.is_relative_to(upload_root) and target.is_file():
+                target.unlink()
+                deleted += 1
+    return {"scanned": scanned, "migrated": migrated, "missing": missing, "failed": failed, "localFilesDeleted": deleted}
 
 
 def upload_existing_reference_to_drive(
@@ -15010,7 +15177,8 @@ def mobile_housing_posts(
     elif need == "have_place":
         clauses.append("post_mode = 'NEED_PLACE'")
     elif need == "need_roommates":
-        clauses.append("(post_mode = 'HAVE_PLACE' OR roommate_intent = 1)")
+        clauses.append("post_mode = 'NEED_PLACE'")
+        clauses.append("roommate_intent = 1")
     if category:
         clauses.append("category = ?")
         values.append(category)
@@ -15234,7 +15402,7 @@ def mobile_sample_housing_posts(
         else SAMPLE_HOUSING_OWNER_NAME
     )
     selected_location = " ".join((area or city or "your selected location").split())[:120]
-    mode = "NEED_PLACE" if need == "have_place" else "HAVE_PLACE"
+    mode = "NEED_PLACE" if need in {"have_place", "need_roommates"} else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
     selected_budget = int(float_from_value(budget) or 0)
     location_key = hashlib.sha256(f"{selected_location}|{need}|{category}".encode()).hexdigest()[:10].upper()
@@ -15278,7 +15446,7 @@ def mobile_sample_housing_posts(
                 "posterUserId": sample_owner_id,
                 "daysLeft": 30,
                 "expiryLabel": "30 days left",
-                "roommateIntent": bool(roommate_count),
+                "roommateIntent": need == "need_roommates" or bool(roommate_count),
                 "genderPreference": option_label(ACCOMMODATION_GENDER_OPTIONS, gender, "Open") if gender else "Open",
                 "leaseTerm": lease,
                 "bathroomType": bath,
@@ -21740,8 +21908,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
-            attachment_url = save_file_payload_locally(
-                folder_name="chat", file_data={"filename": f"encrypted-{message['id']}.ffenc", "mime_type": "application/octet-stream", "payload": ciphertext},
+            attachment_url = save_chat_file_payload(
+                file_data={"filename": f"encrypted-{message['id']}.ffenc", "mime_type": "application/octet-stream", "payload": ciphertext},
                 fallback_name=f"encrypted-{message['id']}.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
             )
             if not attachment_url:
@@ -21908,8 +22076,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     )
                 elif upload_mime_type in ALLOWED_CHAT_FILE_MIME_TYPES:
                     valid_upload = valid_chat_document_payload(upload_mime_type, upload_filename, upload_payload)
-            attachment_url = save_file_payload_locally(
-                folder_name="chat",
+            attachment_url = save_chat_file_payload(
                 file_data={"filename": upload_filename, "mime_type": upload_mime_type, "payload": upload_payload} if upload_parts and valid_upload else None,
                 fallback_name=requested_filename or f"chat-{conversation_public_id}",
                 allowed_mime_types=allowed_mime_types,
@@ -22129,7 +22296,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (message_id, int(user["id"])),
             ).fetchone()
         attachment_url = row_value(message, "attachment_url") if message else ""
-        parts = local_upload_parts(attachment_url) if attachment_url else None
+        try:
+            parts = stored_upload_parts(attachment_url) if attachment_url else None
+        except Exception:
+            parts = None
         if not parts:
             self.not_found()
             return

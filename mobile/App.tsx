@@ -268,6 +268,7 @@ function FairFaresApp() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
   const [listingOpen, setListingOpen] = useState(false);
+  const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
@@ -1031,7 +1032,7 @@ function FairFaresApp() {
             }
           : current
       );
-      Alert.alert("Listing posted", "Your housing lead is live for 30 days.");
+      setHousingListingSuccess(payload.post);
     } catch (error) {
       Alert.alert("Post failed", error instanceof Error ? error.message : "Unable to post this listing.");
     }
@@ -1958,6 +1959,51 @@ function FairFaresApp() {
           </View>
         </View>
       </Modal>
+      <Modal
+        visible={Boolean(housingListingSuccess)}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setHousingListingSuccess(null)}
+      >
+        <View style={styles.listingSuccessBackdrop}>
+          <View style={styles.listingSuccessCard} accessibilityRole="alert">
+            <View style={styles.listingSuccessIcon}><Text style={styles.listingSuccessCheck}>✓</Text></View>
+            <Text style={styles.listingSuccessEyebrow}>Successfully posted</Text>
+            <Text style={styles.listingSuccessTitle}>
+              {housingListingSuccess?.roommateIntent
+                ? "Your roommate request is live"
+                : housingListingSuccess?.mode === "HAVE_PLACE"
+                  ? "Your place is now listed"
+                  : "Your housing request is live"}
+            </Text>
+            <Text style={styles.listingSuccessLocation} numberOfLines={2}>
+              {housingListingSuccess?.area || housingListingSuccess?.location || city}
+            </Text>
+            <View style={styles.listingSuccessFacts}>
+              <Text style={styles.listingSuccessFact}>{housingListingSuccess?.categoryLabel || "Housing"}</Text>
+              {housingListingSuccess?.rent ? <Text style={styles.listingSuccessFact}>{housingListingSuccess.rent}</Text> : null}
+              <Text style={styles.listingSuccessFact}>{housingListingSuccess?.expiryLabel || "30 days live"}</Text>
+            </View>
+            <Text style={styles.listingSuccessCopy}>
+              Your post is visible to matching FairFares members. Replies will arrive in Chitthi, and you can edit the current post from Activity.
+            </Text>
+            <TouchableOpacity
+              style={styles.listingSuccessPrimary}
+              onPress={() => {
+                setHousingListingSuccess(null);
+                setActiveTab("activity");
+              }}
+            >
+              <Text style={styles.listingSuccessPrimaryText}>View my listing</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.listingSuccessSecondary} onPress={() => setHousingListingSuccess(null)}>
+              <Text style={styles.listingSuccessSecondaryText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView style={[styles.modalCard, styles.listingModalCard]} contentContainerStyle={styles.listingForm} keyboardShouldPersistTaps="handled">
@@ -2267,6 +2313,20 @@ const styles = StyleSheet.create({
   },
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   appContent: { flex: 1 },
+  listingSuccessBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
+  listingSuccessCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", backgroundColor: "#171a18", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", gap: 12 },
+  listingSuccessIcon: { width: 70, height: 70, borderRadius: 35, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,197,94,0.18)", borderWidth: 2, borderColor: theme.colors.green },
+  listingSuccessCheck: { color: theme.colors.green, fontSize: 38, lineHeight: 43, fontWeight: "900" },
+  listingSuccessEyebrow: { color: theme.colors.green, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.4, marginTop: 2 },
+  listingSuccessTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
+  listingSuccessLocation: { color: theme.colors.soft, fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center" },
+  listingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
+  listingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
+  listingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
+  listingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
+  listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  listingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
+  listingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
   launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.bg, overflow: "hidden" },
   launchBackdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.82 },
   launchBackdropShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(1,8,23,0.18)" },

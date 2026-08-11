@@ -64,6 +64,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         gender="open",
         rent_min=900,
         rent_max=0,
+        roommate_intent=0,
         description="Housing listing",
         status="ACTIVE",
         expires_at="2099-12-31 23:59:59",
@@ -74,11 +75,11 @@ class HousingLocationSearchTest(unittest.TestCase):
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description, city, city_area_zip,
                  area_or_apartment, lat, lng, rent_min, rent_max, gender_preference,
-                 contact_name, contact_phone, contact_email, visibility_status, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Central', 39.7392, -104.9903, ?, ?, ?,
+                 roommate_intent, contact_name, contact_phone, contact_email, visibility_status, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Central', 39.7392, -104.9903, ?, ?, ?, ?,
                         'Poster', '3035550100', 'poster@example.com', ?, ?)
                 """,
-                (public_id, self.user_id, mode, category, public_id, description, city, city, rent_min, rent_max, gender, status, expires_at),
+                (public_id, self.user_id, mode, category, public_id, description, city, city, rent_min, rent_max, gender, roommate_intent, status, expires_at),
             )
 
     def test_plain_miami_does_not_resolve_to_miamisburg(self):
@@ -200,6 +201,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.insert_filter_post("MALE-SINGLE", gender="male", rent_min=850)
         self.insert_filter_post("OVER-BUDGET", gender="open", rent_min=1500, rent_max=1800)
         self.insert_filter_post("TENANT-REQUEST", mode="NEED_PLACE", gender="open", rent_min=800)
+        self.insert_filter_post("ROOMMATE-REQUEST", mode="NEED_PLACE", gender="open", rent_min=800, roommate_intent=1)
         self.insert_filter_post("WRONG-CITY", city="Dayton, OH", description="Moving from Denver and looking locally")
         self.insert_filter_post("EXPIRED", expires_at="2020-01-01 00:00:00")
 
@@ -211,7 +213,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             budget="1000",
             limit=30,
         )
-        controlled_ids = {"OPEN-SINGLE", "FEMALE-SHARED", "MALE-SINGLE", "OVER-BUDGET", "TENANT-REQUEST", "WRONG-CITY", "EXPIRED"}
+        controlled_ids = {"OPEN-SINGLE", "FEMALE-SHARED", "MALE-SINGLE", "OVER-BUDGET", "TENANT-REQUEST", "ROOMMATE-REQUEST", "WRONG-CITY", "EXPIRED"}
         real_ids = {item["id"] for item in female_single_results} & controlled_ids
         self.assertEqual(real_ids, {"OPEN-SINGLE"})
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in female_single_results))
@@ -233,8 +235,13 @@ class HousingLocationSearchTest(unittest.TestCase):
 
         tenant_requests = app.mobile_housing_posts(city="Denver, CO", need="have_place", limit=30)
         request_real_ids = {item["id"] for item in tenant_requests} & controlled_ids
-        self.assertEqual(request_real_ids, {"TENANT-REQUEST"})
+        self.assertEqual(request_real_ids, {"TENANT-REQUEST", "ROOMMATE-REQUEST"})
         self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in tenant_requests))
+
+        roommate_requests = app.mobile_housing_posts(city="Denver, CO", need="need_roommates", limit=30)
+        roommate_real_ids = {item["id"] for item in roommate_requests} & controlled_ids
+        self.assertEqual(roommate_real_ids, {"ROOMMATE-REQUEST"})
+        self.assertTrue(all(item["mode"] == "NEED_PLACE" and item["roommateIntent"] for item in roommate_requests))
 
     def test_full_address_and_uploaded_photo_feed_website_map_and_cards(self):
         with app.db() as con:

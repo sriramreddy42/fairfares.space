@@ -38,3 +38,13 @@ services:
         sync: false
       - key: OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED
         value: "0"
+      - key: CLOUDFLARE_R2_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_R2_ACCESS_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_R2_BUCKET
+        value: fairfares-attachments
+      - key: CLOUDFLARE_R2_PREFIX
+        value: fairfares
