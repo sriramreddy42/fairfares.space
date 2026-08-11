@@ -3883,14 +3883,14 @@ const styles = StyleSheet.create({
     height: "100%"
   },
   rentalSectionHeader: {
-    alignItems: "center",
+    alignItems: "flex-end",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 6,
+    marginBottom: theme.spacing.sm,
     gap: 12
   },
-  rentalSectionEyebrow: { color: "#6ee7b7", fontSize: 10, lineHeight: 13, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase" },
-  rentalSectionTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 27, fontWeight: "800", marginTop: 2 },
+  rentalSectionEyebrow: { color: theme.colors.accent, fontSize: 11, lineHeight: 14, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
+  rentalSectionTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700" },
   rentalSectionAction: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.09)", borderColor: "rgba(255,255,255,0.16)", borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 6, minHeight: 42, paddingHorizontal: 13 },
   rentalSectionActionText: { color: theme.colors.text, fontSize: 12, fontWeight: "800" },
   rentalSectionArrow: { color: "#6ee7b7", fontSize: 20, lineHeight: 21, fontWeight: "500" },
