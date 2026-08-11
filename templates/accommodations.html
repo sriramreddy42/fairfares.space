@@ -19,7 +19,11 @@
   <header class="ff-site-header housing-topbar">
     <a class="ff-site-brand housing-brand" href="/" aria-label="FairFares home"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
     <nav class="ff-site-nav" aria-label="Main navigation">
-      <a class="active" href="/accommodations">Housing</a><a href="/carpool">Carpool</a><a href="/car-rentals">Car Rentals</a><a href="/explorer">Explore</a><a href="/deals">Deals</a>
+      <div class="ff-nav-group"><a class="active" href="/accommodations">Housing</a><div class="ff-nav-menu"><a href="/accommodations#housing-posts">Browse listings</a><a href="/accommodations#list">List a place</a><a href="/dashboard#housing">My housing</a></div></div>
+      <div class="ff-nav-group"><a href="/carpool">Carpool</a><div class="ff-nav-menu"><a href="/carpool#find">Find a ride</a><a href="/carpool#offer">Offer a ride</a><a href="/carpool#activity">My rides</a></div></div>
+      <div class="ff-nav-group"><a href="/car-rentals">Car Rentals</a><div class="ff-nav-menu"><a href="/car-rentals#searchForm">Search cars</a><a href="/manage-booking">Manage booking</a><a href="/deals">Rental deals</a></div></div>
+      <div class="ff-nav-group"><a href="/explorer">Explore</a><div class="ff-nav-menu"><a href="/explorer">Explore Denver</a><a href="/blog">Travel stories</a><a href="/wiki">Help center</a></div></div>
+      <div class="ff-nav-group"><a href="/deals">Deals</a><div class="ff-nav-menu"><a href="/deals">Current deals</a><a href="/dashboard#student">Student savings</a><a href="/car-rentals#results">Price match</a></div></div>
     </nav>
     <div class="ff-site-actions housing-top-actions"><button class="ff-account-action" type="button" data-profile-drawer-open aria-label="Open profile">Profile</button><button class="menu-button housing-menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button></div>
   </header>
@@ -986,6 +990,30 @@
         focusMapPost(postId, false);
         const post = lastRenderedMapPosts.find((item) => item.id === postId);
         if (selectButton) openMapDetailModal(post);
+      });
+      const openHousingCardDetail = (postId) => {
+        const payloadNode = document.getElementById("housingMapPayload");
+        if (!payloadNode || !postId) return;
+        try {
+          const payload = JSON.parse(payloadNode.textContent || "{}");
+          const post = (payload.posts || []).find((item) => String(item.id || "") === String(postId));
+          if (post) openMapDetailModal(post);
+        } catch (_) {}
+      };
+      document.querySelector(".housing-post-grid")?.addEventListener("click", (event) => {
+        if (event.target.closest("[data-chat-open]")) return;
+        const card = event.target.closest("[data-housing-detail-id]");
+        const button = event.target.closest("[data-housing-card-details]");
+        const postId = button?.dataset.housingCardDetails || card?.dataset.housingDetailId || "";
+        if (postId) openHousingCardDetail(postId);
+      });
+      document.querySelector(".housing-post-grid")?.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (event.target.closest("button")) return;
+        const card = event.target.closest("[data-housing-detail-id]");
+        if (!card) return;
+        event.preventDefault();
+        openHousingCardDetail(card.dataset.housingDetailId || "");
       });
       mapDetailModal?.addEventListener("click", (event) => {
         if (event.target === mapDetailModal || event.target.closest("[data-map-detail-close]")) {

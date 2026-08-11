@@ -13,7 +13,11 @@
   <header class="ff-site-header carpool-nav">
     <a class="ff-site-brand carpool-brand" href="/" aria-label="FairFares home"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares"></a>
     <nav class="ff-site-nav" aria-label="Main navigation">
-      <a href="/accommodations">Housing</a><a class="active" href="/carpool">Carpool</a><a href="/car-rentals">Car Rentals</a><a href="/explorer">Explore</a><a href="/deals">Deals</a>
+      <div class="ff-nav-group"><a href="/accommodations">Housing</a><div class="ff-nav-menu"><a href="/accommodations#housing-posts">Browse listings</a><a href="/accommodations#list">List a place</a><a href="/dashboard#housing">My housing</a></div></div>
+      <div class="ff-nav-group"><a class="active" href="/carpool">Carpool</a><div class="ff-nav-menu"><a href="/carpool#find">Find a ride</a><a href="/carpool#offer">Offer a ride</a><a href="/carpool#activity">My rides</a></div></div>
+      <div class="ff-nav-group"><a href="/car-rentals">Car Rentals</a><div class="ff-nav-menu"><a href="/car-rentals#searchForm">Search cars</a><a href="/manage-booking">Manage booking</a><a href="/deals">Rental deals</a></div></div>
+      <div class="ff-nav-group"><a href="/explorer">Explore</a><div class="ff-nav-menu"><a href="/explorer">Explore Denver</a><a href="/blog">Travel stories</a><a href="/wiki">Help center</a></div></div>
+      <div class="ff-nav-group"><a href="/deals">Deals</a><div class="ff-nav-menu"><a href="/deals">Current deals</a><a href="/dashboard#student">Student savings</a><a href="/car-rentals#results">Price match</a></div></div>
     </nav>
     <div class="ff-site-actions">$auth_link<button class="menu-button" type="button" aria-label="Menu"><span></span><span></span><span></span></button></div>
   </header>
@@ -25,7 +29,7 @@
         <h1>Going the same way?</h1>
         <p>Turn the trip you are already taking into a simpler, more affordable ride for everyone.</p>
         <div class="carpool-hero-actions">
-          <button type="button" data-carpool-open="CARPOOL_REQUEST">Find a ride</button>
+          <button type="button" data-carpool-find>Find a ride</button>
           <button type="button" data-carpool-open="CARPOOL_OFFER">Offer a ride</button>
         </div>
       </div>
@@ -38,7 +42,7 @@
       <article><span>03</span><div><h2>Coordinate privately</h2><p>Confirm details with your match instead of exposing exact addresses publicly.</p></div></article>
     </section>
 
-    <section class="carpool-finder" aria-labelledby="carpoolResultsTitle">
+    <section class="carpool-finder" id="find" aria-labelledby="carpoolResultsTitle">
       <form class="carpool-search" data-carpool-search>
         <label><span>City</span><input name="city" value="$search_city" placeholder="Denver, CO"></label>
         <div class="carpool-search-field carpool-origin-field">
@@ -52,18 +56,21 @@
           <input type="hidden" name="originLng">
         </div>
         <label><span>To</span><input name="destination" placeholder="Destination"></label>
+        <label><span>Date</span><input name="pickupDate" type="date"></label>
+        <label><span>Passengers</span><input name="passengers" type="number" min="1" max="8" value="1"></label>
         <button type="submit">Find carpools</button>
       </form>
+      <p class="carpool-search-note">Exact pickup addresses stay private until riders connect.</p>
       <div class="carpool-results-head"><div><p class="carpool-eyebrow">Available routes</p><h2 id="carpoolResultsTitle">Carpools near you</h2></div><span data-carpool-count></span></div>
       <div class="carpool-results" data-carpool-results><p>Finding carpools…</p></div>
     </section>
 
-    <section class="carpool-activity" aria-labelledby="carpoolActivityTitle">
+    <section class="carpool-activity" id="activity" aria-labelledby="carpoolActivityTitle">
       <div class="carpool-results-head"><div><p class="carpool-eyebrow">Requests and listings</p><h2 id="carpoolActivityTitle">My ride activity</h2></div><button type="button" data-activity-refresh>Refresh</button></div>
       <div class="carpool-activity-list" data-carpool-activity><p>Loading your ride activity…</p></div>
     </section>
 
-    <section class="carpool-how">
+    <section class="carpool-how" id="offer">
       <article><span>1</span><h2>Search your route</h2><p>Enter where you are leaving from and where you need to go.</p></article>
       <article><span>2</span><h2>Post or match</h2><p>Request a ride or offer available seats to the community.</p></article>
       <article><span>3</span><h2>Connect in Chitthi</h2><p>Coordinate trip details through FairFares messaging.</p></article>
@@ -102,6 +109,16 @@
     const currentUserId = Number(document.body.dataset.userId || 0);
     const date = post.querySelector('[name="pickupDate"]');
     date.min = new Date().toISOString().slice(0, 10);
+    const searchDate = search.querySelector('[name="pickupDate"]');
+    if (searchDate) searchDate.min = date.min;
+
+    function compactPlace(value, fallback) {
+      const text = String(value || '').trim();
+      if (!text) return fallback;
+      const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
+      if (/^\d/.test(text) && parts.length >= 3) return parts.slice(1, 3).join(', ');
+      return parts.slice(0, 2).join(', ') || text;
+    }
 
     function render(rides) {
       results.replaceChildren();
@@ -117,9 +134,9 @@
         const owner = document.createElement('strong'); owner.textContent = ride.ownerName || 'FairFares member';
         const badge = document.createElement('span'); badge.textContent = ride.type === 'CARPOOL_OFFER' ? 'Offering seats' : 'Needs a ride';
         head.append(owner, badge);
-        const title = document.createElement('h3'); title.textContent = ride.title || 'Carpool route';
+        const title = document.createElement('h3'); title.textContent = `${compactPlace(ride.origin, 'Pickup area')} → ${compactPlace(ride.destination, 'Destination')}`;
         const route = document.createElement('div'); route.className = 'carpool-card-route';
-        [['A', ride.origin || 'Pickup open'], ['B', ride.destination || 'Destination open']].forEach(([marker, label]) => {
+        [['A', compactPlace(ride.origin, 'Pickup area')], ['B', compactPlace(ride.destination, 'Destination')]].forEach(([marker, label]) => {
           const row = document.createElement('p'); const dot = document.createElement('b'); dot.textContent = marker;
           row.append(dot, document.createTextNode(label)); route.append(row);
         });
@@ -143,7 +160,13 @@
         const response = await fetch(`/api/mobile/rides?${query}`, {headers:{Accept:'application/json'}});
         const payload = await response.json();
         if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load carpools.');
-        render(payload.rides || []);
+        const requestedDate = String(search.querySelector('[name="pickupDate"]')?.value || '');
+        const requestedSeats = Math.max(1, Number(search.querySelector('[name="passengers"]')?.value || 1));
+        const rides = (payload.rides || []).filter((ride) => {
+          if (requestedDate && String(ride.pickupDate || '') !== requestedDate) return false;
+          return Number(ride.seats || 1) >= requestedSeats;
+        });
+        render(rides);
       } catch (error) { results.textContent = error.message || 'Could not load carpools.'; }
     }
 
@@ -244,6 +267,7 @@
       } catch (error) { activity.textContent = error.message || 'Could not load ride activity.'; }
     }
     document.querySelectorAll('[data-carpool-open]').forEach((button) => button.addEventListener('click', () => openPost(button.dataset.carpoolOpen)));
+    document.querySelector('[data-carpool-find]')?.addEventListener('click', () => document.querySelector('#find')?.scrollIntoView({behavior:'smooth',block:'start'}));
     document.querySelector('[data-carpool-close]').addEventListener('click', () => { post.hidden = true; document.body.classList.remove('carpool-modal-open'); });
     locationButton.addEventListener('click', useCurrentLocation);
     originInput.addEventListener('input', () => {
@@ -263,6 +287,7 @@
       } catch (error) { status.textContent = error.message || 'Could not post this carpool.'; }
     });
     document.querySelector('[data-activity-refresh]').addEventListener('click', loadActivity);
+    if (location.hash === '#offer') openPost('CARPOOL_OFFER');
     load(); loadActivity();
   })();
   </script>

@@ -149,7 +149,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260810-comprehensive-polish"
+ASSET_VERSION = "20260811-navigation-detail-motion"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -15497,7 +15497,7 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
         )
         cards.append(
             f"""
-            <article class="housing-post-card">
+            <article class="housing-post-card" data-housing-detail-id="{escape(public_id)}" tabindex="0" aria-label="View details for {escape(row_value(post, 'title'))}">
               {media_html}
               <div class="housing-post-top">
                 <span class="housing-mode-badge">{escape(mode_label)}</span>
@@ -15512,7 +15512,10 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
                 <div><dt>Fit</dt><dd>{escape(fit)}</dd></div>
               </dl>
               <div class="housing-chips">{chips_html}</div>
-              <button class="housing-card-action" type="button" data-chat-open data-post-id="{escape(public_id)}" data-chat-subject="{escape(row_value(post, "title"))}">Message</button>
+              <div class="housing-card-actions">
+                <button class="housing-card-details" type="button" data-housing-card-details="{escape(public_id)}">View details</button>
+                <button class="housing-card-action" type="button" data-chat-open data-post-id="{escape(public_id)}" data-chat-subject="{escape(row_value(post, "title"))}">Message</button>
+              </div>
             </article>
             """
         )

@@ -26,9 +26,10 @@
 .ff-value-grid h2 { color: var(--ff-brand); font-size: 1.05rem; letter-spacing: -.01em; margin: 0 0 7px; }
 .ff-value-grid p { color: var(--ff-muted); font-size: .88rem; line-height: 1.5; margin: 0; }
 .fairfares-home .booking-hero { background: var(--ff-bg); min-height: 610px; padding: 22px 30px 0; }
-.fairfares-home .search-panel { align-self: center; border: 1px solid var(--ff-border); border-radius: 22px 22px 0 0; box-shadow: var(--ff-shadow); padding: clamp(28px, 4vw, 48px); }
+.fairfares-home .search-panel { align-self: stretch; border: 1px solid var(--ff-border); border-radius: 24px; box-shadow: var(--ff-shadow); padding: clamp(28px, 4vw, 48px); }
 .fairfares-home .search-panel h1 { font-size: clamp(2.25rem, 4vw, 4rem); letter-spacing: -.055em; line-height: .98; margin: 0 0 20px; max-width: 560px; text-transform: none; }
-.fairfares-home .hero-poster { border-radius: 22px 22px 0 0; box-shadow: var(--ff-shadow); min-height: 588px; overflow: hidden; }
+.fairfares-home .ff-hero-lede { margin: 0 0 30px; max-width: 520px; }
+.fairfares-home .hero-poster { border-radius: 24px; box-shadow: var(--ff-shadow); min-height: 588px; overflow: hidden; }
 .housing-value-grid { padding-left: 0; padding-right: 0; }
 .carpool-value-grid { padding-left: 0; padding-right: 0; }
 
@@ -67,7 +68,11 @@
 .housing-post-card dt { color: var(--ff-muted); font-size: .66rem; letter-spacing: .06em; }
 .housing-post-card dd { color: var(--ff-text); font-size: .86rem; line-height: 1.3; }
 .housing-chips span { background: #f0f3f7; font-size: .72rem; padding: 6px 9px; }
-.housing-card-action { background: var(--ff-brand); font-size: .9rem; min-height: 48px; transition: background 160ms ease; }
+.housing-card-actions { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; margin: 10px 0 0 !important; }
+.housing-card-actions button { border: 0; font: inherit; font-size: .86rem; font-weight: 850; min-height: 48px; }
+.housing-card-details { background: #eef2f7; color: var(--ff-brand); }
+.housing-card-details:hover { background: #dfe8f3; }
+.housing-card-action { background: var(--ff-brand); font-size: .9rem; margin: 0 !important; min-height: 48px; transition: background 160ms ease; }
 .housing-card-action:hover { background: var(--ff-action); }
 
 .fairfares-home .car-list { gap: 16px; }
@@ -99,6 +104,26 @@
 .fairfares-chat-form { backdrop-filter: blur(18px); background: rgba(255,255,255,.7); padding: 16px 20px; }
 .fairfares-chat-form input { background: rgba(255,255,255,.88); border-radius: 12px; padding: 0 16px; }
 .fairfares-chat-form button { border-radius: 12px; min-width: 92px; }
+
+.carpool-page .carpool-hero { box-shadow: 0 24px 60px rgba(7,29,73,.18); }
+.carpool-page .carpool-finder, .carpool-page .carpool-activity { backdrop-filter: blur(18px); background: rgba(255,255,255,.9); border-radius: 22px; box-shadow: var(--ff-shadow); }
+.carpool-page .carpool-search { background: #fff; border-radius: 16px; grid-template-columns: .7fr 1.45fr 1fr .75fr .55fr auto; padding: 7px; }
+.carpool-page .carpool-search > label, .carpool-page .carpool-search-field { min-height: 60px; }
+.carpool-page .carpool-search-note { color: var(--ff-muted); font-size: .78rem; margin: 9px 4px 0; }
+.carpool-page .carpool-results { gap: 18px; }
+.carpool-page .carpool-card { background: rgba(255,255,255,.92); border-radius: 18px; box-shadow: 0 10px 28px rgba(7,29,73,.08); min-height: 250px; padding: 22px; }
+.carpool-page .carpool-card h3 { font-size: 1.15rem; letter-spacing: -.02em; line-height: 1.3; }
+.carpool-page .carpool-card-action { align-self: end; border-radius: 10px; }
+.carpool-page .carpool-post { backdrop-filter: blur(24px); background: rgba(255,255,255,.96); border: 1px solid rgba(255,255,255,.75); border-radius: 24px; }
+
+@keyframes ff-rise-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ff-soft-in { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
+.booking-hero .search-panel, .housing-hero .housing-landing-copy, .carpool-hero-copy { animation: ff-rise-in 560ms cubic-bezier(.2,.8,.2,1) both; }
+.hero-poster, .housing-landing-preview, .carpool-route-art { animation: ff-soft-in 700ms 100ms cubic-bezier(.2,.8,.2,1) both; }
+.ff-value-grid article { animation: ff-rise-in 480ms cubic-bezier(.2,.8,.2,1) both; }
+.ff-value-grid article:nth-child(2) { animation-delay: 70ms; }
+.ff-value-grid article:nth-child(3) { animation-delay: 140ms; }
+.housing-map-detail-modal.is-open .housing-map-detail-panel, .fairfares-chat-drawer.is-open .fairfares-chat-panel { animation: ff-soft-in 220ms ease-out both; }
 @media (hover:hover) {
   .ff-value-grid article { transition: transform 180ms ease, box-shadow 180ms ease; }
   .ff-value-grid article:hover { box-shadow: var(--ff-shadow); position: relative; transform: translateY(-3px); z-index: 2; }
@@ -130,6 +155,12 @@
 .ff-site-actions a, .ff-site-actions button { font-weight: 750; text-decoration: none; white-space: nowrap; }
 .ff-account-action, .ff-site-actions .nav-button, .ff-site-actions .carpool-account { background: #fff; border: 1px solid var(--ff-border); border-radius: 10px; color: var(--ff-brand); min-height: 42px; padding: 0 14px; }
 .ff-site-actions a.nav-button, .ff-site-actions a.carpool-account { align-items: center; display: inline-flex; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.ff-nav-group { align-items: stretch; display: flex; position: relative; }
+.ff-nav-group > a::before { border-bottom: 1.5px solid currentColor; border-right: 1.5px solid currentColor; content: ""; height: 5px; margin-left: 8px; order: 2; transform: rotate(45deg) translateY(-2px); width: 5px; }
+.ff-nav-menu { backdrop-filter: blur(20px); background: rgba(255,255,255,.94); border: 1px solid rgba(7,29,73,.1); border-radius: 14px; box-shadow: 0 18px 45px rgba(7,29,73,.16); display: grid; gap: 3px; left: 50%; min-width: 190px; opacity: 0; padding: 8px; pointer-events: none; position: absolute; top: calc(100% - 5px); transform: translate(-50%,8px) scale(.98); transform-origin: top; transition: opacity 160ms ease,transform 160ms ease; }
+.ff-nav-menu a { border-radius: 9px; color: var(--ff-text); font-size: .84rem; min-height: 38px; padding: 0 11px; }
+.ff-nav-menu a:hover { background: #f0f4f9; color: var(--ff-action); }
+.ff-nav-group:hover .ff-nav-menu, .ff-nav-group:focus-within .ff-nav-menu { opacity: 1; pointer-events: auto; transform: translate(-50%,0) scale(1); }
 
 @media (min-width: 861px) {
   body.fairfares-home:not(.admin-screen):not(.login-screen):not(.auth-page) { padding-top: 0 !important; }
@@ -140,6 +171,13 @@
   .ff-site-header { grid-template-columns: 1fr auto; }
   .ff-site-nav { display: none; }
   .ff-site-actions .menu-button { display: grid; }
+  .carpool-page .carpool-search { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .carpool-page .carpool-search > button { min-height: 56px; }
+}
+@media (max-width: 1100px) and (min-width: 961px) {
+  .ff-site-header { gap: 14px; grid-template-columns: minmax(112px,.7fr) auto minmax(110px,.7fr); }
+  .ff-site-nav { gap: 14px; }
+  .ff-site-nav a { font-size: .84rem; }
 }
 @media (max-width: 600px) {
   .ff-site-header { gap: 10px; height: 64px; min-height: 64px; padding: 0 14px; }
@@ -160,9 +198,17 @@
   .fairfares-home .car-card, .fairfares-home .car-card + .car-card { grid-template-columns: 1fr; }
   .fairfares-chat-panel { border-radius: 0; height: 100%; margin: 0; max-width: 100vw; }
   .fairfares-chat-sidebar { padding: 14px; }
+  .carpool-page .carpool-search { grid-template-columns: 1fr; }
   .accommodations-page .housing-mobile-hero { background: linear-gradient(145deg,var(--ff-brand),#153f80); }
   .accommodations-page .housing-mobile-promo { background: rgba(255,255,255,.92); border-bottom: 1px solid var(--ff-border); }
   .accommodations-page .housing-mobile-search { backdrop-filter: blur(14px); background: rgba(255,255,255,.94); border: 1px solid rgba(255,255,255,.8); border-radius: 14px; box-shadow: 0 12px 28px rgba(7,29,73,.18); }
   .accommodations-page .housing-mobile-trends button { backdrop-filter: blur(10px); background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.6); }
   .accommodations-page .housing-mobile-cta, .accommodations-page .housing-mobile-welcome { border-radius: 18px; box-shadow: 0 10px 28px rgba(7,29,73,.07); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+  .booking-hero .search-panel, .housing-hero .housing-landing-copy, .carpool-hero-copy,
+  .hero-poster, .housing-landing-preview, .carpool-route-art, .ff-value-grid article,
+  .housing-map-detail-modal.is-open .housing-map-detail-panel, .fairfares-chat-drawer.is-open .fairfares-chat-panel { animation: none !important; }
+  .housing-post-card, .car-card-image, .ff-nav-menu { transition: none !important; }
 }
