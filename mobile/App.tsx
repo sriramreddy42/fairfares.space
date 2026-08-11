@@ -628,7 +628,10 @@ function FairFaresApp() {
   }, [contentOpacity, launchOpacity, launchScale, launchVisible, loading]);
 
   useEffect(() => {
-    setBottomTabsHidden(false);
+    // Messenger owns tab visibility while it is active. Resetting here when
+    // entering Chitthi can run after the thread's hide callback and expose the
+    // global navbar over the composer.
+    if (activeTab !== "messenger") setBottomTabsHidden(false);
   }, [activeTab]);
 
   useEffect(() => {

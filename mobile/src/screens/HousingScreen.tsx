@@ -520,6 +520,7 @@ export function HousingScreen({
   const [rideActivityBusy, setRideActivityBusy] = useState(false);
   const [rideBusy, setRideBusy] = useState(false);
   const [ridePosted, setRidePosted] = useState(false);
+  const [rideListingSuccess, setRideListingSuccess] = useState<RidePost | null>(null);
   const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
   const [ridePlannerStage, setRidePlannerStage] = useState<"plan" | "choices">("plan");
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
@@ -1285,10 +1286,10 @@ export function HousingScreen({
         setRidePosted(true);
         setRideRequestStatus("Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in Chitthi.");
         setRidePlannerOpen(false);
-        setRideOwnerOpen(true);
+        setRideOwnerOpen(false);
+        setRideListingSuccess(ride);
         setRideOwnerPrompt("Ride listed. Requests on the same corridor will appear in your Request tracker with route details, status, pickup PIN, and Chitthi.");
         void refreshRideActivity();
-        Alert.alert("Ride listed", "Rider requests that match this route will appear in your driver workspace.");
         return;
       }
       const searchRideType: RideType = "CARPOOL_OFFER";
@@ -2251,8 +2252,11 @@ export function HousingScreen({
       const ride = result.ride;
       if (!ride) throw new Error("Ride was not saved.");
       setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+      setRideActivityRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
       setRidePosted(true);
-      Alert.alert("Ride posted", "Your carpool ride is live.");
+      setRideListingSuccess(ride);
+      onBottomTabsHiddenChange?.(true);
+      void refreshRideActivity();
     } catch (error) {
       Alert.alert("Ride post failed", error instanceof Error ? error.message : "Unable to post this ride.");
     } finally {
@@ -2648,6 +2652,49 @@ export function HousingScreen({
     );
   }
 
+  function closeRideListingSuccess() {
+    setRideListingSuccess(null);
+    onBottomTabsHiddenChange?.(false);
+  }
+
+  function viewSuccessfulRideListing() {
+    setRideListingSuccess(null);
+    setRideOwnerOpen(true);
+    setRideOwnerPrompt("Your ride is live. Matching rider requests will appear below.");
+    onBottomTabsHiddenChange?.(true);
+    void refreshRideActivity();
+  }
+
+  function renderRideListingSuccess() {
+    const ride = rideListingSuccess;
+    return (
+      <Modal visible={Boolean(ride)} transparent animationType="fade" onRequestClose={closeRideListingSuccess}>
+        <View style={styles.rideListingSuccessBackdrop}>
+          <View style={styles.rideListingSuccessCard} accessibilityRole="alert">
+            <View style={styles.rideListingSuccessIcon}><Text style={styles.rideListingSuccessCheck}>✓</Text></View>
+            <Text style={styles.rideListingSuccessEyebrow}>Successfully listed</Text>
+            <Text style={styles.rideListingSuccessTitle}>Your carpool ride is live</Text>
+            <Text style={styles.rideListingSuccessRoute} numberOfLines={3}>
+              {ride ? `${ride.origin} → ${ride.destination}` : ""}
+            </Text>
+            <View style={styles.rideListingSuccessFacts}>
+              <Text style={styles.rideListingSuccessFact}>{ride?.pickupDate || "Date open"}</Text>
+              <Text style={styles.rideListingSuccessFact}>{ride?.pickupTime || "Time open"}</Text>
+              <Text style={styles.rideListingSuccessFact}>{ride?.seats || 1} seat{Number(ride?.seats || 1) === 1 ? "" : "s"}</Text>
+            </View>
+            <Text style={styles.rideListingSuccessCopy}>Matching rider requests will appear in your driver workspace. You can coordinate with accepted riders in Chitthi.</Text>
+            <TouchableOpacity style={styles.rideListingSuccessPrimary} onPress={viewSuccessfulRideListing}>
+              <Text style={styles.rideListingSuccessPrimaryText}>View my listing</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rideListingSuccessSecondary} onPress={closeRideListingSuccess}>
+              <Text style={styles.rideListingSuccessSecondaryText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
     const rideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = [
@@ -2866,6 +2913,7 @@ export function HousingScreen({
 
   return (
     <>
+    {renderRideListingSuccess()}
     {renderRideOwnerTracker()}
     {renderRentalOwnerModal()}
     <Modal visible={exportsInfoOpen} transparent animationType="fade" onRequestClose={() => setExportsInfoOpen(false)}>
@@ -4523,6 +4571,20 @@ const styles = StyleSheet.create({
   rentalOwnerNotes: { minHeight: 96, paddingTop: 12, textAlignVertical: "top" },
   rentalOwnerSubmit: { minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, alignItems: "center", justifyContent: "center" },
   rentalOwnerSubmitText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideListingSuccessBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
+  rideListingSuccessCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", backgroundColor: "#171a18", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", gap: 12 },
+  rideListingSuccessIcon: { width: 70, height: 70, borderRadius: 35, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,197,94,0.18)", borderWidth: 2, borderColor: theme.colors.green },
+  rideListingSuccessCheck: { color: theme.colors.green, fontSize: 38, lineHeight: 43, fontWeight: "900" },
+  rideListingSuccessEyebrow: { color: theme.colors.green, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.4, marginTop: 2 },
+  rideListingSuccessTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
+  rideListingSuccessRoute: { color: theme.colors.soft, fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center" },
+  rideListingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
+  rideListingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
+  rideListingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
+  rideListingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
+  rideListingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideListingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
+  rideListingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
   ridePlannerScreen: { flex: 1, backgroundColor: "#111" },
   ridePlannerContent: { paddingTop: 26, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
