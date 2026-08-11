@@ -826,7 +826,14 @@ export async function getChatMessages(conversationId: string, beforeMessageId = 
 export async function registerChatDeviceKey(deviceId: string, publicKey: string, signingPublicKey = "") {
   return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey, signingPublicKey })
-  }, { attempts: 3 });
+  }, {
+    // Registration is an idempotent upsert and is retried by the Chitthi
+    // initialization loop. Backend deploys and mobile handoffs can briefly
+    // return a gateway error, which must not create a diagnostic storm.
+    attempts: 4,
+    silentNetworkFailure: true,
+    silentServerFailure: true
+  });
 }
 
 export async function relayEncryptedChatMessage(bundle: Record<string, unknown>) {
