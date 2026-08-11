@@ -221,7 +221,8 @@ def main():
             lambda token=token: workload.call("ride-search", f"/api/mobile/rides?city=Denver%2C%20CO&type=CARPOOL_OFFER&origin=Denver%2C%20CO&destination=Colorado%20Springs%2C%20CO&pickup_date={pickup_date}", token=token)[1]
             for token in tokens
         ])
-        assert all(len(result.get("rides", [])) >= 25 for result in ride_searches)
+        ride_counts = [len(result.get("rides", [])) for result in ride_searches]
+        assert all(count >= 25 for count in ride_counts), f"ride search returned too few offers: {ride_counts}"
 
         rental_lists = workload.parallel("rental-search", [
             lambda token=token: workload.call("rental-search", "/api/mobile/rentals?location=Denver", token=token)[1]

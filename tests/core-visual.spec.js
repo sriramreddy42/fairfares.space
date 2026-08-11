@@ -118,7 +118,7 @@ async function expectFeedbackWidget(page) {
 test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/car-rentals", "home-desktop.png");
-  await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your Colorado drive starts here/i })).toBeVisible();
   await expect(page.locator(".results-promo", { hasText: "Explorer is your Colorado road trip guide." })).toBeVisible();
   await expect(page.locator(".results-ad-card", { hasText: "Affordable car rental across Colorado." })).toBeVisible();
   const filterBox = await page.locator(".results-side-rail .filters").boundingBox();
@@ -129,7 +129,7 @@ test("home page desktop and mobile visual smoke", async ({ page }) => {
 
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/car-rentals", "home-mobile.png");
-  await expect(page.getByRole("heading", { name: /Find cheap car rentals in Denver Colorado/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your Colorado drive starts here/i })).toBeVisible();
   await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel");
 });
@@ -180,14 +180,12 @@ test("uploaded Explorer avatar follows the user into the header", async ({ page 
   await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /data:image/);
 });
 
-test("deals and buy cars pages visual smoke", async ({ page }) => {
+test("deals page visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await smokePage(page, "/deals", "deals-desktop.png");
-  await smokePage(page, "/buy-cars", "buy-cars-desktop.png");
 
   await page.setViewportSize({ width: 390, height: 1100 });
   await smokePage(page, "/deals", "deals-mobile.png");
-  await smokePage(page, "/buy-cars", "buy-cars-mobile.png");
 });
 
 test("wiki search respects public and internal visibility", async ({ page }) => {

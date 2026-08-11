@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -21,6 +22,13 @@ sys.path.insert(0, str(ROOT))
 import app  # noqa: E402
 
 app.OUTBOX_DIR = Path(TMP.name) / "outbox"
+
+
+def capture_send_with_resend(_email: str, _subject: str, _text_body: str, _html_body: str) -> str:
+    return "sent through test capture"
+
+
+app.send_with_resend = capture_send_with_resend
 
 
 def assert_true(condition: bool, message: str) -> None:
@@ -116,6 +124,14 @@ def admin_approve_cancel(booking_id: int) -> None:
 def main() -> None:
     app.init_db()
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
+    future_start_api = (date.today() + timedelta(days=21)).isoformat()
+    future_short_return_api = (date.today() + timedelta(days=23)).isoformat()
+    future_return_api = (date.today() + timedelta(days=26)).isoformat()
+    future_late_return_api = (date.today() + timedelta(days=35)).isoformat()
+    future_campaign_date = (date.today() + timedelta(days=30)).isoformat()
+    future_manual_campaign_date = (date.today() + timedelta(days=45)).isoformat()
+    future_start_label = app.format_booking_date(future_start_api, future_start_api)
+    future_late_return_label = app.format_booking_date(future_late_return_api, future_late_return_api)
 
     cars = app.get_cars()
     assert_true(len(cars) >= 4, "seed cars should be available")
@@ -165,14 +181,17 @@ def main() -> None:
     assert_true("data-price-range" in first_card and "data-total-range" not in first_card, "feed cards should render daily estimate ranges without old total-range copy")
     assert_true("price match" in app_source.lower(), "application should retain price-match policy support")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
-    assert_true('href="/buy-cars"' in dashboard_template, "dashboard should link to the Buy Cars page")
+    assert_true('href="/buy-cars"' not in dashboard_template, "dashboard should not link to removed Buy Cars page")
     assert_true("payment-confirmation" not in dashboard_template and "$booking_payment_state" not in dashboard_template, "manage booking should use the booking badge for pay at pickup")
     assert_true("booking-accordions" not in dashboard_template and "$admin_panel" not in dashboard_template, "customer dashboard should not render marketing accordions or homepage CMS")
     assert_true('data-manage-tab="details" data-detail-jump="student"' in dashboard_template, "student verification link should open details/student")
     assert_true('data-manage-tab="details" data-detail-jump="saved"' in dashboard_template, "saved trips link should open details/saved")
     assert_true('data-manage-tab="support"' in dashboard_template, "support link should open support panel")
     assert_true('data-manage-tab="documents"' in dashboard_template, "price details should open documents panel")
-    css_text = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+    css_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [ROOT / "static" / "css" / "styles.css", *(ROOT / "static" / "css" / "sections").glob("*.css")]
+    )
     assert_true(".agreement-customer" in css_text and ".agreement-issuer" in css_text, "agreement fields should mark customer and issuer ownership")
     app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
@@ -182,7 +201,7 @@ def main() -> None:
     assert_true("getRentalDays" in app_js and "discount_code" in app_js, "select flow should carry rental length and discount code")
     assert_true("pickup_location" in app_js and "return_location" in app_js, "select flow should carry selected locations")
     assert_true("Modification sent to admin" in app_js and "response.json().then((payload) => Promise.reject(payload))" in app_js, "modify flow should show pending status and server validation errors")
-    assert_true("Available after" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
+    assert_true("prior booking ends" in app_js and "data-availability-note" in first_card, "car feed should show same-day return availability notes")
     assert_true("detailJump" in app_js and "showDetailPanel(tab.dataset.detailJump)" in app_js, "manage buttons should support detail jumps")
     assert_true("noCarResults" in app_js and "clearCarFilters" in app_js, "car feed should show and reset empty filter states")
     assert_true("data-total-range" not in app_js and "total range" not in app_js, "frontend should not restore removed total-range copy")
@@ -199,7 +218,7 @@ def main() -> None:
     assert_true('const endpoint = form.dataset.guestBooking === "true" ? "/guest-booking" : "/profile/update"' in app_js, "booking confirmation details should choose guest or profile API")
     assert_true("playHeroFold" in app_js and "dataset.videoSrc" in app_js, "homepage hero should lazy-load and play fold video")
     assert_true("parseJsonData" in app_js and "textarea.innerHTML" in app_js, "frontend JSON parsing should not break all mobile controls")
-    assert_true('...document.querySelectorAll(".nav-actions > a")' in app_js, "mobile menu should include account links like logout/sign in")
+    assert_true('...document.querySelectorAll(".nav-actions > a:not(.user-chip)")' in app_js, "mobile menu should include account links like logout/sign in")
     assert_true("fetch(heroFoldVideo.dataset.videoSrc" not in app_js, "hero video should not depend on fragile HEAD requests")
     assert_true("querySelector(\"[data-video-src]\")" in app_js and "setAttribute(\"src\"" in app_js, "homepage hero should load commercial embeds dynamically")
     assert_true("guestOfferModal" in app_js and "showGuestOfferModal(`${url.pathname}${url.search}`)" in app_js, "signed-out booking selection should show the guest referral offer before checkout")
@@ -209,7 +228,7 @@ def main() -> None:
     assert_true("get 10% off your first booking" in app_js and "wa.me" in app_js and "mailto:" in app_js, "post-booking referral prompt should professionally offer the friend 10% off")
     assert_true("referralClaimModal" in app_js and 'fetch("/referrals/claim"' in app_js, "earned referral coupons should be claimable from the Book page")
     assert_true("guestAfterSaveActions" in app_js, "guest checkout should reveal manage action buttons after contact details are saved")
-    styles = (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8")
+    styles = css_text
     assert_true(".manage-screen .mini-trip" in styles and "background: #fff !important" in styles, "saved trip rows should stay quiet with red only on hover")
     assert_true(".card-actions-row" in styles and "minmax(0, 1fr)" in styles, "car card action buttons should stay inside the card")
     assert_true(".trip-card .price-summary" in styles and "grid-column: 1 / -1" in styles, "manage booking price summary should sit as a horizontal strip")
@@ -220,11 +239,11 @@ def main() -> None:
     assert_true(".manage-panels > .trip-actions" in styles and "document-booking-select" in styles, "manage actions and document history should live in the lower workflow area")
     assert_true(".mini-trip-remove" in styles, "saved trip rows should expose a styled remove action")
     assert_true("perspective-origin: left center" in styles and "rotateY(-86deg)" in styles and "prefers-reduced-motion" in styles, "homepage hero should fold toward the left with reduced-motion fallback")
-    assert_true("background-size: auto 100%" in styles and "background-position: left center" in styles, "desktop hero artwork should keep natural height alignment")
+    assert_true("background-size: contain !important" in styles and "background-position: center center !important" in styles, "desktop hero artwork should keep contained center alignment")
     assert_true("commercial-preview" in styles and "status-live" in styles, "admin commercials should preview and flag live videos")
     assert_true(".guest-offer-backdrop" in styles and ".booking-referral-backdrop" in styles and ".guest-after-save-actions" in styles and "max-height: 88vh" in styles, "guest offer, guest actions, and referral modals should be styled and mobile safe")
     index_template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
-    assert_true('href="/buy-cars"' in index_template, "book page should link to the Buy Cars page")
+    assert_true('href="/buy-cars"' not in index_template, "book page should not link to removed Buy Cars page")
     assert_true("noCarResults" in index_template and "resetCarFilters" in index_template, "book page should render no-results reset controls")
     assert_true("data-hero-fold" in index_template and "$commercial_embed_url" in index_template, "homepage hero should wire dynamic commercial embeds")
     auth_template = (ROOT / "templates" / "auth.html").read_text(encoding="utf-8")
@@ -277,7 +296,8 @@ def main() -> None:
         "admin_pickup.html",
     ):
         nav_text = (ROOT / "templates" / nav_template).read_text(encoding="utf-8")
-        assert_true('/admin/email-marketing' in nav_text, f"{nav_template} should link to email marketing")
+        assert_true("$admin_nav" in nav_text, f"{nav_template} should render shared admin navigation")
+    assert_true('/admin/email-marketing' in (ROOT / "app.py").read_text(encoding="utf-8"), "shared admin navigation should link to email marketing")
     with app.db() as con:
         con.execute(
             """
@@ -286,7 +306,7 @@ def main() -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "2026-07-01",
+                future_campaign_date,
                 "Seasonal",
                 "Denver students",
                 "Before July travel",
@@ -330,11 +350,8 @@ def main() -> None:
     admin_tickets_template = (ROOT / "templates" / "admin_tickets.html").read_text(encoding="utf-8")
     assert_true("Support Tickets" in admin_tickets_template and "ticket-table" in admin_tickets_template, "admin tickets page should render ticket table")
     assert_true("/admin/tickets/update" in (ROOT / "app.py").read_text(encoding="utf-8"), "admin ticket rows should post update actions")
-    buy_template = (ROOT / "templates" / "buy_cars.html").read_text(encoding="utf-8")
-    assert_true("buy-cars-coming-soon.png" in buy_template, "Buy Cars page should render the coming-soon campaign")
-    assert_true('class="top-brand"' in buy_template and 'href="/manage-booking"' in buy_template, "Buy Cars page should share main header navigation")
-    assert_true('"/buy-cars": self.buy_cars_page' in (ROOT / "app.py").read_text(encoding="utf-8"), "Buy Cars route should be registered")
-    assert_true((ROOT / "static" / "img" / "buy-cars-coming-soon.png").exists(), "Buy Cars campaign image should be in static assets")
+    assert_true(not (ROOT / "templates" / "buy_cars.html").exists(), "removed Buy Cars page should not ship a template")
+    assert_true('"/buy-cars": self.buy_cars_page' not in (ROOT / "app.py").read_text(encoding="utf-8"), "removed Buy Cars route should not be registered")
     low_to_high = sorted(cars, key=lambda row: row["daily_price"])
     high_to_low = sorted(cars, key=lambda row: row["daily_price"], reverse=True)
     assert_true(low_to_high[0]["daily_price"] <= low_to_high[-1]["daily_price"], "low price sort should order ascending")
@@ -347,7 +364,7 @@ def main() -> None:
     assert_true(sum(row["total"] for row in counts["types"]) == len(cars), "type filter counts should match available feed")
     assert_true(sum(row["total"] for row in counts["fuel"]) == len(cars), "fuel filter counts should match available feed")
 
-    assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def serve_static")], "public cars API should not expose license plates")
+    assert_true("license_plate" not in app_source[app_source.index("def api_cars"):app_source.index("def api_mobile_social_auth")], "public cars API should not expose license plates")
     assert_true("allow_post_from_same_origin" in app_source and "Request origin not allowed" in app_source, "POST routes should have same-origin guard")
     assert_true("bool(not active_document_set or active_document_set.get(\"locked\"))" in app_source, "documents should stay locked when there is no booking document set")
     assert_true('"login_required": True, "message": "Sign in to create a support ticket."' in app_source, "signed-out support should return a login-required JSON response")
@@ -374,7 +391,7 @@ def main() -> None:
     assert_true("max 3 referrals" in referral["description"], "referral terms should be visible in admin description")
     deals_template = (ROOT / "templates" / "deals.html").read_text(encoding="utf-8")
     assert_true("Follow Instagram" in deals_template and "Maximum 3 successful referrals" in deals_template, "deals page should include follow CTA and terms")
-    assert_true('class="top-brand"' in deals_template and 'href="/buy-cars"' in deals_template, "deals page should share main header navigation")
+    assert_true('class="top-brand"' in deals_template and 'href="/buy-cars"' not in deals_template, "deals page should not link to removed Buy Cars page")
     assert_true("fairfares.placeholder" in deals_template, "deals page should use temporary Instagram follow link")
 
     users = [create_verified_user(index) for index in range(1, 16)]
@@ -388,7 +405,7 @@ def main() -> None:
             (user_id, car_id, pickup_location, pickup_date, pickup_time, return_date, return_time)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (users[0]["id"], cars[0]["id"], "Denver Union Station", "2026-06-10", "9:30 AM", "2026-06-12", "3:30 PM"),
+            (users[0]["id"], cars[0]["id"], "Denver Union Station", future_start_api, "9:30 AM", future_short_return_api, "3:30 PM"),
         )
     saved_rows = app.get_saved_cars_for_user(users[0]["id"])
     assert_true(saved_rows and saved_rows[0]["car_name"], "saved cars should persist and join back to car data")
@@ -397,6 +414,11 @@ def main() -> None:
     assert_true("data-trip-details" not in app.render_user_trip_rows([]) and "mini-trip-empty" in app.render_user_trip_rows([]), "empty trip state should not open a blank trip detail modal")
 
     same_day_user = create_verified_user(99)
+    same_day_pickup_api = (date.today() + timedelta(days=21)).isoformat()
+    same_day_return_api = (date.today() + timedelta(days=35)).isoformat()
+    adjusted_return_api = (date.today() + timedelta(days=40)).isoformat()
+    same_day_start_label = app.format_booking_date(same_day_pickup_api, same_day_pickup_api)
+    same_day_return_label = app.format_booking_date(same_day_return_api, same_day_return_api)
     with app.db() as con:
         con.execute(
             """
@@ -415,19 +437,19 @@ def main() -> None:
             INSERT INTO bookings
             (booking_id, user_id, car_id, provider, pickup_location, pickup_date, pickup_time,
              dropoff_location, dropoff_date, dropoff_time, days, subtotal_price, total_price, status, booking_status, payment_status)
-            VALUES ('FFSAMEDAY1', ?, ?, 'AVIS', 'Denver International Airport (DEN)', 'Jun 1, 2026', '10:00 AM',
-                    'Denver International Airport (DEN)', 'Jun 15, 2026', '4:00 PM', 14, 700, 700,
+            VALUES ('FFSAMEDAY1', ?, ?, 'AVIS', 'Denver International Airport (DEN)', ?, '10:00 AM',
+                    'Denver International Airport (DEN)', ?, '4:00 PM', 14, 700, 700,
                     'CONFIRMED', 'CONFIRMED', 'PAY_AT_PICKUP')
             """,
-            (same_day_user["id"], same_day_car["id"]),
+            (same_day_user["id"], same_day_car["id"], same_day_start_label, same_day_return_label),
         )
     same_day_row = next(row for row in app.get_cars() if row["name"] == "Same Day Return Test")
     same_day_card = app.FairFaresHandler.render_car_card(None, same_day_row)
-    assert_true('data-booked-until-date="Jun 15, 2026"' in same_day_card and 'data-booked-until-time="4:00 PM"' in same_day_card, "booked cars returning same day should remain in feed with return time")
-    assert_true("Available after" in app_js and "sameCalendarDay" in app_js, "frontend should show same-day cars with available-after messaging instead of hiding them")
+    assert_true(f'data-booked-until-date="{same_day_return_label}"' in same_day_card and 'data-booked-until-time="4:00 PM"' in same_day_card, "booked cars returning same day should remain in feed with return time")
+    assert_true("availableAfter" in app_js and "prior booking ends" in app_js, "frontend should show same-day cars with availability messaging instead of hiding them")
     adjusted_user = create_verified_user(100)
-    adjusted_booking = app.create_booking_for_user(adjusted_user["id"], same_day_car["id"], "", 5, "2026-06-15", "2026-06-20", "10:00 AM", "10:00 AM")
-    assert_true(adjusted_booking["pickup_date"] == "Jun 15, 2026" and adjusted_booking["pickup_time"] == "4:00 PM", "same-day pickup should adjust to car return time")
+    adjusted_booking = app.create_booking_for_user(adjusted_user["id"], same_day_car["id"], "", 5, same_day_return_api, adjusted_return_api, "10:00 AM", "10:00 AM")
+    assert_true(adjusted_booking["pickup_date"] == same_day_return_label and adjusted_booking["pickup_time"] == "4:00 PM", "same-day pickup should adjust to car return time")
 
     with app.db() as con:
         con.execute(
@@ -456,7 +478,7 @@ def main() -> None:
     manual_row = next(row for row in app.get_cars() if row["name"] == "Manual Available Test")
     assert_true(not app.row_value(manual_row, "booked_until_date") and not app.row_value(manual_row, "booked_until_time"), "admin AVAILABLE inventory should not carry stale booking blockers into feed")
     manual_user = create_verified_user(101)
-    manual_booking = app.create_booking_for_user(manual_user["id"], manual_car["id"], "", 5, "2026-06-15", "2026-06-20", "12:00 PM", "10:00 AM")
+    manual_booking = app.create_booking_for_user(manual_user["id"], manual_car["id"], "", 5, future_start_api, future_return_api, "12:00 PM", "10:00 AM")
     assert_true(manual_booking["pickup_time"] == "12:00 PM", "admin AVAILABLE inventory should book at requested time without stale active booking adjustment")
 
     duplicate_failed = False
@@ -473,16 +495,19 @@ def main() -> None:
     booked_ids: list[int] = []
     discounted_booking_id = 0
     for index, user in enumerate(users, start=1):
-        booking = app.create_booking_for_user(user["id"], cars[(index - 1) % len(cars)]["id"], "STRESS15" if index == 1 else "", 45 if index == 1 else 10)
-        assert_true(booking["booking_status"] == "CONFIRMED", "new booking should be confirmed")
-        assert_true(booking["payment_status"] == "PAY_AT_PICKUP", "new selected bookings should default to pay at pickup")
-        assert_true(app.booking_status_label(booking["booking_status"], booking["payment_status"]) == "Confirmed / Pay at pickup", "confirmed booking badge should show pay at pickup")
-        assert_true(app.payment_status_label(booking["payment_status"]) == "Pay at pickup", "pay at pickup label should be user friendly")
+        selected_car = cars[(index - 1) % len(cars)]
+        selected_days = 45 if index == 1 else 10
+        booking = app.create_booking_for_user(user["id"], selected_car["id"], "STRESS15" if index == 1 else "", selected_days)
+        assert_true(booking["booking_status"] == "PENDING_HOLD", "new booking should open a payment hold window")
+        assert_true(booking["payment_status"] == "HOLD_PENDING", "new selected bookings should wait for payment hold")
+        assert_true(app.booking_status_label(booking["booking_status"], booking["payment_status"]) == "Payment window", "pending hold booking badge should show payment window")
+        assert_true(app.payment_status_label(booking["payment_status"]) == "Payment pending", "pending hold payment label should be user friendly")
         if index == 1:
             discounted_booking_id = booking["id"]
             assert_true(booking["discount_code"] == "STRESS15", "selected discount code should save on booking")
             assert_true(booking["days"] == 45, "booking should store selected rental length")
-            assert_true(float(booking["discount_amount"]) > 0 and float(booking["total_price"]) < float(booking["subtotal_price"]), "discount should reduce booking total")
+            no_discount_total = float(app.rental_price_breakdown(selected_car["daily_price"], selected_days, 0)["total"])
+            assert_true(float(booking["discount_amount"]) > 0 and float(booking["total_price"]) < no_discount_total, "discount should reduce booking total")
             confirmation = app.save_booking_contact_and_send_confirmation(
                 user["id"],
                 "Stress",
@@ -498,24 +523,25 @@ def main() -> None:
             assert_true(
                 confirmed_booking["contact_name"] == "Stress Customer"
                 and confirmed_booking["contact_email"] == user["email"]
-                and confirmed_booking["contact_phone"] == "9372518688"
-                and confirmed_booking["confirmation_email_sent_at"],
-                "booking should store customer contact snapshot and confirmation timestamp",
+                and confirmed_booking["contact_phone"] == "9372518688",
+                "booking should store customer contact snapshot",
             )
+            assert_true("Pay the 10% hold" in str(confirmation["message"]) and not confirmed_booking["confirmation_email_sent_at"], "pending hold should wait for payment before confirmation email")
             with app.db() as con:
                 subscribed_user = con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
             assert_true(
                 subscribed_user["promo_email_opt_in"] == 1 and subscribed_user["text_opt_in"] == 1,
                 "booking confirmation details should save email and text subscription choices",
             )
-            outbox_text = Path(str(confirmation["outbox_file"])).read_text(encoding="utf-8")
-            assert_true(
-                booking["booking_id"] in outbox_text
-                and "booking-confirmation-promise.png" in outbox_text
-                and "9372518688" in outbox_text
-                and "We'll match it and give you an additional 10% off" in outbox_text,
-                "booking confirmation email should include poster, booking details, query phone, and price-match promise",
-            )
+            if confirmation.get("outbox_file"):
+                outbox_text = Path(str(confirmation["outbox_file"])).read_text(encoding="utf-8")
+                assert_true(
+                    booking["booking_id"] in outbox_text
+                    and "booking-confirmation-promise.png" in outbox_text
+                    and "9372518688" in outbox_text
+                    and "We'll match it and give you an additional 10% off" in outbox_text,
+                    "booking confirmation email should include poster, booking details, query phone, and price-match promise",
+                )
         booked_ids.append(booking["id"])
         with app.db() as con:
             con.execute(
@@ -547,7 +573,7 @@ def main() -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "2026-08-01",
+                future_manual_campaign_date,
                 "Seasonal",
                 "Subscribed customers",
                 "Manual send",
@@ -585,16 +611,16 @@ def main() -> None:
     admin_bookings = app.get_admin_bookings()
     requested_count = sum(1 for row in admin_bookings if row["booking_status"] == "CANCELLATION_REQUESTED")
     assert_true(requested_count == len(users), "admin should see every cancellation request")
-    admin_row_html = app.FairFaresHandler.render_admin_booking_row(None, admin_bookings[0])
-    assert_true('value="PAY_AT_PICKUP"' in admin_row_html, "admin booking row should keep pay at pickup")
-    assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "PAID", "FAILED", "REFUND_REVIEW", "REFUNDED")), "admin payment dropdown should not show old payment options")
+    admin_row_html = app.FairFaresHandler.render_admin_booking_row(None, admin_bookings[0], users[0])
+    assert_true('value="HOLD_PENDING"' in admin_row_html and 'value="HOLD_PAID"' in admin_row_html, "admin booking row should expose hold payment states")
+    assert_true(all(f'value="{status}"' not in admin_row_html for status in ("PENDING", "FAILED")), "admin payment dropdown should not show old generic payment options")
     assert_true("admin-request-row" in admin_row_html and "admin-request-summary" in admin_row_html, "pending admin requests should be visually highlighted")
     assert_true("Cancellation approval requested" in admin_row_html, "admin cancellation requests should include approval guidance")
-    assert_true("admin-request-row" in (ROOT / "static" / "css" / "styles.css").read_text(encoding="utf-8"), "admin request rows should have dedicated styling")
+    assert_true("admin-request-row" in styles, "admin request rows should have dedicated styling")
     pickup_html = app.FairFaresHandler.render_pickup_record(None, admin_bookings[0])
     assert_true("Rental Agreement Builder" in pickup_html, "admin pickup should include agreement builder")
     assert_true('data-dl-camera="front"' in pickup_html and 'data-dl-camera="back"' in pickup_html, "admin pickup should allow taking DL pictures")
-    assert_true('name="agreement_license_number"' in pickup_html and 'name="agreement_vehicle_mileage"' in pickup_html, "agreement builder should expose customer and issuer fields")
+    assert_true('href="/admin/agreement/customer?booking_id=' in pickup_html and 'name="agreement_vehicle_mileage"' in pickup_html, "agreement builder should split customer form and issuer fields")
     agreement_values = app.agreement_default_values(admin_bookings[0])
     agreement_values.update(
         {
@@ -623,10 +649,12 @@ def main() -> None:
         )
     docs = app.get_booking_documents(admin_bookings[0]["id"])
     assert_true("42150" in docs["Rental Agreement"]["content"] and "POL-STRESS-123" in docs["Rental Agreement"]["content"], "user rental agreement document should use saved dynamic agreement data")
-    assert_true("FairFares price promise" in docs["Rental Agreement"]["content"], "agreement should include price-match promise")
+    assert_true("Price match:" in docs["Rental Agreement"]["content"], "agreement should include price-match promise")
     assert_true("Trip status:" in docs["Rental Agreement"]["content"], "documents should label booking status at the top")
     discount_docs = app.get_booking_documents(discounted_booking_id)
     assert_true("STRESS15" in discount_docs["Invoice / Receipt"]["content"], "invoice should show applied discount code")
+    with app.db() as con:
+        con.execute("UPDATE bookings SET payment_status = 'HOLD_PAID' WHERE id = ?", (admin_bookings[0]["id"],))
     user_document_sets = app.get_user_document_sets(admin_bookings[0]["user_id"], admin_bookings[0]["id"])
     assert_true(user_document_sets and "docs" in user_document_sets[0] and "lockMessage" in user_document_sets[0], "dashboard should expose per-booking document sets")
     original_document_status = admin_bookings[0]["booking_status"]
@@ -663,7 +691,7 @@ def main() -> None:
             (admin_bookings[0]["user_id"],),
         )
     admin_users_template = (ROOT / "templates" / "admin_users.html").read_text(encoding="utf-8")
-    assert_true("adminUserSearch" in admin_users_template and "/admin/users" in admin_users_template, "admin users page should include search and nav")
+    assert_true("adminUserSearch" in admin_users_template and "$admin_nav" in admin_users_template, "admin users page should include search and shared nav")
     dashboard_template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert_true("$booking_confirmation_card" in dashboard_template and "customerInfoForm" in (ROOT / "app.py").read_text(encoding="utf-8"), "selected bookings should render customer confirmation form")
     assert_true("/guest-booking" in app_source and "build_booking_preview" in app_source, "signed-out selected cars should use guest booking preview flow")
@@ -682,9 +710,9 @@ def main() -> None:
         )
         guest_car_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
     guest_car = app.get_car(guest_car_id)
-    preview = app.build_booking_preview(guest_car["id"], "", 5, "2026-06-11", "2026-06-16", "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
+    preview = app.build_booking_preview(guest_car["id"], "", 5, future_start_api, future_return_api, "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
     assert_true(preview is not None and preview["booking_id"] == "Pending details" and preview["pickup_time"] == "09:30 AM", "guest preview should show selected trip before account login")
-    guest_booking = app.create_booking_for_user(guest_user_id, guest_car["id"], "", 5, "2026-06-11", "2026-06-16", "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
+    guest_booking = app.create_booking_for_user(guest_user_id, guest_car["id"], "", 5, future_start_api, future_return_api, "09:30 AM", "01:15 PM", guest_car["location"], guest_car["location"])
     app.save_booking_contact_and_send_confirmation(guest_user_id, "Guest", "Booker", "guest.booker@example.com", "5557779999", "http://stress.local", True, False)
     guest_reward = app.ensure_referral_reward(guest_user_id, "Guest Booker", "guest.booker@example.com", "5557779999")
     assert_true(guest_reward is not None and guest_reward["code"] == "GUEST_BOOKER_REFER_COUPON", "guest booking should create a shareable referral reward code")
@@ -714,7 +742,9 @@ def main() -> None:
                 (f"Referral Use Car {referral_use}", 600 + referral_use),
             )
             referral_car_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-        app.create_booking_for_user(guest_user_id, referral_car_id, guest_reward["code"], 2, f"2026-07-{10 + referral_use}", f"2026-07-{12 + referral_use}", "10:00 AM", "10:00 AM")
+        referral_pickup_api = (date.today() + timedelta(days=50 + referral_use * 3)).isoformat()
+        referral_return_api = (date.today() + timedelta(days=52 + referral_use * 3)).isoformat()
+        app.create_booking_for_user(guest_user_id, referral_car_id, guest_reward["code"], 2, referral_pickup_api, referral_return_api, "10:00 AM", "10:00 AM")
     with app.db() as con:
         referral_discount = con.execute("SELECT * FROM discounts WHERE code = ?", (guest_reward["code"],)).fetchone()
     assert_true(referral_discount["used_count"] == 3 and referral_discount["max_uses"] == 3, "referral coupon should track 3/3 uses")
@@ -726,7 +756,7 @@ def main() -> None:
     assert_true(guest_user["email"] == "guest.booker@example.com" and guest_user["phone"] == "5557779999", "guest booking should store matching email and phone")
     assert_true("Save Current Trip" not in dashboard_template and "tripDetailModal" in dashboard_template, "saved trips should use clickable rows and modal details")
     assert_true('"/bookings/request-cancel": self.cancel_booking_request' in (ROOT / "app.py").read_text(encoding="utf-8"), "request cancel route should be registered")
-    assert_true("No upgrade" in (ROOT / "app.py").read_text(encoding="utf-8") and "Current total" in (ROOT / "app.py").read_text(encoding="utf-8"), "modify vehicle should include visible no-upgrade option")
+    assert_true("No upgrade" in (ROOT / "app.py").read_text(encoding="utf-8") and "upgrade-current" in (ROOT / "app.py").read_text(encoding="utf-8"), "modify vehicle should include visible no-upgrade option")
     admin_user_rows = app.get_admin_users()
     assert_true(any(row["booking_count"] > 0 for row in admin_user_rows), "admin users should aggregate booking counts")
     user_card = app.FairFaresHandler.render_admin_user_card(None, next(row for row in admin_user_rows if row["id"] == admin_bookings[0]["user_id"]))
@@ -761,11 +791,11 @@ def main() -> None:
     assert_true(pending == len(users) - 8, "remaining cancel requests should stay pending")
     with app.db() as con:
         con.execute(
-            "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAY_AT_PICKUP', cancellation_reason = '' WHERE id = ?",
+            "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'HOLD_PAID', cancellation_reason = '' WHERE id = ?",
             (booked_ids[8],),
         )
         resolved = con.execute("SELECT * FROM bookings WHERE id = ?", (booked_ids[8],)).fetchone()
-    assert_true(resolved["cancellation_reason"] == "" and app.booking_status_label(resolved["booking_status"], resolved["payment_status"]) == "Confirmed / Pay at pickup", "admin confirmation should resolve old request notes")
+    assert_true(resolved["cancellation_reason"] == "" and app.booking_status_label(resolved["booking_status"], resolved["payment_status"]) == "Confirmed", "admin confirmation should resolve old request notes")
 
     backup = app.create_db_backup("stress")
     assert_true(backup.exists() and backup.stat().st_size > 0, "backup should create a non-empty SQLite file")

@@ -602,6 +602,8 @@ ACCOMMODATION_STATIC_POINTS = {
     "thornton, co": (39.8680, -104.9719),
     "centennial, co": (39.5807, -104.8772),
     "boulder, co": (40.0150, -105.2705),
+    "colorado springs, co": (38.8339, -104.8214),
+    "colorado springs": (38.8339, -104.8214),
     "dayton, oh": (39.7589, -84.1916),
     "dayton": (39.7589, -84.1916),
     "dayton metro area": (39.7589, -84.1916),
@@ -1522,6 +1524,19 @@ def cached_mobile_search(cache_key: tuple[object, ...], factory):
                     _MOBILE_SEARCH_CACHE.pop(key, None)
                     _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
         return value, "MISS"
+
+
+def invalidate_mobile_search_cache(prefix: str = "") -> None:
+    """Drop short-lived mobile search cache entries after marketplace writes."""
+    with _MOBILE_SEARCH_CACHE_LOCK:
+        if not prefix:
+            _MOBILE_SEARCH_CACHE.clear()
+            _MOBILE_SEARCH_KEY_LOCKS.clear()
+            return
+        keys = [key for key in _MOBILE_SEARCH_CACHE if key and key[0] == prefix]
+        for key in keys:
+            _MOBILE_SEARCH_CACHE.pop(key, None)
+            _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
 
 
 class FairFaresConnection(sqlite3.Connection):
@@ -14605,6 +14620,7 @@ def mobile_ride_posts(
     ride_type: str = "",
     origin: str = "",
     destination: str = "",
+    pickup_date: str = "",
     limit: int = 30,
     origin_lat: float = 0,
     origin_lng: float = 0,
@@ -14614,6 +14630,7 @@ def mobile_ride_posts(
 ) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
+    pickup_date = clean_text_value(pickup_date, 30)
     if origin_lat and origin_lng:
         origin_point = accommodation_location_point(origin or city, city, allow_refresh=False)
         if not origin_point or not float(origin_point.get("lat") or 0) or not float(origin_point.get("lng") or 0):
@@ -14659,6 +14676,9 @@ def mobile_ride_posts(
     if ride_type:
         clauses.append("ride_posts.ride_type = ?")
         values.append(ride_type)
+    if pickup_date:
+        clauses.append("(ride_posts.pickup_date = ? OR ride_posts.start_date = ?)")
+        values.extend([pickup_date, pickup_date])
     # A rider may join and leave anywhere along a longer route. Restricting a
     # two-ended search to the offer's city label would discard valid midway
     # matches before route deviation can be calculated.
@@ -18491,7 +18511,9 @@ def build_rental_agreement_text(row: sqlite3.Row, values: dict[str, str]) -> str
     price_match_discount = float(row_value(row, "price_match_discount_amount") or 0)
     price_match_original = float(row_value(row, "price_match_original_total") or row_value(row, "subtotal_price") or row_value(row, "total_price") or 0)
     late_fee = float(row_value(row, "late_fee_amount") or 0)
-    pickup_odometer = row_value(row, "pickup_odometer") or values.get("vehicle_mileage", "")
+    pickup_odometer = row_value(row, "pickup_odometer")
+    if pickup_odometer in {"", "0"}:
+        pickup_odometer = values.get("vehicle_mileage", "")
     return_odometer = row_value(row, "return_odometer")
     pickup_fuel = row_value(row, "pickup_fuel_level") or "Staff to record at pickup."
     return_fuel = row_value(row, "return_fuel_level") or "Staff to record at return."
@@ -19091,7 +19113,6 @@ PUBLIC_SCHEMA_TEMPLATES = {
     "blog_index.html",
     "blog_post.html",
     "deals.html",
-    "buy_cars.html",
     "explorer.html",
     "wiki.html",
 }
@@ -19901,7 +19922,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/robots.txt": self.robots_txt,
             "/llms.txt": self.llms_txt,
             "/sitemap.xml": self.sitemap_xml,
-            "/buy-cars": self.buy_cars_page,
             "/deals": self.deals_page,
             "/accommodations": self.accommodations_page,
             "/carpool": self.carpool_page,
@@ -23155,14 +23175,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             generated_code=escape(code),
             referral_message=escape(message),
             generated_class="" if code else "is-hidden",
-        )
-        self.send_html(body)
-
-    def buy_cars_page(self) -> None:
-        user = self.current_user()
-        body = render_template(
-            "buy_cars.html",
-            auth_link='<a class="nav-button" href="/dashboard">Dashboard</a>' if user else '<a href="/login">Sign in / Join</a>',
         )
         self.send_html(body)
 
@@ -30752,6 +30764,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         origin_lng = float_from_value(params.get("originLng", params.get("origin_lng", ["0"]))[0])
         destination_lat = float_from_value(params.get("destinationLat", params.get("destination_lat", ["0"]))[0])
         destination_lng = float_from_value(params.get("destinationLng", params.get("destination_lng", ["0"]))[0])
+        pickup_date = clean_text_value((params.get("pickup_date", params.get("pickupDate", [""]))[0] or ""), 30)
         raw_ride_type = params.get("type", params.get("rideType", [""]))[0] if params.get("type") or params.get("rideType") else ""
         ride_type = normalize_ride_type(raw_ride_type) if raw_ride_type else ""
         try:
@@ -30760,12 +30773,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             limit, offset = 30, 0
         rides, cache_status = cached_mobile_search(
-            ("rides", city, ride_type, origin, destination, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset),
+            ("rides", city, ride_type, origin, destination, pickup_date, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset),
             lambda: mobile_ride_posts(
                 city=city,
                 ride_type=ride_type,
                 origin=origin,
                 destination=destination,
+                pickup_date=pickup_date,
                 limit=limit,
                 origin_lat=origin_lat,
                 origin_lng=origin_lng,
@@ -31912,6 +31926,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     con.execute("DELETE FROM ride_instances WHERE ride_post_id = ?", (int(row_value(existing, "id") or 0),))
                     create_ride_instances(con, int(row_value(existing, "id") or 0), start_date, end_date, days_of_week, pickup_time)
                 row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (int(row_value(existing, "id") or 0),)).fetchone()
+            invalidate_mobile_search_cache("rides")
             self.send_json({"ok": True, "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None})
             return
         with db() as con:
@@ -31962,6 +31977,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
             dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+        invalidate_mobile_search_cache("rides")
         notified_driver_user_ids = list(dispatch.pop("driverUserIds", []))
         driver_detours = dict(dispatch.pop("driverDetours", {}))
         if notified_driver_user_ids:
@@ -32176,6 +32192,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (post_id,),
             ).fetchone()
+        invalidate_mobile_search_cache("housing")
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 201)
 
     def serve_upload(self, path: str) -> None:
