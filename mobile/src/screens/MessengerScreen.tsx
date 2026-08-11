@@ -5,6 +5,7 @@ import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
+import { BlurView } from "expo-blur";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Alert, Animated, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -269,16 +270,18 @@ function websiteCardDetails(value: string) {
 
 function SwipeToReply({ children, onReply }: { children: React.ReactNode; onReply: () => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
+  const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 58], outputRange: [0, 0.55, 1], extrapolate: "clamp" });
+  const hintScale = translateX.interpolate({ inputRange: [0, 58], outputRange: [0.72, 1], extrapolate: "clamp" });
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.18,
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.min(82, Math.max(0, gesture.dx * 0.62))),
+    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.12,
+    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.min(76, Math.max(0, gesture.dx * 0.78))),
     onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx >= 58) onReply();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 5 }).start();
+      if (gesture.dx >= 52 || gesture.vx > 0.62) onReply();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, speed: 30, bounciness: 4 }).start();
     },
     onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start()
   }), [onReply, translateX]);
-  return <View style={styles.swipeReplyWrap}><View style={styles.swipeReplyHint}><Text style={styles.swipeReplyHintText}>↩</Text></View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
+  return <View style={styles.swipeReplyWrap}><Animated.View pointerEvents="none" style={[styles.swipeReplyHint, { opacity: hintOpacity, transform: [{ scale: hintScale }] }]}><Text style={styles.swipeReplyHintText}>↩</Text></Animated.View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
 }
 
 function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
@@ -2697,13 +2700,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
-                {!isPhotoMessage && !selectedMessageIds.length && (!message.mine || message.canEdit) && !["pending", "relayed", "failed"].includes(message.status) ? (
-                  <View style={styles.messageMenuRow}>
-                    <TouchableOpacity style={styles.messageMenuButton} onPress={() => showMessageActions(message)} accessibilityLabel="Message options">
-                      <Text style={[styles.messageMenuText, message.mine ? styles.myMessageMenuText : styles.theirMessageMenuText]}>•••</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
                 {message.replyToMessageId ? <View style={[styles.quotedReply, message.mine ? styles.myQuotedReply : styles.theirQuotedReply]}><Text style={styles.quotedReplyName}>{replyTarget ? (replyTarget.mine ? "You" : replyTarget.senderName) : "Original message"}</Text><Text style={styles.quotedReplyText} numberOfLines={2}>{replyTarget ? (shareableMessageText({ ...replyTarget, senderName: "" }) || "Attachment") : "Message unavailable"}</Text></View> : null}
                 {message.contextTitle ? (
@@ -2723,7 +2719,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {message.attachmentUrl ? (
-                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}{!selectedMessageIds.length && !["pending", "relayed", "failed"].includes(message.status) ? <TouchableOpacity style={[styles.photoForwardAction, message.mine && styles.photoForwardActionMine]} onPress={() => showMessageActions(message)} accessibilityLabel="Photo actions and forward"><Text style={styles.photoForwardActionText}>↗</Text></TouchableOpacity> : null}</View> : message.type === "VIDEO" ? (
+                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <TouchableOpacity style={styles.videoMessageCard} onPress={() => void openAttachment(message)} accessibilityLabel="Play video">
                       <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
                       <Text style={styles.videoMessageTitle}>Video</Text>
@@ -2782,8 +2778,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(message.createdAt)}</Text>
                   {message.mine && messageReceipt(message.status) ? <Text style={[styles.receiptMark, message.status === "seen" && styles.receiptSeen, message.status === "failed" && styles.receiptFailed]}>{messageReceipt(message.status)}</Text> : null}
                 </View> : null}
+                {(message.reactions || []).length ? <View style={styles.messageReactions}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
               </TouchableOpacity>
-              {(message.reactions || []).length ? <View style={[styles.messageReactions, message.mine && styles.messageReactionsMine]}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text><Text style={styles.messageReactionCount}>{reaction.count}</Text></TouchableOpacity>)}</View> : null}
             </View></SwipeToReply>
             </React.Fragment>
             );
@@ -2792,27 +2788,41 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setActionMessage(null)}>
           <View style={styles.messageActionBackdrop}>
+            {Platform.OS === "web" ? <View style={styles.messageActionBlurFallback} /> : <BlurView intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
             <TouchableOpacity activeOpacity={1} style={styles.messageActionDismissLayer} onPress={() => setActionMessage(null)} accessibilityLabel="Close message actions" />
-            <View style={[styles.messageReactionTray, actionMessage?.mine && styles.messageReactionTrayMine]}>
-              {["👍", "❤️", "😂", "😮", "😢", "🙏", "👏"].map((emoji) => (
-                <TouchableOpacity key={emoji} style={styles.messageReactionChoice} onPress={() => actionMessage && void reactToMessage(actionMessage, emoji)} accessibilityRole="button" accessibilityLabel={`React ${emoji}`}>
-                  <Text style={styles.messageReactionChoiceText}>{emoji}</Text>
-                </TouchableOpacity>
-              ))}
-              <TouchableOpacity style={styles.messageReactionMore} onPress={() => Alert.alert("More reactions", "Use one of these quick reactions for now.")} accessibilityRole="button" accessibilityLabel="More reactions">
-                <Text style={styles.messageReactionMoreText}>＋</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={[styles.messageActionSheet, actionMessage?.mine && styles.messageActionSheetMine]}>
-              <TouchableOpacity style={styles.messageActionRow} onPress={() => actionMessage && beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); setTimeout(openForwardPicker, 0); }}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
-              {actionMessage?.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
-              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; void Share.share({ message: shareableMessageText(actionMessage) || "Chitthi message" }); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>⇧</Text><Text style={styles.messageActionLabel}>Share</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.messageActionRow} onPress={() => { if (!actionMessage) return; setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
-              {actionMessage?.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }}><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
-              {actionMessage?.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
-              {actionMessage && !actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
-            </View>
+            {actionMessage ? (
+              <View style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]}>
+                <View style={[styles.messageReactionTray, actionMessage.mine && styles.messageReactionTrayMine]}>
+                  {["👍", "❤️", "😂", "😮", "😢", "🙏", "👏"].map((emoji) => (
+                    <TouchableOpacity key={emoji} style={styles.messageReactionChoice} onPress={() => void reactToMessage(actionMessage, emoji)} accessibilityRole="button" accessibilityLabel={`React ${emoji}`}>
+                      <Text style={styles.messageReactionChoiceText}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity style={styles.messageReactionMore} onPress={() => Alert.alert("More reactions", "Use one of these quick reactions for now.")} accessibilityRole="button" accessibilityLabel="More reactions">
+                    <Text style={styles.messageReactionMoreText}>＋</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]}>
+                  <View style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
+                    {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} /> : null}
+                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} /> : null}
+                    {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
+                    <View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, actionMessage.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(actionMessage.createdAt)}</Text>{actionMessage.mine && messageReceipt(actionMessage.status) ? <Text style={[styles.receiptMark, actionMessage.status === "seen" && styles.receiptSeen, actionMessage.status === "failed" && styles.receiptFailed]}>{messageReceipt(actionMessage.status)}</Text> : null}</View>
+                    {(actionMessage.reactions || []).length ? <View style={styles.messagePreviewReactions}>{actionMessage.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(actionMessage, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
+                  </View>
+                </View>
+                <View style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]}>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); setTimeout(openForwardPicker, 0); }}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
+                  {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Share.share({ message: shareableMessageText(actionMessage) || "Chitthi message" }); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>⇧</Text><Text style={styles.messageActionLabel}>Share</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
+                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }}><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
+                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
+                  {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
+                </View>
+              </View>
+            ) : null}
           </View>
         </Modal>
 
@@ -3497,13 +3507,13 @@ const styles = StyleSheet.create({
   olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingVertical: 10 },
   olderMessagesButton: { alignSelf: "center", minHeight: 38, justifyContent: "center", paddingHorizontal: 16, marginBottom: 8, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.06)" },
   olderMessagesButtonText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
-  threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5 },
+  threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5, position: "relative", overflow: "visible" },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
   swipeReplyWrap: { position: "relative", overflow: "visible" },
   swipeReplyBody: { overflow: "visible" },
-  swipeReplyHint: { position: "absolute", left: 10, top: 0, bottom: 0, width: 42, alignItems: "center", justifyContent: "center", opacity: 0.92 },
-  swipeReplyHintText: { width: 32, height: 32, borderRadius: 16, textAlign: "center", lineHeight: 31, color: "#E7D3A7", fontSize: 21, fontWeight: "800", backgroundColor: "rgba(7,45,35,0.92)", overflow: "hidden" },
+  swipeReplyHint: { position: "absolute", left: 8, top: 0, bottom: 0, width: 38, alignItems: "center", justifyContent: "center" },
+  swipeReplyHintText: { width: 30, height: 30, borderRadius: 15, textAlign: "center", lineHeight: 29, color: "#E7D3A7", fontSize: 20, fontWeight: "800", backgroundColor: "rgba(7,45,35,0.94)", overflow: "hidden" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
@@ -3859,21 +3869,28 @@ const styles = StyleSheet.create({
   receiptMark: { color: "#66756a", fontSize: 12, lineHeight: 14, fontWeight: "700", letterSpacing: -2 },
   receiptSeen: { color: "#1689d8" },
   receiptFailed: { color: "#dc2626", letterSpacing: 0 },
-  messageReactions: { alignSelf: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: -5, marginLeft: 34, marginBottom: 5, zIndex: 4 },
-  messageReactionsMine: { alignSelf: "flex-end", marginLeft: 0, marginRight: 4 },
-  messageReactionChip: { minHeight: 25, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, borderRadius: 13, borderWidth: 1, borderColor: "rgba(214,169,95,0.34)", backgroundColor: "rgba(15,23,22,0.92)" },
+  messageReactions: { position: "absolute", right: -5, bottom: -9, flexDirection: "row", alignItems: "center", gap: 0, zIndex: 8, elevation: 8 },
+  messageReactionsMine: { right: -5 },
+  messageReactionChip: { minHeight: 21, minWidth: 25, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 1, paddingHorizontal: 4, borderRadius: 11, borderWidth: 1, borderColor: "rgba(214,169,95,0.34)", backgroundColor: "rgba(15,23,22,0.92)" },
   messageReactionChipMine: { backgroundColor: "rgba(9,48,36,0.96)", borderColor: "rgba(214,169,95,0.48)" },
-  messageReactionEmoji: { fontSize: 14 },
-  messageReactionCount: { color: "#F0E4CA", fontSize: 11, fontWeight: "800" },
-  messageActionBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "rgba(5,10,18,0.42)" },
+  messageReactionEmoji: { fontSize: 13 },
+  messageReactionCount: { color: "#F0E4CA", fontSize: 9, fontWeight: "800" },
+  messageActionBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "transparent" },
+  messageActionBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(3,9,14,0.58)" },
   messageActionDismissLayer: { ...StyleSheet.absoluteFillObject },
+  messageActionStack: { width: "100%", maxWidth: 390, alignSelf: "center", zIndex: 3, elevation: 30 },
+  messageActionStackMine: { alignItems: "flex-end" },
   messageReactionTray: { alignSelf: "flex-start", maxWidth: "96%", minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 29, backgroundColor: "rgba(28,31,34,0.97)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.08)", shadowColor: "#000", shadowOpacity: 0.30, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 18, zIndex: 3 },
   messageReactionTrayMine: { alignSelf: "flex-end" },
   messageReactionChoice: { width: 38, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
   messageReactionChoiceText: { fontSize: 28 },
   messageReactionMore: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.13)" },
   messageReactionMoreText: { color: "#D8DDE5", fontSize: 28, lineHeight: 31, fontWeight: "300" },
-  messageActionSheet: { width: 286, maxWidth: "86%", alignSelf: "flex-start", marginTop: 10, borderRadius: 28, paddingVertical: 12, backgroundColor: "rgba(54,59,66,0.98)", shadowColor: "#000", shadowOpacity: 0.34, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 20, overflow: "hidden", zIndex: 3 },
+  messageActionPreviewRow: { width: "100%", alignItems: "flex-start", marginTop: 10, marginBottom: 8 },
+  messageActionPreviewRowMine: { alignItems: "flex-end" },
+  messageActionPreviewBubble: { transform: [{ scale: 1.015 }], shadowColor: "#000", shadowOpacity: 0.32, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 24 },
+  messagePreviewReactions: { position: "absolute", right: -5, bottom: -9, flexDirection: "row", gap: 0, zIndex: 9 },
+  messageActionSheet: { width: 286, maxWidth: "86%", alignSelf: "flex-start", marginTop: 0, borderRadius: 28, paddingVertical: 12, backgroundColor: "rgba(54,59,66,0.98)", shadowColor: "#000", shadowOpacity: 0.34, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 20, overflow: "hidden", zIndex: 3 },
   messageActionSheetMine: { alignSelf: "flex-end" },
   messageActionRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 18, paddingHorizontal: 24 },
   messageActionGlyph: { width: 28, color: "#F5F7FA", fontSize: 25, lineHeight: 30, textAlign: "center", fontWeight: "400" },
