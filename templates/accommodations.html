@@ -1113,9 +1113,7 @@
           });
           activeHousingMap = map;
           activeMapMarkers = new Map();
-          const bounds = new google.maps.LatLngBounds();
           const centerPosition = { lat: Number(center.lat), lng: Number(center.lng) };
-          bounds.extend(centerPosition);
           new google.maps.Marker({
             map,
             position: centerPosition,
@@ -1126,7 +1124,6 @@
             const position = { lat: Number(post.lat), lng: Number(post.lng) };
             const distance = milesBetween(centerPosition, position);
             post.distance = distance === null ? null : Math.round(distance * 10) / 10;
-            bounds.extend(position);
             const marker = new google.maps.Marker({
               map,
               position,
@@ -1157,7 +1154,6 @@
               info.open({ map, anchor: marker });
             });
           });
-          if (visiblePosts.length) map.fitBounds(bounds);
           renderMapResults(visiblePosts, "No mappable housing leads match this search yet.");
         });
       };

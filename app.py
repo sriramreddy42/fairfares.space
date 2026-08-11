@@ -149,7 +149,7 @@ POST_RETURN_FEE_RULES = (
     ("Service call fee", "FLAT", 150.00, "Customer-requested service call caused by renter issue", 40),
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
-ASSET_VERSION = "20260810-marketplace-enhancement"
+ASSET_VERSION = "20260810-comprehensive-polish"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -15493,7 +15493,7 @@ def render_accommodation_posts(posts: list[sqlite3.Row]) -> str:
         media_html = (
             f'<img class="housing-post-media" src="{escape(image_url)}" alt="{escape(row_value(post, "title") or "Housing listing")}" loading="lazy">'
             if image_url
-            else '<div class="housing-post-media housing-post-media-empty" role="img" aria-label="No image found"><span>No image found</span></div>'
+            else '<div class="housing-post-media housing-post-media-empty" role="img" aria-label="Photos coming soon"><span aria-hidden="true">⌂</span><strong>Photos coming soon</strong><small>Housing preview</small></div>'
         )
         cards.append(
             f"""
