@@ -16,8 +16,8 @@ type Props = {
   onLogout: () => void;
   onProfileUpdated: (user: BootstrapPayload["user"]) => void;
   onOpenHousing?: () => void;
-  onOpenRide?: (target?: "workspace" | "requests" | "listings") => void;
-  onOpenServices?: () => void;
+  onOpenRide?: (target?: "workspace" | "requests" | "listings", rideId?: string) => void;
+  onOpenServices?: (bookingId?: string) => void;
   onOpenMessenger?: () => void;
   onOpenStaffPickup?: () => void;
 };
@@ -25,7 +25,7 @@ type Props = {
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
 type AccountHistorySection = "housing" | "carpool" | "rentals";
 type CarpoolHistoryView = "listings" | "requests";
-type AccountHistoryItem = { id: string; title: string; meta: string; status: string; current: boolean; kind: string };
+type AccountHistoryItem = { id: string; sourceId: string; title: string; meta: string; status: string; current: boolean; kind: string; editable: boolean };
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
@@ -138,11 +138,13 @@ export function ProfileScreen({
   const accountHistoryItems = useMemo<AccountHistoryItem[]>(() => {
     if (historySection === "housing") return housingActivity.map((post) => ({
       id: post.id,
+      sourceId: post.id,
       title: post.title,
       meta: `${post.location} · ${post.modeLabel}`,
       status: post.expiryLabel,
       current: post.status === "ACTIVE" && post.expiryLabel !== "Expired",
-      kind: /need|looking|request/i.test(post.modeLabel) ? "Request" : "Listing"
+      kind: /need|looking|request/i.test(post.modeLabel) ? "Request" : "Listing",
+      editable: false
     }));
     if (historySection === "carpool") return rideActivity.filter((ride) => carpoolHistoryView === "listings"
       ? ride.activityRole === "MINE" && ride.role === "DRIVER"
@@ -152,22 +154,26 @@ export function ProfileScreen({
       const requestType = ride.activityRole === "DRIVER_NOTIFICATION" ? "Received request" : "Your request";
       return {
         id: `${ride.activityRole || "ride"}-${ride.id}`,
+        sourceId: ride.id,
         title: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
         meta: [carpoolHistoryView === "requests" ? requestType : "Seat listing", ride.pickupDate || ride.startDate, ride.pickupTime].filter(Boolean).join(" · ") || "Timing open",
         status,
         current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired,
-        kind: carpoolHistoryView === "listings" ? "Listing" : "Request"
+        kind: carpoolHistoryView === "listings" ? "Listing" : "Request",
+        editable: ride.activityRole === "MINE"
       };
     });
     if (historySection === "rentals") return rentalActivity.map((booking) => {
       const status = String(booking.statusLabel || booking.status || "Current").replaceAll("_", " ");
       return {
         id: String(booking.id),
+        sourceId: String(booking.id),
         title: booking.carName || "Rental car",
         meta: [booking.pickupDate, booking.pickupLocation].filter(Boolean).join(" · "),
         status,
         current: !PAST_RENTAL_STATUSES.has(String(booking.status || "").toUpperCase()),
-        kind: "Booking"
+        kind: "Booking",
+        editable: true
       };
     });
     return [];
@@ -431,7 +437,7 @@ export function ProfileScreen({
               {currentHistoryItems.length ? currentHistoryItems.map((item) => (
                 <View key={`current-${item.id}`} style={styles.historyRow}>
                   <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Current</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
-                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); }}><Text style={styles.historyEditText}>Edit</Text></TouchableOpacity></View>
+                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView, item.editable ? item.sourceId : undefined) : historySection === "rentals" ? onOpenServices?.(item.sourceId) : historyAction?.(); }}><Text style={styles.historyEditText}>{item.editable ? "Edit" : "Manage"}</Text></TouchableOpacity></View>
                 </View>
               )) : <Text style={styles.historyEmpty}>No current records.</Text>}
               <Text style={styles.historySectionTitle}>Expired / completed · {previousHistoryItems.length}</Text>

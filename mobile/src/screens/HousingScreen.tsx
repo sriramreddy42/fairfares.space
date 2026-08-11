@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, updateMobileRide } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -41,6 +41,7 @@ type Props = {
   focusWelcomeKey?: number;
   rideOwnerOpenToken?: number;
   rideOwnerOpenTarget?: "workspace" | "requests" | "listings";
+  rideOwnerEditId?: string;
   onRideOwnerClosed?: () => void;
 };
 
@@ -504,6 +505,7 @@ export function HousingScreen({
   focusWelcomeKey = 0,
   rideOwnerOpenToken = 0,
   rideOwnerOpenTarget = "workspace",
+  rideOwnerEditId = "",
   onRideOwnerClosed
 }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
@@ -548,6 +550,7 @@ export function HousingScreen({
   const [rideActivityBusy, setRideActivityBusy] = useState(false);
   const [rideBusy, setRideBusy] = useState(false);
   const [ridePosted, setRidePosted] = useState(false);
+  const [editingRideId, setEditingRideId] = useState("");
   const [rideListingSuccess, setRideListingSuccess] = useState<RidePost | null>(null);
   const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
   const [ridePlannerStage, setRidePlannerStage] = useState<"plan" | "choices">("plan");
@@ -829,8 +832,49 @@ export function HousingScreen({
   useEffect(() => {
     if (!rideOwnerOpenToken || rideOwnerOpenToken === lastRideOwnerOpenTokenRef.current) return;
     lastRideOwnerOpenTokenRef.current = rideOwnerOpenToken;
+    if (rideOwnerEditId) {
+      void getRideActivity().then((rows) => {
+        const ride = rows.find((item) => item.id === rideOwnerEditId && item.activityRole === "MINE" && !item.isExpired);
+        if (!ride) {
+          Alert.alert("Ride unavailable", "Only your current ride listings and requests can be edited.");
+          return;
+        }
+        setEditingRideId(ride.id);
+        setRideForm({
+          rideType: ride.type,
+          city: ride.city || data?.location.city || "Denver, CO",
+          origin: ride.origin,
+          originLat: ride.originLat ?? null,
+          originLng: ride.originLng ?? null,
+          destination: ride.destination,
+          destinationLat: ride.destinationLat ?? null,
+          destinationLng: ride.destinationLng ?? null,
+          pickupDate: ride.pickupDate || ride.startDate,
+          pickupTime: ride.pickupTime,
+          startDate: ride.startDate,
+          endDate: ride.endDate,
+          daysOfWeek: ride.daysOfWeek || [],
+          seats: String(ride.seats || 1),
+          luggage: ride.luggage || "",
+          accessibility: ride.accessibility || "",
+          maxDetourMinutes: String(ride.maxDetourMinutes || 0),
+          maxPickupDistanceMiles: String(ride.maxPickupDistanceMiles || 0),
+          departureFlexMinutes: String(ride.departureFlexMinutes || 0),
+          contributionPerSeat: String(ride.contributionPerSeat || 0),
+          approvalRequired: ride.approvalRequired,
+          preferences: ride.preferences || "",
+          notes: ride.notes || ""
+        });
+        setMode("ride");
+        setSelectedRideService("carpool");
+        setRidePlannerStage("plan");
+        setRidePlannerOpen(true);
+        onBottomTabsHiddenChange?.(true);
+      }).catch((error) => Alert.alert("Could not edit ride", error instanceof Error ? error.message : "Please try again."));
+      return;
+    }
     void openRideOwnerTracker();
-  }, [rideOwnerOpenTarget, rideOwnerOpenToken]);
+  }, [rideOwnerEditId, rideOwnerOpenTarget, rideOwnerOpenToken]);
 
   useEffect(() => {
     if (!rideOwnerOpen || rideOwnerOpenTarget === "workspace" || !rideOwnerTrackerY) return;
@@ -1305,17 +1349,19 @@ export function HousingScreen({
       if (listingRide && !destinationAlreadyPicked) {
         return;
       }
-      if (nextRideType === "CARPOOL_OFFER") {
-        const result = await createMobileRide(nextRideForm);
-        const ride = result.ride;
+      if (nextRideType === "CARPOOL_OFFER" || editingRideId) {
+        const result = editingRideId ? null : await createMobileRide(nextRideForm);
+        const ride = editingRideId ? await updateMobileRide(editingRideId, nextRideForm) : result?.ride;
         if (!ride) throw new Error("Ride listing was not saved.");
+        const wasEditing = Boolean(editingRideId);
+        setEditingRideId("");
         setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
         setRideActivityRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
         setRidePosted(true);
-        setRideRequestStatus("Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in Chitthi.");
+        setRideRequestStatus(wasEditing ? "Ride updated." : "Ride listed. Matching rider requests will show in your driver workspace, and accepted riders can coordinate in Chitthi.");
         setRidePlannerOpen(false);
         setRideOwnerOpen(false);
-        setRideListingSuccess(ride);
+        if (!wasEditing) setRideListingSuccess(ride);
         setRideOwnerPrompt("Ride listed. Requests on the same corridor will appear in your Request tracker with route details, status, pickup PIN, and Chitthi.");
         void refreshRideActivity();
         return;
@@ -2325,7 +2371,7 @@ export function HousingScreen({
           rideForm.destinationLng !== null ||
           rideForm.destination.trim() === selectedRideSuggestionRef.current)
     );
-    const plannerActionText = listingRide ? (rideDestinationPicked ? "List ride" : "Continue") : "Find rides";
+    const plannerActionText = editingRideId ? "Save changes" : listingRide ? (rideDestinationPicked ? "List ride" : "Continue") : "Find rides";
     return (
       <Modal visible={ridePlannerOpen} animationType="slide" onRequestClose={closeRidePlanner}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.ridePlannerScreen}>
@@ -2336,7 +2382,7 @@ export function HousingScreen({
                 <TouchableOpacity style={styles.ridePlannerBack} onPress={closeRidePlanner}>
                   <Text style={styles.ridePlannerBackText}>‹</Text>
                 </TouchableOpacity>
-                <Text style={styles.ridePlannerTitle}>{listingRide ? "List your ride" : "Plan your ride"}</Text>
+                <Text style={styles.ridePlannerTitle}>{editingRideId ? "Edit your ride" : listingRide ? "List your ride" : "Plan your ride"}</Text>
                 <View style={styles.ridePlannerBack} />
               </View>
 
@@ -2520,7 +2566,7 @@ export function HousingScreen({
 
               {listingRide ? (
                 <Pressable style={styles.ridePlannerSearchButton} onPress={() => void planRideRoute()} disabled={rideBusy}>
-                  <Text style={styles.ridePlannerSearchText}>{rideBusy ? "Listing ride..." : plannerActionText}</Text>
+                  <Text style={styles.ridePlannerSearchText}>{rideBusy ? (editingRideId ? "Saving..." : "Listing ride...") : plannerActionText}</Text>
                 </Pressable>
               ) : null}
             </ScrollView>

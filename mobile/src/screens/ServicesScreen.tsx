@@ -44,6 +44,8 @@ type Props = {
   onOpenProfile: () => void;
   onRequireLogin: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
+  editBookingId?: string;
+  onEditBookingOpened?: () => void;
 };
 
 type ServiceAction = {
@@ -88,7 +90,9 @@ export function ServicesScreen({
   onOpenMessenger,
   onOpenActivity,
   onOpenProfile,
-  onSelect
+  onSelect,
+  editBookingId = "",
+  onEditBookingOpened
 }: Props) {
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [view, setView] = useState<ServicesView>("grid");
@@ -158,6 +162,14 @@ export function ServicesScreen({
   useEffect(() => {
     void loadBookings();
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!editBookingId || !bookings.some((booking) => booking.id === editBookingId)) return;
+    setSelectedBookingId(editBookingId);
+    setView("rental");
+    setPanelMode("modify");
+    onEditBookingOpened?.();
+  }, [bookings, editBookingId]);
 
   const selectedBooking = useMemo(
     () => bookings.find((booking) => booking.id === selectedBookingId) || bookings[0] || null,

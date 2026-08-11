@@ -413,6 +413,15 @@ export async function createMobileRide(input: RideInput) {
   return { ride: payload.ride, dispatch: payload.dispatch };
 }
 
+export async function updateMobileRide(rideId: string, input: RideInput) {
+  const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, rideId })
+  });
+  return payload.ride;
+}
+
 export async function respondToRideDispatch(rideId: string, action: "ACCEPT" | "DECLINE" | "EN_ROUTE" | "ARRIVED" | "COMPLETED") {
   const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides/dispatch", {
     method: "POST",

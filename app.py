@@ -31412,6 +31412,41 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 title = f"Recurring ride from {origin_label} to {destination_label}"
             else:
                 title = f"Need a ride from {origin_label} to {destination_label}"
+        edit_ride_id = clean_text_value(payload.get("rideId") or payload.get("ride_id"), 80)
+        if edit_ride_id:
+            now = datetime.utcnow().isoformat(timespec="seconds")
+            with db() as con:
+                existing = con.execute(
+                    "SELECT * FROM ride_posts WHERE public_id = ? AND user_id = ? LIMIT 1",
+                    (edit_ride_id, int(row_value(user, "id") or 0)),
+                ).fetchone()
+                if not existing:
+                    self.send_json({"ok": False, "error": "That ride is not available to edit."}, 404)
+                    return
+                if str(row_value(existing, "status") or "").upper() != "ACTIVE":
+                    self.send_json({"ok": False, "error": "Only current rides can be edited."}, 409)
+                    return
+                con.execute(
+                    """
+                    UPDATE ride_posts SET ride_type = ?, rider_role = ?, title = ?, origin_label = ?, origin_lat = ?, origin_lng = ?,
+                        destination_label = ?, destination_lat = ?, destination_lng = ?, city_label = ?, pickup_date = ?, pickup_time = ?,
+                        start_date = ?, end_date = ?, days_of_week = ?, seats = ?, luggage = ?, accessibility = ?, max_detour_minutes = ?,
+                        max_pickup_distance_miles = ?, departure_flex_minutes = ?, contribution_per_seat = ?, approval_required = ?,
+                        preferences = ?, notes = ?, updated_at = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (ride_type, rider_role, title, origin_label, float(origin_point.get("lat") or 0), float(origin_point.get("lng") or 0),
+                     destination_label, float(destination_point.get("lat") or 0), float(destination_point.get("lng") or 0), city,
+                     pickup_date, pickup_time, start_date, end_date, days_of_week, seats, luggage, accessibility, max_detour_minutes,
+                     max_pickup_distance, flex_minutes, contribution, approval_required, preferences, notes, now,
+                     int(row_value(existing, "id") or 0), int(row_value(user, "id") or 0)),
+                )
+                if ride_type == "SCHEDULED_REQUEST":
+                    con.execute("DELETE FROM ride_instances WHERE ride_post_id = ?", (int(row_value(existing, "id") or 0),))
+                    create_ride_instances(con, int(row_value(existing, "id") or 0), start_date, end_date, days_of_week, pickup_time)
+                row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (int(row_value(existing, "id") or 0),)).fetchone()
+            self.send_json({"ok": True, "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None})
+            return
         with db() as con:
             while con.execute("SELECT 1 FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone():
                 public_id = ride_public_id()

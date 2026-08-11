@@ -240,6 +240,8 @@ function FairFaresApp() {
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
+  const [rideOwnerEditId, setRideOwnerEditId] = useState("");
+  const [rentalEditBookingId, setRentalEditBookingId] = useState("");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
   const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
@@ -1427,7 +1429,8 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
-        onOpenServices={() => {
+        onOpenServices={(bookingId = "") => {
+          setRentalEditBookingId(bookingId);
           setSelectedService("cars");
           setActiveTab("services");
         }}
@@ -1453,14 +1456,16 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
-        onOpenRide={(target = "workspace") => {
+        onOpenRide={(target = "workspace", rideId = "") => {
           setRideOwnerOpenTarget(target);
+          setRideOwnerEditId(rideId);
           setRideOwnerReturnTab("profile");
           setSelectedNeed("ride_offer");
           setActiveTab("housing");
           setRideOwnerOpenToken((value) => value + 1);
         }}
-        onOpenServices={() => {
+        onOpenServices={(bookingId = "") => {
+          setRentalEditBookingId(bookingId);
           setSelectedService("cars");
           setActiveTab("services");
         }}
@@ -1490,6 +1495,8 @@ function FairFaresApp() {
         onOpenProfile={() => setActiveTab("profile")}
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
+        editBookingId={rentalEditBookingId}
+        onEditBookingOpened={() => setRentalEditBookingId("")}
       />
     ) : activeTab === "housing" || activeTab === "home" ? (
       <HousingScreen
@@ -1525,9 +1532,11 @@ function FairFaresApp() {
         focusWelcomeKey={housingWelcomeFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
+        rideOwnerEditId={rideOwnerEditId}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
           setRideOwnerOpenToken(0);
+          setRideOwnerEditId("");
           setRideOwnerReturnTab(null);
         }}
       />
@@ -1565,9 +1574,11 @@ function FairFaresApp() {
         focusWelcomeKey={housingWelcomeFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
+        rideOwnerEditId={rideOwnerEditId}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
           setRideOwnerOpenToken(0);
+          setRideOwnerEditId("");
           setRideOwnerReturnTab(null);
         }}
       />
