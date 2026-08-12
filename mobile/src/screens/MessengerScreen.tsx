@@ -3100,6 +3100,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function showMessageActions(message: ChatMessage) {
+    if (message.type === "VIDEO" && attachmentPreview) {
+      setAttachmentPreview(null);
+      setTimeout(() => setActionMessage(message), 180);
+      return;
+    }
     setActionMessage(message);
   }
 
@@ -3516,7 +3521,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 ) : null}
                 {message.attachmentUrl ? (
                   message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
-                    <TouchableOpacity style={styles.videoMessageCard} onPress={() => void openAttachment(message)} accessibilityLabel="Play video">
+                    <TouchableOpacity
+                      style={styles.videoMessageCard}
+                      delayLongPress={350}
+                      onLongPress={() => showMessageActions(message)}
+                      onPress={() => void openAttachment(message)}
+                      accessibilityLabel="Play video"
+                    >
                       {mediaDownloading ? (
                         <View style={styles.videoDownloadOverlay} pointerEvents="none">
                           {Platform.OS === "web" ? <View style={styles.videoDownloadBlurFallback} /> : <BlurView intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
@@ -3608,9 +3619,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ) : null}
         </View>
 
-        <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setActionMessage(null)}>
+        <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent hardwareAccelerated onRequestClose={() => setActionMessage(null)}>
           <View style={styles.messageActionBackdrop}>
-            {Platform.OS === "web" ? <View style={styles.messageActionBlurFallback} /> : <BlurView intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
+            {Platform.OS === "web" || actionMessage?.type === "VIDEO" ? <View style={styles.messageActionBlurFallback} /> : <BlurView intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
             <TouchableOpacity activeOpacity={1} style={styles.messageActionDismissLayer} onPress={() => setActionMessage(null)} accessibilityLabel="Close message actions" />
             {actionMessage ? (
               <View style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]}>
