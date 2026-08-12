@@ -257,9 +257,10 @@ function safeCachedChatMessage(message: ChatMessage): ChatMessage {
   const metadata = message.metadata ? { ...message.metadata } : undefined;
   if (metadata) {
     delete metadata.decryptedDataUrl;
-    if (Platform.OS === "web") {
-      delete metadata.encryptedKeyPayload;
-    }
+    delete metadata.thumbnailDataUrl;
+    // The decrypted attachment descriptor contains the media key. Never place
+    // it in AsyncStorage; it is reconstructed from the encrypted envelope.
+    delete metadata.encryptedKeyPayload;
   }
   const cached: ChatMessage = {
     ...message,
@@ -594,7 +595,9 @@ function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean;
       accessibilityRole="link"
       accessibilityLabel={`Open ${cardTitle}`}
     >
-      {preview?.imageUrl ? <Image source={{ uri: preview.imageUrl }} style={styles.websitePreviewImage} resizeMode="cover" /> : null}
+      <View style={styles.websitePreviewImageSlot}>
+        {preview?.imageUrl ? <Image source={{ uri: preview.imageUrl }} style={styles.websitePreviewImage} resizeMode="cover" /> : <View style={styles.websitePreviewImagePlaceholder}><Text style={styles.websitePreviewImagePlaceholderText}>↗</Text></View>}
+      </View>
       <View style={styles.websitePreviewContent}>
         <Text style={[styles.websitePreviewTitle, mine && styles.myWebsitePreviewText]} numberOfLines={2}>{cardTitle}</Text>
         {cardDetail ? <Text style={[styles.websitePreviewDetail, mine && styles.myWebsitePreviewDetail]} numberOfLines={2}>{cardDetail}</Text> : null}
@@ -890,6 +893,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const prependScrollAnchorRef = useRef<{ height: number; offset: number } | null>(null);
   const prependScrollSettleRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const latestScrollFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  const replyHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingOlderMessagesRef = useRef(false);
   const messagesUserDraggingRef = useRef(false);
   const userTouchedThreadRef = useRef(false);
@@ -1051,9 +1055,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     shouldAutoScrollToEndRef.current = false;
-    messagesScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-    setHighlightedMessageId(messageId);
-    setTimeout(() => setHighlightedMessageId((current) => current === messageId ? 0 : current), 1600);
+    // Variable-height bubbles may not be measured yet. An animated request can
+    // visibly travel to an estimated offset and then jump when FlatList corrects
+    // it. Position immediately and let the highlight provide the navigation cue.
+    messagesScrollRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+    requestAnimationFrame(() => setHighlightedMessageId(messageId));
+    if (replyHighlightTimerRef.current) clearTimeout(replyHighlightTimerRef.current);
+    replyHighlightTimerRef.current = setTimeout(() => {
+      setHighlightedMessageId((current) => current === messageId ? 0 : current);
+      replyHighlightTimerRef.current = null;
+    }, 1600);
   }
 
   function updateJumpToLatestVisibility(offset: number) {
@@ -1260,6 +1271,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       .catch(() => undefined);
     return () => {
       if (openingThreadSettleTimer.current) clearTimeout(openingThreadSettleTimer.current);
+      if (replyHighlightTimerRef.current) clearTimeout(replyHighlightTimerRef.current);
       if (prependScrollSettleRef.current) cancelAnimationFrame(prependScrollSettleRef.current);
       if (latestScrollFrameRef.current) cancelAnimationFrame(latestScrollFrameRef.current);
     };
@@ -3483,8 +3495,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             removeClippedSubviews={Platform.OS !== "web"}
             onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
             onScrollToIndexFailed={({ index, averageItemLength }) => {
-              messagesScrollRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true });
-              setTimeout(() => messagesScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 }), 180);
+              messagesScrollRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: false });
+              requestAnimationFrame(() => messagesScrollRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 }));
             }}
             onScrollBeginDrag={(event) => {
               markThreadTouched();
@@ -3577,13 +3589,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
                 onLongPress={() => showMessageActions(message)}
-                onPress={() => { if (selectedMessageIds.length) toggleMessageSelection(message); }}
+                onPress={() => {
+                  if (selectedMessageIds.length) {
+                    toggleMessageSelection(message);
+                  } else if (message.replyToMessageId) {
+                    jumpToRepliedMessage(Number(message.replyToMessageId));
+                  }
+                }}
                 style={[styles.bubble, isPhotoMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isPhotoMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
-                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} onPress={() => jumpToRepliedMessage(Number(message.replyToMessageId))} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
+                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={() => jumpToRepliedMessage(Number(message.replyToMessageId))} onLongPress={() => showMessageActions(message)} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -4757,11 +4775,14 @@ const styles = StyleSheet.create({
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
   theirDiscoveredLink: { color: "#176A55" },
-  websitePreviewCard: { width: 286, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
+  websitePreviewCard: { width: 286, height: 276, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
   myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
   theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
-  websitePreviewImage: { width: "100%", height: 154, backgroundColor: "#D7D8D4" },
-  websitePreviewContent: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 11 },
+  websitePreviewImageSlot: { width: "100%", height: 154, overflow: "hidden", backgroundColor: "#D7D8D4" },
+  websitePreviewImage: { width: "100%", height: "100%", backgroundColor: "#D7D8D4" },
+  websitePreviewImagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(35,116,88,0.12)" },
+  websitePreviewImagePlaceholderText: { color: "rgba(35,116,88,0.55)", fontSize: 34, fontWeight: "700" },
+  websitePreviewContent: { height: 120, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 11, overflow: "hidden" },
   websitePreviewSource: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 },
   websitePreviewIcon: { width: 22, height: 22, borderRadius: 6, backgroundColor: "#237458", alignItems: "center", justifyContent: "center" },
   websitePreviewIconText: { color: "#fff", fontSize: 12, fontWeight: "700" },
