@@ -800,6 +800,37 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
+function replyMediaKind(message: ChatMessage | null) {
+  if (!message) return "";
+  if (message.type === "IMAGE") return "Photo";
+  if (message.type === "VIDEO") return "Video";
+  if (message.type === "FILE") return String(message.metadata?.fileName || "File");
+  return "";
+}
+
+function ReplyMediaPreview({ message }: { message: ChatMessage }) {
+  const previewUri = message.type === "IMAGE" && typeof message.metadata?.decryptedDataUrl === "string"
+    ? message.metadata.decryptedDataUrl
+    : "";
+  if (previewUri) return <Image source={{ uri: previewUri }} style={styles.replyMediaThumbnail} resizeMode="cover" />;
+  const icon = message.type === "IMAGE" ? "▣" : message.type === "VIDEO" ? "▶" : "▤";
+  return <View style={styles.replyMediaFallback}><Text style={styles.replyMediaFallbackText}>{icon}</Text></View>;
+}
+
+function QuotedReply({ target, mine }: { target: ChatMessage | null; mine: boolean }) {
+  const mediaLabel = replyMediaKind(target);
+  const quotedText = target ? (shareableMessageText({ ...target, senderName: "" }) || "Message") : "Message unavailable";
+  return (
+    <View style={[styles.quotedReply, mine ? styles.myQuotedReply : styles.theirQuotedReply]}>
+      <View style={styles.quotedReplyCopy}>
+        <Text style={styles.quotedReplyName}>{target ? (target.mine ? "You" : target.senderName) : "Original message"}</Text>
+        <Text style={styles.quotedReplyText} numberOfLines={2}>{mediaLabel || quotedText}</Text>
+      </View>
+      {target && mediaLabel ? <ReplyMediaPreview message={target} /> : null}
+    </View>
+  );
+}
+
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (instance) => { instance.loop = false; instance.play(); });
   return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" allowsFullscreen />;
@@ -3514,7 +3545,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
-                {message.replyToMessageId ? <View style={[styles.quotedReply, message.mine ? styles.myQuotedReply : styles.theirQuotedReply]}><Text style={styles.quotedReplyName}>{replyTarget ? (replyTarget.mine ? "You" : replyTarget.senderName) : "Original message"}</Text><Text style={styles.quotedReplyText} numberOfLines={2}>{replyTarget ? (shareableMessageText({ ...replyTarget, senderName: "" }) || "Attachment") : "Message unavailable"}</Text></View> : null}
+                {message.replyToMessageId ? <QuotedReply target={replyTarget} mine={message.mine} /> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -3546,8 +3577,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                           <CircularDownloadProgress progress={mediaProgress} />
                         </View>
                       ) : null}
+                      <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>
                       <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
-                      <Text style={styles.videoMessageTitle}>Video</Text>
+                      <View style={styles.videoMessageBadge}><Text style={styles.videoMessageBadgeText}>↓ {Math.max(1, Number(message.metadata?.size || 0) / (1024 * 1024)).toFixed(1)} MB</Text></View>
+                      <Text style={styles.videoMessageTitle} numberOfLines={1}>{message.metadata?.fileName || "Video"}</Text>
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "Chitthi file")}`}>
@@ -3912,8 +3945,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </ScrollView>
         ) : null}
 
-        {replyingTo ? <View style={[styles.replyComposerPreview, Platform.OS === "ios" && keyboardHeight > 0 ? { bottom: 63 + Math.max(0, keyboardHeight - safeAreaInsets.bottom) } : null]}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View><TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
-        <View style={styles.composer}>
+        <View style={styles.composerDock}>
+          {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyMediaKind(replyingTo) || shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View>{replyMediaKind(replyingTo) ? <ReplyMediaPreview message={replyingTo} /> : null}<TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
+          <View style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           <TextInput
@@ -3930,6 +3964,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
+          </View>
         </View>
         {editingMessageId ? (
           <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
@@ -4376,17 +4411,21 @@ const styles = StyleSheet.create({
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
   loadingThreadShell: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center" },
+  composerDock: { position: "relative", zIndex: 34, elevation: 18, overflow: "visible" },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(5,31,25,0.97)", overflow: "hidden" },
   composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
   paperclipIcon: { color: "#D6A95F", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
   composerEmojiText: { color: "#D6A95F", fontSize: 25, lineHeight: 28 },
-  replyComposerPreview: { position: "absolute", left: 8, right: 8, bottom: Platform.OS === "ios" ? 63 : 55, minHeight: 54, zIndex: 34, elevation: 18, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)", borderRadius: 14, backgroundColor: "rgba(7,38,30,0.98)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
+  replyComposerPreview: { position: "absolute", left: 8, right: 8, bottom: "100%", minHeight: 58, zIndex: 35, elevation: 19, flexDirection: "row", alignItems: "center", gap: 9, paddingLeft: 10, paddingRight: 6, paddingVertical: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)", borderRadius: 14, backgroundColor: "rgba(7,38,30,0.99)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
   replyComposerBar: { width: 4, alignSelf: "stretch", borderRadius: 2, backgroundColor: "#D6A95F" },
   replyComposerCopy: { flex: 1, minWidth: 0 },
   replyComposerName: { color: "#F4D99E", fontSize: 12, fontWeight: "900", marginBottom: 2 },
   replyComposerText: { color: "#E7E1D2", fontSize: 13, fontWeight: "600" },
   replyComposerClose: { width: 32, height: 32, color: "#D8DDDC", fontSize: 26, lineHeight: 31, textAlign: "center" },
+  replyMediaThumbnail: { width: 46, height: 46, borderRadius: 8, backgroundColor: "#173d32" },
+  replyMediaFallback: { width: 46, height: 46, borderRadius: 8, backgroundColor: "rgba(214,169,95,0.14)", alignItems: "center", justifyContent: "center" },
+  replyMediaFallbackText: { color: "#F4D99E", fontSize: 20, fontWeight: "800" },
   emojiPanel: { maxHeight: 330, borderRadius: 18, backgroundColor: "#f7f5f1", borderWidth: 1, borderColor: "#c8c5bf", paddingTop: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   emojiSearchRow: { minHeight: 42, marginHorizontal: 10, borderWidth: 2, borderColor: "#78b88c", borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   emojiSearchIcon: { color: "#62676e", fontSize: 24 },
@@ -4667,11 +4706,12 @@ const styles = StyleSheet.create({
   messageContextSubtitle: { fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: "700" },
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
-  quotedReply: { borderLeftWidth: 3, borderRadius: 9, paddingHorizontal: 9, paddingVertical: 7, marginBottom: 7, minWidth: 190 },
+  quotedReply: { borderLeftWidth: 3, borderRadius: 9, paddingLeft: 9, paddingRight: 5, paddingVertical: 5, marginBottom: 7, minWidth: 190, minHeight: 50, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" },
   myQuotedReply: { borderLeftColor: "#F4D99E", backgroundColor: "rgba(255,255,255,0.14)" },
   theirQuotedReply: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
   quotedReplyName: { color: "#D6A95F", fontSize: 12, fontWeight: "900", marginBottom: 2 },
   quotedReplyText: { color: "#776E5B", fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  quotedReplyCopy: { flex: 1, minWidth: 0 },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
@@ -4707,7 +4747,9 @@ const styles = StyleSheet.create({
   photoForwardAction: { position: "absolute", right: -47, bottom: 10, width: 39, height: 39, borderRadius: 20, backgroundColor: "rgba(37,41,40,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   photoForwardActionMine: { right: undefined, left: -47 },
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
-  videoMessageCard: { width: 246, minHeight: 180, borderRadius: 15, backgroundColor: "#181c22", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 4 },
+  videoMessageCard: { width: 286, height: 220, borderRadius: 15, backgroundColor: "#14231e", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 4 },
+  videoMessageBackdrop: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "#18382e" },
+  videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
   videoDownloadOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 8, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   videoDownloadBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(8,18,15,0.48)" },
   downloadProgressCircle: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(3,18,12,0.74)", borderWidth: 1, borderColor: "rgba(50,215,135,0.25)" },
@@ -4717,7 +4759,9 @@ const styles = StyleSheet.create({
   downloadProgressText: { color: "#E8FFF3", fontSize: 12, fontWeight: "900" },
   videoMessagePlay: { width: 58, height: 58, borderRadius: 29, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", paddingLeft: 4 },
   videoMessagePlayText: { color: "#fff", fontSize: 25 },
-  videoMessageTitle: { color: "#fff", fontSize: 15, fontWeight: "900" },
+  videoMessageBadge: { position: "absolute", left: 10, bottom: 31, borderRadius: 14, backgroundColor: "rgba(0,0,0,0.70)", paddingHorizontal: 9, paddingVertical: 5 },
+  videoMessageBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  videoMessageTitle: { position: "absolute", left: 11, right: 11, bottom: 8, color: "#fff", fontSize: 12, fontWeight: "800" },
   myBubbleText: { color: "#FFF9ED" },
   theirBubbleText: { color: "#18342A" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },
