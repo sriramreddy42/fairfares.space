@@ -489,6 +489,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const loadingOlderMessagesRef = useRef(false);
   const messagesUserDraggingRef = useRef(false);
   const shouldAutoScrollToEndRef = useRef(true);
+  const lastAutoScrolledMessageKeyRef = useRef("");
   const outboxFlushRunning = useRef(false);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
@@ -601,8 +602,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const showSubscription = Keyboard.addListener(showEvent, (event) => {
       setKeyboardVisible(true);
       setKeyboardHeight(Math.max(0, event.endCoordinates?.height || 0));
-      requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: true }));
-      setTimeout(() => messagesScrollRef.current?.scrollToEnd({ animated: true }), 180);
+      if (shouldAutoScrollToEndRef.current) requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: false }));
     });
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
       setKeyboardVisible(false);
@@ -683,8 +683,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
-    if (activeConversationId) shouldAutoScrollToEndRef.current = true;
+    if (activeConversationId) {
+      shouldAutoScrollToEndRef.current = true;
+      lastAutoScrolledMessageKeyRef.current = "";
+    }
   }, [activeConversationId]);
+
+  useEffect(() => {
+    if (!inThread || threadLoading || loadingOlderMessagesRef.current || messagesUserDraggingRef.current) return;
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    const messageKey = `${activeConversationId}:${lastMessage?.id || "empty"}:${visibleMessages.length}`;
+    if (!lastMessage || messageKey === lastAutoScrolledMessageKeyRef.current || !shouldAutoScrollToEndRef.current) return;
+    lastAutoScrolledMessageKeyRef.current = messageKey;
+    requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: false }));
+  }, [activeConversationId, inThread, threadLoading, visibleMessages]);
 
   useEffect(() => {
     const userId = Number(data?.user?.id || 0);
@@ -1360,7 +1372,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Message metadata and encrypted envelopes are independent requests. Running
       // them together removes a full network round trip from normal thread opens.
       const [payload, preparedDecryption] = await Promise.all([
-        getChatMessages(conversation.id),
+        getChatMessages(conversation.id, 0, 20),
         prepareMessageDecryption(conversation.id)
           .then((context) => ({ context }))
           .catch(() => ({ context: null }))
@@ -2642,12 +2654,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const offset = Math.max(0, event.nativeEvent.contentOffset.y);
             messagesScrollOffsetRef.current = offset;
             if (offset <= 140) void loadOlderMessages();
-            messagesUserDraggingRef.current = false;
           }}
           onMomentumScrollEnd={(event) => {
             const offset = Math.max(0, event.nativeEvent.contentOffset.y);
             messagesScrollOffsetRef.current = offset;
-            if (offset <= 140) void loadOlderMessages();
+            if (messagesUserDraggingRef.current && offset <= 140) void loadOlderMessages();
             messagesUserDraggingRef.current = false;
           }}
           onScroll={(event) => {
@@ -2665,7 +2676,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               messagesScrollRef.current?.scrollTo({ y: Math.max(0, height - anchor.height + anchor.offset), animated: false });
               return;
             }
-            if (!threadLoading && shouldAutoScrollToEndRef.current) messagesScrollRef.current?.scrollToEnd({ animated: false });
           }}
         >
           {loadingOlderMessages ? <Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text> : null}
@@ -3512,7 +3522,7 @@ const styles = StyleSheet.create({
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#D6A95F" },
   threadMessages: { flex: 1 },
-  threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2, flexGrow: 1, justifyContent: "flex-end" },
+  threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2 },
   olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingVertical: 10 },
   olderMessagesButton: { alignSelf: "center", minHeight: 38, justifyContent: "center", paddingHorizontal: 16, marginBottom: 8, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.06)" },
   olderMessagesButtonText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },

@@ -515,7 +515,12 @@ export function HousingScreen({
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [detailPreviewImage, setDetailPreviewImage] = useState("");
+  const [detailPreviewImageIndex, setDetailPreviewImageIndex] = useState(0);
   const detailCarouselRef = useRef<ScrollView>(null);
+  const detailPreviewCarouselRef = useRef<ScrollView>(null);
+  const detailScrollRef = useRef<ScrollView>(null);
+  const detailScrollOffsetRef = useRef(0);
+  const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
   const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
@@ -721,6 +726,8 @@ export function HousingScreen({
 
   useEffect(() => {
     setDetailImageIndex(0);
+    detailScrollOffsetRef.current = 0;
+    setDetailCanScrollMore(false);
   }, [detailPost?.id]);
 
   function showNextDetailImage() {
@@ -728,6 +735,22 @@ export function HousingScreen({
     const nextIndex = (detailImageIndex + 1) % detailImages.length;
     detailCarouselRef.current?.scrollTo({ x: nextIndex * detailImageWidth, animated: true });
     setDetailImageIndex(nextIndex);
+  }
+
+  function openDetailPreviewImage(index: number) {
+    const image = detailImages[index];
+    if (!image) return;
+    setDetailPreviewImageIndex(index);
+    setDetailPreviewImage(absoluteAssetUrl(image));
+    requestAnimationFrame(() => detailPreviewCarouselRef.current?.scrollTo({ x: index * viewportWidth, animated: false }));
+  }
+
+  function showDetailPreviewImage(index: number) {
+    if (!detailImages.length) return;
+    const nextIndex = (index + detailImages.length) % detailImages.length;
+    setDetailPreviewImageIndex(nextIndex);
+    setDetailPreviewImage(absoluteAssetUrl(detailImages[nextIndex]));
+    detailPreviewCarouselRef.current?.scrollTo({ x: nextIndex * viewportWidth, animated: true });
   }
 
   useEffect(() => {
@@ -3439,7 +3462,18 @@ export function HousingScreen({
               </TouchableOpacity>
             </View>
             {detailPost ? (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
+              <ScrollView
+                ref={detailScrollRef}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.detailContent}
+                scrollEventThrottle={48}
+                onContentSizeChange={(_width, height) => setDetailCanScrollMore(height > 560)}
+                onScroll={(event) => {
+                  const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+                  detailScrollOffsetRef.current = Math.max(0, contentOffset.y);
+                  setDetailCanScrollMore(contentOffset.y + layoutMeasurement.height < contentSize.height - 36);
+                }}
+              >
                 {detailImages.length ? (
                   <View style={styles.detailCarouselWrap}>
                     <ScrollView
@@ -3451,7 +3485,7 @@ export function HousingScreen({
                       onMomentumScrollEnd={(event) => setDetailImageIndex(Math.round(event.nativeEvent.contentOffset.x / detailImageWidth))}
                     >
                       {detailImages.map((image, index) => (
-                        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => setDetailPreviewImage(absoluteAssetUrl(image))} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
+                        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => openDetailPreviewImage(index)} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
                           <Image source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
                         </TouchableOpacity>
                       ))}
@@ -3482,34 +3516,32 @@ export function HousingScreen({
                 )}
                 <Text style={styles.detailTitle}>{detailPost.title}</Text>
                 <Text style={styles.detailMeta}>{detailPost.location}{detailPost.area ? ` · ${detailPost.area}` : ""}</Text>
-                <View style={styles.detailSummaryRow}>
-                  <Text style={styles.detailSummaryPill}>{detailPost.expiryLabel || `${Math.max(0, detailPost.daysLeft)} days left`}</Text>
-                  {detailPost.posterName ? <Text style={styles.detailSummaryPill}>Posted by {detailPost.posterName}</Text> : null}
-                  {detailPost.accommodates ? <Text style={styles.detailSummaryPill}>Accommodates {detailPost.accommodates}</Text> : null}
+                <View style={styles.detailDescriptionCard}>
+                  <Text style={styles.detailSectionTitle}>Description</Text>
+                  <Text style={styles.detailDescription}>{detailPost.description || "No description yet."}</Text>
                 </View>
-                <View style={styles.detailMap}>
-                  <Text style={styles.detailMapTitle}>Map view</Text>
-                  <Text style={styles.detailMapText}>
-                    {detailPost.distanceMiles !== null
-                      ? `${detailPost.distanceMiles} mi from ${distanceReference || detailPost.location}`
-                      : "Distance opens when location coordinates are available."}
-                  </Text>
-                  <TouchableOpacity style={styles.detailMapButton} onPress={() => openPostMap(detailPost)}>
-                    <Text style={styles.detailMapButtonText}>Open map</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.detailDescription}>{detailPost.description || "No description yet."}</Text>
-                <View style={styles.detailGrid}>
-                  <Text style={styles.detailFact}>Type: {detailPost.modeLabel}</Text>
-                  <Text style={styles.detailFact}>Category: {detailPost.categoryLabel}</Text>
-                  <Text style={styles.detailFact}>Rent: {detailPost.rent || "Open"}</Text>
-                  <Text style={styles.detailFact}>Move-in: {detailPost.moveIn || "Open"}</Text>
-                  <Text style={styles.detailFact}>Bath: {detailPost.bathroomType || "Open"}</Text>
-                  <Text style={styles.detailFact}>Lease: {detailPost.leaseTerm || "Flexible"}</Text>
-                  <Text style={styles.detailFact}>Gender: {detailPost.genderPreference || "Open"}</Text>
-                  <Text style={styles.detailFact}>Roommates: {detailPost.roommateCount || "Open"}</Text>
-                  <Text style={styles.detailFact}>Radius: {detailPost.radiusMiles || "Open"} mi</Text>
-                  <Text style={styles.detailFact}>Intent: {detailPost.roommateIntent ? "Roommate match" : "Listing"}</Text>
+                <TouchableOpacity style={styles.detailMapCompact} onPress={() => openPostMap(detailPost)} accessibilityRole="button" accessibilityLabel="Open housing location map">
+                  <View style={styles.detailMapCopy}>
+                    <Text style={styles.detailMapTitle}>Map view</Text>
+                    <Text style={styles.detailMapText} numberOfLines={1}>
+                      {detailPost.distanceMiles !== null
+                        ? `${detailPost.distanceMiles} mi from ${distanceReference || detailPost.location}`
+                        : "Open location in maps"}
+                    </Text>
+                  </View>
+                  <Text style={styles.detailMapChevron}>›</Text>
+                </TouchableOpacity>
+                <View style={styles.detailInfoCard}>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Type</Text><Text style={styles.detailInfoValue}>{detailPost.modeLabel}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Category</Text><Text style={styles.detailInfoValue}>{detailPost.categoryLabel}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Rent</Text><Text style={styles.detailInfoValue}>{detailPost.rent || "Open"}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Move-in</Text><Text style={styles.detailInfoValue}>{detailPost.moveIn || "Open"}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Bath</Text><Text style={styles.detailInfoValue}>{detailPost.bathroomType || "Open"}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Lease</Text><Text style={styles.detailInfoValue}>{detailPost.leaseTerm || "Flexible"}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Gender</Text><Text style={styles.detailInfoValue}>{detailPost.genderPreference || "Open"}</Text></View>
+                  <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Roommates</Text><Text style={styles.detailInfoValue}>{detailPost.roommateCount || "Open"}</Text></View>
+                  {detailPost.accommodates ? <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Accommodates</Text><Text style={styles.detailInfoValue}>{detailPost.accommodates}</Text></View> : null}
+                  {detailPost.posterName ? <View style={styles.detailInfoRow}><Text style={styles.detailInfoLabel}>Posted by</Text><Text style={styles.detailInfoValue}>{detailPost.posterName}</Text></View> : null}
                 </View>
                 {detailPost.amenities?.length ? (
                   <View style={styles.detailAmenities}>
@@ -3524,6 +3556,16 @@ export function HousingScreen({
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
+            {detailPost && detailCanScrollMore ? (
+              <TouchableOpacity
+                style={styles.detailScrollHint}
+                onPress={() => detailScrollRef.current?.scrollTo({ y: detailScrollOffsetRef.current + 280, animated: true })}
+                accessibilityRole="button"
+                accessibilityLabel="Scroll housing details down"
+              >
+                <Text style={styles.detailScrollHintText}>⌄</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </Modal>
@@ -3532,7 +3574,46 @@ export function HousingScreen({
           <TouchableOpacity style={styles.detailPhotoClose} onPress={() => setDetailPreviewImage("")} accessibilityLabel="Close housing photo">
             <Text style={styles.detailPhotoCloseText}>×</Text>
           </TouchableOpacity>
-          {detailPreviewImage ? <Image source={{ uri: detailPreviewImage }} style={styles.detailPhotoFull} resizeMode="contain" /> : null}
+          {detailPreviewImage ? (
+            <>
+              <ScrollView
+                ref={detailPreviewCarouselRef}
+                horizontal
+                pagingEnabled
+                style={styles.detailPhotoPager}
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(event) => {
+                  const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, viewportWidth));
+                  setDetailPreviewImageIndex(nextIndex);
+                  if (detailImages[nextIndex]) setDetailPreviewImage(absoluteAssetUrl(detailImages[nextIndex]));
+                }}
+              >
+                {detailImages.map((image, index) => (
+                  <ScrollView
+                    key={`${image}-preview-${index}`}
+                    style={[styles.detailPhotoScroll, { width: viewportWidth }]}
+                    contentContainerStyle={styles.detailPhotoScrollContent}
+                    maximumZoomScale={3}
+                    minimumZoomScale={1}
+                    bouncesZoom
+                    showsHorizontalScrollIndicator={false}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {Math.abs(index - detailPreviewImageIndex) <= 1 ? <Image source={{ uri: absoluteAssetUrl(image) }} style={styles.detailPhotoFull} resizeMode="contain" /> : <View style={styles.detailPhotoFull} />}
+                  </ScrollView>
+                ))}
+              </ScrollView>
+              {detailImages.length > 1 ? (
+                <>
+                  <TouchableOpacity style={[styles.detailPhotoNav, styles.detailPhotoNavLeft]} onPress={() => showDetailPreviewImage(detailPreviewImageIndex - 1)} accessibilityLabel="Previous housing photo"><Text style={styles.detailPhotoNavText}>‹</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.detailPhotoNav, styles.detailPhotoNavRight]} onPress={() => showDetailPreviewImage(detailPreviewImageIndex + 1)} accessibilityLabel="Next housing photo"><Text style={styles.detailPhotoNavText}>›</Text></TouchableOpacity>
+                  <View style={styles.detailPhotoDots}>
+                    {detailImages.map((image, index) => <View key={`${image}-preview-dot-${index}`} style={[styles.detailPhotoDot, index === detailPreviewImageIndex && styles.detailPhotoDotActive]} />)}
+                  </View>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </View>
       </Modal>
     </ScrollView>
@@ -4129,7 +4210,7 @@ const styles = StyleSheet.create({
   detailEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   detailClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   detailCloseText: { color: theme.colors.text, fontWeight: "900" },
-  detailContent: { padding: theme.spacing.md, gap: theme.spacing.md },
+  detailContent: { padding: theme.spacing.md, paddingBottom: 48, gap: theme.spacing.md },
   detailCarouselWrap: { borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
   detailCarousel: { width: "100%" },
   detailImage: { height: 210, borderRadius: theme.radius.md },
@@ -4142,14 +4223,17 @@ const styles = StyleSheet.create({
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
   detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
   detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },
-  detailSummaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  detailSummaryPill: { color: theme.colors.text, backgroundColor: "rgba(47,115,78,0.35)", borderWidth: 1, borderColor: "rgba(78,199,119,0.30)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "800" },
-  detailMap: { backgroundColor: theme.colors.bg, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
-  detailMapTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "700" },
-  detailMapText: { color: theme.colors.green, fontSize: 15, fontWeight: "700" },
-  detailMapButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
-  detailMapButtonText: { color: theme.colors.text, fontWeight: "900" },
-  detailDescription: { color: theme.colors.soft, fontSize: 14, lineHeight: 20 },
+  detailDescriptionCard: { backgroundColor: "rgba(255,255,255,0.045)", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
+  detailMapCompact: { minHeight: 62, backgroundColor: "rgba(6,12,11,0.74)", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, paddingHorizontal: theme.spacing.md, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 12 },
+  detailMapCopy: { flex: 1, minWidth: 0 },
+  detailMapTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "800" },
+  detailMapText: { color: theme.colors.green, fontSize: 12.5, fontWeight: "800", marginTop: 3 },
+  detailMapChevron: { color: theme.colors.text, fontSize: 34, lineHeight: 36, fontWeight: "400", marginTop: -2 },
+  detailDescription: { color: theme.colors.soft, fontSize: 15, lineHeight: 22, fontWeight: "500" },
+  detailInfoCard: { backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, overflow: "hidden" },
+  detailInfoRow: { minHeight: 43, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 14, paddingHorizontal: 14, paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(255,255,255,0.08)" },
+  detailInfoLabel: { flexShrink: 0, color: theme.colors.muted, fontSize: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
+  detailInfoValue: { flex: 1, color: theme.colors.soft, fontSize: 14, fontWeight: "700", textAlign: "right" },
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "600" },
   detailAmenities: { gap: 8 },
@@ -4157,10 +4241,22 @@ const styles = StyleSheet.create({
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
+  detailScrollHint: { position: "absolute", bottom: 10, alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(9,13,18,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
+  detailScrollHintText: { color: "#fff", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -7 },
   detailPhotoBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 54 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 18, paddingHorizontal: 10 },
   detailPhotoClose: { position: "absolute", top: Platform.OS === "ios" ? 54 : 24, right: 14, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center", zIndex: 3 },
   detailPhotoCloseText: { color: "#fff", fontSize: 30, lineHeight: 32, marginTop: -2 },
-  detailPhotoFull: { flex: 1, width: "100%", height: "100%" },
+  detailPhotoPager: { flex: 1, marginHorizontal: -10 },
+  detailPhotoScroll: { flex: 1 },
+  detailPhotoScrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", minWidth: "100%" },
+  detailPhotoFull: { width: "100%", height: "100%", minHeight: 620 },
+  detailPhotoNav: { position: "absolute", top: "50%", width: 48, height: 48, marginTop: -24, borderRadius: 24, backgroundColor: "rgba(22,22,24,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", zIndex: 2 },
+  detailPhotoNavLeft: { left: 14 },
+  detailPhotoNavRight: { right: 14 },
+  detailPhotoNavText: { color: "#fff", fontSize: 42, lineHeight: 44, fontWeight: "300", marginTop: -4 },
+  detailPhotoDots: { position: "absolute", bottom: Platform.OS === "ios" ? 44 : 26, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
+  detailPhotoDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.48)" },
+  detailPhotoDotActive: { width: 18, backgroundColor: "#fff" },
   ridePopularSection: { gap: 12 },
   ridePopularHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
   ridePopularTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },

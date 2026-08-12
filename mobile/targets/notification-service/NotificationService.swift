@@ -43,10 +43,14 @@ final class NotificationService: UNNotificationServiceExtension {
         let conversationId = stringValue(payload["conversationId"])
         let conversationName = stringValue(payload["conversationName"])
         let isGroup = boolValue(payload["isGroup"])
-        let avatarUrl = URL(string: stringValue(payload["senderAvatarUrl"]))
+        let displayName = isGroup && !conversationName.isEmpty ? conversationName : senderName
+        let displayId = isGroup && !conversationId.isEmpty ? conversationId : senderId
+        let groupAvatarUrl = stringValue(payload["groupAvatarUrl"])
+        let avatarUrl = URL(string: groupAvatarUrl.isEmpty ? stringValue(payload["senderAvatarUrl"]) : groupAvatarUrl)
 
         if isGroup && !conversationName.isEmpty {
-            content.subtitle = conversationName
+            content.title = conversationName
+            content.subtitle = senderName
         }
 
         if let preview = decryptPreview(payload), !preview.isEmpty {
@@ -59,8 +63,8 @@ final class NotificationService: UNNotificationServiceExtension {
             guard let self else { return }
             self.deliverCommunicationNotification(
                 content: content,
-                senderName: senderName,
-                senderId: senderId,
+                senderName: displayName,
+                senderId: displayId,
                 conversationId: conversationId,
                 conversationName: conversationName,
                 isGroup: isGroup,

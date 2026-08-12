@@ -561,7 +561,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       ))}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Housing</Text>
+        <Text style={styles.sectionTitle}>Your listings</Text>
         <Text style={styles.sectionMeta}>{activeHousing.length} current · {pastHousing.length} previous</Text>
       </View>
       {activeHousing.length ? activeHousing.slice(0, 4).map((post) => (
@@ -571,12 +571,12 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             <Text style={styles.rowTitle}>{post.title}</Text>
             <Text style={styles.rowMeta}>{post.location} · {post.expiryLabel}</Text>
           </View>
-          <Text style={styles.rebookText}>Current</Text>
+          <Text style={styles.rebookText}>Your listing</Text>
         </TouchableOpacity>
       )) : (
         <TouchableOpacity style={styles.emptyPast} onPress={onOpenHousing}>
-          <Text style={styles.emptyTitle}>No current housing posts</Text>
-          <Text style={styles.emptyCopy}>Your active housing listings and roommate searches will appear here.</Text>
+          <Text style={styles.emptyTitle}>No current listings</Text>
+          <Text style={styles.emptyCopy}>Homes, rooms, and roommate searches you post will appear here.</Text>
         </TouchableOpacity>
       )}
 

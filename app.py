@@ -21642,22 +21642,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if is_group and community_id
                 else chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
             )
+            sender_display_name = row_value(sender, "name") or "FairFares member"
+            push_title = conversation_name if is_group and conversation_name else sender_display_name or "New FChat message"
+            push_body = f"{sender_display_name}: {notification_preview}" if is_group and sender_display_name else notification_preview
             common_data = {
                 "type": "FCHAT_MESSAGE",
                 "conversationId": row_value(conversation, "public_id"),
                 "messageId": int(row_value(message, "id") or 0),
                 "senderId": sender_id,
-                "senderName": row_value(sender, "name") or "FairFares member",
+                "senderName": sender_display_name,
                 "senderAvatarUrl": notification_avatar_url,
+                "groupAvatarUrl": notification_avatar_url if is_group else "",
                 "conversationName": conversation_name,
                 "isGroup": is_group,
-                "subtitle": conversation_name,
+                "subtitle": sender_display_name if is_group else conversation_name,
             }
             for token, encrypted_preview in push_jobs:
                 enqueue_mobile_pushes(
                     [(int(encrypted_preview.get("recipientUserId") or 0), token)],
-                    row_value(sender, "name") or "New FChat message",
-                    notification_preview,
+                    push_title,
+                    push_body,
                     {**common_data, **encrypted_preview},
                 )
 

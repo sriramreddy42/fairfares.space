@@ -180,10 +180,10 @@ export function ProfileScreen({
   }, [carpoolHistoryView, historySection, housingActivity, rentalActivity, rideActivity]);
   const currentHistoryItems = accountHistoryItems.filter((item) => item.current);
   const previousHistoryItems = accountHistoryItems.filter((item) => !item.current);
-  const historyTitle = historySection === "housing" ? "Housing history" : historySection === "carpool" ? "Carpool history" : "Rental car history";
+  const historyTitle = historySection === "housing" ? "Your listings" : historySection === "carpool" ? "Carpool history" : "Rental car history";
   const historyAction = historySection === "housing" ? onOpenHousing : historySection === "carpool" ? onOpenRide : onOpenServices;
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
-    { title: "Housing", copy: "Current and previous housing activity", icon: appAssets.serviceHome, onPress: () => user ? setHistorySection("housing") : onLogin() },
+    { title: "Housing", copy: "Your posted rooms, homes, and roommate searches", icon: appAssets.serviceHome, onPress: () => user ? setHistorySection("housing") : onLogin() },
     { title: "Carpool", copy: "Your listings, requests, and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: () => { if (!user) return onLogin(); setCarpoolHistoryView("listings"); setHistorySection("carpool"); } },
     { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: () => user ? setHistorySection("rentals") : onLogin() },
     { title: "Chitthi", copy: "Current and previous conversations", icon: appAssets.chittiMascot, fullColor: true, onPress: onOpenMessenger },
@@ -411,7 +411,7 @@ export function ProfileScreen({
             <View style={styles.supportHeader}>
               <View style={styles.supportHeaderCopy}>
                 <Text style={styles.cardTitle}>{historyTitle}</Text>
-                <Text style={styles.cardCopy}>Records connected only to your FairFares account.</Text>
+                <Text style={styles.cardCopy}>{historySection === "housing" ? "Listings connected only to your FairFares account." : "Records connected only to your FairFares account."}</Text>
               </View>
               <TouchableOpacity style={styles.closeButton} onPress={() => setHistorySection(null)} accessibilityLabel="Close history">
                 <Text style={styles.closeButtonText}>×</Text>
@@ -449,7 +449,7 @@ export function ProfileScreen({
               )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}
             </ScrollView>
             <TouchableOpacity style={styles.historyManageButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); }}>
-              <Text style={styles.primaryButtonText}>Manage {historySection === "carpool" ? carpoolHistoryView : historySection === "rentals" ? "rentals" : historySection}</Text>
+              <Text style={styles.primaryButtonText}>Manage {historySection === "carpool" ? carpoolHistoryView : historySection === "rentals" ? "rentals" : "listings"}</Text>
             </TouchableOpacity>
           </View>
         </View>
