@@ -2207,7 +2207,9 @@ async function downloadEncryptedChitthiAttachment(messageId, envelope) {
   const descriptorText = decryptChitthiEnvelope(envelope, identity);
   let descriptor;
   try { descriptor = JSON.parse(descriptorText); } catch { descriptor = null; }
-  if (descriptor?.v !== 1 || descriptor?.kind !== "attachment") throw new Error("The encrypted attachment key is invalid.");
+  const legacyDescriptor = descriptor?.v === 1 && descriptor?.kind === "attachment";
+  const chunkedDescriptor = descriptor?.v === 2 && descriptor?.type === "ATTACHMENT" && descriptor?.format === "CHUNKED_SECRETBOX_V2";
+  if (!legacyDescriptor && !chunkedDescriptor) throw new Error("The encrypted attachment key is invalid.");
   const authorizationResponse = await fetch("/api/chat/e2ee/attachments/download-url", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -2220,6 +2222,37 @@ async function downloadEncryptedChitthiAttachment(messageId, envelope) {
   const encryptedBytes = new Uint8Array(await downloadResponse.arrayBuffer());
   const actualChecksum = await chitthiSha256Base64(encryptedBytes);
   if (actualChecksum !== authorization.ciphertextSha256) throw new Error("The encrypted attachment checksum did not match.");
+  if (chunkedDescriptor) {
+    const chunkSize = Number(descriptor.chunkSize || 0);
+    const chunkCount = Number(descriptor.chunkCount || 0);
+    const plaintextSize = Number(descriptor.plaintextSize || 0);
+    const key = chitthiFromBase64(descriptor.key);
+    const noncePrefix = chitthiFromBase64(descriptor.noncePrefix);
+    if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0 || chunkSize > 4 * 1024 * 1024 || !Number.isSafeInteger(chunkCount) || chunkCount <= 0 || noncePrefix.byteLength !== 16) {
+      throw new Error("The chunked attachment descriptor is invalid.");
+    }
+    const clearChunks = [];
+    let encryptedOffset = 0;
+    let clearOffset = 0;
+    for (let index = 0; index < chunkCount; index += 1) {
+      const clearSize = Math.min(chunkSize, plaintextSize - clearOffset);
+      const encryptedSize = clearSize + window.nacl.secretbox.overheadLength;
+      const nonce = new Uint8Array(window.nacl.secretbox.nonceLength);
+      nonce.set(noncePrefix, 0);
+      let nonceIndex = index;
+      for (let position = 23; position >= 16; position -= 1) {
+        nonce[position] = nonceIndex & 0xff;
+        nonceIndex = Math.floor(nonceIndex / 256);
+      }
+      const clearChunk = window.nacl.secretbox.open(encryptedBytes.slice(encryptedOffset, encryptedOffset + encryptedSize), nonce, key);
+      if (!clearChunk || clearChunk.byteLength !== clearSize) throw new Error(`Attachment authentication failed at chunk ${index + 1}.`);
+      clearChunks.push(clearChunk);
+      encryptedOffset += encryptedSize;
+      clearOffset += clearSize;
+    }
+    if (encryptedOffset !== encryptedBytes.byteLength || clearOffset !== plaintextSize) throw new Error("The chunked attachment size did not match.");
+    return { blob: new Blob(clearChunks, { type: descriptor.mimeType }), name: descriptor.fileName, deviceId: identity.deviceId };
+  }
   const clearBytes = window.nacl.secretbox.open(encryptedBytes, chitthiFromBase64(descriptor.nonce), chitthiFromBase64(descriptor.key));
   if (!clearBytes) throw new Error("The attachment could not be authenticated or decrypted.");
   return { blob: new Blob([clearBytes], { type: descriptor.type }), name: descriptor.name, deviceId: identity.deviceId };

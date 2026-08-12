@@ -68,7 +68,8 @@ import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 import { useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
-import { cleanupPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
+import { cleanupPersistentChitthiMedia, copyPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
+import { decryptChunkedAttachmentFile, deleteChunkedTemporaryFile, encryptAttachmentFileForDevices, parseChunkedAttachmentDescriptor } from "../utils/chitthiChunkedCrypto";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -2037,8 +2038,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const sentMessages: ChatMessage[] = [];
         for (let index = 0; index < attachments.length; index += 1) {
           const attachment = attachments[index];
-          const fileBase64 = Platform.OS === "web"
-            ? await new Promise<string>(async (resolve, reject) => {
+          const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+          const caption = index === 0 ? cleanMessage : "";
+          let fileBase64 = "";
+          let encryptedTemporaryUri = "";
+          const encrypted = Platform.OS === "web"
+            ? (() => undefined)()
+            : encryptAttachmentFileForDevices(
+                attachment.uri,
+                { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata },
+                identity,
+                keyPayload.keys
+              );
+          if (Platform.OS === "web") {
+            fileBase64 = await new Promise<string>(async (resolve, reject) => {
                 try {
                   let blob = attachment.blob;
                   if (!blob) blob = await fetch(attachment.uri).then((item) => item.blob());
@@ -2047,26 +2060,32 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
                   reader.readAsDataURL(blob as Blob);
                 } catch (error) { reject(error); }
-              })
-            : await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
-          const caption = index === 0 ? cleanMessage : "";
-          const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata }, identity, keyPayload.keys);
-          const response = await sendDirectEncryptedChatAttachment(activeConversationId, encrypted, attachment.mimeType, index + 1 < attachments.length);
+              });
+          }
+          const encryptedPayload = encrypted || encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata }, identity, keyPayload.keys);
+          encryptedTemporaryUri = "encryptedUri" in encryptedPayload ? String(encryptedPayload.encryptedUri || "") : "";
+          let response;
+          try {
+            response = await sendDirectEncryptedChatAttachment(activeConversationId, encryptedPayload, attachment.mimeType, index + 1 < attachments.length);
+          } finally {
+            if (encryptedTemporaryUri) deleteChunkedTemporaryFile(encryptedTemporaryUri);
+          }
+          let senderLocalUri = "";
           if (Platform.OS !== "web") {
             const localUri = encryptedAttachmentLocalUri(currentUserId, response.message.id, attachment.name, attachment.mimeType);
             if (localUri) {
               // The server has already accepted the message. A local-storage
               // failure must not present it as unsent or encourage duplicates.
-              await writePersistentChitthiMedia(localUri, fileBase64)
+              await copyPersistentChitthiMedia(localUri, attachment.uri)
                 .then(() => {
+                  senderLocalUri = localUri;
                   setLocalMediaMessageIds((current) => current.includes(response.message.id) ? current : [...current, response.message.id]);
                   return cleanupPersistentChitthiMedia(localUri);
                 })
                 .catch(() => undefined);
             }
           }
-          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" || attachment.kind === "IMAGE" ? `data:${attachment.mimeType};base64,${fileBase64}` : undefined, ...mediaMetadata } });
+          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
         setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
@@ -2901,6 +2920,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const downloadAuthorization = await getEncryptedChatAttachmentDownloadUrl(message.id, identity.deviceId);
         await downloadAuthenticatedAssetToFile(downloadAuthorization.downloadUrl, encryptedUri, (progress) => onProgress?.(Math.round(progress * 88)), false);
         onProgress?.(90);
+        const chunkedDescriptor = parseChunkedAttachmentDescriptor(encryptedKeyPayload);
+        if (chunkedDescriptor) {
+          mimeType = chunkedDescriptor.mimeType || mimeType;
+          fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: chunkedDescriptor.fileName } }, mimeType);
+          const finalUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType) || localUri;
+          decryptChunkedAttachmentFile(encryptedUri, finalUri, encryptedKeyPayload);
+          onProgress?.(99);
+          await cleanupPersistentChitthiMedia(finalUri).catch(() => undefined);
+          setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+          await confirmLocalDownload();
+          onProgress?.(100);
+          return { uri: finalUri, name: fileName, mimeType };
+        }
         const ciphertextBase64 = await FileSystem.readAsStringAsync(encryptedUri, { encoding: FileSystem.EncodingType.Base64 });
         const decrypted = decryptAttachmentBase64(ciphertextBase64, encryptedKeyPayload);
         onProgress?.(94);
@@ -3144,12 +3176,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {
             const attachment = await materializeAttachment(message);
             if (!attachment) continue;
-            const fileBase64 = Platform.OS === "web"
-              ? attachment.uri.slice(attachment.uri.indexOf(",") + 1)
-              : await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
             const kind = message.type as "IMAGE" | "VIDEO" | "FILE";
-            const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
-            await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
+            if (Platform.OS === "web") {
+              const fileBase64 = attachment.uri.slice(attachment.uri.indexOf(",") + 1);
+              const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
+              await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
+            } else {
+              const encrypted = encryptAttachmentFileForDevices(attachment.uri, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
+              try {
+                await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
+              } finally {
+                deleteChunkedTemporaryFile(encrypted.encryptedUri);
+              }
+            }
           } else {
             const text = shareableMessageText({ ...message, senderName: "" });
             if (!text) continue;

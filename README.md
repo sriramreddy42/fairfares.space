@@ -201,6 +201,8 @@ The default URL lifetime is 10 minutes and is capped at 15 minutes. Unfinalized 
 
 The legacy server-relay attachment endpoint remains temporarily available for older app builds. Current web, iOS, and Android clients use direct encrypted R2 transfer. Without R2 variables, legacy local development continues using `data/uploads/chat`, while the direct-transfer authorization endpoint reports that storage is unavailable.
 
+Native Chitthi attachments use the versioned `CHUNKED_SECRETBOX_V2` format. iOS and Android read and write 1 MiB chunks through Expo file handles; every chunk is independently encrypted and authenticated with a nonce derived from a random per-file prefix and its chunk index. Version-1 whole-file attachments remain readable, and web recipients can decrypt both versions. Keep the 12 MB production limit until physical-device transfer and interruption testing is complete; raising the limit and adding multipart/Ranged resume are separate release gates.
+
 After configuring R2, migrate existing local attachments in a safe first pass:
 
 ```bash

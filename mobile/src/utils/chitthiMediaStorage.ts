@@ -50,6 +50,22 @@ export async function writePersistentChitthiMedia(uri: string, base64: string) {
   }
 }
 
+export async function copyPersistentChitthiMedia(uri: string, sourceUri: string) {
+  if (!uri || !sourceUri) throw new Error("The Chitthi media source is missing.");
+  await ensureMediaRoot();
+  const temporaryUri = `${uri}.part`;
+  await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
+  try {
+    await FileSystem.copyAsync({ from: sourceUri, to: temporaryUri });
+    if (!await persistentChitthiMediaExists(temporaryUri)) throw new Error("Chitthi media could not be copied to durable storage.");
+    await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+    await FileSystem.moveAsync({ from: temporaryUri, to: uri });
+  } catch (error) {
+    await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function cleanupPersistentChitthiMedia(protectedUri = "") {
   const root = mediaRootUri();
   if (!root) return { deleted: 0, retainedBytes: 0 };

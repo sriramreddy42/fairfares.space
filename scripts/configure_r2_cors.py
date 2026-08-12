@@ -4,7 +4,9 @@
 import os
 import sys
 import urllib.parse
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
 
 
@@ -30,16 +32,22 @@ def main() -> int:
     if not app.r2_storage_configured():
         print("Cloudflare R2 credentials are not configured.", file=sys.stderr)
         return 2
-    app.r2_storage_client().put_bucket_cors(
-        Bucket=app.R2_BUCKET_NAME,
-        CORSConfiguration={"CORSRules": [{
-            "AllowedOrigins": origins,
-            "AllowedMethods": ["GET", "PUT", "HEAD"],
-            "AllowedHeaders": ["content-type", "x-amz-checksum-sha256", "x-amz-meta-upload-id"],
-            "ExposeHeaders": ["etag", "content-length", "x-amz-checksum-sha256"],
-            "MaxAgeSeconds": 3600,
-        }]},
-    )
+    try:
+        app.r2_storage_client().put_bucket_cors(
+            Bucket=app.R2_BUCKET_NAME,
+            CORSConfiguration={"CORSRules": [{
+                "AllowedOrigins": origins,
+                "AllowedMethods": ["GET", "PUT", "HEAD"],
+                "AllowedHeaders": ["content-type", "x-amz-checksum-sha256", "x-amz-meta-upload-id"],
+                "ExposeHeaders": ["etag", "content-length", "x-amz-checksum-sha256"],
+                "MaxAgeSeconds": 3600,
+            }]},
+        )
+    except Exception as error:
+        if error.__class__.__name__ in {"AccessDenied", "ClientError"}:
+            print("The R2 object key cannot change bucket CORS. Add this policy in Cloudflare R2 → bucket → Settings → CORS Policy.", file=sys.stderr)
+            return 3
+        raise
     print(f"Applied restricted Chitthi R2 CORS policy for {len(origins)} origin(s).")
     return 0
 

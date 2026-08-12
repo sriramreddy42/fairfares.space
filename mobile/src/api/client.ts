@@ -954,6 +954,14 @@ export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<s
   }
 }
 
+export async function uploadEncryptedFile(uploadUrl: string, headers: Record<string, string>, encryptedUri: string) {
+  if (Platform.OS === "web") throw new Error("Native encrypted-file upload is unavailable on web.");
+  const result = await FileSystem.uploadAsync(uploadUrl, encryptedUri, {
+    httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+  });
+  if (result.status < 200 || result.status >= 300) throw new Error(`Encrypted upload failed (${result.status}).`);
+}
+
 export async function finalizeEncryptedChatAttachment(uploadId: string, envelopes: Array<Record<string, unknown>>, silent = false) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -963,12 +971,14 @@ export async function finalizeEncryptedChatAttachment(uploadId: string, envelope
 
 export async function sendDirectEncryptedChatAttachment(
   conversationId: string,
-  encrypted: { ciphertextBase64: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
+  encrypted: { ciphertextBase64?: string; encryptedUri?: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
   mediaMimeType: string,
   silent = false
 ) {
   const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
-  await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
+  if (encrypted.encryptedUri) await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri);
+  else if (encrypted.ciphertextBase64) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
+  else throw new Error("Encrypted attachment data is missing.");
   return finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent);
 }
 
