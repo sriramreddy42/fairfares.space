@@ -535,18 +535,12 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
   const translateX = useRef(new Animated.Value(0)).current;
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
-  const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 52], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
-  const hintScale = translateX.interpolate({ inputRange: [0, 52], outputRange: [0.76, 1], extrapolate: "clamp" });
+  const displayedTranslateX = translateX.interpolate({ inputRange: [-1, 0, 70], outputRange: [0, 0, 58], extrapolate: "clamp" });
   const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) =>
-    gesture.dx > (Platform.OS === "web" ? 14 : 10) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.6);
+    gesture.dx > (Platform.OS === "web" ? 14 : 12) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.7);
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponderCapture: shouldClaimReplySwipe,
     onMoveShouldSetPanResponder: shouldClaimReplySwipe,
-    onPanResponderMove: (_event, gesture) => {
-      const raw = Math.max(0, gesture.dx);
-      const eased = Math.min(68, raw * (Platform.OS === "web" ? 0.72 : 0.78));
-      translateX.setValue(eased);
-    },
+    onPanResponderMove: Animated.event([null, { dx: translateX }], { useNativeDriver: false }),
     onPanResponderRelease: (_event, gesture) => {
       const shouldReply = gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62);
       Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start(({ finished }) => {
@@ -557,7 +551,7 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
     onShouldBlockNativeResponder: () => true,
     onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start()
   }), [translateX]);
-  return <View style={styles.swipeReplyWrap}><Animated.View pointerEvents="none" style={[styles.swipeReplyHint, { opacity: hintOpacity, transform: [{ scale: hintScale }] }]}><Text style={styles.swipeReplyHintText}>↩</Text></Animated.View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
+  return <View style={styles.swipeReplyWrap}><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX: displayedTranslateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
 }
 
 function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
@@ -4372,8 +4366,6 @@ const styles = StyleSheet.create({
   threadMessageRunEnd: { marginBottom: 7 },
   swipeReplyWrap: { position: "relative", overflow: "visible" },
   swipeReplyBody: { overflow: "visible" },
-  swipeReplyHint: { position: "absolute", left: 8, top: 0, bottom: 0, width: 38, alignItems: "center", justifyContent: "center" },
-  swipeReplyHintText: { width: 30, height: 30, borderRadius: 15, textAlign: "center", lineHeight: 29, color: "#E7D3A7", fontSize: 20, fontWeight: "800", backgroundColor: "rgba(7,45,35,0.94)", overflow: "hidden" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
