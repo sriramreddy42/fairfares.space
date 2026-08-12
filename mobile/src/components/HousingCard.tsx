@@ -16,10 +16,28 @@ type Props = {
 export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false }: Props) {
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
   const imageUrl = absoluteAssetUrl(postImages[0] || "");
+  const fallbackTitle = post.roommateIntent
+    ? "Need roommate"
+    : post.mode === "NEED_PLACE"
+      ? "Need a place"
+      : "Place photos";
+  const fallbackCopy = post.roommateIntent
+    ? "Photos optional"
+    : post.mode === "NEED_PLACE"
+      ? "Details first"
+      : "Coming soon";
   return (
     <TouchableOpacity style={[styles.card, width ? { width, marginRight: 0 } : null]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
       <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
-        {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.image} /> : <View style={styles.fallback} />}
+        {imageUrl ? (
+          <Image source={{ uri: imageUrl }} style={styles.image} />
+        ) : (
+          <View style={styles.fallback}>
+            <Text style={[styles.fallbackIcon, compact && styles.fallbackIconCompact]}>{post.roommateIntent ? "👥" : post.mode === "NEED_PLACE" ? "🏠" : "🛏️"}</Text>
+            <Text style={[styles.fallbackTitle, compact && styles.fallbackTitleCompact]}>{fallbackTitle}</Text>
+            <Text style={[styles.fallbackCopy, compact && styles.fallbackCopyCompact]}>{fallbackCopy}</Text>
+          </View>
+        )}
         <Text style={[styles.badge, compact && styles.badgeCompact]}>{post.modeLabel}</Text>
         {postImages.length > 1 ? <Text style={styles.imageCount}>1/{Math.min(postImages.length, 4)}</Text> : null}
       </View>
@@ -78,8 +96,18 @@ const styles = StyleSheet.create({
   },
   fallback: {
     flex: 1,
-    backgroundColor: "#202a25"
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#202a25",
+    gap: 5,
+    paddingHorizontal: 14
   },
+  fallbackIcon: { fontSize: 34, lineHeight: 38 },
+  fallbackIconCompact: { fontSize: 27, lineHeight: 31 },
+  fallbackTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", textAlign: "center" },
+  fallbackTitleCompact: { fontSize: 14, lineHeight: 18 },
+  fallbackCopy: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", textAlign: "center" },
+  fallbackCopyCompact: { fontSize: 10, lineHeight: 13 },
   poster: { color: theme.colors.soft, fontSize: 11, fontWeight: "500", marginTop: 2 },
   badge: {
     position: "absolute",

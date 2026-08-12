@@ -10,6 +10,7 @@ export type FestivalCampaign = {
 };
 
 type FestivalDate = { month: number; day: number };
+const FESTIVAL_LEAD_DAYS = 1;
 
 const movingDates: Record<number, Record<string, FestivalDate>> = {
   2026: {
@@ -81,8 +82,8 @@ export function activeFestivalCampaign(now = new Date()): FestivalCampaign | nul
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   const candidates = [...campaignsForYear(now.getFullYear() - 1), ...campaignsForYear(now.getFullYear()), ...campaignsForYear(now.getFullYear() + 1)];
   return candidates.find((campaign) => {
-    const visibleFrom = addDays(campaign.date, -3);
-    const visibleUntil = addDays(campaign.endDate, 1);
+    const visibleFrom = addDays(campaign.date, -FESTIVAL_LEAD_DAYS);
+    const visibleUntil = campaign.endDate;
     return today >= visibleFrom && today <= visibleUntil;
   }) || null;
 }

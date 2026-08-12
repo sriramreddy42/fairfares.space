@@ -15213,7 +15213,6 @@ def mobile_housing_posts(
     elif need == "have_place":
         clauses.append("post_mode = 'NEED_PLACE'")
     elif need == "need_roommates":
-        clauses.append("post_mode = 'NEED_PLACE'")
         clauses.append("roommate_intent = 1")
     if category:
         clauses.append("category = ?")
@@ -20852,7 +20851,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             clauses.append("post_mode = 'HAVE_PLACE'")
             clauses.append("category IN ('single_room', 'shared_room', 'paying_guest', 'basement_apartment')")
         elif search_need == "need_roommates":
-            clauses.append("post_mode = 'NEED_PLACE'")
             clauses.append("roommate_intent = 1")
         elif search_need == "need_property_rent":
             clauses.append("post_mode = 'HAVE_PLACE'")

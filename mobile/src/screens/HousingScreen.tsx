@@ -414,6 +414,16 @@ function normalizeLocalityKey(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/,\s*(co|ca|tx|fl|usa)$/i, "");
 }
 
+function isStreetLikeLocality(value: string) {
+  const clean = normalizeLocalityKey(value);
+  if (!clean) return false;
+  if (/^\d{3,}/.test(clean)) return true;
+  if (/\b(?:street|st|road|rd|avenue|ave|boulevard|blvd|drive|dr|lane|ln|court|ct|circle|cir|way|place|pl|terrace|ter|parkway|pkwy|highway|hwy)\b\.?/i.test(clean)) return true;
+  if (/\b(?:apt|apartment|unit|suite|ste|#)\s*[\w-]+/i.test(clean)) return true;
+  if (/\b\d{5}(?:-\d{4})?\b/.test(clean)) return true;
+  return false;
+}
+
 function cleanLocalityName(value: string, fallbackCity: string) {
   const clean = value
     .replace(/\s+/g, " ")
@@ -423,6 +433,7 @@ function cleanLocalityName(value: string, fallbackCity: string) {
   const cityOnly = normalizeLocalityKey(fallbackCity || "");
   const cleanKey = normalizeLocalityKey(clean);
   if (!clean || cleanKey === cityOnly || cleanKey === "area open") return "";
+  if (isStreetLikeLocality(clean)) return "";
   return clean;
 }
 
@@ -722,11 +733,11 @@ export function HousingScreen({
       groups.set(normalizeLocalityKey(name), { name, total: 0, count: 0, offered: 0, needed: 0, preset: true });
     });
     posts.filter((post) => !post.sample).forEach((post) => {
-      const name = cleanLocalityName(post.area || post.location || "", city);
+      const name = cleanLocalityName(post.area || "", city) || cleanLocalityName(post.location || "", city);
       if (!name) return;
       const key = normalizeLocalityKey(name);
       const current = groups.get(key) || { name, total: 0, count: 0, offered: 0, needed: 0, preset: false };
-      if (post.rentValue > 0) {
+      if (post.mode === "HAVE_PLACE" && post.rentValue > 0) {
         current.total += post.rentValue;
         current.count += 1;
       }
@@ -806,6 +817,26 @@ export function HousingScreen({
     setDetailPreviewImageIndex(nextIndex);
     setDetailPreviewImage(absoluteAssetUrl(detailImages[nextIndex]));
     detailPreviewCarouselRef.current?.scrollTo({ x: nextIndex * viewportWidth, animated: true });
+  }
+
+  function renderDetailImageFallback(post: HousingPost) {
+    const title = post.roommateIntent
+      ? "Need roommate"
+      : post.mode === "NEED_PLACE"
+        ? "Need a place"
+        : "Place photos coming soon";
+    const copy = post.roommateIntent
+      ? "Photos are optional for roommate searches. Use the description and preferences to decide if it is a fit."
+      : post.mode === "NEED_PLACE"
+        ? "No photos needed for place requests. Check the preferred area, budget, move-in date, and requirements below."
+        : "The owner has not added photos yet. Review the description and listing details below.";
+    return (
+      <View style={styles.detailImageFallback}>
+        <Text style={styles.detailImageFallbackIcon}>{post.roommateIntent ? "👥" : post.mode === "NEED_PLACE" ? "🏠" : "🛏️"}</Text>
+        <Text style={styles.detailImageFallbackTitle}>{title}</Text>
+        <Text style={styles.detailImageFallbackCopy}>{copy}</Text>
+      </View>
+    );
   }
 
   useEffect(() => {
@@ -3134,16 +3165,6 @@ export function HousingScreen({
         <View style={[styles.brandHeader, mode !== "housing" && styles.brandHeaderHidden]}>
           {mode === "housing" ? (
           <>
-          {festivalCampaign ? (
-            <View style={styles.festivalHero} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
-              <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="cover" />
-              <View style={styles.festivalPosterActions}>
-                <TouchableOpacity accessibilityLabel="Open Housing" style={styles.festivalPosterAction} onPress={() => setMode("housing")} />
-                <TouchableOpacity accessibilityLabel="Open Explorer" style={styles.festivalPosterAction} onPress={() => onTopAction("Explorer")} />
-                <TouchableOpacity accessibilityLabel="Open Deals" style={styles.festivalPosterAction} onPress={() => onTopAction("Deals")} />
-              </View>
-            </View>
-          ) : <>
           <View style={styles.freeServicesHero}>
             <View style={styles.freeServicesCopy}>
               <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
@@ -3163,6 +3184,11 @@ export function HousingScreen({
                 </View>
               ))}
             </View>
+            {festivalCampaign ? (
+              <View pointerEvents="none" style={styles.festivalHeroOverlay} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
+                <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="cover" />
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.topTabs}>
@@ -3186,7 +3212,6 @@ export function HousingScreen({
               );
             })}
           </View>
-          </>}
           </>
           ) : null}
         </View>
@@ -3595,7 +3620,7 @@ export function HousingScreen({
                     ) : null}
                   </View>
                 ) : (
-                  <View style={styles.detailImageFallback} />
+                  renderDetailImageFallback(detailPost)
                 )}
                 <TouchableOpacity style={styles.detailMapCompact} onPress={() => openPostMap(detailPost)} accessibilityRole="button" accessibilityLabel="Open housing location map">
                   <View style={styles.detailMapCopy}>
@@ -3710,15 +3735,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#09bf78"
   },
   brandHeaderHidden: { height: 0, borderWidth: 0, backgroundColor: "transparent" },
-  festivalHero: { width: "100%", aspectRatio: 2, backgroundColor: "#00472d", position: "relative" },
+  festivalHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00472d" },
   festivalPoster: { width: "100%", height: "100%" },
-  festivalPosterActions: { position: "absolute", left: 0, right: 0, bottom: 0, height: "20%", flexDirection: "row" },
-  festivalPosterAction: { flex: 1 },
   freeServicesHero: {
     width: "100%",
     minHeight: 142,
     padding: 16,
     overflow: "hidden",
+    position: "relative",
     flexDirection: "row",
     alignItems: "center",
     gap: 12
@@ -4298,7 +4322,10 @@ const styles = StyleSheet.create({
   detailImageNext: { position: "absolute", right: 12, top: "50%", width: 44, height: 44, marginTop: -22, borderRadius: 22, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.58)", backgroundColor: "rgba(10,18,15,0.34)" },
   detailImageNextGlass: { flex: 1, alignItems: "center", justifyContent: "center" },
   detailImageNextText: { color: "#ffffff", fontSize: 36, lineHeight: 38, fontWeight: "500", marginTop: -3 },
-  detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
+  detailImageFallback: { width: "100%", minHeight: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25", alignItems: "center", justifyContent: "center", padding: 22, gap: 8 },
+  detailImageFallbackIcon: { fontSize: 38, lineHeight: 42 },
+  detailImageFallbackTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "900", textAlign: "center" },
+  detailImageFallbackCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center", maxWidth: 420 },
   detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
   detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },
   detailDescriptionCard: { backgroundColor: "rgba(255,255,255,0.045)", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
