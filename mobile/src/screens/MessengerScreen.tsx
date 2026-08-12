@@ -548,8 +548,10 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
       translateX.setValue(eased);
     },
     onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62)) onReplyRef.current();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start();
+      const shouldReply = gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62);
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start(({ finished }) => {
+        if (finished && shouldReply) onReplyRef.current();
+      });
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
