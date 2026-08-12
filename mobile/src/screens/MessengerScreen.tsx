@@ -2522,7 +2522,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           intensity={48}
           tintColor="#08291D"
           fallbackColor="rgba(4,25,19,0.96)"
-          style={[styles.threadHeader, Platform.OS === "ios" ? { minHeight: 66 + safeAreaInsets.top, paddingTop: safeAreaInsets.top + 7 } : null]}
+          style={styles.threadHeader}
         >
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />

@@ -71,9 +71,9 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
           <AdaptiveGlassView
             style={[
               styles.liquidIndicator,
-              Platform.OS !== "ios" && styles.fallbackLiquidIndicator,
+              styles.fallbackLiquidIndicator,
               active === "messenger" && styles.chittiIndicator,
-              active === "messenger" && Platform.OS !== "ios" && styles.chittiFallbackIndicator
+              active === "messenger" && styles.chittiFallbackIndicator
             ]}
             tintColor={active === "messenger" ? "#17653C" : "#163A2D"}
             fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(34,92,65,0.62)"}
@@ -117,18 +117,23 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
     height: 72,
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(21,24,23,0.86)",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#2e2e2f",
+    borderColor: "rgba(255,255,255,0.14)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
     paddingHorizontal: 6,
-    overflow: "hidden"
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.34,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 14
   },
   chittiBar: {
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(5,31,25,0.88)",
     borderColor: "rgba(220,171,84,0.26)"
   },
   item: {

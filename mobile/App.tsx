@@ -1596,8 +1596,8 @@ function FairFaresApp() {
 
   return (
     <NearbyRelayProvider user={data?.user || null}>
-    <SafeAreaView style={styles.safe} edges={["top", "right", "bottom", "left"]}>
-      <StatusBar style="light" backgroundColor={theme.colors.bg} translucent={false} />
+    <SafeAreaView style={[styles.safe, activeTab === "messenger" && styles.chittiSafe]} edges={["top", "right", "bottom", "left"]}>
+      <StatusBar style="light" backgroundColor={activeTab === "messenger" ? "#052017" : theme.colors.bg} translucent={false} />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
         {loading ? (
           <View style={styles.loader}>
@@ -2312,6 +2312,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.bg,
   },
   safe: { flex: 1, backgroundColor: theme.colors.bg },
+  chittiSafe: { backgroundColor: "#052017" },
   appContent: { flex: 1 },
   listingSuccessBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
   listingSuccessCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", backgroundColor: "#171a18", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", gap: 12 },

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
-import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, updateMobileRide } from "../api/client";
 import { appAssets } from "../assets";
@@ -516,6 +516,8 @@ export function HousingScreen({
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [detailPreviewImage, setDetailPreviewImage] = useState("");
   const [detailPreviewImageIndex, setDetailPreviewImageIndex] = useState(0);
+  const [detailCarouselWidth, setDetailCarouselWidth] = useState(0);
+  const [detailImageLoadState, setDetailImageLoadState] = useState<Record<string, "loading" | "loaded" | "error">>({});
   const detailCarouselRef = useRef<ScrollView>(null);
   const detailPreviewCarouselRef = useRef<ScrollView>(null);
   const detailScrollRef = useRef<ScrollView>(null);
@@ -575,7 +577,7 @@ export function HousingScreen({
   const [rideDriverDraft, setRideDriverDraft] = useState<RideDriverProfile>(blankRideDriverProfile);
   const [rideDriverBusy, setRideDriverBusy] = useState(false);
   const [rideOwnerPrompt, setRideOwnerPrompt] = useState("");
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const compactHousingHome = viewportWidth < 560;
   const housingCardWidth = compactHousingHome
     ? Math.max(164, Math.min(212, (viewportWidth - 38) / 2))
@@ -722,13 +724,25 @@ export function HousingScreen({
   const detailImages = detailPost
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
-  const detailImageWidth = Math.max(260, Math.min(viewportWidth - theme.spacing.md * 4, 620));
+  const detailImageWidth = Math.max(260, detailCarouselWidth || viewportWidth - theme.spacing.md * 4);
+  const detailPhotoHeight = Math.max(360, viewportHeight - (Platform.OS === "ios" ? 112 : 58));
 
   useEffect(() => {
     setDetailImageIndex(0);
+    setDetailCarouselWidth(0);
+    setDetailImageLoadState({});
     detailScrollOffsetRef.current = 0;
     setDetailCanScrollMore(false);
   }, [detailPost?.id]);
+
+  function updateDetailImageLoadState(uri: string, state: "loading" | "loaded" | "error") {
+    setDetailImageLoadState((current) => ({ ...current, [uri]: state }));
+  }
+
+  function handleDetailCarouselLayout(event: LayoutChangeEvent) {
+    const width = event.nativeEvent.layout.width;
+    if (width > 0) setDetailCarouselWidth(width);
+  }
 
   function showNextDetailImage() {
     if (detailImages.length < 2) return;
@@ -3475,7 +3489,7 @@ export function HousingScreen({
                 }}
               >
                 {detailImages.length ? (
-                  <View style={styles.detailCarouselWrap}>
+                  <View style={styles.detailCarouselWrap} onLayout={handleDetailCarouselLayout}>
                     <ScrollView
                       ref={detailCarouselRef}
                       horizontal
@@ -3484,11 +3498,29 @@ export function HousingScreen({
                       style={styles.detailCarousel}
                       onMomentumScrollEnd={(event) => setDetailImageIndex(Math.round(event.nativeEvent.contentOffset.x / detailImageWidth))}
                     >
-                      {detailImages.map((image, index) => (
-                        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => openDetailPreviewImage(index)} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
-                          <Image source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
-                        </TouchableOpacity>
-                      ))}
+                      {detailImages.map((image, index) => {
+                        const uri = absoluteAssetUrl(image);
+                        const loadState = detailImageLoadState[uri];
+                        return (
+                          <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => openDetailPreviewImage(index)} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
+                            <View style={[styles.detailImageFrame, { width: detailImageWidth }]}>
+                              <Image
+                                source={{ uri }}
+                                style={styles.detailImage}
+                                resizeMode="cover"
+                                onLoadStart={() => updateDetailImageLoadState(uri, "loading")}
+                                onLoad={() => updateDetailImageLoadState(uri, "loaded")}
+                                onError={() => updateDetailImageLoadState(uri, "error")}
+                              />
+                              {loadState !== "loaded" ? (
+                                <View style={styles.detailImageLoading}>
+                                  {loadState === "error" ? <Text style={styles.detailImageErrorText}>Photo unavailable</Text> : <ActivityIndicator color={theme.colors.green} />}
+                                </View>
+                              ) : null}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </ScrollView>
                     {detailImages.length > 1 ? (
                       <>
@@ -3599,7 +3631,13 @@ export function HousingScreen({
                     showsHorizontalScrollIndicator={false}
                     showsVerticalScrollIndicator={false}
                   >
-                    {Math.abs(index - detailPreviewImageIndex) <= 1 ? <Image source={{ uri: absoluteAssetUrl(image) }} style={styles.detailPhotoFull} resizeMode="contain" /> : <View style={styles.detailPhotoFull} />}
+                    {Math.abs(index - detailPreviewImageIndex) <= 1 ? (
+                      <Image
+                        source={{ uri: absoluteAssetUrl(image) }}
+                        style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight }]}
+                        resizeMode="contain"
+                      />
+                    ) : <View style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight }]} />}
                   </ScrollView>
                 ))}
               </ScrollView>
@@ -4211,9 +4249,12 @@ const styles = StyleSheet.create({
   detailClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   detailCloseText: { color: theme.colors.text, fontWeight: "900" },
   detailContent: { padding: theme.spacing.md, paddingBottom: 48, gap: theme.spacing.md },
-  detailCarouselWrap: { borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
+  detailCarouselWrap: { width: "100%", borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
   detailCarousel: { width: "100%" },
-  detailImage: { height: 210, borderRadius: theme.radius.md },
+  detailImageFrame: { height: 210, borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
+  detailImage: { width: "100%", height: "100%" },
+  detailImageLoading: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(12,18,17,0.48)" },
+  detailImageErrorText: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" },
   detailImageDots: { position: "absolute", bottom: 12, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.48)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 7 },
   detailImageDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.48)" },
   detailImageDotActive: { width: 16, backgroundColor: "#ffffff" },
@@ -4249,7 +4290,7 @@ const styles = StyleSheet.create({
   detailPhotoPager: { flex: 1, marginHorizontal: -10 },
   detailPhotoScroll: { flex: 1 },
   detailPhotoScrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", minWidth: "100%" },
-  detailPhotoFull: { width: "100%", height: "100%", minHeight: 620 },
+  detailPhotoFull: { maxWidth: "100%" },
   detailPhotoNav: { position: "absolute", top: "50%", width: 48, height: 48, marginTop: -24, borderRadius: 24, backgroundColor: "rgba(22,22,24,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", zIndex: 2 },
   detailPhotoNavLeft: { left: 14 },
   detailPhotoNavRight: { right: 14 },
