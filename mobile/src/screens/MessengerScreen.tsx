@@ -3912,7 +3912,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </ScrollView>
         ) : null}
 
-        {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View><TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
+        {replyingTo ? <View style={[styles.replyComposerPreview, Platform.OS === "ios" && keyboardHeight > 0 ? { bottom: 63 + Math.max(0, keyboardHeight - safeAreaInsets.bottom) } : null]}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View><TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
         <View style={styles.composer}>
           <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
           <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
