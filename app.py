@@ -6123,7 +6123,7 @@ def init_db() -> None:
         ensure_column(con, "cars", "owner_notes", "owner_notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "available_from_date", "available_from_date TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "cars", "available_to_date", "available_to_date TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "cars", "owner_contact_preference", "owner_contact_preference TEXT NOT NULL DEFAULT 'FCHAT'")
+        ensure_column(con, "cars", "owner_contact_preference", "owner_contact_preference TEXT NOT NULL DEFAULT 'CHITTHI'")
         ensure_column(con, "bookings", "pickup_odometer_image", "pickup_odometer_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_fuel_image", "pickup_fuel_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_interior_front_image", "pickup_interior_front_image TEXT NOT NULL DEFAULT ''")
@@ -6849,7 +6849,7 @@ def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite
         raise ValueError("Use realistic seats, bags, and doors.")
     if daily_price < 10 or daily_price > 500:
         raise ValueError("Daily price must be between $10 and $500.")
-    features = clean_text_value(payload.get("features"), 300) or "Owner listed|FChat available|Review pending"
+    features = clean_text_value(payload.get("features"), 300) or "Owner listed|Chitthi available|Review pending"
     image_url = clean_text_value(payload.get("imageUrl") or payload.get("image_url"), 300)
     color = clean_text_value(payload.get("color"), 40)
     available_from = clean_text_value(payload.get("availableFrom") or payload.get("available_from"), 20)
@@ -6864,7 +6864,7 @@ def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite
              owner_user_id, listing_source, review_status, owner_notes, available_from_date, available_to_date,
              owner_contact_preference, sort_order)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Owner listed', ?, ?, ?, ?, 'AVAILABLE', ?,
-                    ?, 'OWNER_LISTING', 'PENDING_REVIEW', ?, ?, ?, 'FCHAT', 1000)
+                    ?, 'OWNER_LISTING', 'PENDING_REVIEW', ?, ?, ?, 'CHITTHI', 1000)
             """,
             (
                 name,
@@ -17048,7 +17048,7 @@ def get_or_create_accommodation_conversation(
                 (SAMPLE_HOUSING_OWNER_EMAIL,),
             ).fetchone()
             if not demo_owner:
-                return None, "This housing poster is not available in FChat yet."
+                return None, "This housing poster is not available in Chitthi yet."
             return get_or_create_person_conversation(con, sender, int(row_value(demo_owner, "id") or 0))
         return None, "Housing post was not found."
     if row_value(post, "visibility_status") != "ACTIVE":
@@ -17396,7 +17396,7 @@ def chat_listing_context(
 
 
 def chat_notification_avatar_signature(user_id: int, expires_at: int) -> str:
-    value = f"fchat-avatar:{int(user_id)}:{int(expires_at)}".encode("utf-8")
+    value = f"chitthi-avatar:{int(user_id)}:{int(expires_at)}".encode("utf-8")
     return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
 
 
@@ -17408,7 +17408,7 @@ def chat_notification_avatar_url(origin: str, user_id: int, lifetime_seconds: in
 
 
 def chat_notification_group_avatar_signature(community_id: int, expires_at: int) -> str:
-    value = f"fchat-group-avatar:{int(community_id)}:{int(expires_at)}".encode("utf-8")
+    value = f"chitthi-group-avatar:{int(community_id)}:{int(expires_at)}".encode("utf-8")
     return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
 
 
@@ -17446,7 +17446,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "data": notification_data,
                 "channelId": channel_id,
                 **({"badge": badge_count} if badge_count else {}),
-                **({"mutableContent": True, "categoryId": "FCHAT_MESSAGE"} if notification_type == "FCHAT_MESSAGE" else {}),
+                **({"mutableContent": True, "categoryId": "CHITTHI_MESSAGE"} if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE"} else {}),
                 **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
             }
             for token in token_batch
@@ -17515,7 +17515,7 @@ def push_idempotency_key(data: dict[str, object], title: str, body: str) -> str:
 
 def mobile_push_category(data: dict[str, object] | None) -> str:
     notification_type = str((data or {}).get("type") or "").upper()
-    if notification_type == "FCHAT_MESSAGE" or notification_type.startswith("FCHAT_"):
+    if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE"} or notification_type.startswith(("CHITTHI_", "FCHAT_")):
         return "chitthi"
     if notification_type.startswith("CARPOOL_"):
         return "carpool"
@@ -19779,8 +19779,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/.well-known/assetlinks.json":
             self.app_association_file("android")
             return
-        if parsed.path in {"/fchat/invite", "/fchat/group"}:
-            self.fchat_invite_landing(parsed)
+        if parsed.path in {"/chitthi/invite", "/chitthi/group", "/fchat/invite", "/fchat/group"}:
+            self.chitthi_invite_landing(parsed)
             return
         if parsed.path == "/api/health":
             self.api_health()
@@ -20388,17 +20388,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return f"/login?next={urllib.parse.quote(safe_next, safe='')}"
 
     def community_join_url(self, public_id: str) -> str:
-        return f"{self.public_origin()}/fchat/group?community_id={urllib.parse.quote(public_id)}"
+        return f"{self.public_origin()}/chitthi/group?community_id={urllib.parse.quote(public_id)}"
 
     def community_invite_url(self, token: str) -> str:
-        return f"{self.public_origin()}/fchat/invite?group_invite={urllib.parse.quote(token)}"
+        return f"{self.public_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
 
     def app_association_file(self, platform: str) -> None:
         if platform == "ios":
             payload = {
                 "applinks": {
                     "apps": [],
-                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/fchat/*"}]}],
+                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}]}],
                 }
             }
         else:
@@ -20413,7 +20413,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }]
         self.send_text(json.dumps(payload), "application/json; charset=utf-8")
 
-    def fchat_invite_landing(self, parsed: urllib.parse.ParseResult) -> None:
+    def chitthi_invite_landing(self, parsed: urllib.parse.ParseResult) -> None:
         token = (urllib.parse.parse_qs(parsed.query).get("group_invite", [""])[0] or "").strip()
         community_id = (urllib.parse.parse_qs(parsed.query).get("community_id", [""])[0] or "").strip()
         if not token and not community_id:
@@ -20421,8 +20421,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         deep_link = f"fairfares://group?group_invite={urllib.parse.quote(token)}" if token else f"fairfares://group?community_id={urllib.parse.quote(community_id)}"
         safe_deep_link = html.escape(deep_link, quote=True)
-        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Open FChat group</title></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside FChat.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares</a><p style=\"color:#8995a8;font-size:13px\">Install or update FairFares if the app does not open.</p></main><script>setTimeout(function(){{location.href={json.dumps(deep_link)}}},120);</script></body></html>"""
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Open Chitthi group</title></head>
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside Chitthi.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares</a><p style=\"color:#8995a8;font-size:13px\">Install or update FairFares if the app does not open.</p></main><script>setTimeout(function(){{location.href={json.dumps(deep_link)}}},120);</script></body></html>"""
         self.send_text(body, "text/html; charset=utf-8")
 
     def healthz(self) -> None:
@@ -21565,7 +21565,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             # Never expose the encrypted-at-rest database placeholder in a
             # system notification. A plaintext preview is intentionally not
             # available to the relay server for an E2EE message.
-            notification_preview = "New FChat message"
+            notification_preview = "New Chitthi message"
         else:
             notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
@@ -21628,12 +21628,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             threading.Thread(
                 target=deliver_chat_emails,
                 daemon=True,
-                name="fairfares-fchat-email",
+                name="fairfares-chitthi-email",
             ).start()
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
-            conversation_name = str(row_value(conversation, "subject") or "FChat group") if is_group else ""
+            conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
             community_id = int(row_value(conversation, "community_id") or 0)
             notification_avatar_url = (
                 chat_notification_group_avatar_url(self.public_origin(), community_id)
@@ -21641,10 +21641,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
             )
             sender_display_name = row_value(sender, "name") or "FairFares member"
-            push_title = conversation_name if is_group and conversation_name else sender_display_name or "New FChat message"
+            push_title = conversation_name if is_group and conversation_name else sender_display_name or "New Chitthi message"
             push_body = f"{sender_display_name}: {notification_preview}" if is_group and sender_display_name else notification_preview
             common_data = {
-                "type": "FCHAT_MESSAGE",
+                "type": "CHITTHI_MESSAGE",
                 "conversationId": row_value(conversation, "public_id"),
                 "messageId": int(row_value(message, "id") or 0),
                 "senderId": sender_id,
@@ -21725,7 +21725,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (conversation["id"], context_owner_user_id),
                 ).fetchone()
                 if not verified_participant:
-                    self.send_json({"ok": False, "message": "The listing owner does not match this FChat profile."}, 409)
+                    self.send_json({"ok": False, "message": "The listing owner does not match this Chitthi profile."}, 409)
                     return
             message = save_chat_message(
                 con,
@@ -21954,7 +21954,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_register_chat_e2ee_key(self) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure FChat."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure Chitthi."}, 401)
             return
         form = self.read_form()
         error = register_chat_device_key(int(user["id"]), form.get("deviceId", ""), form.get("publicKey", ""), form.get("signingPublicKey", ""))
@@ -21966,7 +21966,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_chat_e2ee_keys(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure FChat."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure Chitthi."}, 401)
             return
         conversation_id = (urllib.parse.parse_qs(parsed.query).get("conversation_id") or [""])[0]
         keys, warning = get_chat_conversation_device_keys(conversation_id, int(user["id"]))
@@ -21989,7 +21989,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_chat_e2ee_envelopes(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted FChat."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted Chitthi."}, 401)
             return
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id") or [""])[0]
@@ -22011,7 +22011,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         """Return the current device's conversation-preview envelopes in one query."""
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted FChat."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to read encrypted Chitthi."}, 401)
             return
         params = urllib.parse.parse_qs(parsed.query)
         device_id = (params.get("device_id") or [""])[0].strip()
@@ -22109,7 +22109,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_relay_encrypted_chat_message(self) -> None:
         relay_user = self.current_user()
         if not relay_user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to relay encrypted FChat messages."}, 401)
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to relay encrypted Chitthi messages."}, 401)
             return
         bundle = self.read_json_body()
         message, error = accept_encrypted_chat_relay(bundle)
@@ -22502,7 +22502,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         photo = str(row_value(avatar_row, photo_column) or "").strip() if avatar_row else ""
         upload = data_url_upload_parts(
             photo,
-            f"fchat-group-avatar-{community_id}" if community_id > 0 else f"fchat-avatar-{user_id}",
+            f"chitthi-group-avatar-{community_id}" if community_id > 0 else f"chitthi-avatar-{user_id}",
             allowed_mime_types=ALLOWED_CHAT_IMAGE_MIME_TYPES,
             max_bytes=2_000_000,
         )

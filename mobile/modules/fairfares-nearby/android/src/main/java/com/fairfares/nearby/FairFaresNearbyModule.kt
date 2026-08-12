@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 
 class FairFaresNearbyModule : Module() {
-  private val serviceId = "com.fairfares.mobile.fchat.relay.v1"
+  private val serviceId = "com.fairfares.mobile.chitthi.relay.v1"
   private val strategy = Strategy.P2P_CLUSTER
   private val connected = ConcurrentHashMap.newKeySet<String>()
   private val requested = ConcurrentHashMap.newKeySet<String>()

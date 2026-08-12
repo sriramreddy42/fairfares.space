@@ -124,15 +124,15 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(mock_send.call_args.args[0], [enabled_token])
         self.assertEqual(mock_send.call_args.args[3]["type"], "CARPOOL_REQUEST")
 
-    def test_fchat_payload_stays_on_chitthi_message_channel(self):
-        token = "ExponentPushToken[fchat-device]"
+    def test_legacy_fchat_payload_stays_on_chitthi_message_channel(self):
+        token = "ExponentPushToken[chitthi-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-chat"}]})
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Vinay Reddy", "Hello", {"type": "FCHAT_MESSAGE", "subtitle": "Dayton Rides & Community"})
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(messages[0]["channelId"], "chitthi-messages-v2")
         self.assertTrue(messages[0]["mutableContent"])
-        self.assertEqual(messages[0]["categoryId"], "FCHAT_MESSAGE")
+        self.assertEqual(messages[0]["categoryId"], "CHITTHI_MESSAGE")
         self.assertEqual(messages[0]["subtitle"], "Dayton Rides & Community")
 
     def test_promotional_payload_includes_rich_image_for_android_and_ios(self):
@@ -155,7 +155,7 @@ class PushNotificationTest(unittest.TestCase):
         token = "ExpoPushToken[badge-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-badge"}]})
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
-            app.send_expo_push(token.split(), "New message", "Hello", {"type": "FCHAT_MESSAGE", "badge": 4})
+            app.send_expo_push(token.split(), "New message", "Hello", {"type": "CHITTHI_MESSAGE", "badge": 4})
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
         self.assertEqual(message["badge"], 4)
 
@@ -194,7 +194,7 @@ class PushNotificationTest(unittest.TestCase):
     def test_outbox_records_ticket_then_receipt_delivery(self):
         token = "ExpoPushToken[receipt-device]"
         with patch.object(app.threading, "Thread", DeferredThread):
-            app.enqueue_mobile_pushes([(self.user_id, token)], "New message", "Hello", {"type": "FCHAT_MESSAGE", "messageId": 88})
+            app.enqueue_mobile_pushes([(self.user_id, token)], "New message", "Hello", {"type": "CHITTHI_MESSAGE", "messageId": 88})
         with patch.object(app, "send_expo_push", return_value={token: {"status": "ACCEPTED", "ticketId": "ticket-88", "error": ""}}):
             result = app.process_mobile_push_outbox()
         self.assertEqual(result["accepted"], 1)
@@ -209,7 +209,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(row["status"], "DELIVERED")
         self.assertTrue(row["delivered_at"])
 
-    def test_fchat_avatar_urls_are_short_lived_and_tamper_evident(self):
+    def test_chitthi_avatar_urls_are_short_lived_and_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
             url = app.chat_notification_avatar_url("https://www.fairfare.space", self.user_id)
         parsed = app.urllib.parse.urlparse(url)
@@ -222,7 +222,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id, expires_at)))
         self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id + 1, expires_at)))
 
-    def test_fchat_group_avatar_urls_are_short_lived_and_tamper_evident(self):
+    def test_chitthi_group_avatar_urls_are_short_lived_and_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
             url = app.chat_notification_group_avatar_url("https://www.fairfare.space", 42)
         parsed = app.urllib.parse.urlparse(url)

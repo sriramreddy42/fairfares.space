@@ -7,7 +7,7 @@ function accountRecoveryPassphrase(password: string) {
 }
 
 /**
- * Keeps the native FChat identity recoverable with the user's account password.
+ * Keeps the native Chitthi identity recoverable with the user's account password.
  * The password and unencrypted key never leave the device.
  */
 export async function syncChatIdentityRecovery(userId: number, password: string) {

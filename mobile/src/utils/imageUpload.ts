@@ -89,7 +89,7 @@ export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76)
   });
   if (result.canceled || !result.assets.length) return [];
   return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
-    compressedUpload(asset, index, "fchat", maxWidth, quality)
+    compressedUpload(asset, index, "chitthi", maxWidth, quality)
   ));
 }
 
@@ -116,14 +116,14 @@ export async function pickChatMedia(limit = 4, maxWidth = 1600, quality = 0.76) 
     return [{
       uri: selectedVideo.uri,
       blob,
-      name: selectedVideo.fileName || `fchat-video-${Date.now()}.mp4`,
+      name: selectedVideo.fileName || `chitthi-video-${Date.now()}.mp4`,
       mimeType,
       size,
       kind: "VIDEO" as const
     }];
   }
   return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
-    compressedUpload(asset, index, "fchat", maxWidth, quality)
+    compressedUpload(asset, index, "chitthi", maxWidth, quality)
   ));
 }
 
@@ -138,5 +138,5 @@ export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
   });
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
-  return compressedUpload(asset, 0, "fchat-camera", maxWidth, quality);
+  return compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality);
 }

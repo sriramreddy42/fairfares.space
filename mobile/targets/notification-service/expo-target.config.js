@@ -2,7 +2,7 @@
 module.exports = config => ({
   type: "notification-service",
   name: "FChatNotificationService",
-  displayName: "FChat Notification Service",
+  displayName: "Chitthi Notification Service",
   bundleIdentifier: ".fchat-notification-service",
   deploymentTarget: "15.1",
   frameworks: ["Intents", "UIKit", "UserNotifications"],

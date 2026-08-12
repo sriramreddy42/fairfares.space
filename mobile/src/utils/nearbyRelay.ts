@@ -9,8 +9,8 @@ type RelayWireMessage =
   | { kind: "FF_RELAY_CUSTODY_V1"; clientMessageId: string };
 
 type CarrierItem = { bundle: SignedChatRelayBundle; receivedAt: string };
-const carrierKey = (userId: number) => `fairfares.fchat.nearby-carrier.${userId}`;
-export const nearbyRelayPreferenceKey = (userId: number) => `fairfares.fchat.nearby-enabled.${userId}`;
+const carrierKey = (userId: number) => `fairfares.chitthi.nearby-carrier.${userId}`;
+export const nearbyRelayPreferenceKey = (userId: number) => `fairfares.chitthi.nearby-enabled.${userId}`;
 
 function isRelayBundle(value: unknown): value is SignedChatRelayBundle {
   const item = value as SignedChatRelayBundle;

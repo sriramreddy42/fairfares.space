@@ -36,8 +36,8 @@
           "INSendMessageIntent"
         ],
         "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
-        "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in FChat.",
-        "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in FChat.",
+        "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in Chitthi.",
+        "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in Chitthi.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -71,6 +71,16 @@
             {
               "scheme": "https",
               "host": "fairfare.space",
+              "pathPrefix": "/chitthi/"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fairfare.space",
+              "pathPrefix": "/chitthi/"
+            },
+            {
+              "scheme": "https",
+              "host": "fairfare.space",
               "pathPrefix": "/fchat/"
             },
             {
@@ -93,7 +103,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in FChat."
+          "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in Chitthi."
         }
       ],
       [
@@ -109,15 +119,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow FairFares to select photos and videos that you choose to send in FChat.",
-          "cameraPermission": "Allow FairFares to take a photo that you choose to send in FChat.",
+          "photosPermission": "Allow FairFares to select photos and videos that you choose to send in Chitthi.",
+          "cameraPermission": "Allow FairFares to take a photo that you choose to send in Chitthi.",
           "microphonePermission": false
         }
       ],
       [
         "expo-contacts",
         {
-          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in FChat. Your address book is not uploaded."
+          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in Chitthi. Your address book is not uploaded."
         }
       ],
       "@bacons/apple-targets",

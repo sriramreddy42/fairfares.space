@@ -11,11 +11,14 @@ import { chacha20poly1305 } from "@noble/ciphers/chacha";
 export type DeviceIdentity = { deviceId: string; publicKey: string; secretKey: string; signingPublicKey: string; signingSecretKey: string };
 export type ConversationDeviceKey = { userId: number; deviceId: string; publicKey: string };
 
-const keyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
+const keyName = (userId: number) => `fairfares.chitthi.e2ee.${userId}`;
+const legacyKeyName = (userId: number) => `fairfares.fchat.e2ee.${userId}`;
 const notificationAccessGroup = "9RVTF77D2S.com.fairfares.mobile.shared";
-const notificationKeychainService = "fairfares-fchat-notification";
+const notificationKeychainService = "fairfares-chitthi-notification";
+const legacyNotificationKeychainService = "fairfares-fchat-notification";
 const secureOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY } as const;
 const sharedSecureOptions = { ...secureOptions, accessGroup: notificationAccessGroup, keychainService: notificationKeychainService } as const;
+const legacySharedSecureOptions = { ...secureOptions, accessGroup: notificationAccessGroup, keychainService: legacyNotificationKeychainService } as const;
 
 type SecureReadResult = { value: string | null; error: unknown };
 
@@ -29,6 +32,7 @@ async function tryReadSecureIdentity(name: string, options: typeof secureOptions
 
 async function readSecureIdentity(userId: number): Promise<string | null> {
   const name = keyName(userId);
+  const legacyName = legacyKeyName(userId);
   if (Platform.OS === "ios") {
     // Older FairFares builds stored this identity in the app's default
     // Keychain group. New builds also mirror it into the notification
@@ -40,14 +44,22 @@ async function readSecureIdentity(userId: number): Promise<string | null> {
 
     const app = await tryReadSecureIdentity(name, secureOptions);
     if (app.value) return app.value;
-    if (shared.error && app.error) {
+    const legacyShared = await tryReadSecureIdentity(legacyName, legacySharedSecureOptions);
+    if (legacyShared.value) return legacyShared.value;
+
+    const legacyApp = await tryReadSecureIdentity(legacyName, secureOptions);
+    if (legacyApp.value) return legacyApp.value;
+    if (shared.error && app.error && legacyShared.error && legacyApp.error) {
       throw new Error("Secure Chitthi storage is unavailable. Install the latest FairFares build and try again.");
     }
     return null;
   }
   const app = await tryReadSecureIdentity(name, secureOptions);
   if (app.error) throw app.error;
-  return app.value;
+  if (app.value) return app.value;
+  const legacyApp = await tryReadSecureIdentity(legacyName, secureOptions);
+  if (legacyApp.error) throw legacyApp.error;
+  return legacyApp.value;
 }
 
 async function writeSecureIdentity(userId: number, serialized: string): Promise<void> {
@@ -87,7 +99,7 @@ function isDeviceIdentity(value: unknown): value is DeviceIdentity {
 
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
   const existing = Platform.OS === "web"
-    ? await AsyncStorage.getItem(keyName(userId))
+    ? (await AsyncStorage.getItem(keyName(userId))) || (await AsyncStorage.getItem(legacyKeyName(userId)))
     : await readSecureIdentity(userId);
   if (!existing) return null;
   let identity: DeviceIdentity;
@@ -179,7 +191,7 @@ export function encryptForDevices(text: string, identity: DeviceIdentity, keys: 
     // Use raw X25519 here (not nacl.box.before, which additionally applies
     // HSalsa20) so Apple's CryptoKit extension derives the identical secret.
     const shared = nacl.scalarMult(secretKey, util.decodeBase64(key.publicKey));
-    const previewKey = sha256(new Uint8Array([...util.decodeUTF8("FairFares FChat notification preview v1"), ...shared]));
+    const previewKey = sha256(new Uint8Array([...util.decodeUTF8("FairFares Chitthi notification preview v1"), ...shared]));
     const previewCiphertext = chacha20poly1305(previewKey, previewNonce).encrypt(util.decodeUTF8(notificationText.slice(0, 240)));
     return {
       recipientUserId: key.userId,

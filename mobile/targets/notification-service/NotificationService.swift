@@ -27,7 +27,8 @@ final class NotificationService: UNNotificationServiceExtension {
             )
             return
         }
-        guard stringValue(payload["type"]) == "FCHAT_MESSAGE" else {
+        let notificationType = stringValue(payload["type"])
+        guard notificationType == "CHITTHI_MESSAGE" || notificationType == "FCHAT_MESSAGE" else {
             deliver(content)
             return
         }
@@ -56,7 +57,7 @@ final class NotificationService: UNNotificationServiceExtension {
         if let preview = decryptPreview(payload), !preview.isEmpty {
             content.body = preview
         } else if isEncryptedPlaceholder(content.body) {
-            content.body = "New FChat message"
+            content.body = "New Chitthi message"
         }
 
         loadAvatar(from: avatarUrl) { [weak self] avatarData in
@@ -110,7 +111,7 @@ final class NotificationService: UNNotificationServiceExtension {
             content: content.body,
             speakableGroupName: groupName,
             conversationIdentifier: conversationId,
-            serviceName: "FChat",
+            serviceName: "Chitthi",
             sender: sender,
             attachments: nil
         )
@@ -217,35 +218,44 @@ final class NotificationService: UNNotificationServiceExtension {
               let privateKey = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: secretData),
               let publicKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: senderPublic),
               let shared = try? privateKey.sharedSecretFromKeyAgreement(with: publicKey) else { return nil }
-        let domain = Data("FairFares FChat notification preview v1".utf8)
         let sharedData = shared.withUnsafeBytes { Data($0) }
-        let key = SymmetricKey(data: Data(SHA256.hash(data: domain + sharedData)))
-        do {
-            let nonce = try ChaChaPoly.Nonce(data: nonceData)
-            let ciphertext = sealedData.dropLast(16)
-            let tag = sealedData.suffix(16)
-            let box = try ChaChaPoly.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
-            let clear = try ChaChaPoly.open(box, using: key)
-            return String(data: clear, encoding: .utf8)
-        } catch {
-            return nil
+        for domainLabel in ["FairFares Chitthi notification preview v1", "FairFares FChat notification preview v1"] {
+            let domain = Data(domainLabel.utf8)
+            let key = SymmetricKey(data: Data(SHA256.hash(data: domain + sharedData)))
+            do {
+                let nonce = try ChaChaPoly.Nonce(data: nonceData)
+                let ciphertext = sealedData.dropLast(16)
+                let tag = sealedData.suffix(16)
+                let box = try ChaChaPoly.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+                let clear = try ChaChaPoly.open(box, using: key)
+                return String(data: clear, encoding: .utf8)
+            } catch {
+                continue
+            }
         }
+        return nil
     }
 
     private func sharedIdentityData(userId: String) -> Data? {
-        let account = "fairfares.fchat.e2ee.\(userId)"
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            // expo-secure-store appends this alias for non-biometric items.
-            kSecAttrService as String: "fairfares-fchat-notification:no-auth",
-            kSecAttrAccount as String: Data(account.utf8),
-            kSecAttrAccessGroup as String: "9RVTF77D2S.com.fairfares.mobile.shared",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
-        return item as? Data
+        for (service, account) in [
+            ("fairfares-chitthi-notification:no-auth", "fairfares.chitthi.e2ee.\(userId)"),
+            ("fairfares-fchat-notification:no-auth", "fairfares.fchat.e2ee.\(userId)")
+        ] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                // expo-secure-store appends this alias for non-biometric items.
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: Data(account.utf8),
+                kSecAttrAccessGroup as String: "9RVTF77D2S.com.fairfares.mobile.shared",
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne
+            ]
+            var item: CFTypeRef?
+            if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
+                return data
+            }
+        }
+        return nil
     }
 
     private func initialsAvatarData(for name: String) -> Data? {

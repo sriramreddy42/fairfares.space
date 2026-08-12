@@ -81,6 +81,7 @@ type Props = {
   onClearNotificationConversation?: () => void;
   onThreadModeChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
+  onCardMessageSent?: () => void;
 };
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
@@ -102,9 +103,13 @@ const CHAT_MESSAGE_CACHE_LIMIT = 50;
 const WEB_CHAT_MESSAGE_CACHE_LIMIT = 20;
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
-const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
-const chatConversationCacheName = (userId: number) => `fairfares.fchat.conversations.v1.${userId}`;
-const chatMessageCacheName = (userId: number, conversationId: string) => `fairfares.fchat.messages.v1.${userId}.${conversationId}`;
+const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
+const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.chitthi.public-keys.${userId}.${conversationId}`;
+const legacyConversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
+const chatConversationCacheName = (userId: number) => `fairfares.chitthi.conversations.v1.${userId}`;
+const legacyChatConversationCacheName = (userId: number) => `fairfares.fchat.conversations.v1.${userId}`;
+const chatMessageCacheName = (userId: number, conversationId: string) => `fairfares.chitthi.messages.v1.${userId}.${conversationId}`;
+const legacyChatMessageCacheName = (userId: number, conversationId: string) => `fairfares.fchat.messages.v1.${userId}.${conversationId}`;
 const chatImagePreviewCache = new Map<string, string>();
 const chatImagePreviewInflight = new Map<string, Promise<string>>();
 const encryptedChatImagePreviewCache = new Map<string, string>();
@@ -192,7 +197,7 @@ function mergeChatConversations(existingConversations: ChatConversation[], incom
 async function readCachedChatConversations(userId: number) {
   if (!userId) return [];
   try {
-    const stored = await AsyncStorage.getItem(chatConversationCacheName(userId));
+    const stored = await AsyncStorage.getItem(chatConversationCacheName(userId)) || await AsyncStorage.getItem(legacyChatConversationCacheName(userId));
     if (!stored) return [];
     const parsed = JSON.parse(stored);
     const conversations = Array.isArray(parsed?.conversations) ? parsed.conversations : Array.isArray(parsed) ? parsed : [];
@@ -219,7 +224,7 @@ async function writeCachedChatConversations(userId: number, conversations: ChatC
 async function readCachedChatMessages(userId: number, conversationId: string) {
   if (!userId || !conversationId) return [];
   try {
-    const stored = await AsyncStorage.getItem(chatMessageCacheName(userId, conversationId));
+    const stored = await AsyncStorage.getItem(chatMessageCacheName(userId, conversationId)) || await AsyncStorage.getItem(legacyChatMessageCacheName(userId, conversationId));
     if (!stored) return [];
     const parsed = JSON.parse(stored);
     const messages = Array.isArray(parsed?.messages) ? parsed.messages : Array.isArray(parsed) ? parsed : [];
@@ -325,7 +330,7 @@ function encryptedPreviewLocalUri(attachmentUrl: string, keyPayload: string) {
   const cacheRoot = FileSystem.cacheDirectory;
   if (!cacheRoot) return "";
   const safeUrl = attachmentUrl.replace(/[^A-Za-z0-9]+/g, "-").slice(-64);
-  return `${cacheRoot}fchat-decrypted-${safeUrl}-${stablePreviewHash(keyPayload)}.${encryptedPreviewExtension(keyPayload)}`;
+  return `${cacheRoot}chitthi-decrypted-${safeUrl}-${stablePreviewHash(keyPayload)}.${encryptedPreviewExtension(keyPayload)}`;
 }
 
 async function warmChatImagePreviewCache(messages: ChatMessage[]) {
@@ -427,7 +432,7 @@ function shareableMessageText(message: ChatMessage) {
 }
 
 function isEncryptedPlaceholder(value: string) {
-  return /end-to-end encrypted message|sent you a secure message|new fchat message/i.test(value || "");
+  return /end-to-end encrypted message|sent you a secure message|new (?:chitthi|fchat) message/i.test(value || "");
 }
 
 function encryptedOverviewPreview(clearText: string) {
@@ -483,7 +488,7 @@ function websiteCardDetails(value: string) {
       return { host: "FairFares", label: "Private Chitthi group invitation", detail: "Open securely in the FairFares app" };
     }
     const host = parsed.hostname.replace(/^www\./i, "");
-    if (/fairfare\.space$/i.test(host) && /^\/fchat\/(?:invite|group)/i.test(parsed.pathname)) {
+    if (/fairfare\.space$/i.test(host) && /^\/(?:chitthi|fchat)\/(?:invite|group)/i.test(parsed.pathname)) {
       return { host: "FairFares", label: "Chitthi group invitation", detail: "Open and confirm inside the app" };
     }
     const path = decodeURIComponent(parsed.pathname).replace(/\/$/, "");
@@ -520,7 +525,7 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
 function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean; onOpen: () => void }) {
   const details = websiteCardDetails(url);
   const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
-  const isFairFaresInvitation = url.startsWith("fairfares:") || /fairfare\.space\/(?:fchat\/)?(?:invite|group)/i.test(url);
+  const isFairFaresInvitation = url.startsWith("fairfares:") || /fairfare\.space\/(?:(?:chitthi|fchat)\/)?(?:invite|group)/i.test(url);
   useEffect(() => {
     let cancelled = false;
     if (isFairFaresInvitation) return () => { cancelled = true; };
@@ -747,9 +752,11 @@ function ChitthiVideoPlayer({ uri }: { uri: string }) {
   return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" allowsFullscreen />;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
+  const signedIn = Boolean(data?.user);
+  const currentUserId = Number(data?.user?.id || 0);
   const messagesScrollRef = useRef<FlatList<ThreadMessageItem>>(null);
   const composerRef = useRef<TextInput>(null);
   const activeConversationIdRef = useRef("");
@@ -767,20 +774,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const openingThreadToLatestRef = useRef(false);
   const openingThreadQuietUntilRef = useRef(0);
   const openingThreadSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpToLatestVisibleRef = useRef(false);
   const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
   const messengerLoaderVersion = useRef(0);
+  const messengerUserIdRef = useRef(currentUserId);
   const messageCache = useRef(new Map<string, ChatMessage[]>());
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingLastSentAt = useRef(0);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const locationExpiresAt = useRef(0);
   const locationLastSentAt = useRef(0);
-  const signedIn = Boolean(data?.user);
-  const currentUserId = Number(data?.user?.id || 0);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
@@ -791,6 +798,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [nextBeforeMessageId, setNextBeforeMessageId] = useState(0);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
@@ -898,11 +906,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function scrollThreadToLatest(animated = false) {
     shouldAutoScrollToEndRef.current = true;
+    userTouchedThreadRef.current = false;
+    jumpToLatestVisibleRef.current = false;
+    setJumpToLatestVisible(false);
     if (latestScrollFrameRef.current) cancelAnimationFrame(latestScrollFrameRef.current);
     latestScrollFrameRef.current = requestAnimationFrame(() => {
       messagesScrollRef.current?.scrollToOffset({ offset: 0, animated });
       latestScrollFrameRef.current = null;
     });
+  }
+
+  function updateJumpToLatestVisibility(offset: number) {
+    const nextVisible = offset > 260;
+    if (jumpToLatestVisibleRef.current === nextVisible) return;
+    jumpToLatestVisibleRef.current = nextVisible;
+    setJumpToLatestVisible(nextVisible);
   }
 
   function markThreadTouched() {
@@ -1012,11 +1030,36 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     let cancelled = false;
     const bootstrapConversations = data?.chat.conversations || [];
-    if (bootstrapConversations.length) {
+    const userChanged = messengerUserIdRef.current !== currentUserId;
+    if (userChanged) {
+      messengerUserIdRef.current = currentUserId;
+      messageCache.current.clear();
+      activeConversationIdRef.current = "";
+      messagesConversationIdRef.current = "";
+      userTouchedThreadRef.current = false;
+      shouldAutoScrollToEndRef.current = true;
+      setActiveConversationId("");
+      setActiveConversation(null);
+      setActiveSubject("");
+      setMessages([]);
+      setSelectedMessageIds([]);
+      setActionMessage(null);
+      setReplyingTo(null);
+      deviceRegistration.current = null;
+      deviceRegistrationPromise.current = null;
+      setDeviceIdentity(null);
+      setEncryptionReady(false);
+      setConversations(bootstrapConversations);
+    } else if (bootstrapConversations.length) {
       setConversations((current) => mergeChatConversations(current, bootstrapConversations));
     } else if (currentUserId) {
       void readCachedChatConversations(currentUserId).then((cachedConversations) => {
         if (!cancelled && cachedConversations.length) setConversations((current) => mergeChatConversations(current, cachedConversations));
+      });
+    }
+    if (userChanged && !bootstrapConversations.length && currentUserId) {
+      void readCachedChatConversations(currentUserId).then((cachedConversations) => {
+        if (!cancelled) setConversations(cachedConversations);
       });
     }
     setHasMoreConversations(bootstrapConversations.length >= 30);
@@ -1045,7 +1088,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, []);
 
   useEffect(() => {
-    AsyncStorage.getItem("fairfares.fchat.recent-emojis")
+    AsyncStorage.getItem("fairfares.chitthi.recent-emojis").then((stored) => stored || AsyncStorage.getItem("fairfares.fchat.recent-emojis"))
       .then((value) => { if (value) setRecentEmojis(JSON.parse(value).slice(0, 16)); })
       .catch(() => undefined);
     return () => {
@@ -1204,7 +1247,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return payload;
     } catch (error) {
       if (!isRetryableChatNetworkError(error)) throw error;
-      const cached = await AsyncStorage.getItem(conversationKeyCacheName(userId, conversationId));
+      const cached = await AsyncStorage.getItem(conversationKeyCacheName(userId, conversationId)) || await AsyncStorage.getItem(legacyConversationKeyCacheName(userId, conversationId));
       if (!cached) throw error;
       return JSON.parse(cached) as Awaited<ReturnType<typeof getChatDeviceKeys>>;
     }
@@ -1302,7 +1345,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return await Promise.all(nextMessages.map(async (message) => {
         const envelope = byMessage.get(message.id);
         if (!envelope) return message.text.includes("End-to-end encrypted message")
-          ? { ...message, text: "Encrypted message unavailable on this device. Ask the sender to resend it.", canEdit: false }
+          ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
           : message;
         const clearText = decryptEnvelope(envelope, identity);
         if (message.type === "ENCRYPTED_ATTACHMENT" && message.attachmentUrl && clearText) {
@@ -1759,7 +1802,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setCommunities(nextCommunities);
       onUnreadCountChange?.(immediateConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
       // Encrypted preview decryption can require one envelope request per thread.
-      // Do that after the list is visible so a large inbox never blocks FChat opening.
+      // Do that after the list is visible so a large inbox never blocks Chitthi opening.
       void decryptConversationPreviews(conversationPayload).then((decrypted) => {
         if (messengerRefreshVersion.current !== refreshVersion) return;
         const previewById = new Map(decrypted.map((conversation) => [conversation.id, conversation.lastMessage]));
@@ -1867,6 +1910,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
+    const startedFromCardContext = Boolean(pendingPost || pendingRide);
     userTouchedThreadRef.current = false;
     shouldAutoScrollToEndRef.current = true;
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
@@ -1920,6 +1964,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setMessageText("");
         setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : "File sent");
         setTimeout(() => setAttachmentStatus(""), 1600);
+        if (startedFromCardContext) onCardMessageSent?.();
         onClearPendingPost?.();
         onClearPendingRide?.();
         void refreshMessenger({ showLoader: false, showError: false });
@@ -1984,6 +2029,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           setReplyingTo(null);
           queuedOffline = true;
         }
+        if (startedFromCardContext) onCardMessageSent?.();
         onClearPendingPost?.();
         onClearPendingRide?.();
       } else {
@@ -2689,9 +2735,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function safeAttachmentName(message: ChatMessage, mimeType: string) {
     const fallbackExtension = mimeType.startsWith("image/") ? ".jpg" : mimeType.startsWith("video/") ? ".mp4" : ".bin";
-    const raw = String(message.metadata?.fileName || `fchat-${message.id}${fallbackExtension}`);
+    const raw = String(message.metadata?.fileName || `chitthi-${message.id}${fallbackExtension}`);
     const clean = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(-120);
-    return clean || `fchat-${message.id}${fallbackExtension}`;
+    return clean || `chitthi-${message.id}${fallbackExtension}`;
   }
 
   async function materializeAttachment(message: ChatMessage) {
@@ -2793,7 +2839,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setMessageText((current) => `${current}${emoji}`);
     const next = [emoji, ...recentEmojis.filter((item) => item !== emoji)].slice(0, 16);
     setRecentEmojis(next);
-    void AsyncStorage.setItem("fairfares.fchat.recent-emojis", JSON.stringify(next));
+    void AsyncStorage.setItem("fairfares.chitthi.recent-emojis", JSON.stringify(next));
   }
 
   function showChatOptions() {
@@ -3127,18 +3173,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               messagesUserDraggingRef.current = true;
               const offset = Math.max(0, event.nativeEvent.contentOffset.y);
               messagesScrollOffsetRef.current = offset;
+              updateJumpToLatestVisibility(offset);
               const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
               if (!loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
             }}
             onScrollEndDrag={(event) => {
               const offset = Math.max(0, event.nativeEvent.contentOffset.y);
               messagesScrollOffsetRef.current = offset;
+              updateJumpToLatestVisibility(offset);
               const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
               if (!loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
             }}
             onMomentumScrollEnd={(event) => {
               const offset = Math.max(0, event.nativeEvent.contentOffset.y);
               messagesScrollOffsetRef.current = offset;
+              updateJumpToLatestVisibility(offset);
               const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
               if (messagesUserDraggingRef.current && !loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
               messagesUserDraggingRef.current = false;
@@ -3146,6 +3195,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             onScroll={(event) => {
               const offset = Math.max(0, event.nativeEvent.contentOffset.y);
               messagesScrollOffsetRef.current = offset;
+              updateJumpToLatestVisibility(offset);
               messagesContentHeightRef.current = Math.max(messagesContentHeightRef.current, event.nativeEvent.contentSize.height);
               messagesViewportHeightRef.current = event.nativeEvent.layoutMeasurement.height;
               shouldAutoScrollToEndRef.current = offset <= 120;
@@ -3275,9 +3325,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     url={discoveredUrl}
                     mine={message.mine}
                     onOpen={() => {
-                      if (/community_id=|\/fchat\/group/i.test(discoveredUrl)) {
+                      if (/community_id=|\/(?:chitthi|fchat)\/group/i.test(discoveredUrl)) {
                         try { void confirmGroupInvitation(`community:${new URL(discoveredUrl).searchParams.get("community_id") || ""}`); } catch { void Linking.openURL(discoveredUrl); }
-                      } else if (/group_invite=|\/fchat\/invite\//i.test(discoveredUrl) || discoveredUrl.startsWith("fairfares://")) {
+                      } else if (/group_invite=|\/(?:chitthi|fchat)\/invite\//i.test(discoveredUrl) || discoveredUrl.startsWith("fairfares://")) {
                         void confirmGroupInvitation(discoveredUrl);
                       } else {
                         void Linking.openURL(discoveredUrl);
@@ -3298,6 +3348,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             );
             }}
           />
+          {jumpToLatestVisible ? (
+            <TouchableOpacity
+              style={styles.jumpToLatestButton}
+              activeOpacity={0.86}
+              onPress={() => scrollThreadToLatest(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Jump to latest messages"
+            >
+              <Text style={styles.jumpToLatestButtonText}>⌄</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setActionMessage(null)}>
@@ -4019,6 +4080,8 @@ const styles = StyleSheet.create({
   threadMessages: { flex: 1 },
   threadMessagesList: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2 },
+  jumpToLatestButton: { position: "absolute", right: 16, bottom: 18, width: 43, height: 43, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(7,35,29,0.94)", borderWidth: 1, borderColor: "rgba(214,169,95,0.55)", shadowColor: "#000", shadowOpacity: 0.26, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
+  jumpToLatestButtonText: { color: "#F4D99E", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -6 },
   threadListFooter: { overflow: "visible" },
   threadListEmpty: { minHeight: 360, flexGrow: 1, alignItems: "center", justifyContent: "center" },
   olderMessagesStatusWrap: { alignItems: "center", marginBottom: 8 },

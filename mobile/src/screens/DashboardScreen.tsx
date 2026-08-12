@@ -660,7 +660,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <View style={styles.requestSide}>
                 <View style={styles.requestDateRow}><ActivityIcon kind="calendar" color="#c2cada" /><Text style={styles.requestDateText}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text><Text style={styles.moreGlyph}>⋮</Text></View>
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.fchatButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.chitthiButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.detailsOutlinePill} onPress={handleListRide}><Text style={styles.secondaryPillText}>List another</Text></TouchableOpacity>
                 </View>
               </View>
@@ -905,7 +905,7 @@ const styles = StyleSheet.create({
   carpoolEmpty: { backgroundColor: "rgba(15,23,42,0.9)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 12 },
   primarySmallPill: { minHeight: 34, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 5 },
   primarySmallPillText: { color: "#fff", fontWeight: "500", fontSize: 12 },
-  fchatButtonIcon: { width: 17, height: 17, tintColor: "#fff" },
+  chitthiButtonIcon: { width: 17, height: 17, tintColor: "#fff" },
   detailsOutlinePill: { minHeight: 34, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(108,125,158,0.52)", paddingHorizontal: 14, justifyContent: "center" },
   acceptPill: { backgroundColor: "#16a34a", borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },
   declinePill: { backgroundColor: "#dc2626", borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10 },

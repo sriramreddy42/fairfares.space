@@ -6,12 +6,13 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout } from "./src/api/client";
+import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, registerMobilePushToken, RidePlaceSuggestion, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -74,6 +75,9 @@ const CRITICAL_BRAND_IMAGE_SOURCES = [
   require("./assets/launch-cityscape-v2.jpg"),
   require("./assets/launch-car-mobile.png")
 ];
+const REVIEW_PROMPT_DELAY_MS = 180_000;
+const REVIEW_PROMPT_READY_GRACE_MS = 5 * 60_000;
+const reviewPromptStorageKey = (userId: number | string) => `fairfares.mobile.review-prompt.v1.${userId}`;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -303,6 +307,12 @@ function FairFaresApp() {
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<{ title: string; body: string; action: string } | null>(null);
+  const [reviewPromptArmedUserId, setReviewPromptArmedUserId] = useState(0);
+  const [reviewPromptReadyAt, setReviewPromptReadyAt] = useState(0);
+  const [reviewPromptOpen, setReviewPromptOpen] = useState(false);
+  const [reviewPromptRating, setReviewPromptRating] = useState(0);
+  const [reviewPromptText, setReviewPromptText] = useState("");
+  const [reviewPromptBusy, setReviewPromptBusy] = useState(false);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
   const launchStartedAt = useRef(Date.now());
@@ -508,6 +518,46 @@ function FairFaresApp() {
   }, [data?.user?.id]);
 
   useEffect(() => {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId || reviewPromptArmedUserId !== userId || !reviewPromptReadyAt) return;
+    let cancelled = false;
+    let promptTimer: ReturnType<typeof setTimeout> | undefined;
+    const markReviewPromptHandled = async (action: "dismissed" | "positive" | "feedback") => {
+      setReviewPromptArmedUserId(0);
+      setReviewPromptReadyAt(0);
+      setReviewPromptOpen(false);
+      try {
+        await AsyncStorage.setItem(reviewPromptStorageKey(userId), JSON.stringify({
+          action,
+          handledAt: new Date().toISOString()
+        }));
+      } catch {
+        // If local storage is unavailable, still clear this in-memory prompt.
+      }
+    };
+    const schedulePrompt = async () => {
+      const existing = await AsyncStorage.getItem(reviewPromptStorageKey(userId)).catch(() => null);
+      if (cancelled || existing) return;
+      const waitMs = Math.max(0, reviewPromptReadyAt - Date.now());
+      promptTimer = setTimeout(() => {
+        if (cancelled) return;
+        if (loading || launchVisible || loginOpen || authBusy || searchOpen || listingOpen || staffPickupOpen || paymentUrl || paymentStatus || bottomTabsHidden || activeTab === "messenger") {
+          if (Date.now() - reviewPromptReadyAt <= REVIEW_PROMPT_READY_GRACE_MS) setReviewPromptReadyAt(Date.now() + 15_000);
+          return;
+        }
+        setReviewPromptRating(0);
+        setReviewPromptText("");
+        setReviewPromptOpen(true);
+      }, waitMs);
+    };
+    void schedulePrompt();
+    return () => {
+      cancelled = true;
+      if (promptTimer) clearTimeout(promptTimer);
+    };
+  }, [activeTab, authBusy, bottomTabsHidden, data?.user?.id, launchVisible, listingOpen, loading, loginOpen, paymentStatus, paymentUrl, reviewPromptArmedUserId, reviewPromptReadyAt, searchOpen, staffPickupOpen]);
+
+  useEffect(() => {
     if (googleResponse?.type !== "success") return;
     const response = googleResponse as typeof googleResponse & {
       authentication?: { idToken?: string } | null;
@@ -553,7 +603,7 @@ function FairFaresApp() {
   useEffect(() => {
     const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
       const type = String(response?.notification.request.content.data?.type || "");
-      if (type === "FCHAT_MESSAGE") {
+      if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE") {
         setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
         setPendingPost(null);
         setPendingRide(null);
@@ -677,7 +727,7 @@ function FairFaresApp() {
       if (!url) return;
       try {
         const parsed = new URL(url);
-        const invitePathMatch = parsed.pathname.match(/\/fchat\/invite\/([^/]+)/i);
+        const invitePathMatch = parsed.pathname.match(/\/(?:chitthi|fchat)\/invite\/([^/]+)/i);
         const groupCommunity = parsed.searchParams.get("community_id") || "";
         const groupInvite = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token") || (invitePathMatch?.[1] ? decodeURIComponent(invitePathMatch[1]) : "") || (groupCommunity ? `community:${groupCommunity}` : "");
         if (groupInvite) {
@@ -762,6 +812,57 @@ function FairFaresApp() {
     setActiveTab("messenger");
     if (!data?.user) {
       setLoginOpen(true);
+    }
+  }
+
+  async function armReviewPromptAfterCardMessage() {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId) return;
+    const alreadyHandled = await AsyncStorage.getItem(reviewPromptStorageKey(userId)).catch(() => null);
+    if (alreadyHandled) return;
+    setReviewPromptArmedUserId(userId);
+    setReviewPromptReadyAt(Date.now() + REVIEW_PROMPT_DELAY_MS);
+  }
+
+  async function dismissReviewPrompt() {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId) {
+      setReviewPromptOpen(false);
+      return;
+    }
+    setReviewPromptArmedUserId(0);
+    setReviewPromptReadyAt(0);
+    setReviewPromptOpen(false);
+    await AsyncStorage.setItem(reviewPromptStorageKey(userId), JSON.stringify({
+      action: "dismissed",
+      handledAt: new Date().toISOString()
+    })).catch(() => undefined);
+  }
+
+  async function submitReviewPrompt() {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId || !reviewPromptRating || reviewPromptBusy) return;
+    setReviewPromptBusy(true);
+    const cleanText = reviewPromptText.trim();
+    try {
+      await AsyncStorage.setItem(reviewPromptStorageKey(userId), JSON.stringify({
+        action: reviewPromptRating >= 4 ? "positive" : "feedback",
+        handledAt: new Date().toISOString()
+      })).catch(() => undefined);
+      setReviewPromptArmedUserId(0);
+      setReviewPromptReadyAt(0);
+      setReviewPromptOpen(false);
+      await submitAppFeedback(
+        reviewPromptRating,
+        cleanText || (reviewPromptRating >= 4 ? "Enjoying FairFares mobile experience." : "FairFares mobile review prompt: user said it needs work."),
+        "mobile-review-prompt"
+      );
+      setReviewPromptText("");
+      setReviewPromptRating(0);
+    } catch {
+      Alert.alert("FairFares", "Could not send your feedback right now.");
+    } finally {
+      setReviewPromptBusy(false);
     }
   }
 
@@ -1462,7 +1563,7 @@ function FairFaresApp() {
         openListingFormForUser(payload.user, selectedNeed || "need_place");
       }
       // Authentication is complete at this point. Refreshing the dashboard and
-      // preparing FChat encryption must not keep the login modal blocked.
+      // preparing Chitthi encryption must not keep the login modal blocked.
       runPostLoginTasks(Number(payload.user?.id || 0), authenticatedPassword);
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
@@ -1575,6 +1676,7 @@ function FairFaresApp() {
           chat: { ...current.chat, unreadCount },
           dashboard: { ...current.dashboard, messages: unreadCount }
         } : current)}
+        onCardMessageSent={() => void armReviewPromptAfterCardMessage()}
       />
     ) : activeTab === "activity" ? (
       <DashboardScreen
@@ -2121,6 +2223,40 @@ function FairFaresApp() {
           </View>
         </View>
       </Modal>
+      <Modal visible={reviewPromptOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => void dismissReviewPrompt()}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <View style={[styles.modalCard, styles.reviewPromptCard]}>
+            <Text style={styles.reviewPromptEyebrow}>Quick check</Text>
+            <Text style={styles.modalTitle}>How’s FairFares feeling?</Text>
+            <Text style={styles.modalCopy}>You just used Chitthi from a listing. Tell us if the flow felt helpful.</Text>
+            <View style={styles.reviewPromptStars}>
+              {[1, 2, 3, 4, 5].map((rating) => (
+                <TouchableOpacity key={rating} style={styles.reviewPromptStarButton} onPress={() => setReviewPromptRating(rating)} accessibilityLabel={`${rating} stars`}>
+                  <Text style={[styles.reviewPromptStar, rating <= reviewPromptRating && styles.reviewPromptStarActive]}>★</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              value={reviewPromptText}
+              onChangeText={(text) => setReviewPromptText(text.slice(0, 300))}
+              placeholder="Optional: what should we improve?"
+              placeholderTextColor={theme.colors.muted}
+              style={styles.reviewPromptInput}
+              multiline
+              maxLength={300}
+              textAlignVertical="top"
+            />
+            <View style={styles.reviewPromptActions}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => void dismissReviewPrompt()} disabled={reviewPromptBusy}>
+                <Text style={styles.secondaryButtonText}>Not now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryButton, (!reviewPromptRating || reviewPromptBusy) && styles.disabledButton]} disabled={!reviewPromptRating || reviewPromptBusy} onPress={() => void submitReviewPrompt()}>
+                <Text style={styles.primaryButtonText}>{reviewPromptBusy ? "Sending…" : "Send feedback"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
       <Modal
         visible={Boolean(housingListingSuccess)}
         transparent
@@ -2527,6 +2663,14 @@ const styles = StyleSheet.create({
   listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   listingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
   listingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
+  reviewPromptCard: { width: "100%", maxWidth: 430, alignSelf: "center" },
+  reviewPromptEyebrow: { color: theme.colors.green, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.1 },
+  reviewPromptStars: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
+  reviewPromptStarButton: { flex: 1, minHeight: 52, alignItems: "center", justifyContent: "center" },
+  reviewPromptStar: { color: "#4B4F55", fontSize: 39 },
+  reviewPromptStarActive: { color: "#F5B942" },
+  reviewPromptInput: { minHeight: 104, maxHeight: 150, color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingTop: 12, fontSize: 14, fontWeight: "700" },
+  reviewPromptActions: { flexDirection: "row", gap: 10 },
   launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.bg, overflow: "hidden" },
   launchBackdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.82 },
   launchBackdropShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(1,8,23,0.18)" },

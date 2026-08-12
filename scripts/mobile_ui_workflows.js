@@ -113,12 +113,12 @@ async function openApp(browser, width, height) {
     if (!(await page.getByText("Log out of FairFares", { exact: true }).count())) throw new Error("logout missing");
     await assertViewport(page, "profile");
 
-    for (const tab of ["Services", "Activity", "Fchat", "Home"]) {
+    for (const tab of ["Services", "Activity", "Chitthi", "Home"]) {
       await page.getByText(tab, { exact: true }).last().click();
       await page.waitForTimeout(100);
       await assertViewport(page, tab);
     }
-    results.push({ detailedMobileWorkflows: "pass", flows: ["need-place", "need-roommates", "have-place", "calendar", "location", "profile", "support", "services", "activity", "fchat"] });
+    results.push({ detailedMobileWorkflows: "pass", flows: ["need-place", "need-roommates", "have-place", "calendar", "location", "profile", "support", "services", "activity", "chitthi"] });
     await page.close();
     console.log(JSON.stringify({ ok: true, results }, null, 2));
   } finally {

@@ -22,7 +22,8 @@ export type EncryptedOutboxItem = {
   replyToMessageId?: number;
 };
 
-const outboxKey = (userId: number) => `fairfares.fchat.encrypted-outbox.${userId}`;
+const outboxKey = (userId: number) => `fairfares.chitthi.encrypted-outbox.${userId}`;
+const legacyOutboxKey = (userId: number) => `fairfares.fchat.encrypted-outbox.${userId}`;
 
 export function createOutboxClientMessageId(deviceId: string) {
   return `offline-${deviceId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`.slice(0, 120);
@@ -38,7 +39,7 @@ export function isRetryableChatNetworkError(error: unknown) {
 export async function readEncryptedOutbox(userId: number): Promise<EncryptedOutboxItem[]> {
   if (!userId) return [];
   try {
-    const stored = await AsyncStorage.getItem(outboxKey(userId));
+    const stored = await AsyncStorage.getItem(outboxKey(userId)) || await AsyncStorage.getItem(legacyOutboxKey(userId));
     const parsed = stored ? JSON.parse(stored) : [];
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((item): item is EncryptedOutboxItem => Boolean(
@@ -53,9 +54,11 @@ export async function readEncryptedOutbox(userId: number): Promise<EncryptedOutb
 async function writeEncryptedOutbox(userId: number, items: EncryptedOutboxItem[]) {
   if (!items.length) {
     await AsyncStorage.removeItem(outboxKey(userId));
+    await AsyncStorage.removeItem(legacyOutboxKey(userId));
     return;
   }
   await AsyncStorage.setItem(outboxKey(userId), JSON.stringify(items));
+  await AsyncStorage.removeItem(legacyOutboxKey(userId));
 }
 
 export async function enqueueEncryptedMessage(item: EncryptedOutboxItem) {

@@ -307,7 +307,7 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
   const cacheRoot = FileSystem.cacheDirectory;
   if (!cacheRoot) throw new Error("Photo preview storage is unavailable.");
   const safeKey = value.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(-80) || String(Date.now());
-  const destination = `${cacheRoot}fchat-preview-${safeKey}.img`;
+  const destination = `${cacheRoot}chitthi-preview-${safeKey}.img`;
   const existing = await FileSystem.getInfoAsync(destination);
   if (existing.exists && Number(existing.size || 0) > 0) return destination;
   const headers: Record<string, string> = {};
@@ -1081,7 +1081,7 @@ function groupInviteToken(value: string) {
     const parsed = new URL(raw);
     const fromQuery = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token");
     if (fromQuery) return fromQuery;
-    const match = parsed.pathname.match(/\/fchat\/invite\/([^/]+)/i);
+    const match = parsed.pathname.match(/\/(?:chitthi|fchat)\/invite\/([^/]+)/i);
     if (match?.[1]) return decodeURIComponent(match[1]);
   } catch {
     // A raw invitation token is also accepted.
