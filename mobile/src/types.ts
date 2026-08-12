@@ -121,6 +121,7 @@ export type ChatMessage = {
     encrypted?: boolean;
     kind?: "IMAGE" | "VIDEO" | "FILE";
     decryptedDataUrl?: string;
+    thumbnailDataUrl?: string;
     encryptedKeyPayload?: string;
     caption?: string;
     mediaGroupId?: string;

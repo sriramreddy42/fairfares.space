@@ -5,8 +5,9 @@ import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { BlurView } from "expo-blur";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { createVideoPlayer, useVideoPlayer, VideoView } from "expo-video";
 import { Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
@@ -339,9 +340,27 @@ function encryptedPreviewLocalUri(attachmentUrl: string, keyPayload: string) {
 
 function encryptedAttachmentMetadata(keyPayload: string) {
   try {
-    return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE" };
+    return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE"; thumbnailBase64?: string };
   } catch {
     return {};
+  }
+}
+
+async function createEncryptedVideoThumbnail(uri: string) {
+  if (Platform.OS === "web") return "";
+  const player = createVideoPlayer(uri);
+  try {
+    const [thumbnail] = await player.generateThumbnailsAsync(0.15, { maxWidth: 480, maxHeight: 360 });
+    if (!thumbnail) return "";
+    const context = ImageManipulator.manipulate(thumbnail);
+    context.resize({ width: 360 });
+    const image = await context.renderAsync();
+    const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: 0.58, base64: true });
+    return saved.base64 || "";
+  } catch {
+    return "";
+  } finally {
+    player.release();
   }
 }
 
@@ -809,9 +828,9 @@ function replyMediaKind(message: ChatMessage | null) {
 }
 
 function ReplyMediaPreview({ message }: { message: ChatMessage }) {
-  const previewUri = message.type === "IMAGE" && typeof message.metadata?.decryptedDataUrl === "string"
-    ? message.metadata.decryptedDataUrl
-    : "";
+  const previewUri = typeof message.metadata?.thumbnailDataUrl === "string"
+    ? message.metadata.thumbnailDataUrl
+    : message.type === "IMAGE" && typeof message.metadata?.decryptedDataUrl === "string" ? message.metadata.decryptedDataUrl : "";
   if (previewUri) return <Image source={{ uri: previewUri }} style={styles.replyMediaThumbnail} resizeMode="cover" />;
   const icon = message.type === "IMAGE" ? "▣" : message.type === "VIDEO" ? "▶" : "▤";
   return <View style={styles.replyMediaFallback}><Text style={styles.replyMediaFallbackText}>{icon}</Text></View>;
@@ -824,7 +843,7 @@ function QuotedReply({ target, mine }: { target: ChatMessage | null; mine: boole
     <View style={[styles.quotedReply, mine ? styles.myQuotedReply : styles.theirQuotedReply]}>
       <View style={styles.quotedReplyCopy}>
         <Text style={styles.quotedReplyName}>{target ? (target.mine ? "You" : target.senderName) : "Original message"}</Text>
-        <Text style={styles.quotedReplyText} numberOfLines={2}>{mediaLabel || quotedText}</Text>
+        <Text style={[styles.quotedReplyText, mine ? styles.myQuotedReplyText : styles.theirQuotedReplyText]} numberOfLines={2}>{mediaLabel || quotedText}</Text>
       </View>
       {target && mediaLabel ? <ReplyMediaPreview message={target} /> : null}
     </View>
@@ -903,6 +922,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [highlightedMessageId, setHighlightedMessageId] = useState(0);
   const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [nextBeforeMessageId, setNextBeforeMessageId] = useState(0);
@@ -1022,6 +1042,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       messagesScrollRef.current?.scrollToOffset({ offset: 0, animated });
       latestScrollFrameRef.current = null;
     });
+  }
+
+  function jumpToRepliedMessage(messageId: number) {
+    const index = threadMessageItems.findIndex((item) => Number(item.message.id) === Number(messageId));
+    if (index < 0) {
+      if (hasMoreMessages) void loadOlderMessages();
+      return;
+    }
+    shouldAutoScrollToEndRef.current = false;
+    messagesScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    setHighlightedMessageId(messageId);
+    setTimeout(() => setHighlightedMessageId((current) => current === messageId ? 0 : current), 1600);
   }
 
   function updateJumpToLatestVisibility(offset: number) {
@@ -1484,12 +1516,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           : message;
         const clearText = decryptEnvelope(envelope, identity);
         if (message.type === "ENCRYPTED_ATTACHMENT" && (message.attachmentUrl || message.metadata?.mediaExpired) && clearText) {
-          const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number };
+          const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; thumbnailBase64?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number };
           return {
             ...message,
             type: attachmentInfo.kind,
             text: attachmentInfo.caption || "",
-            metadata: { ...message.metadata, encrypted: true, kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
+            metadata: { ...message.metadata, encrypted: true, kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption, thumbnailDataUrl: attachmentInfo.thumbnailBase64 ? `data:image/jpeg;base64,${attachmentInfo.thumbnailBase64}` : undefined, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
           };
         }
         if (clearText.startsWith("FFRICH:")) {
@@ -2072,6 +2104,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         for (let index = 0; index < attachments.length; index += 1) {
           const attachment = attachments[index];
           const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+          const thumbnailBase64 = attachment.kind === "VIDEO" ? await createEncryptedVideoThumbnail(attachment.uri) : "";
+          const encryptedMediaMetadata = thumbnailBase64 ? { ...mediaMetadata, thumbnailBase64 } : mediaMetadata;
           const caption = index === 0 ? cleanMessage : "";
           let fileBase64 = "";
           let encryptedTemporaryUri = "";
@@ -2079,7 +2113,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             ? (() => undefined)()
             : encryptAttachmentFileForDevices(
                 attachment.uri,
-                { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata },
+                { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata },
                 identity,
                 keyPayload.keys
               );
@@ -2095,7 +2129,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 } catch (error) { reject(error); }
               });
           }
-          const encryptedPayload = encrypted || encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata }, identity, keyPayload.keys);
+          const encryptedPayload = encrypted || encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata }, identity, keyPayload.keys);
           encryptedTemporaryUri = "encryptedUri" in encryptedPayload ? String(encryptedPayload.encryptedUri || "") : "";
           let response;
           try {
@@ -2118,7 +2152,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 .catch(() => undefined);
             }
           }
-          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, ...mediaMetadata } });
+          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, thumbnailDataUrl: thumbnailBase64 ? `data:image/jpeg;base64,${thumbnailBase64}` : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
         setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
@@ -3448,6 +3482,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             windowSize={7}
             removeClippedSubviews={Platform.OS !== "web"}
             onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
+            onScrollToIndexFailed={({ index, averageItemLength }) => {
+              messagesScrollRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true });
+              setTimeout(() => messagesScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 }), 180);
+            }}
             onScrollBeginDrag={(event) => {
               markThreadTouched();
               messagesUserDraggingRef.current = true;
@@ -3529,7 +3567,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const mediaProgress = mediaDownloadProgress[message.id] || 0;
             return (
             <View key={message.id} style={styles.threadMessageCell}>
-            <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
+            <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
                   {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(message.senderPhotoUrl) }} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
@@ -3545,7 +3583,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
-                {message.replyToMessageId ? <QuotedReply target={replyTarget} mine={message.mine} /> : null}
+                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} onPress={() => jumpToRepliedMessage(Number(message.replyToMessageId))} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -3577,7 +3615,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                           <CircularDownloadProgress progress={mediaProgress} />
                         </View>
                       ) : null}
-                      <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>
+                      {message.metadata?.thumbnailDataUrl ? <Image source={{ uri: message.metadata.thumbnailDataUrl }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
                       <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
                       <View style={styles.videoMessageBadge}><Text style={styles.videoMessageBadgeText}>↓ {Math.max(1, Number(message.metadata?.size || 0) / (1024 * 1024)).toFixed(1)} MB</Text></View>
                       <Text style={styles.videoMessageTitle} numberOfLines={1}>{message.metadata?.fileName || "Video"}</Text>
@@ -4398,6 +4436,7 @@ const styles = StyleSheet.create({
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5, position: "relative", overflow: "visible" },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
+  highlightedMessageRow: { borderRadius: 16, backgroundColor: "rgba(214,169,95,0.24)" },
   swipeReplyWrap: { position: "relative", overflow: "visible" },
   swipeReplyBody: { overflow: "visible" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
@@ -4710,7 +4749,9 @@ const styles = StyleSheet.create({
   myQuotedReply: { borderLeftColor: "#F4D99E", backgroundColor: "rgba(255,255,255,0.14)" },
   theirQuotedReply: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
   quotedReplyName: { color: "#D6A95F", fontSize: 12, fontWeight: "900", marginBottom: 2 },
-  quotedReplyText: { color: "#776E5B", fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  quotedReplyText: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
+  myQuotedReplyText: { color: "#FFF8E9" },
+  theirQuotedReplyText: { color: "#24483C" },
   quotedReplyCopy: { flex: 1, minWidth: 0 },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
@@ -4749,6 +4790,7 @@ const styles = StyleSheet.create({
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
   videoMessageCard: { width: 286, height: 220, borderRadius: 15, backgroundColor: "#14231e", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 4 },
   videoMessageBackdrop: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "#18382e" },
+  videoMessageThumbnail: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
   videoDownloadOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 8, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   videoDownloadBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(8,18,15,0.48)" },
