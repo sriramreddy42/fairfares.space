@@ -855,7 +855,7 @@ function QuotedReply({ target, mine }: { target: ChatMessage | null; mine: boole
 
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (instance) => { instance.loop = false; instance.play(); });
-  return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" allowsFullscreen />;
+  return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" fullscreenOptions={{ enable: true }} />;
 }
 
 function CircularDownloadProgress({ progress }: { progress: number }) {
@@ -2209,36 +2209,78 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           : item)));
         setEditingMessageId(null);
       } else if (activeConversationId) {
-        const identity = await ensureChatDeviceIdentity();
-        const keyPayload = await getEncryptionKeysForSend(activeConversationId);
-        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
-        setEncryptionReady(true);
-        const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
-        const clientMessageId = createOutboxClientMessageId(identity.deviceId);
+        const replySnapshot = replyingTo;
+        const replyToMessageId = replySnapshot?.id || 0;
+        const localMessageId = -Date.now();
+        const clientMessageId = createOutboxClientMessageId("sending");
+        const createdAt = new Date().toISOString();
+        const optimisticMessage: ChatMessage = {
+          id: localMessageId,
+          senderId: Number(data?.user?.id || 0),
+          senderName: data?.user?.name || "You",
+          mine: true,
+          type: "TEXT",
+          text: cleanMessage,
+          attachmentUrl: "",
+          metadata: { encrypted: true },
+          createdAt,
+          deliveredAt: "",
+          readAt: "",
+          editedAt: "",
+          deletedAt: "",
+          canEdit: false,
+          status: "pending",
+          localClientMessageId: clientMessageId,
+          replyToMessageId
+        };
+        setMessages((current) => [...current, optimisticMessage]);
+        setMessageText("");
+        setReplyingTo(null);
+        scrollThreadToLatest(false);
+        let pendingIdentity: DeviceIdentity | null = null;
+        let pendingEnvelopes: EncryptedOutboxItem["envelopes"] = [];
         try {
-          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyingTo?.id || 0);
-          setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }]);
+          const identity = await ensureChatDeviceIdentity();
+          const keyPayload = await getEncryptionKeysForSend(activeConversationId);
+          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+          setEncryptionReady(true);
+          const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
+          pendingIdentity = identity;
+          pendingEnvelopes = envelopes;
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId);
+          setMessages((current) => current.map((item) => item.localClientMessageId === clientMessageId
+            ? { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }
+            : item));
           scrollThreadToLatest(false);
-          setReplyingTo(null);
         } catch (error) {
-          if (!isRetryableChatNetworkError(error)) throw error;
-          const createdAt = new Date().toISOString();
+          if (!isRetryableChatNetworkError(error)) {
+            setMessages((current) => current.filter((item) => item.localClientMessageId !== clientMessageId));
+            setMessageText(cleanMessage);
+            setReplyingTo(replySnapshot);
+            throw error;
+          }
+          if (!pendingIdentity || !pendingEnvelopes.length) {
+            setMessages((current) => current.filter((item) => item.localClientMessageId !== clientMessageId));
+            setMessageText(cleanMessage);
+            setReplyingTo(replySnapshot);
+            throw error;
+          }
+          const identityForQueue = pendingIdentity;
           const outboxItem: EncryptedOutboxItem = {
             version: 1,
             userId: Number(data?.user?.id || 0),
             conversationId: activeConversationId,
             clientMessageId,
-            localMessageId: -Date.now(),
+            localMessageId,
             createdAt,
-            envelopes,
-            replyToMessageId: replyingTo?.id || 0,
+            envelopes: pendingEnvelopes,
+            replyToMessageId,
             attempts: 0,
             lastAttemptAt: ""
           };
           await enqueueEncryptedMessage(outboxItem);
-          setMessages((current) => [...current, queuedMessage(outboxItem, identity)]);
+          setMessages((current) => current.map((item) => item.localClientMessageId === clientMessageId ? queuedMessage(outboxItem, identityForQueue) : item));
           scrollThreadToLatest(false);
-          setReplyingTo(null);
           queuedOffline = true;
         }
         if (startedFromCardContext) onCardMessageSent?.();
