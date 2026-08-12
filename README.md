@@ -201,7 +201,21 @@ The default URL lifetime is 10 minutes and is capped at 15 minutes. Unfinalized 
 
 The legacy server-relay attachment endpoint remains temporarily available for older app builds. Current web, iOS, and Android clients use direct encrypted R2 transfer. Without R2 variables, legacy local development continues using `data/uploads/chat`, while the direct-transfer authorization endpoint reports that storage is unavailable.
 
-Native Chitthi attachments use the versioned `CHUNKED_SECRETBOX_V2` format. iOS and Android read and write 1 MiB chunks through Expo file handles; every chunk is independently encrypted and authenticated with a nonce derived from a random per-file prefix and its chunk index. Version-1 whole-file attachments remain readable, and web recipients can decrypt both versions. Keep the 12 MB production limit until physical-device transfer and interruption testing is complete; raising the limit and adding multipart/Ranged resume are separate release gates.
+Native Chitthi attachments use the versioned `CHUNKED_SECRETBOX_V2` format. iOS and Android encrypt new files in 256 KiB chunks through Expo file handles; every chunk is independently encrypted and authenticated with a nonce derived from a random per-file prefix and its chunk index. The chunk size is versioned in each descriptor, so existing 1 MiB chunked attachments and version-1 whole-file attachments remain readable; web recipients can decrypt both versions.
+
+Native clients accept media up to 100 MB. Ciphertext above 12 MB uses resumable R2 multipart transfer with uniform 8 MiB parts. Every presigned part is bound to its exact number, byte length, and SHA-256 checksum; the backend reconciles R2 part ETags and sizes, completes the upload, then streams the completed private object once to verify the authorized whole-object SHA-256 before publishing the message. Interrupted native uploads retain only encrypted `.ffenc2` data and encrypted envelope state and resume when Chitthi next opens. Native downloads use authenticated 8 MiB HTTP ranges, retain partial ciphertext across retries, verify the whole-object SHA-256, authenticate each secretbox chunk, save the plaintext durably, and only then send the per-device receipt. Browser sending remains limited to 12 MB because its legacy encryption path still processes the whole attachment in memory.
+
+The production rollout is server-controlled and defaults safely to 12 MB with multipart disabled. Render can raise it without a mobile release:
+
+```bash
+FAIRFARES_CHITTHI_MULTIPART_ENABLED=1
+FAIRFARES_CHITTHI_MAX_VIDEO_MB=25
+FAIRFARES_CHITTHI_ROLLOUT_PERCENT=5
+FAIRFARES_CHITTHI_ROLLOUT_USER_IDS=123,456
+FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS=10
+```
+
+Explicit user IDs are always placed in the internal cohort. Everyone else is assigned deterministically to the configured percentage, so users do not move in and out of the test group between launches. The backend returns the effective configuration in mobile bootstrap and enforces the same byte limit during authorization; clients cannot unlock multipart by altering local state. Expo Go always applies an additional hard 12 MB safety ceiling.
 
 After configuring R2, migrate existing local attachments in a safe first pass:
 

@@ -534,6 +534,15 @@ export type BootstrapPayload = {
     unreadCount: number;
     conversations: ChatConversation[];
   };
+  features: {
+    chitthi: {
+      maxVideoSizeMb: number;
+      maxVideoSizeBytes: number;
+      enableMultipartUpload: boolean;
+      cryptoThrottleMs: number;
+      rolloutCohort: "internal" | "enabled" | "control";
+    };
+  };
   dashboard: {
     housingPosts: number;
     messages: number;

@@ -1,8 +1,12 @@
 import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import { File, Paths } from "expo-file-system";
+import { sha256 } from "@noble/hashes/sha256";
+import * as naclUtil from "tweetnacl-util";
 
 declare const process: {
   env: {
@@ -190,7 +194,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     headers.Authorization = `Bearer ${authToken}`;
   }
   let lastError = "";
-  const isAttachmentUpload = path === "/api/chat/attachments" || path === "/api/chat/e2ee/attachments";
+  const isAttachmentUpload = path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments");
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
@@ -200,7 +204,9 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     const attempts = options.attempts || (method === "GET" ? (EXPLICIT_API_URL ? 4 : 2) : 1);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const controller = new AbortController();
-      const timeoutMs = isAttachmentUpload ? 45000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
+      // Multipart completion can legitimately spend time reconciling parts and
+      // streaming the completed ciphertext through the backend checksum pass.
+      const timeoutMs = isAttachmentUpload ? 120000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
@@ -262,6 +268,7 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
     housing: [],
     communities: [],
     chat: { unreadCount: 0, conversations: [] },
+    features: { chitthi: { maxVideoSizeMb: 12, maxVideoSizeBytes: 12_000_000, enableMultipartUpload: false, cryptoThrottleMs: 10, rolloutCohort: "control" } },
     dashboard: { housingPosts: 0, messages: 0 },
     hasSubmittedHousingExperience: false,
     testimonials: []
@@ -926,29 +933,135 @@ export async function sendEncryptedChatAttachment(conversationId: string, cipher
   });
 }
 
+type EncryptedUploadAuthorization = {
+  ok: boolean;
+  uploadId: string;
+  transferMode: "SINGLE" | "MULTIPART";
+  uploadUrl?: string;
+  headers?: Record<string, string>;
+  expiresIn: number;
+  partSize?: number;
+  partCount?: number;
+};
+
 export async function authorizeEncryptedChatAttachment(conversationId: string, encryptedSize: number, ciphertextSha256: string, mediaMimeType: string) {
-  return request<{ ok: boolean; uploadId: string; uploadUrl: string; headers: Record<string, string>; expiresIn: number }>("/api/chat/e2ee/attachments/authorize", {
+  return request<EncryptedUploadAuthorization>("/api/chat/e2ee/attachments/authorize", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ conversationId, encryptedSize, ciphertextSha256, mediaMimeType })
-  });
+  }, { attempts: 3 });
+}
+
+type CompletedMultipartPart = { partNumber: number; etag: string; size?: number };
+
+async function authorizeEncryptedMultipartPart(uploadId: string, partNumber: number, partSize: number, partSha256: string) {
+  return request<{ ok: boolean; uploadUrl: string; headers: Record<string, string> }>("/api/chat/e2ee/attachments/multipart/part", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uploadId, partNumber, partSize, partSha256 })
+  }, { attempts: 3 });
+}
+
+async function getEncryptedMultipartStatus(uploadId: string) {
+  return request<{ ok: boolean; parts: CompletedMultipartPart[] }>("/api/chat/e2ee/attachments/multipart/status", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId })
+  }, { attempts: 3 });
+}
+
+async function completeEncryptedMultipartUpload(uploadId: string, parts: CompletedMultipartPart[]) {
+  return request<{ ok: boolean; completed: boolean }>("/api/chat/e2ee/attachments/multipart/complete", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId, parts })
+  }, { attempts: 3 });
+}
+
+const multipartStatePrefix = "fairfares.chitthi.multipart.v1.";
+
+type PendingMultipartUpload = {
+  authorization: EncryptedUploadAuthorization;
+  conversationId: string;
+  encryptedUri: string;
+  encryptedSize: number;
+  ciphertextSha256: string;
+  envelopes: Array<Record<string, unknown>>;
+  mediaMimeType: string;
+  silent: boolean;
+  clientMessageId: string;
+  uploaded?: boolean;
+};
+
+function multipartStateKey(ciphertextSha256: string) {
+  return `${multipartStatePrefix}${ciphertextSha256.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthorization, encryptedUri: string) {
+  const source = new File(encryptedUri);
+  const partSize = Number(authorization.partSize || 0);
+  const partCount = Number(authorization.partCount || 0);
+  if (!source.exists || source.size <= 0 || partSize <= 0 || partCount <= 0) throw new Error("Encrypted multipart upload data is invalid.");
+  const remote = await getEncryptedMultipartStatus(authorization.uploadId);
+  const completed = new Map(remote.parts.map((part) => [part.partNumber, part]));
+  const reader = source.open();
+  try {
+    for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+      const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
+      const existing = completed.get(partNumber);
+      if (existing?.etag && existing.size === expectedSize) continue;
+      reader.offset = (partNumber - 1) * partSize;
+      const bytes = reader.readBytes(expectedSize);
+      if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
+      const partSha256 = naclUtil.encodeBase64(sha256(bytes));
+      const partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
+      const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
+      partFile.create({ overwrite: true, intermediates: true });
+      partFile.write(bytes);
+      bytes.fill(0);
+      try {
+        let uploaded: FileSystem.FileSystemUploadResult | undefined;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          uploaded = await FileSystem.uploadAsync(partAuthorization.uploadUrl, partFile.uri, {
+            httpMethod: "PUT", headers: partAuthorization.headers,
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+          });
+          if (uploaded.status >= 200 && uploaded.status < 300) break;
+          if (attempt < 2) await wait([500, 1250][attempt]);
+        }
+        if (!uploaded || uploaded.status < 200 || uploaded.status >= 300) throw new Error(`Encrypted upload part ${partNumber} failed (${uploaded?.status || 0}).`);
+        const responseHeaders = uploaded.headers || {};
+        const etag = String(responseHeaders.etag || responseHeaders.ETag || responseHeaders.Etag || "");
+        if (!etag) throw new Error(`Encrypted upload part ${partNumber} did not return an ETag.`);
+        completed.set(partNumber, { partNumber, etag, size: expectedSize });
+      } finally {
+        if (partFile.exists) partFile.delete();
+      }
+    }
+  } finally {
+    reader.close();
+  }
+  const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
+  await completeEncryptedMultipartUpload(authorization.uploadId, parts);
 }
 
 export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<string, string>, ciphertextBase64: string) {
   if (Platform.OS === "web") {
     const binary = atob(ciphertextBase64);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const response = await fetch(uploadUrl, { method: "PUT", headers, body: bytes });
-    if (!response.ok) throw new Error(`Encrypted upload failed (${response.status}).`);
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await fetch(uploadUrl, { method: "PUT", headers, body: bytes });
+        if (response.ok) break;
+      } catch {
+        response = undefined;
+      }
+      if (attempt < 2) await wait([500, 1250][attempt]);
+    }
+    bytes.fill(0);
+    if (!response?.ok) throw new Error(`Encrypted upload failed (${response?.status || 0}).`);
     return;
   }
   if (!FileSystem.cacheDirectory) throw new Error("Encrypted upload storage is unavailable.");
   const temporaryPath = `${FileSystem.cacheDirectory}chitthi-upload-${Date.now()}-${Math.random().toString(36).slice(2)}.ffenc`;
   try {
     await FileSystem.writeAsStringAsync(temporaryPath, ciphertextBase64, { encoding: FileSystem.EncodingType.Base64 });
-    const result = await FileSystem.uploadAsync(uploadUrl, temporaryPath, {
-      httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
-    });
-    if (result.status < 200 || result.status >= 300) throw new Error(`Encrypted upload failed (${result.status}).`);
+    await uploadEncryptedFile(uploadUrl, headers, temporaryPath);
   } finally {
     await FileSystem.deleteAsync(temporaryPath, { idempotent: true }).catch(() => undefined);
   }
@@ -956,17 +1069,26 @@ export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<s
 
 export async function uploadEncryptedFile(uploadUrl: string, headers: Record<string, string>, encryptedUri: string) {
   if (Platform.OS === "web") throw new Error("Native encrypted-file upload is unavailable on web.");
-  const result = await FileSystem.uploadAsync(uploadUrl, encryptedUri, {
-    httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
-  });
-  if (result.status < 200 || result.status >= 300) throw new Error(`Encrypted upload failed (${result.status}).`);
+  let result: FileSystem.FileSystemUploadResult | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      result = await FileSystem.uploadAsync(uploadUrl, encryptedUri, {
+        httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+      });
+      if (result.status >= 200 && result.status < 300) return;
+    } catch {
+      result = undefined;
+    }
+    if (attempt < 2) await wait([500, 1250][attempt]);
+  }
+  throw new Error(`Encrypted upload failed (${result?.status || 0}).`);
 }
 
-export async function finalizeEncryptedChatAttachment(uploadId: string, envelopes: Array<Record<string, unknown>>, silent = false) {
+export async function finalizeEncryptedChatAttachment(uploadId: string, envelopes: Array<Record<string, unknown>>, silent = false, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uploadId, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent })
-  });
+    body: JSON.stringify({ uploadId, envelopes, clientMessageId, silent })
+  }, { attempts: 3 });
 }
 
 export async function sendDirectEncryptedChatAttachment(
@@ -976,16 +1098,161 @@ export async function sendDirectEncryptedChatAttachment(
   silent = false
 ) {
   const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
-  if (encrypted.encryptedUri) await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri);
-  else if (encrypted.ciphertextBase64) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
-  else throw new Error("Encrypted attachment data is missing.");
-  return finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent);
+  const stateKey = multipartStateKey(encrypted.ciphertextSha256);
+  const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (authorization.transferMode === "MULTIPART") {
+    if (!encrypted.encryptedUri || Platform.OS === "web") throw new Error("Multipart encrypted uploads require the native app.");
+    const pending: PendingMultipartUpload = {
+      authorization, conversationId, encryptedUri: encrypted.encryptedUri,
+      encryptedSize: encrypted.encryptedSize, ciphertextSha256: encrypted.ciphertextSha256,
+      envelopes: encrypted.envelopes, mediaMimeType, silent, clientMessageId,
+    };
+    await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
+    let multipartError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await uploadEncryptedMultipartFile(authorization, encrypted.encryptedUri);
+        multipartError = undefined;
+        break;
+      } catch (error) {
+        multipartError = error;
+        if (attempt < 2) await wait([750, 1750][attempt]);
+      }
+    }
+    if (multipartError) throw multipartError;
+    pending.uploaded = true;
+    await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
+  } else {
+    try {
+      if (encrypted.encryptedUri && authorization.uploadUrl && authorization.headers) await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri);
+      else if (encrypted.ciphertextBase64 && authorization.uploadUrl && authorization.headers) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
+      else throw new Error("Encrypted attachment data is missing.");
+    } catch (error) {
+      // Single PUT is restarted from the original media on the next user retry;
+      // it has no resumable state, so its encrypted cache must not be orphaned.
+      if (encrypted.encryptedUri && Platform.OS !== "web") {
+        const temporary = new File(encrypted.encryptedUri);
+        if (temporary.exists) temporary.delete();
+      }
+      throw error;
+    }
+  }
+  try {
+    const finalized = await finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent, clientMessageId);
+    if (authorization.transferMode === "MULTIPART") await AsyncStorage.removeItem(stateKey);
+    return finalized;
+  } catch (error) {
+    if (authorization.transferMode === "SINGLE" && encrypted.encryptedUri && Platform.OS !== "web") {
+      const temporary = new File(encrypted.encryptedUri);
+      if (temporary.exists) temporary.delete();
+    }
+    throw error;
+  }
+}
+
+export async function resumePendingEncryptedChatUploads() {
+  if (Platform.OS === "web") return [] as ChatMessage[];
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStatePrefix));
+  const finalized: ChatMessage[] = [];
+  for (const key of keys.slice(0, 5)) {
+    try {
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) continue;
+      const pending = JSON.parse(raw) as PendingMultipartUpload;
+      const encryptedFile = new File(pending.encryptedUri);
+      if (!pending.authorization?.uploadId || !encryptedFile.exists || encryptedFile.size !== pending.encryptedSize) {
+        await AsyncStorage.removeItem(key);
+        continue;
+      }
+      if (!pending.uploaded) {
+        await uploadEncryptedMultipartFile(pending.authorization, pending.encryptedUri);
+        pending.uploaded = true;
+        await AsyncStorage.setItem(key, JSON.stringify(pending));
+      }
+      const result = await finalizeEncryptedChatAttachment(pending.authorization.uploadId, pending.envelopes, pending.silent, pending.clientMessageId);
+      finalized.push(result.message);
+      await AsyncStorage.removeItem(key);
+      encryptedFile.delete();
+    } catch {
+      // Keep valid state and encrypted ciphertext for the next foreground retry.
+    }
+  }
+  return finalized;
 }
 
 export async function getEncryptedChatAttachmentDownloadUrl(messageId: number, deviceId: string) {
   return request<{ ok: boolean; downloadUrl: string; encryptedSize: number; ciphertextSha256: string; mediaMimeType: string }>("/api/chat/e2ee/attachments/download-url", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messageId, deviceId })
   });
+}
+
+export async function downloadEncryptedAssetResumably(
+  downloadUrl: string,
+  destination: string,
+  encryptedSize: number,
+  ciphertextSha256: string,
+  onProgress?: (progress: number) => void
+) {
+  if (Platform.OS === "web" || encryptedSize <= 0) throw new Error("Resumable encrypted download is unavailable.");
+  const target = new File(destination);
+  target.parentDirectory.create({ idempotent: true, intermediates: true });
+  if (!target.exists) target.create({ overwrite: false, intermediates: true });
+  if (target.size > encryptedSize) target.create({ overwrite: true, intermediates: true });
+  const digest = sha256.create();
+  if (target.size > 0) {
+    const existingReader = target.open();
+    try {
+      while (existingReader.offset !== null && existingReader.offset < target.size) {
+        digest.update(existingReader.readBytes(Math.min(1024 * 1024, target.size - existingReader.offset)));
+      }
+    } finally {
+      existingReader.close();
+    }
+  }
+  const writer = target.open();
+  writer.offset = target.size;
+  const rangeBytes = 8 * 1024 * 1024;
+  try {
+    while (writer.offset !== null && writer.offset < encryptedSize) {
+      const start = writer.offset;
+      const end = Math.min(encryptedSize - 1, start + rangeBytes - 1);
+      const partUri = `${destination}.range-${start}`;
+      let result: FileSystem.FileSystemDownloadResult | undefined;
+      try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+          result = await FileSystem.downloadAsync(downloadUrl, partUri, { headers: { Range: `bytes=${start}-${end}` } });
+          if (result.status === 206 || (start === 0 && end + 1 === encryptedSize && result.status === 200)) break;
+          if (attempt < 2) await wait([500, 1250][attempt]);
+        }
+        if (!result || ![200, 206].includes(result.status)) throw new Error(`Encrypted range download failed (${result?.status || 0}).`);
+        const part = new File(partUri);
+        const expected = end - start + 1;
+        if (!part.exists || part.size !== expected) throw new Error("Encrypted range download was incomplete.");
+        const reader = part.open();
+        try {
+          while (reader.offset !== null && reader.offset < part.size) {
+            const bytes = reader.readBytes(Math.min(1024 * 1024, part.size - reader.offset));
+            writer.writeBytes(bytes);
+            digest.update(bytes);
+          }
+        } finally {
+          reader.close();
+        }
+        onProgress?.(Math.max(0, Math.min(1, (writer.offset || 0) / encryptedSize)));
+      } finally {
+        await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+      }
+    }
+  } finally {
+    writer.close();
+  }
+  const actualChecksum = naclUtil.encodeBase64(digest.digest());
+  if (target.size !== encryptedSize || !ciphertextSha256 || actualChecksum !== ciphertextSha256) {
+    target.delete();
+    throw new Error("Encrypted download checksum verification failed.");
+  }
+  return target.uri;
 }
 
 export async function confirmChatAttachmentDownloaded(messageId: number, deviceId: string) {

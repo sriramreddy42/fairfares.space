@@ -15,6 +15,8 @@ import app
 class FakeR2Client:
     def __init__(self):
         self.objects = {}
+        self.multipart_uploads = {}
+        self.next_multipart_id = 1
 
     def put_object(self, **kwargs):
         self.objects[(kwargs["Bucket"], kwargs["Key"])] = {
@@ -29,8 +31,12 @@ class FakeR2Client:
         payload = stored["Body"]
 
         class Body:
+            offset = 0
+
             def read(self, limit):
-                return payload[:limit]
+                chunk = payload[self.offset:self.offset + limit]
+                self.offset += len(chunk)
+                return chunk
 
         return {"Body": Body(), "ContentLength": len(payload), "ContentType": stored["ContentType"]}
 
@@ -49,8 +55,125 @@ class FakeR2Client:
         self.presigned = {"operation": operation, "params": Params, "expires": ExpiresIn}
         return f"https://r2.example.test/{Params['Key']}?signed=1"
 
+    def create_multipart_upload(self, **kwargs):
+        upload_id = f"multipart-{self.next_multipart_id}"
+        self.next_multipart_id += 1
+        self.multipart_uploads[upload_id] = {"params": kwargs, "parts": {}}
+        return {"UploadId": upload_id}
+
+    def upload_test_part(self, upload_id, part_number, payload):
+        etag = hashlib.md5(payload).hexdigest()
+        self.multipart_uploads[upload_id]["parts"][part_number] = {"payload": payload, "etag": etag}
+        return etag
+
+    def list_parts(self, **kwargs):
+        upload = self.multipart_uploads[kwargs["UploadId"]]
+        return {"Parts": [
+            {"PartNumber": number, "ETag": part["etag"], "Size": len(part["payload"])}
+            for number, part in sorted(upload["parts"].items())
+        ]}
+
+    def complete_multipart_upload(self, **kwargs):
+        upload = self.multipart_uploads.pop(kwargs["UploadId"])
+        payload = b"".join(upload["parts"][part["PartNumber"]]["payload"] for part in kwargs["MultipartUpload"]["Parts"])
+        self.objects[(kwargs["Bucket"], kwargs["Key"])] = {
+            "Body": payload,
+            "ContentType": upload["params"]["ContentType"],
+            "ChecksumSHA256": "composite-checksum",
+            "Metadata": upload["params"].get("Metadata", {}),
+        }
+        return {"ETag": "multipart-etag"}
+
+    def abort_multipart_upload(self, **kwargs):
+        self.multipart_uploads.pop(kwargs["UploadId"], None)
+
 
 class R2StorageTest(unittest.TestCase):
+    def test_chitthi_rollout_defaults_safe_and_internal_ids_override_percentage(self):
+        with mock.patch.object(app, "CHITTHI_MULTIPART_ROLLOUT_ENABLED", True), \
+             mock.patch.object(app, "CHITTHI_ROLLOUT_PERCENT", 0), \
+             mock.patch.object(app, "CHITTHI_ROLLOUT_MAX_VIDEO_MB", 50), \
+             mock.patch.object(app, "CHITTHI_ROLLOUT_USER_IDS", {42}):
+            control = app.chitthi_transfer_features(41)
+            internal = app.chitthi_transfer_features(42)
+        self.assertEqual(control["maxVideoSizeMb"], 12)
+        self.assertFalse(control["enableMultipartUpload"])
+        self.assertEqual(internal["maxVideoSizeMb"], 50)
+        self.assertTrue(internal["enableMultipartUpload"])
+        self.assertEqual(internal["rolloutCohort"], "internal")
+
+    def test_multipart_upload_is_resumable_and_whole_object_checksum_is_verified(self):
+        self.addCleanup(app.refresh_storage_paths)
+        client = FakeR2Client()
+        encrypted = b"eightbyt" + b"final"
+        checksum = base64.b64encode(hashlib.sha256(encrypted).digest()).decode()
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "R2_BUCKET_NAME", "fairfares-attachments"), \
+             mock.patch.object(app, "CHITTHI_MULTIPART_THRESHOLD_BYTES", 10), \
+             mock.patch.object(app, "CHITTHI_MULTIPART_PART_BYTES", 8), \
+             mock.patch.object(app, "CHITTHI_MULTIPART_ROLLOUT_ENABLED", True), \
+             mock.patch.object(app, "CHITTHI_ROLLOUT_PERCENT", 100), \
+             mock.patch.object(app, "CHITTHI_ROLLOUT_MAX_VIDEO_MB", 100), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            app.refresh_storage_paths(); app.init_db()
+            with app.db() as con:
+                for name, email in (("Sender", "multipart-sender@example.com"), ("Recipient", "multipart-recipient@example.com")):
+                    con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'x', 1)", (name, email))
+                sender_id, recipient_id = [int(row[0]) for row in con.execute("SELECT id FROM users ORDER BY id")]
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('multipart-conversation')")
+                conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                for user_id in (sender_id, recipient_id):
+                    con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, user_id))
+                sender_key = base64.b64encode(b"S" * 32).decode()
+                recipient_key = base64.b64encode(b"R" * 32).decode()
+                con.execute("INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'sender-device', ?)", (sender_id, sender_key))
+                con.execute("INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'recipient-device', ?)", (recipient_id, recipient_key))
+                sender = con.execute("SELECT * FROM users WHERE id = ?", (sender_id,)).fetchone()
+
+            authorization, error = app.create_chitthi_upload_authorization(
+                user_id=sender_id, conversation_public_id="multipart-conversation", encrypted_size=len(encrypted),
+                ciphertext_sha256=checksum, media_mime_type="video/mp4",
+            )
+            self.assertFalse(error)
+            self.assertEqual(authorization["transferMode"], "MULTIPART")
+            self.assertEqual(authorization["partCount"], 2)
+            with app.db() as con:
+                upload = con.execute("SELECT * FROM chat_attachment_uploads WHERE public_id = ?", (authorization["uploadId"],)).fetchone()
+            multipart_id = upload["multipart_upload_id"]
+            completed_parts = []
+            for number, payload in enumerate((encrypted[:8], encrypted[8:]), 1):
+                part_checksum = base64.b64encode(hashlib.sha256(payload).digest()).decode()
+                part_authorization, part_error = app.authorize_chitthi_multipart_part(
+                    upload_id=authorization["uploadId"], user_id=sender_id, part_number=number,
+                    part_size=len(payload), part_sha256=part_checksum,
+                )
+                self.assertFalse(part_error)
+                self.assertEqual(client.presigned["operation"], "upload_part")
+                self.assertEqual(part_authorization["headers"]["x-amz-checksum-sha256"], part_checksum)
+                completed_parts.append({"partNumber": number, "etag": client.upload_test_part(multipart_id, number, payload)})
+
+            resumed, status_error = app.list_chitthi_multipart_parts(upload_id=authorization["uploadId"], user_id=sender_id)
+            self.assertFalse(status_error)
+            self.assertEqual([part["partNumber"] for part in resumed], [1, 2])
+            completion, completion_error = app.complete_chitthi_multipart_upload(
+                upload_id=authorization["uploadId"], user_id=sender_id, completed_parts=completed_parts,
+            )
+            self.assertFalse(completion_error)
+            self.assertTrue(completion["completed"])
+            envelopes = [
+                {"recipientUserId": sender_id, "recipientDeviceId": "sender-device", "senderPublicKey": sender_key, "nonce": "n1", "ciphertext": "c1"},
+                {"recipientUserId": recipient_id, "recipientDeviceId": "recipient-device", "senderPublicKey": sender_key, "nonce": "n2", "ciphertext": "c2"},
+            ]
+            message, finalize_error = app.finalize_chitthi_upload(
+                user=sender, upload_id=authorization["uploadId"], envelopes=envelopes, client_message_id="multipart-finalized",
+            )
+            self.assertFalse(finalize_error)
+            self.assertEqual(message["message_type"], "ENCRYPTED_ATTACHMENT")
+
     def test_expired_unfinalized_upload_is_deleted_from_r2_and_database(self):
         self.addCleanup(app.refresh_storage_paths)
         client = FakeR2Client()
@@ -131,8 +254,8 @@ class R2StorageTest(unittest.TestCase):
                 user=sender, upload_id=authorization["uploadId"], envelopes=envelopes,
                 client_message_id="finalized-1",
             )
-            self.assertIsNone(second)
-            self.assertIn("expired", second_error.lower())
+            self.assertFalse(second_error)
+            self.assertEqual(second["id"], message["id"])
 
     def test_finalize_rejects_checksum_mismatch_without_message(self):
         self.addCleanup(app.refresh_storage_paths)

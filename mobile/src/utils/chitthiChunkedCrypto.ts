@@ -4,7 +4,7 @@ import * as util from "tweetnacl-util";
 import { sha256 } from "@noble/hashes/sha256";
 import { ConversationDeviceKey, DeviceIdentity, encryptForDevices } from "./chatCrypto";
 
-export const CHITTHI_CHUNK_SIZE = 1024 * 1024;
+export const CHITTHI_CHUNK_SIZE = 256 * 1024;
 export const CHITTHI_CHUNK_FORMAT = "CHUNKED_SECRETBOX_V2";
 
 type AttachmentMetadata = {
@@ -65,11 +65,17 @@ export function deleteChunkedTemporaryFile(uri: string) {
   }
 }
 
-export function encryptAttachmentFileForDevices(
+function yieldToUiThread(throttleMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, Math.min(100, throttleMs))));
+}
+
+export async function encryptAttachmentFileForDevices(
   sourceUri: string,
   metadata: AttachmentMetadata,
   identity: DeviceIdentity,
-  keys: ConversationDeviceKey[]
+  keys: ConversationDeviceKey[],
+  onProgress?: (progress: number) => void,
+  throttleMs = 10
 ) {
   const source = new File(sourceUri);
   if (!source.exists || source.size <= 0) throw new Error("The selected attachment is empty.");
@@ -79,6 +85,7 @@ export function encryptAttachmentFileForDevices(
   const noncePrefix = nacl.randomBytes(16);
   const chunkCount = Math.ceil(source.size / CHITTHI_CHUNK_SIZE);
   const digest = sha256.create();
+  let lastReportedPercent = -1;
   const reader = source.open();
   const writer = output.open();
   try {
@@ -89,6 +96,16 @@ export function encryptAttachmentFileForDevices(
       writer.writeBytes(encryptedChunk);
       digest.update(encryptedChunk);
       clearChunk.fill(0);
+      encryptedChunk.fill(0);
+      const percent = Math.floor(((index + 1) / chunkCount) * 100);
+      if (percent === 100 || percent >= lastReportedPercent + 5) {
+        lastReportedPercent = percent;
+        onProgress?.(percent / 100);
+      }
+      // File reads and NaCl are synchronous HostFunctions. Yield after each
+      // bounded chunk so React Native can draw, process touches, and satisfy
+      // the iOS main-thread watchdog during large attachment encryption.
+      if (index + 1 < chunkCount) await yieldToUiThread(throttleMs);
     }
   } catch (error) {
     deleteChunkedTemporaryFile(output.uri);

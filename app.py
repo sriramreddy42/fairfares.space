@@ -83,6 +83,13 @@ def positive_int_env(name: str, default: int) -> int:
         return default
 
 
+def nonnegative_int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
 SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 SESSION_TOUCH_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_TOUCH_SECONDS", 5 * 60)
@@ -99,7 +106,18 @@ ALLOWED_CHAT_FILE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 MAX_CHAT_FILE_BYTES = 8_000_000
-MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 12_000_000
+# 100 MB plaintext plus bounded CHUNKED_SECRETBOX_V2 authentication overhead.
+MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
+CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
+CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
+CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 12)))
+CHITTHI_ROLLOUT_PERCENT = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_ROLLOUT_PERCENT", 0))
+CHITTHI_MULTIPART_ROLLOUT_ENABLED = os.environ.get("FAIRFARES_CHITTHI_MULTIPART_ENABLED", "0").strip() == "1"
+CHITTHI_CRYPTO_THROTTLE_MS = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS", 10))
+CHITTHI_ROLLOUT_USER_IDS = {
+    int(value) for value in os.environ.get("FAIRFARES_CHITTHI_ROLLOUT_USER_IDS", "").split(",")
+    if value.strip().isdigit() and int(value) > 0
+}
 ALLOWED_CHITTHI_MEDIA_MIME_TYPES = {
     "image/jpeg", "image/png", "image/webp",
     "video/mp4", "video/quicktime", "video/webm",
@@ -1129,6 +1147,20 @@ def chitthi_r2_object_key() -> str:
     return f"{prefix}/{secrets.token_urlsafe(24)}.ffenc"
 
 
+def chitthi_transfer_features(user_id: int = 0) -> dict[str, object]:
+    explicitly_allowed = user_id > 0 and user_id in CHITTHI_ROLLOUT_USER_IDS
+    cohort = int.from_bytes(hashlib.sha256(f"chitthi-multipart-v1:{user_id}".encode()).digest()[:4], "big") % 100 if user_id else 100
+    eligible = CHITTHI_MULTIPART_ROLLOUT_ENABLED and (explicitly_allowed or cohort < CHITTHI_ROLLOUT_PERCENT)
+    max_video_mb = CHITTHI_ROLLOUT_MAX_VIDEO_MB if eligible else 12
+    return {
+        "maxVideoSizeMb": max_video_mb,
+        "maxVideoSizeBytes": max_video_mb * 1_000_000,
+        "enableMultipartUpload": eligible,
+        "cryptoThrottleMs": CHITTHI_CRYPTO_THROTTLE_MS,
+        "rolloutCohort": "internal" if explicitly_allowed else ("enabled" if eligible else "control"),
+    }
+
+
 def create_chitthi_upload_authorization(
     *, user_id: int, conversation_public_id: str, encrypted_size: int,
     ciphertext_sha256: str, media_mime_type: str,
@@ -1138,12 +1170,16 @@ def create_chitthi_upload_authorization(
         return None, "Direct encrypted media storage is not configured."
     checksum = valid_sha256_base64(ciphertext_sha256)
     media_type = str(media_mime_type or "").strip().lower()
-    if encrypted_size <= 0 or encrypted_size > MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024:
+    features = chitthi_transfer_features(user_id)
+    authorized_max = int(features["maxVideoSizeBytes"]) + 10_000
+    if encrypted_size <= 0 or encrypted_size > min(MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024, authorized_max):
         return None, "Encrypted attachment is missing or too large."
     if media_type not in ALLOWED_CHITTHI_MEDIA_MIME_TYPES:
         return None, "This media type is not supported."
     if not checksum:
         return None, "A valid encrypted attachment checksum is required."
+    transfer_mode = "MULTIPART" if bool(features["enableMultipartUpload"]) and encrypted_size > CHITTHI_MULTIPART_THRESHOLD_BYTES else "SINGLE"
+    multipart_upload_id = ""
     with db() as con:
         conversation = get_chat_conversation_by_public_id(con, conversation_public_id, user_id)
         if not conversation:
@@ -1153,14 +1189,36 @@ def create_chitthi_upload_authorization(
             return None, block_error
         upload_id = secrets.token_urlsafe(32)
         object_key = chitthi_r2_object_key()
+        if transfer_mode == "MULTIPART":
+            try:
+                created = r2_storage_client().create_multipart_upload(
+                    Bucket=R2_BUCKET_NAME, Key=object_key,
+                    ContentType="application/octet-stream", Metadata={"upload-id": upload_id},
+                )
+                multipart_upload_id = str(created.get("UploadId") or "")
+            except Exception:
+                return None, "Could not initialize the encrypted multipart upload."
+            if not multipart_upload_id:
+                return None, "Encrypted multipart storage did not return an upload identifier."
         con.execute(
             """INSERT INTO chat_attachment_uploads
                (public_id, conversation_id, uploader_user_id, object_key, expected_size,
-                expected_checksum, media_mime_type, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
+                expected_checksum, media_mime_type, expires_at, transfer_mode,
+                multipart_upload_id, multipart_part_size)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?, ?, ?)""",
             (upload_id, int(conversation["id"]), user_id, object_key, encrypted_size,
-             checksum, media_type, f"+{CHITTHI_UNFINALIZED_UPLOAD_HOURS} hours"),
+             checksum, media_type, f"+{CHITTHI_UNFINALIZED_UPLOAD_HOURS} hours",
+             transfer_mode, multipart_upload_id, CHITTHI_MULTIPART_PART_BYTES if multipart_upload_id else 0),
         )
+    if transfer_mode == "MULTIPART":
+        return {
+            "uploadId": upload_id,
+            "transferMode": "MULTIPART",
+            "partSize": CHITTHI_MULTIPART_PART_BYTES,
+            "partCount": (encrypted_size + CHITTHI_MULTIPART_PART_BYTES - 1) // CHITTHI_MULTIPART_PART_BYTES,
+            "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
+            "maxBytes": MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
+        }, ""
     params = {
         "Bucket": R2_BUCKET_NAME,
         "Key": object_key,
@@ -1174,6 +1232,7 @@ def create_chitthi_upload_authorization(
     )
     return {
         "uploadId": upload_id,
+        "transferMode": "SINGLE",
         "uploadUrl": upload_url,
         "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
         "headers": {
@@ -1185,6 +1244,151 @@ def create_chitthi_upload_authorization(
     }, ""
 
 
+def chitthi_pending_multipart_upload(*, upload_id: str, user_id: int) -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """SELECT * FROM chat_attachment_uploads
+               WHERE public_id = ? AND uploader_user_id = ? AND finalized_at IS NULL
+                 AND transfer_mode = 'MULTIPART' AND multipart_upload_id != ''
+                 AND datetime(expires_at) > datetime('now') LIMIT 1""",
+            (clean_text_value(upload_id, 100), user_id),
+        ).fetchone()
+
+
+def authorize_chitthi_multipart_part(
+    *, upload_id: str, user_id: int, part_number: int, part_size: int, part_sha256: str,
+) -> tuple[dict[str, object] | None, str]:
+    upload = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return None, "Multipart upload was not found or has expired."
+    expected_size = int(upload["expected_size"])
+    configured_part_size = int(upload["multipart_part_size"])
+    part_count = (expected_size + configured_part_size - 1) // configured_part_size
+    if part_number < 1 or part_number > part_count:
+        return None, "Multipart part number is outside the authorized range."
+    expected_part_size = configured_part_size if part_number < part_count else expected_size - configured_part_size * (part_count - 1)
+    checksum = valid_sha256_base64(part_sha256)
+    if part_size != expected_part_size or not checksum:
+        return None, "Multipart part size or checksum is invalid."
+    params = {
+        "Bucket": R2_BUCKET_NAME, "Key": str(upload["object_key"]),
+        "UploadId": str(upload["multipart_upload_id"]), "PartNumber": part_number,
+        "ContentLength": part_size, "ChecksumSHA256": checksum,
+    }
+    upload_url = r2_storage_client().generate_presigned_url(
+        "upload_part", Params=params, ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
+    )
+    return {
+        "uploadId": str(upload["public_id"]), "partNumber": part_number,
+        "uploadUrl": upload_url, "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
+        "headers": {"x-amz-checksum-sha256": checksum},
+    }, ""
+
+
+def list_chitthi_multipart_parts(*, upload_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
+    upload = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return None, "Multipart upload was not found or has expired."
+    response = r2_storage_client().list_parts(
+        Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
+    )
+    parts = response.get("Parts") if isinstance(response.get("Parts"), list) else []
+    return [{"partNumber": int(part.get("PartNumber") or 0), "etag": str(part.get("ETag") or ""), "size": int(part.get("Size") or 0)} for part in parts], ""
+
+
+def complete_chitthi_multipart_upload(
+    *, upload_id: str, user_id: int, completed_parts: list[dict[str, object]],
+) -> tuple[dict[str, object] | None, str]:
+    with db() as con:
+        upload = con.execute(
+            """SELECT * FROM chat_attachment_uploads
+               WHERE public_id = ? AND uploader_user_id = ? AND finalized_at IS NULL
+                 AND transfer_mode = 'MULTIPART' AND multipart_upload_id != ''
+                 AND datetime(expires_at) > datetime('now') LIMIT 1""",
+            (clean_text_value(upload_id, 100), user_id),
+        ).fetchone()
+    if not upload:
+        return None, "Multipart upload was not found or has expired."
+    if row_value(upload, "multipart_completed_at"):
+        return {"uploadId": str(upload["public_id"]), "completed": True}, ""
+    expected_size = int(upload["expected_size"])
+    part_size = int(upload["multipart_part_size"])
+    expected_count = (expected_size + part_size - 1) // part_size
+    normalized = sorted(
+        ({"PartNumber": int(part.get("partNumber") or 0), "ETag": str(part.get("etag") or "")} for part in completed_parts),
+        key=lambda part: part["PartNumber"],
+    )
+    if len(normalized) != expected_count or [part["PartNumber"] for part in normalized] != list(range(1, expected_count + 1)):
+        return None, "Every multipart part is required before completion."
+    object_already_completed = False
+    try:
+        remote_parts, error = list_chitthi_multipart_parts(upload_id=upload_id, user_id=user_id)
+        if remote_parts is None:
+            return None, error
+        remote_by_number = {int(part["partNumber"]): part for part in remote_parts}
+        for part in normalized:
+            remote = remote_by_number.get(part["PartNumber"])
+            expected_part_size = part_size if part["PartNumber"] < expected_count else expected_size - part_size * (expected_count - 1)
+            if not remote or not part["ETag"] or not secrets.compare_digest(str(remote["etag"]), part["ETag"]) or int(remote["size"]) != expected_part_size:
+                return None, "Multipart part verification failed."
+    except Exception:
+        # A completion response can be lost after R2 has already assembled the
+        # object. Whole-object size + SHA-256 below is authoritative in that case.
+        try:
+            head = r2_storage_client().head_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+            object_already_completed = int(head.get("ContentLength") or 0) == expected_size
+        except Exception:
+            object_already_completed = False
+        if not object_already_completed:
+            return None, "Could not reconcile the encrypted multipart upload."
+    try:
+        if not object_already_completed:
+            r2_storage_client().complete_multipart_upload(
+                Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
+                MultipartUpload={"Parts": normalized},
+            )
+        stored = r2_storage_client().get_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+        body = stored["Body"]
+        digest = hashlib.sha256()
+        total = 0
+        try:
+            while True:
+                chunk = body.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > expected_size:
+                    return None, "Encrypted multipart upload is larger than authorized."
+                digest.update(chunk)
+        finally:
+            if hasattr(body, "close"):
+                body.close()
+        actual_checksum = base64.b64encode(digest.digest()).decode()
+        if total != expected_size or not secrets.compare_digest(actual_checksum, str(upload["expected_checksum"])):
+            r2_storage_client().delete_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+            return None, "Encrypted multipart checksum verification failed."
+    except Exception:
+        return None, "Could not complete the encrypted multipart upload."
+    with db() as con:
+        con.execute("UPDATE chat_attachment_uploads SET multipart_completed_at = CURRENT_TIMESTAMP WHERE id = ?", (int(upload["id"]),))
+    return {"uploadId": str(upload["public_id"]), "completed": True}, ""
+
+
+def abort_chitthi_multipart_upload(*, upload_id: str, user_id: int) -> tuple[bool, str]:
+    upload = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return False, "Multipart upload was not found or has expired."
+    try:
+        r2_storage_client().abort_multipart_upload(
+            Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
+        )
+    except Exception:
+        return False, "Could not abort the multipart upload."
+    with db() as con:
+        con.execute("DELETE FROM chat_attachment_uploads WHERE id = ?", (int(upload["id"]),))
+    return True, ""
+
+
 def finalize_chitthi_upload(
     *, user: sqlite3.Row, upload_id: str, envelopes: list[dict[str, object]],
     client_message_id: str,
@@ -1194,12 +1398,23 @@ def finalize_chitthi_upload(
     with db() as con:
         upload = con.execute(
             """SELECT * FROM chat_attachment_uploads
-               WHERE public_id = ? AND uploader_user_id = ? AND finalized_at IS NULL
-                 AND datetime(expires_at) > datetime('now') LIMIT 1""",
+               WHERE public_id = ? AND uploader_user_id = ? LIMIT 1""",
             (upload_id, current_user_id),
         ).fetchone()
         if not upload:
             return None, "Upload authorization was not found or has expired."
+        if row_value(upload, "finalized_at") and int(row_value(upload, "message_id") or 0) > 0:
+            existing = con.execute(
+                """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                   FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+                   WHERE messages.id = ? AND messages.sender_id = ? AND messages.client_message_id = ? LIMIT 1""",
+                (int(upload["message_id"]), current_user_id, clean_text_value(client_message_id, 120)),
+            ).fetchone()
+            return (existing, "") if existing else (None, "Upload was already finalized.")
+        if datetime.fromisoformat(str(upload["expires_at"]).replace("Z", "+00:00")).replace(tzinfo=None) <= datetime.now(UTC).replace(tzinfo=None):
+            return None, "Upload authorization was not found or has expired."
+        if str(row_value(upload, "transfer_mode") or "SINGLE") == "MULTIPART" and not row_value(upload, "multipart_completed_at"):
+            return None, "Multipart upload must be completed before finalization."
         conversation = con.execute(
             """SELECT conversations.* FROM chat_conversations conversations
                JOIN chat_participants participants ON participants.conversation_id = conversations.id
@@ -1220,8 +1435,10 @@ def finalize_chitthi_upload(
         actual_size = int(head.get("ContentLength") or 0)
         actual_checksum = str(head.get("ChecksumSHA256") or "")
         metadata = head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        checksum_verified = (str(row_value(upload, "transfer_mode") or "SINGLE") == "MULTIPART"
+                             or secrets.compare_digest(actual_checksum, str(upload["expected_checksum"])))
         if (actual_size != int(upload["expected_size"])
-                or not secrets.compare_digest(actual_checksum, str(upload["expected_checksum"]))
+                or not checksum_verified
                 or not secrets.compare_digest(str(metadata.get("upload-id") or ""), upload_id)):
             return None, "Encrypted upload verification failed."
         message, error = save_encrypted_chat_message(
@@ -1259,7 +1476,7 @@ def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, i
     batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
     with db() as con:
         rows = con.execute(
-            """SELECT id, object_key FROM chat_attachment_uploads
+            """SELECT id, object_key, transfer_mode, multipart_upload_id FROM chat_attachment_uploads
                WHERE finalized_at IS NULL AND datetime(expires_at) <= datetime('now')
                ORDER BY id LIMIT ?""",
             (batch_limit,),
@@ -1267,6 +1484,14 @@ def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, i
         for row in rows:
             scanned += 1
             try:
+                if str(row_value(row, "transfer_mode") or "SINGLE") == "MULTIPART" and str(row_value(row, "multipart_upload_id") or ""):
+                    try:
+                        r2_storage_client().abort_multipart_upload(
+                            Bucket=R2_BUCKET_NAME, Key=str(row["object_key"]), UploadId=str(row["multipart_upload_id"]),
+                        )
+                    except Exception:
+                        # It may already have been completed; deletion remains authoritative.
+                        pass
                 r2_storage_client().delete_object(Bucket=R2_BUCKET_NAME, Key=str(row["object_key"]))
                 con.execute("DELETE FROM chat_attachment_uploads WHERE id = ?", (int(row["id"]),))
                 deleted += 1
@@ -5707,6 +5932,10 @@ def init_db() -> None:
                 media_mime_type TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 expires_at TEXT NOT NULL,
+                transfer_mode TEXT NOT NULL DEFAULT 'SINGLE',
+                multipart_upload_id TEXT NOT NULL DEFAULT '',
+                multipart_part_size INTEGER NOT NULL DEFAULT 0,
+                multipart_completed_at TEXT,
                 finalized_at TEXT,
                 message_id INTEGER,
                 FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
@@ -6759,6 +6988,10 @@ def init_db() -> None:
         ensure_column(con, "chat_device_keys", "signing_public_key", "signing_public_key TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_message_envelopes", "preview_nonce", "preview_nonce TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_message_envelopes", "preview_ciphertext", "preview_ciphertext TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_attachment_uploads", "transfer_mode", "transfer_mode TEXT NOT NULL DEFAULT 'SINGLE'")
+        ensure_column(con, "chat_attachment_uploads", "multipart_upload_id", "multipart_upload_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_attachment_uploads", "multipart_part_size", "multipart_part_size INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "chat_attachment_uploads", "multipart_completed_at", "multipart_completed_at TEXT")
         ensure_column(con, "mobile_push_tokens", "device_id", "device_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
@@ -20245,6 +20478,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/health":
             self.api_health()
             return
+        if parsed.path == "/api/mobile/features":
+            user = self.current_user()
+            self.send_json({"ok": True, "features": {"chitthi": chitthi_transfer_features(int(row_value(user, "id") or 0) if user else 0)}})
+            return
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path)
             return
@@ -20556,6 +20793,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/e2ee/relay": self.api_relay_encrypted_chat_message,
             "/api/chat/e2ee/attachments": self.api_send_encrypted_chat_attachment,
             "/api/chat/e2ee/attachments/authorize": self.api_authorize_encrypted_chat_attachment,
+            "/api/chat/e2ee/attachments/multipart/part": self.api_authorize_encrypted_chat_attachment_part,
+            "/api/chat/e2ee/attachments/multipart/status": self.api_encrypted_chat_attachment_multipart_status,
+            "/api/chat/e2ee/attachments/multipart/complete": self.api_complete_encrypted_chat_attachment_multipart,
+            "/api/chat/e2ee/attachments/multipart/abort": self.api_abort_encrypted_chat_attachment_multipart,
             "/api/chat/e2ee/attachments/finalize": self.api_finalize_encrypted_chat_attachment,
             "/api/chat/e2ee/attachments/download-url": self.api_encrypted_chat_attachment_download_url,
             "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
@@ -22027,14 +22268,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """,
             (conversation["id"], sender["id"]),
         ).fetchall()
-        if row_value(conversation, "ride_public_id") or row_value(conversation, "ride_post_id"):
-            conversation_url = f"{self.public_origin()}/dashboard?tab=rides#rides"
-            post_title = row_value(conversation, "subject") or row_value(conversation, "ride_title") or "a FairFares ride"
-        else:
-            conversation_url = f"{self.public_origin()}/dashboard?tab=housing#housing"
-            post_title = row_value(conversation, "subject") or row_value(conversation, "post_title") or "an accommodation request"
         push_jobs: list[tuple[str, dict[str, object]]] = []
-        email_jobs: list[tuple[str, str, str, str, str, str]] = []
         stored_preview = str(row_value(message, "message_text") or "").strip()
         if row_value(message, "attachment_url"):
             notification_preview = "Sent you a secure attachment"
@@ -22081,32 +22315,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
                         "badge": unread_badge,
                     }))
-            email = normalize_email(row_value(recipient, "email"))
-            if not email:
-                continue
-            email_jobs.append(
-                (
-                    email,
-                    str(row_value(recipient, "name") or ""),
-                    str(row_value(sender, "name") or "FairFares member"),
-                    str(post_title),
-                    notification_preview,
-                    conversation_url,
-                )
-            )
-        if email_jobs:
-            def deliver_chat_emails() -> None:
-                for job in email_jobs:
-                    try:
-                        send_accommodation_message_email(*job)
-                    except Exception as exc:
-                        print(f"Chat email notification failed: {exc}")
-
-            threading.Thread(
-                target=deliver_chat_emails,
-                daemon=True,
-                name="fairfares-chitthi-email",
-            ).start()
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
@@ -22614,7 +22822,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ciphertext = base64.b64decode(ciphertext_base64, validate=True)
         except (ValueError, TypeError):
             ciphertext = b""
-        if not ciphertext or len(ciphertext) > MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024:
+        if not ciphertext or len(ciphertext) > CHITTHI_MULTIPART_THRESHOLD_BYTES + 1024:
             self.send_json({"ok": False, "message": "Encrypted attachment is missing or too large."}, 400)
             return
         current_user_id = int(user["id"])
@@ -22633,7 +22841,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             attachment_url = save_chat_file_payload(
                 file_data={"filename": f"encrypted-{message['id']}.ffenc", "mime_type": "application/octet-stream", "payload": ciphertext},
-                fallback_name=f"encrypted-{message['id']}.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
+                fallback_name=f"encrypted-{message['id']}.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=CHITTHI_MULTIPART_THRESHOLD_BYTES + 1024,
             )
             if not attachment_url:
                 con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (int(message["id"]),))
@@ -22699,6 +22907,62 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if conversation and not bool(payload.get("silent")):
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_authorize_encrypted_chat_attachment_part(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to continue the encrypted upload."}, 401)
+            return
+        payload = self.read_json_body()
+        authorization, error = authorize_chitthi_multipart_part(
+            upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]),
+            part_number=int(float_from_value(payload.get("partNumber")) or 0),
+            part_size=int(float_from_value(payload.get("partSize")) or 0),
+            part_sha256=str(payload.get("partSha256") or ""),
+        )
+        if not authorization:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        self.send_json({"ok": True, **authorization})
+
+    def api_encrypted_chat_attachment_multipart_status(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to resume the encrypted upload."}, 401)
+            return
+        payload = self.read_json_body()
+        parts, error = list_chitthi_multipart_parts(upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]))
+        if parts is None:
+            self.send_json({"ok": False, "message": error}, 404)
+            return
+        self.send_json({"ok": True, "parts": parts})
+
+    def api_complete_encrypted_chat_attachment_multipart(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to complete the encrypted upload."}, 401)
+            return
+        payload = self.read_json_body()
+        parts = payload.get("parts") if isinstance(payload.get("parts"), list) else []
+        result, error = complete_chitthi_multipart_upload(
+            upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]), completed_parts=parts,
+        )
+        if not result:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        self.send_json({"ok": True, **result})
+
+    def api_abort_encrypted_chat_attachment_multipart(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to abort the encrypted upload."}, 401)
+            return
+        payload = self.read_json_body()
+        aborted, error = abort_chitthi_multipart_upload(upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]))
+        if not aborted:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        self.send_json({"ok": True, "aborted": True})
 
     def api_encrypted_chat_attachment_download_url(self) -> None:
         user = self.current_user()
@@ -31094,6 +31358,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "unreadCount": sum(int(item.get("unread") or 0) for item in chats),
                     "conversations": chats[:10],
                 },
+                "features": {"chitthi": chitthi_transfer_features(user_id)},
                 "dashboard": {
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
                     "messages": sum(int(item.get("unread") or 0) for item in chats),

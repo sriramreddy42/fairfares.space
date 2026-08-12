@@ -481,9 +481,10 @@ class ChatRealtimeTest(unittest.TestCase):
 
         try:
             jpeg = b"\xff\xd8\xff\xe0" + (b"photo-data" * 350_000)
-            with patch.object(app, "send_accommodation_message_email", return_value=(Path("outbox"), "sent")):
+            with patch.object(app, "send_accommodation_message_email", return_value=(Path("outbox"), "sent")) as chat_email:
                 image_status, image = multipart_upload("phone-photo.jpg", "image/jpeg", jpeg, "multipart-image")
                 pdf_status, document = multipart_upload("trip.pdf", "application/pdf", b"%PDF-1.4\n" + (b"document-data" * 580_000) + b"\n%%EOF\n", "multipart-file")
+            chat_email.assert_not_called()
             self.assertEqual(image_status, 201)
             self.assertEqual(image["message"]["type"], "IMAGE")
             self.assertEqual(pdf_status, 201)

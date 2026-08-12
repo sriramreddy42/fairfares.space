@@ -1859,7 +1859,10 @@ function FairFaresApp() {
 
   return (
     <NearbyRelayProvider user={data?.user || null}>
-    <SafeAreaView style={[styles.safe, activeTab === "messenger" && styles.chittiSafe]} edges={["top", "right", "bottom", "left"]}>
+    <SafeAreaView
+      style={[styles.safe, activeTab === "messenger" && styles.chittiSafe]}
+      edges={activeTab === "messenger" && bottomTabsHidden ? ["top", "right", "left"] : ["top", "right", "bottom", "left"]}
+    >
       <StatusBar style="light" backgroundColor={activeTab === "messenger" ? "#052017" : theme.colors.bg} translucent={false} />
       <CriticalBrandAssetPreloader />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
@@ -1868,9 +1871,7 @@ function FairFaresApp() {
             <ActivityIndicator color={theme.colors.text} />
             <Text style={styles.loaderText}>Loading FairFares</Text>
           </View>
-        ) : (
-          screen
-        )}
+        ) : screen}
         <BottomTabs
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}

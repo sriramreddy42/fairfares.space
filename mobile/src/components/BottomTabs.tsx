@@ -2,21 +2,26 @@ import React from "react";
 import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
+import { AdaptiveGlassView } from "./AdaptiveGlassView";
 
 export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
-const tabs: Array<{
-  key: TabKey;
+type VisibleTabKey = Exclude<TabKey, "housing">;
+
+type NavigationItem = {
+  key: VisibleTabKey;
   label: string;
   icon: ImageSourcePropType;
-  iconWidth: number;
-  iconHeight: number;
-}> = [
-  { key: "home", label: "Home", icon: appAssets.navHome, iconWidth: 25, iconHeight: 25 },
-  { key: "services", label: "Services", icon: appAssets.navServices, iconWidth: 25, iconHeight: 25 },
-  { key: "activity", label: "Activity", icon: appAssets.navActivity, iconWidth: 25, iconHeight: 25 },
-  { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, iconWidth: 33, iconHeight: 38 },
-  { key: "profile", label: "Account", icon: appAssets.profile, iconWidth: 25, iconHeight: 25 }
+  width: number;
+  height: number;
+};
+
+const navigationItems: NavigationItem[] = [
+  { key: "home", label: "Home", icon: appAssets.navHome, width: 25, height: 25 },
+  { key: "services", label: "Services", icon: appAssets.navServices, width: 25, height: 25 },
+  { key: "activity", label: "Activity", icon: appAssets.navActivity, width: 25, height: 25 },
+  { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, width: 31, height: 35 },
+  { key: "profile", label: "Account", icon: appAssets.profile, width: 25, height: 25 },
 ];
 
 type Props = {
@@ -26,135 +31,189 @@ type Props = {
   hidden?: boolean;
 };
 
+function visibleActiveTab(active: TabKey): VisibleTabKey {
+  return active === "housing" ? "home" : active;
+}
+
 export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
-  if (hidden) {
-    return null;
-  }
+  if (hidden) return null;
+
+  const selected = visibleActiveTab(active);
 
   return (
-    <View style={[styles.bar, active === "messenger" && styles.chittiBar]}>
-      <View pointerEvents="none" style={[styles.navTint, active === "messenger" && styles.chittiNavTint]} />
-      <View pointerEvents="none" style={styles.navTopHighlight} />
-      {tabs.map((tab) => {
-        const isActive = tab.key === active;
-        return (
-          <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.activeItem, isActive && active === "messenger" && styles.chittiActiveItem]} onPress={() => onChange(tab.key)}>
-            {isActive ? <View pointerEvents="none" style={styles.activeItemHighlight} /> : null}
-            <View style={[styles.icon, tab.key === "messenger" && styles.chittiIcon]}>
-              <Image
-                source={tab.icon}
-                style={[
-                  styles.iconImage,
-                  { width: tab.iconWidth, height: tab.iconHeight },
-                  isActive && tab.key !== "messenger" && styles.activeIcon,
-                  !isActive && styles.inactiveIcon,
-                  active === "messenger" && tab.key !== "messenger" && styles.chittiNavIcon
-                ]}
-                resizeMode="contain"
-              />
-              {tab.key === "messenger" && unreadCount > 0 ? <Text style={styles.badge}>{unreadCount}</Text> : null}
-            </View>
-            <Text style={[styles.label, active === "messenger" && styles.chittiLabel, isActive && styles.activeLabel, isActive && tab.key === "messenger" && styles.chittiActiveLabel]}>{tab.label}</Text>
-          </TouchableOpacity>
-        );
-      })}
+    <View style={styles.card} accessibilityRole="tablist">
+      <View pointerEvents="none" style={styles.glassClip}>
+        <AdaptiveGlassView
+          style={StyleSheet.absoluteFill}
+          intensity={72}
+          tintColor="rgba(24,29,27,0.72)"
+          fallbackColor="rgba(20,21,21,0.94)"
+        />
+        <View style={styles.glassTint} />
+        <View style={styles.glassTopHighlight} />
+        <View style={styles.glassBottomShade} />
+      </View>
+      <View style={styles.itemsRow}>
+        {navigationItems.map((item) => {
+          const isSelected = selected === item.key;
+          return (
+            <TouchableOpacity
+              key={item.key}
+              accessibilityRole="tab"
+              accessibilityLabel={item.label}
+              accessibilityState={{ selected: isSelected }}
+              activeOpacity={0.72}
+              onPress={() => onChange(item.key)}
+              style={styles.touchTarget}
+            >
+              <View style={[styles.itemContent, isSelected && styles.selectedItem]}>
+                <View style={[styles.iconFrame, item.key === "messenger" && styles.chitthiIconFrame]}>
+                  <Image
+                    source={item.icon}
+                    resizeMode="contain"
+                    style={[
+                      styles.icon,
+                      { width: item.width, height: item.height },
+                      item.key !== "messenger" && isSelected && styles.selectedIcon,
+                      !isSelected && styles.unselectedIcon,
+                    ]}
+                  />
+                  {item.key === "messenger" && unreadCount > 0 ? (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text numberOfLines={1} style={[styles.label, isSelected && styles.selectedLabel]}>
+                  {item.label}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  bar: {
+  card: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    marginHorizontal: 12,
-    marginTop: 4,
-    marginBottom: 9,
-    height: 68,
-    backgroundColor: "rgba(20,21,21,0.90)",
-    borderRadius: 999,
+    left: 12,
+    right: 12,
+    bottom: 9,
+    height: 70,
+    borderRadius: 35,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 18,
-    overflow: "hidden",
-    shadowColor: "#000",
+    borderColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "transparent",
+    shadowColor: "#000000",
     shadowOpacity: 0.42,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 14
+    elevation: 14,
   },
-  chittiBar: {
-    backgroundColor: "rgba(20,21,21,0.90)",
-    borderColor: "rgba(255,255,255,0.16)"
+  glassClip: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 35,
+    overflow: "hidden",
   },
-  navTint: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.025)" },
-  chittiNavTint: { backgroundColor: "rgba(255,255,255,0.025)" },
-  navTopHighlight: { position: "absolute", left: 22, right: 22, top: 1, height: 1, backgroundColor: "rgba(255,255,255,0.20)" },
-  item: {
-    width: 52,
+  glassTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(11,15,14,0.44)",
+  },
+  glassTopHighlight: {
+    position: "absolute",
+    top: 1,
+    left: 22,
+    right: 22,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,0.34)",
+  },
+  glassBottomShade: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 0,
+    height: 20,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.14)",
+  },
+  itemsRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+  },
+  touchTarget: {
+    flex: 1,
+    height: "100%",
+    minWidth: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  itemContent: {
+    width: 54,
     height: 56,
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    zIndex: 1
   },
-  activeItem: {
-    backgroundColor: "rgba(13,20,18,0.92)",
+  selectedItem: {
+    backgroundColor: "#111715",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(236,190,103,0.72)",
-    overflow: "hidden",
     shadowColor: "#F0C671",
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
+    shadowOpacity: 0.2,
+    shadowRadius: 9,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 4
+    elevation: 4,
   },
-  chittiActiveItem: {
-    borderColor: "rgba(236,190,103,0.54)"
-  },
-  activeItemHighlight: { position: "absolute", left: 9, right: 9, top: 1, height: 1, backgroundColor: "rgba(255,246,220,0.44)" },
-  icon: {
+  iconFrame: {
     width: 38,
-    height: 26,
+    height: 27,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
-  chittiIcon: { height: 34 },
-  activeIcon: { tintColor: "#F0C671", opacity: 1 },
-  iconImage: {
-    width: 23,
-    height: 23
+  chitthiIconFrame: {
+    height: 33,
   },
-  inactiveIcon: {
-    opacity: 0.68
+  icon: {
+    opacity: 1,
   },
-  chittiNavIcon: { tintColor: undefined, opacity: 0.92 },
+  selectedIcon: {
+    tintColor: "#F0C671",
+  },
+  unselectedIcon: {
+    opacity: 0.68,
+  },
   label: {
-    color: "#a8a8a8",
+    color: "#A8A8A8",
     fontSize: 9.5,
-    fontWeight: "800"
+    lineHeight: 12,
+    fontWeight: "800",
+    textAlign: "center",
   },
-  activeLabel: {
-    color: "#ffffff"
+  selectedLabel: {
+    color: "#FFFFFF",
   },
-  chittiLabel: { color: "#a8a8a8", fontWeight: "800" },
-  chittiActiveLabel: { color: "#ffffff", fontSize: 9.5 },
   badge: {
     position: "absolute",
-    top: -7,
-    right: -7,
+    top: -6,
+    right: -6,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    borderRadius: 9,
     backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
     color: theme.colors.text,
-    borderRadius: 10,
-    minWidth: 16,
-    textAlign: "center",
-    fontSize: 10,
+    fontSize: 9,
+    lineHeight: 11,
     fontWeight: "900",
-    overflow: "hidden"
-  }
+  },
 });

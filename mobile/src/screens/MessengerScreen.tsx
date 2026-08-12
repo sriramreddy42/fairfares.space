@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Contacts from "expo-contacts";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
-import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { BlurView } from "expo-blur";
-import { createVideoPlayer, useVideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import Reanimated, { useAnimatedKeyboard, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
@@ -19,6 +20,7 @@ import {
   createChatGroupInvite,
   confirmChatAttachmentDownloaded,
   getEncryptedChatAttachmentDownloadUrl,
+  downloadEncryptedAssetResumably,
   deleteChatMessage,
   editChatMessage,
   findChatPersonByPhone,
@@ -32,7 +34,6 @@ import {
   getChatConversations,
   getChatMessages,
   getAuthenticatedAssetDataUrl,
-  downloadAuthenticatedAssetToFile,
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
   joinChatGroupInvite,
@@ -46,6 +47,7 @@ import {
   openIssuesAndSuggestionsChat,
   pollChatEvents,
   reportChatMessage,
+  resumePendingEncryptedChatUploads,
   registerChatDeviceKey,
   reactToChatMessage,
   removeChatGroupMember,
@@ -93,13 +95,15 @@ type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
+const IS_EXPO_GO = Constants.appOwnership === "expo";
+const EXPO_GO_SAFE_ENCRYPTION_BYTES = 12_000_000;
 type ThreadMessageItem = {
   message: ChatMessage;
   index: number;
   skipForMediaGroup: boolean;
   mediaGroup: ChatMessage[];
   discoveredUrl: string;
-  isPhotoMessage: boolean;
+  isMediaMessage: boolean;
   messageRunEnds: boolean;
   replyTarget: ChatMessage | null;
   showDateDivider: boolean;
@@ -344,24 +348,6 @@ function encryptedAttachmentMetadata(keyPayload: string) {
     return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE"; thumbnailBase64?: string };
   } catch {
     return {};
-  }
-}
-
-async function createEncryptedVideoThumbnail(uri: string) {
-  if (Platform.OS === "web") return "";
-  const player = createVideoPlayer(uri);
-  try {
-    const [thumbnail] = await player.generateThumbnailsAsync(0.15, { maxWidth: 480, maxHeight: 360 });
-    if (!thumbnail) return "";
-    const context = ImageManipulator.manipulate(thumbnail);
-    context.resize({ width: 360 });
-    const image = await context.renderAsync();
-    const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: 0.58, base64: true });
-    return saved.base64 || "";
-  } catch {
-    return "";
-  } finally {
-    player.release();
   }
 }
 
@@ -879,8 +865,23 @@ function CircularDownloadProgress({ progress }: { progress: number }) {
   );
 }
 
+function IosKeyboardTrackingBody({ bottomSafeArea, children }: { bottomSafeArea: number; children: React.ReactNode }) {
+  const keyboard = useAnimatedKeyboard();
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -Math.max(0, keyboard.height.value - bottomSafeArea) }]
+  }), [bottomSafeArea]);
+
+  return <Reanimated.View style={[styles.threadKeyboardBody, animatedStyle]}>{children}</Reanimated.View>;
+}
+
+function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: React.ReactNode }) {
+  return <View style={styles.threadKeyboardBody}>{children}</View>;
+}
+
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
+  const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 12, maxVideoSizeBytes: 12_000_000, enableMultipartUpload: false, cryptoThrottleMs: 10, rolloutCohort: "control" as const };
+  const ThreadKeyboardBody = Platform.OS === "ios" ? IosKeyboardTrackingBody : StaticKeyboardBody;
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const signedIn = Boolean(data?.user);
   const currentUserId = Number(data?.user?.id || 0);
@@ -905,6 +906,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const jumpToLatestVisibleRef = useRef(false);
   const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
+  const multipartResumeUserRef = useRef(0);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
@@ -954,9 +956,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
-  const [composerFocused, setComposerFocused] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
@@ -1017,7 +1016,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         skipForMediaGroup: Boolean(mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId),
         mediaGroup,
         discoveredUrl: message.text ? firstDiscoveredUrl(message.text) : "",
-        isPhotoMessage: message.type === "IMAGE" && Boolean(message.attachmentUrl),
+        isMediaMessage: ["IMAGE", "VIDEO"].includes(message.type) && Boolean(message.attachmentUrl),
         messageRunEnds: mediaGroup.length > 1 || endsMessageRun(visibleMessages, index),
         replyTarget: message.replyToMessageId ? messageById.get(Number(message.replyToMessageId)) || null : null,
         showDateDivider: index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt)
@@ -1049,22 +1048,41 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function jumpToRepliedMessage(messageId: number) {
-    const index = threadMessageItems.findIndex((item) => Number(item.message.id) === Number(messageId));
-    if (index < 0) {
-      if (hasMoreMessages) void loadOlderMessages();
+    const positionReplyTarget = () => {
+      const index = threadMessageItems.findIndex((item) => Number(item.message.id) === Number(messageId));
+      if (index < 0) {
+        if (hasMoreMessages) void loadOlderMessages();
+        return;
+      }
+      shouldAutoScrollToEndRef.current = false;
+      // Variable-height bubbles may not be measured yet. An animated request can
+      // visibly travel to an estimated offset and then jump when FlatList corrects
+      // it. Position immediately and let the highlight provide the navigation cue.
+      messagesScrollRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+      requestAnimationFrame(() => setHighlightedMessageId(messageId));
+      if (replyHighlightTimerRef.current) clearTimeout(replyHighlightTimerRef.current);
+      replyHighlightTimerRef.current = setTimeout(() => {
+        setHighlightedMessageId((current) => current === messageId ? 0 : current);
+        replyHighlightTimerRef.current = null;
+      }, 1600);
+    };
+
+    if (!Keyboard.isVisible()) {
+      positionReplyTarget();
       return;
     }
-    shouldAutoScrollToEndRef.current = false;
-    // Variable-height bubbles may not be measured yet. An animated request can
-    // visibly travel to an estimated offset and then jump when FlatList corrects
-    // it. Position immediately and let the highlight provide the navigation cue.
-    messagesScrollRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
-    requestAnimationFrame(() => setHighlightedMessageId(messageId));
-    if (replyHighlightTimerRef.current) clearTimeout(replyHighlightTimerRef.current);
-    replyHighlightTimerRef.current = setTimeout(() => {
-      setHighlightedMessageId((current) => current === messageId ? 0 : current);
-      replyHighlightTimerRef.current = null;
-    }, 1600);
+    let positioned = false;
+    const positionAfterKeyboard = () => {
+      if (positioned) return;
+      positioned = true;
+      subscription.remove();
+      // Wait one frame after the native keyboard closes so FlatList measures
+      // against its restored height before resolving the reply target.
+      requestAnimationFrame(positionReplyTarget);
+    };
+    const subscription = Keyboard.addListener("keyboardDidHide", positionAfterKeyboard);
+    Keyboard.dismiss();
+    setTimeout(positionAfterKeyboard, 500);
   }
 
   function updateJumpToLatestVisibility(offset: number) {
@@ -1160,6 +1178,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   useEffect(() => {
+    if (!currentUserId || multipartResumeUserRef.current === currentUserId) return;
+    multipartResumeUserRef.current = currentUserId;
+    void resumePendingEncryptedChatUploads().then((resumed) => {
+      if (resumed.length) void refreshMessenger({ showLoader: false, showError: false });
+    });
+  }, [currentUserId]);
+
+  useEffect(() => {
     if (!activeConversationId || messagesConversationIdRef.current !== activeConversationId) return;
     const recent = recentChatMessages(messages);
     messageCache.current.set(activeConversationId, recent);
@@ -1248,20 +1274,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [currentUserId, data?.chat.conversations, data?.communities, preferredSuggestionCity]);
 
   useEffect(() => {
-    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSubscription = Keyboard.addListener(showEvent, (event) => {
-      setKeyboardVisible(true);
-      setKeyboardHeight(Math.max(0, event.endCoordinates?.height || 0));
+    if (Platform.OS !== "ios") {
+      const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+        if (shouldAutoScrollToEndRef.current) scrollThreadToLatest(false);
+      });
+      return () => {
+        showSubscription.remove();
+      };
+    }
+    const shownSubscription = Keyboard.addListener("keyboardDidShow", () => {
       if (shouldAutoScrollToEndRef.current) scrollThreadToLatest(false);
     });
-    const hideSubscription = Keyboard.addListener(hideEvent, () => {
-      setKeyboardVisible(false);
-      setKeyboardHeight(0);
-    });
     return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
+      shownSubscription.remove();
     };
   }, []);
 
@@ -2100,6 +2125,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     const attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
     if (attachments.length) {
+      const overRemoteLimit = attachments.find((attachment) => attachment.size > chitthiFeatures.maxVideoSizeBytes);
+      if (overRemoteLimit) {
+        Alert.alert("Current upload limit", `${overRemoteLimit.name} exceeds your current ${chitthiFeatures.maxVideoSizeMb} MB Chitthi rollout limit.`);
+        return;
+      }
+      const oversizedExpoGoAttachment = IS_EXPO_GO && attachments.find((attachment) => attachment.size > EXPO_GO_SAFE_ENCRYPTION_BYTES);
+      if (oversizedExpoGoAttachment) {
+        Alert.alert(
+          "Development build required",
+          `${oversizedExpoGoAttachment.name} is too large for Expo Go's JavaScript-only encryption runtime. Expo Go can be terminated by iOS memory pressure. Test files above 12 MB with the FairFares EAS development or production build.`
+        );
+        return;
+      }
       if (!activeConversationId) {
         Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
         return;
@@ -2116,18 +2154,22 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         for (let index = 0; index < attachments.length; index += 1) {
           const attachment = attachments[index];
           const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
-          const thumbnailBase64 = attachment.kind === "VIDEO" ? await createEncryptedVideoThumbnail(attachment.uri) : "";
-          const encryptedMediaMetadata = thumbnailBase64 ? { ...mediaMetadata, thumbnailBase64 } : mediaMetadata;
+          // Video previews use a zero-decoding local placeholder. Native frame
+          // extraction belongs in a background queue in a custom app build,
+          // never in this send-critical JavaScript path.
+          const encryptedMediaMetadata = mediaMetadata;
           const caption = index === 0 ? cleanMessage : "";
           let fileBase64 = "";
           let encryptedTemporaryUri = "";
           const encrypted = Platform.OS === "web"
             ? (() => undefined)()
-            : encryptAttachmentFileForDevices(
+            : await encryptAttachmentFileForDevices(
                 attachment.uri,
                 { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata },
                 identity,
-                keyPayload.keys
+                keyPayload.keys,
+                (progress) => setAttachmentStatus(`Encrypting ${attachment.name}… ${Math.round(progress * 100)}%`),
+                chitthiFeatures.cryptoThrottleMs
               );
           if (Platform.OS === "web") {
             fileBase64 = await new Promise<string>(async (resolve, reject) => {
@@ -2144,10 +2186,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const encryptedPayload = encrypted || encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata }, identity, keyPayload.keys);
           encryptedTemporaryUri = "encryptedUri" in encryptedPayload ? String(encryptedPayload.encryptedUri || "") : "";
           let response;
+          let encryptedUploadFinalized = false;
           try {
             response = await sendDirectEncryptedChatAttachment(activeConversationId, encryptedPayload, attachment.mimeType, index + 1 < attachments.length);
+            encryptedUploadFinalized = true;
           } finally {
-            if (encryptedTemporaryUri) deleteChunkedTemporaryFile(encryptedTemporaryUri);
+            if (encryptedTemporaryUri && encryptedUploadFinalized) deleteChunkedTemporaryFile(encryptedTemporaryUri);
           }
           let senderLocalUri = "";
           if (Platform.OS !== "web") {
@@ -2164,7 +2208,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 .catch(() => undefined);
             }
           }
-          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, thumbnailDataUrl: thumbnailBase64 ? `data:image/jpeg;base64,${thumbnailBase64}` : undefined, ...mediaMetadata } });
+          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
         setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
@@ -2784,7 +2828,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const media = await pickChatMedia(4);
+      const media = await pickChatMedia(4, 1280, 0.62, 350_000, IS_EXPO_GO ? Math.min(EXPO_GO_SAFE_ENCRYPTION_BYTES, chitthiFeatures.maxVideoSizeBytes) : chitthiFeatures.maxVideoSizeBytes);
       if (!media.length) return;
       if (media[0].kind === "VIDEO") {
         setPendingImages([]);
@@ -2867,7 +2911,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function openRichComposer(type: "POLL" | "EVENT" | "CONTACT") {
     Keyboard.dismiss();
-    setComposerFocused(false);
     setAttachmentMenuOpen(false);
     setEmojiPickerOpen(false);
     setRichDraft({ primary: "", secondary: "", tertiary: "", fourth: "" });
@@ -3036,10 +3079,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const encryptedUri = `${cacheRoot}chitthi-download-${message.id}-${stablePreviewHash(encryptedKeyPayload)}.ffenc`;
       const localUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
       if (!localUri) throw new Error("Attachment storage is unavailable on this device.");
+      let encryptedDownloadCompleted = false;
       try {
         const identity = await ensureChatDeviceIdentity();
         const downloadAuthorization = await getEncryptedChatAttachmentDownloadUrl(message.id, identity.deviceId);
-        await downloadAuthenticatedAssetToFile(downloadAuthorization.downloadUrl, encryptedUri, (progress) => onProgress?.(Math.round(progress * 88)), false);
+        await downloadEncryptedAssetResumably(
+          downloadAuthorization.downloadUrl,
+          encryptedUri,
+          downloadAuthorization.encryptedSize,
+          downloadAuthorization.ciphertextSha256,
+          (progress) => onProgress?.(Math.round(progress * 88))
+        );
         onProgress?.(90);
         const chunkedDescriptor = parseChunkedAttachmentDescriptor(encryptedKeyPayload);
         if (chunkedDescriptor) {
@@ -3052,6 +3102,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
           await confirmLocalDownload();
           onProgress?.(100);
+          encryptedDownloadCompleted = true;
           return { uri: finalUri, name: fileName, mimeType };
         }
         const ciphertextBase64 = await FileSystem.readAsStringAsync(encryptedUri, { encoding: FileSystem.EncodingType.Base64 });
@@ -3066,9 +3117,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
         await confirmLocalDownload();
         onProgress?.(100);
+        encryptedDownloadCompleted = true;
         return { uri: finalUri, name: fileName, mimeType };
       } finally {
-        await FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => undefined);
+        // Keep authenticated ciphertext after interruption so the next attempt
+        // resumes with a fresh short-lived URL. Delete it only after durable
+        // decrypted storage and the device receipt have completed.
+        if (encryptedDownloadCompleted) await FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => undefined);
       }
     }
     let dataUrl = message.metadata?.decryptedDataUrl || await getAuthenticatedAssetDataUrl(message.attachmentUrl);
@@ -3166,7 +3221,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function showComposerOptions() {
     const willOpen = !attachmentMenuOpen;
     Keyboard.dismiss();
-    setComposerFocused(false);
     setEmojiPickerOpen(false);
     setRichComposer("");
     setAttachmentMenuOpen(willOpen);
@@ -3175,7 +3229,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function toggleEmojiPicker() {
     const willOpen = !emojiPickerOpen;
     Keyboard.dismiss();
-    setComposerFocused(false);
     setAttachmentMenuOpen(false);
     setRichComposer("");
     setEmojiPickerOpen(willOpen);
@@ -3318,11 +3371,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
               await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
             } else {
-              const encrypted = encryptAttachmentFileForDevices(attachment.uri, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
+              const encrypted = await encryptAttachmentFileForDevices(attachment.uri, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys, undefined, chitthiFeatures.cryptoThrottleMs);
+              let encryptedUploadFinalized = false;
               try {
                 await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
+                encryptedUploadFinalized = true;
               } finally {
-                deleteChunkedTemporaryFile(encrypted.encryptedUri);
+                if (encryptedUploadFinalized) deleteChunkedTemporaryFile(encrypted.encryptedUri);
               }
             }
           } else {
@@ -3387,15 +3442,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   if (inThread) {
     return (
-      <View
-        style={[
-          styles.threadScreen,
-          Platform.OS === "android" && styles.threadScreenAndroid,
-          Platform.OS === "ios" && keyboardHeight > 0
-            ? { paddingBottom: Math.max(0, keyboardHeight - safeAreaInsets.bottom) }
-            : null
-        ]}
-      >
+      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid]}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
@@ -3430,6 +3477,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </AdaptiveGlassView>
+
+        <View style={styles.threadKeyboardViewport}>
+        <ThreadKeyboardBody bottomSafeArea={safeAreaInsets.bottom}>
 
         {selectedMessageIds.length ? (
           <View style={styles.messageSelectionBar}>
@@ -3615,7 +3665,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>
             }
             renderItem={({ item }) => {
-            const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isPhotoMessage, messageRunEnds, replyTarget, showDateDivider } = item;
+            const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isMediaMessage, messageRunEnds, replyTarget, showDateDivider } = item;
             if (skipForMediaGroup) return null;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             const mediaProgress = mediaDownloadProgress[message.id] || 0;
@@ -3638,11 +3688,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, isPhotoMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isPhotoMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
-                {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isPhotoMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isPhotoMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
+                {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
                 {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={() => jumpToRepliedMessage(Number(message.replyToMessageId))} onLongPress={() => showMessageActions(message)} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
@@ -3662,24 +3712,26 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 ) : null}
                 {message.attachmentUrl ? (
                   message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
-                    <TouchableOpacity
-                      style={styles.videoMessageCard}
-                      delayLongPress={350}
-                      onLongPress={() => showMessageActions(message)}
-                      onPress={() => void openAttachment(message)}
-                      accessibilityLabel="Play video"
-                    >
-                      {mediaDownloading ? (
-                        <View style={styles.videoDownloadOverlay} pointerEvents="none">
-                          {Platform.OS === "web" ? <View style={styles.videoDownloadBlurFallback} /> : <BlurView intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
-                          <CircularDownloadProgress progress={mediaProgress} />
-                        </View>
-                      ) : null}
-                      {message.metadata?.thumbnailDataUrl ? <Image source={{ uri: message.metadata.thumbnailDataUrl }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
-                      <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
-                      <View style={styles.videoMessageBadge}><Text style={styles.videoMessageBadgeText}>↓ {Math.max(1, Number(message.metadata?.size || 0) / (1024 * 1024)).toFixed(1)} MB</Text></View>
-                      <Text style={styles.videoMessageTitle} numberOfLines={1}>{message.metadata?.fileName || "Video"}</Text>
-                    </TouchableOpacity>
+                    <View style={styles.photoMediaWrap}>
+                      <TouchableOpacity
+                        style={styles.videoMessageCard}
+                        delayLongPress={350}
+                        onLongPress={() => showMessageActions(message)}
+                        onPress={() => void openAttachment(message)}
+                        accessibilityLabel="Play video"
+                      >
+                        {message.metadata?.thumbnailDataUrl ? <Image source={{ uri: message.metadata.thumbnailDataUrl }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
+                        <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
+                        <View style={styles.videoMessageBadge}><Text style={styles.videoMessageBadgeText}>↓ {Math.max(1, Number(message.metadata?.size || 0) / (1024 * 1024)).toFixed(1)} MB</Text></View>
+                        {mediaDownloading ? (
+                          <View style={styles.videoDownloadOverlay} pointerEvents="none">
+                            {Platform.OS === "web" ? <View style={styles.videoDownloadBlurFallback} /> : <BlurView intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
+                            <CircularDownloadProgress progress={mediaProgress} />
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+                      <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View>
+                    </View>
                   ) : (
                     <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "Chitthi file")}`}>
                       <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.fileCardBadge}>{chatFileBadge(String(message.metadata?.fileName || ""), String(message.metadata?.mimeType || ""))}</Text></View>
@@ -3736,7 +3788,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     }}
                   />
                 ) : null}
-                {!isPhotoMessage ? <View style={styles.bubbleMetaRow} accessibilityLabel={`${chatClock(message.createdAt)}${message.mine ? `, ${messageReceiptLabel(message.status)}` : ""}`}>
+                {!isMediaMessage ? <View style={styles.bubbleMetaRow} accessibilityLabel={`${chatClock(message.createdAt)}${message.mine ? `, ${messageReceiptLabel(message.status)}` : ""}`}>
                   {message.editedAt ? <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>Edited · </Text> : null}
                   <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(message.createdAt)}</Text>
                   {message.mine && messageReceipt(message.status) ? <Text style={[styles.receiptMark, message.status === "seen" && styles.receiptSeen, message.status === "failed" && styles.receiptFailed]}>{messageReceipt(message.status)}</Text> : null}
@@ -4037,7 +4089,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
-        {!messageText.trim() && !typingPeople.length && !pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen && !composerFocused && !keyboardVisible ? (
+        {!messageText.trim() && !typingPeople.length && !pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
             {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setMessageText(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
@@ -4055,8 +4107,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             style={styles.composerInput}
             value={messageText}
             onChangeText={handleMessageTextChange}
-            onFocus={() => setComposerFocused(true)}
-            onBlur={() => setComposerFocused(false)}
             multiline
           />
           <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
@@ -4069,6 +4119,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <Text style={styles.cancelEditText}>Cancel edit</Text>
           </TouchableOpacity>
         ) : null}
+        {Platform.OS === "ios" && safeAreaInsets.bottom > 0 ? <View pointerEvents="none" style={[styles.composerSafeArea, { height: safeAreaInsets.bottom }]} /> : null}
+        </ThreadKeyboardBody>
+        </View>
       </View>
     );
   }
@@ -4375,6 +4428,8 @@ const styles = StyleSheet.create({
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
   threadScreen: { flex: 1, backgroundColor: "#03100f", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 0 },
+  threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
+  threadKeyboardBody: { flex: 1, position: "relative", overflow: "visible" },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
   wallpaperImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   wallpaperShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,16,12,0.30)" },
@@ -4512,6 +4567,7 @@ const styles = StyleSheet.create({
   loadingThreadShell: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center" },
   composerDock: { position: "relative", zIndex: 34, elevation: 18, overflow: "visible" },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(5,31,25,0.97)", overflow: "hidden" },
+  composerSafeArea: { backgroundColor: "rgba(5,31,25,0.97)" },
   composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
   paperclipIcon: { color: "#D6A95F", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
@@ -4851,7 +4907,7 @@ const styles = StyleSheet.create({
   photoForwardAction: { position: "absolute", right: -47, bottom: 10, width: 39, height: 39, borderRadius: 20, backgroundColor: "rgba(37,41,40,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   photoForwardActionMine: { right: undefined, left: -47 },
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
-  videoMessageCard: { width: 286, height: 220, borderRadius: 15, backgroundColor: "#14231e", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 4 },
+  videoMessageCard: { width: 286, height: 300, borderRadius: 15, backgroundColor: "#14231e", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   videoMessageBackdrop: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "#18382e" },
   videoMessageThumbnail: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
@@ -4864,9 +4920,8 @@ const styles = StyleSheet.create({
   downloadProgressText: { color: "#E8FFF3", fontSize: 12, fontWeight: "900" },
   videoMessagePlay: { width: 58, height: 58, borderRadius: 29, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", paddingLeft: 4 },
   videoMessagePlayText: { color: "#fff", fontSize: 25 },
-  videoMessageBadge: { position: "absolute", left: 10, bottom: 31, borderRadius: 14, backgroundColor: "rgba(0,0,0,0.70)", paddingHorizontal: 9, paddingVertical: 5 },
+  videoMessageBadge: { position: "absolute", left: 10, bottom: 9, borderRadius: 14, backgroundColor: "rgba(0,0,0,0.70)", paddingHorizontal: 9, paddingVertical: 5 },
   videoMessageBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
-  videoMessageTitle: { position: "absolute", left: 11, right: 11, bottom: 8, color: "#fff", fontSize: 12, fontWeight: "800" },
   myBubbleText: { color: "#FFF9ED" },
   theirBubbleText: { color: "#18342A" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },

@@ -101,7 +101,7 @@ export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62,
   ));
 }
 
-export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
+export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000, maxVideoBytes = 12_000_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error("Allow photo access to upload pictures or videos.");
@@ -125,10 +125,9 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
     const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(selectedVideo.uri);
     const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(selectedVideo.fileSize || 0));
     if (!size) throw new Error("Could not determine the selected video size.");
-    if (size > 12_000_000) {
-      throw new Error(Platform.OS === "ios"
-        ? "This video is still larger than 12 MB after compression. Choose a shorter video."
-        : "Choose a video smaller than 12 MB. Android video compression requires the production app build.");
+    const videoLimit = Math.max(1_000_000, Math.min(100_000_000, maxVideoBytes));
+    if (size > videoLimit) {
+      throw new Error(`This video is larger than the ${Math.round(videoLimit / 1_000_000)} MB encrypted-transfer limit currently enabled for your account.`);
     }
     const mimeType = selectedVideo.mimeType || "video/mp4";
     return [{
