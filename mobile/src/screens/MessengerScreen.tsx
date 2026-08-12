@@ -543,9 +543,8 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
     onPanResponderMove: Animated.event([null, { dx: translateX }], { useNativeDriver: false }),
     onPanResponderRelease: (_event, gesture) => {
       const shouldReply = gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62);
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start(({ finished }) => {
-        if (finished && shouldReply) onReplyRef.current();
-      });
+      if (shouldReply) onReplyRef.current();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start();
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
@@ -3924,7 +3923,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             style={styles.composerInput}
             value={messageText}
             onChangeText={handleMessageTextChange}
-            onFocus={() => { setComposerFocused(true); setTimeout(() => messagesScrollRef.current?.scrollToEnd({ animated: true }), 120); }}
+            onFocus={() => setComposerFocused(true)}
             onBlur={() => setComposerFocused(false)}
             multiline
           />
