@@ -3121,7 +3121,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (["pending", "relayed", "failed"].includes(message.status)) return;
     setReplyingTo(message);
     setActionMessage(null);
-    setTimeout(() => composerRef.current?.focus(), 80);
   }
 
   async function reactToMessage(message: ChatMessage, emoji: string) {
@@ -4391,7 +4390,7 @@ const styles = StyleSheet.create({
   paperclipIcon: { color: "#D6A95F", fontSize: 24 },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
   composerEmojiText: { color: "#D6A95F", fontSize: 25, lineHeight: 28 },
-  replyComposerPreview: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(7,38,30,0.98)" },
+  replyComposerPreview: { position: "absolute", left: 8, right: 8, bottom: Platform.OS === "ios" ? 63 : 55, minHeight: 54, zIndex: 34, elevation: 18, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)", borderRadius: 14, backgroundColor: "rgba(7,38,30,0.98)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
   replyComposerBar: { width: 4, alignSelf: "stretch", borderRadius: 2, backgroundColor: "#D6A95F" },
   replyComposerCopy: { flex: 1, minWidth: 0 },
   replyComposerName: { color: "#F4D99E", fontSize: 12, fontWeight: "900", marginBottom: 2 },
