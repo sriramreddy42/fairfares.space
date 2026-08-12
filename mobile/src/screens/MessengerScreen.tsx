@@ -533,21 +533,28 @@ function websiteCardDetails(value: string) {
 
 function SwipeToReply({ children, onReply }: { children: React.ReactNode; onReply: () => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
+  const onReplyRef = useRef(onReply);
+  onReplyRef.current = onReply;
   const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 52], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
   const hintScale = translateX.interpolate({ inputRange: [0, 52], outputRange: [0.76, 1], extrapolate: "clamp" });
+  const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) =>
+    gesture.dx > (Platform.OS === "web" ? 14 : 10) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.6);
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > (Platform.OS === "web" ? 14 : 8) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.35),
+    onMoveShouldSetPanResponderCapture: shouldClaimReplySwipe,
+    onMoveShouldSetPanResponder: shouldClaimReplySwipe,
     onPanResponderMove: (_event, gesture) => {
       const raw = Math.max(0, gesture.dx);
-      const eased = Math.min(68, raw * (Platform.OS === "web" ? 0.72 : 0.62) + Math.max(0, raw - 42) * 0.18);
+      const eased = Math.min(68, raw * (Platform.OS === "web" ? 0.72 : 0.78));
       translateX.setValue(eased);
     },
     onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx >= 64 || gesture.vx > 0.72) onReply();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 230, mass: 0.72 }).start();
+      if (gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62)) onReplyRef.current();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start();
     },
-    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 230 }).start()
-  }), [onReply, translateX]);
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start()
+  }), [translateX]);
   return <View style={styles.swipeReplyWrap}><Animated.View pointerEvents="none" style={[styles.swipeReplyHint, { opacity: hintOpacity, transform: [{ scale: hintScale }] }]}><Text style={styles.swipeReplyHintText}>↩</Text></Animated.View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
 }
 
@@ -3100,7 +3107,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function showMessageActions(message: ChatMessage) {
-    if (message.type === "VIDEO" && attachmentPreview) {
+    if (attachmentPreview) {
       setAttachmentPreview(null);
       setTimeout(() => setActionMessage(message), 180);
       return;
@@ -3162,6 +3169,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!selectedMessageIds.length) return;
     setSelectedForwardConversationIds([]);
     setForwardPickerOpen(true);
+  }
+
+  function forwardMediaFromPreview() {
+    const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId);
+    if (!source) return;
+    setAttachmentPreview(null);
+    setSelectedMessageIds([messageSelectionKey(source)]);
+    setTimeout(() => {
+      setSelectedForwardConversationIds([]);
+      setForwardPickerOpen(true);
+    }, 180);
   }
 
   function toggleForwardConversation(conversationId: string) {
@@ -3679,7 +3697,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </ScrollView>
               <View style={styles.mediaViewerActions}>
                 <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()}><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Share or save</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.mediaViewerAction} onPress={() => { const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId); if (source) showMessageActions(source); }}><Text style={styles.mediaViewerActionGlyph}>→</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.mediaViewerAction} onPress={forwardMediaFromPreview}><Text style={styles.mediaViewerActionGlyph}>→</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
               </View>
             </View>
           </View>
