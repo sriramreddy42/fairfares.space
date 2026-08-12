@@ -270,16 +270,20 @@ function websiteCardDetails(value: string) {
 
 function SwipeToReply({ children, onReply }: { children: React.ReactNode; onReply: () => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 58], outputRange: [0, 0.55, 1], extrapolate: "clamp" });
-  const hintScale = translateX.interpolate({ inputRange: [0, 58], outputRange: [0.72, 1], extrapolate: "clamp" });
+  const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 52], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
+  const hintScale = translateX.interpolate({ inputRange: [0, 52], outputRange: [0.76, 1], extrapolate: "clamp" });
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.12,
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.min(76, Math.max(0, gesture.dx * 0.78))),
-    onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx >= 52 || gesture.vx > 0.62) onReply();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, speed: 30, bounciness: 4 }).start();
+    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+    onPanResponderMove: (_event, gesture) => {
+      const raw = Math.max(0, gesture.dx);
+      const eased = Math.min(68, raw * 0.62 + Math.max(0, raw - 42) * 0.18);
+      translateX.setValue(eased);
     },
-    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start()
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dx >= 64 || gesture.vx > 0.72) onReply();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 230, mass: 0.72 }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 230 }).start()
   }), [onReply, translateX]);
   return <View style={styles.swipeReplyWrap}><Animated.View pointerEvents="none" style={[styles.swipeReplyHint, { opacity: hintOpacity, transform: [{ scale: hintScale }] }]}><Text style={styles.swipeReplyHintText}>↩</Text></Animated.View><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
 }
@@ -2502,7 +2506,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
           <View style={styles.wallpaperShade} />
         </View>
-        <AdaptiveGlassView intensity={48} tintColor="#08291D" fallbackColor="rgba(4,25,19,0.96)" style={styles.threadHeader}>
+        <AdaptiveGlassView
+          intensity={48}
+          tintColor="#08291D"
+          fallbackColor="rgba(4,25,19,0.96)"
+          style={[styles.threadHeader, Platform.OS === "ios" ? { minHeight: 66 + safeAreaInsets.top, paddingTop: safeAreaInsets.top + 7 } : null]}
+        >
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
@@ -2656,7 +2665,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               messagesScrollRef.current?.scrollTo({ y: Math.max(0, height - anchor.height + anchor.offset), animated: false });
               return;
             }
-            if (shouldAutoScrollToEndRef.current) messagesScrollRef.current?.scrollToEnd({ animated: false });
+            if (!threadLoading && shouldAutoScrollToEndRef.current) messagesScrollRef.current?.scrollToEnd({ animated: false });
           }}
         >
           {loadingOlderMessages ? <Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text> : null}
@@ -2665,7 +2674,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <Text style={styles.olderMessagesButtonText}>Load earlier messages</Text>
             </TouchableOpacity>
           ) : null}
-          {threadLoading && !messages.length ? <Text style={styles.emptyText}>Loading messages...</Text> : null}
+          {threadLoading && !messages.length ? <View style={styles.loadingThreadShell}><Text style={styles.emptyText}>Loading messages…</Text></View> : null}
           {!threadLoading && !messages.length ? (
             <View style={styles.emptyThread}>
               <Text style={styles.emptyThreadTitle}>No messages yet.</Text>
@@ -3395,7 +3404,7 @@ const styles = StyleSheet.create({
   chittiBackdrop: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
   chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
-  threadScreen: { flex: 1, backgroundColor: theme.colors.bg, paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
+  threadScreen: { flex: 1, backgroundColor: "#03100f", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 0 },
   wallpaperBase: { ...StyleSheet.absoluteFillObject },
   wallpaperImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
@@ -3524,6 +3533,7 @@ const styles = StyleSheet.create({
   emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
+  loadingThreadShell: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center" },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(214,169,95,0.30)", backgroundColor: "rgba(5,31,25,0.97)", overflow: "hidden" },
   composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
   paperclipIcon: { color: "#D6A95F", fontSize: 24 },
@@ -3798,11 +3808,6 @@ const styles = StyleSheet.create({
   senderTime: { color: "#786F5C", fontSize: 11, fontWeight: "700" },
   photoSenderLine: { maxWidth: 286, paddingHorizontal: 8, paddingTop: 4, marginBottom: 7 },
   photoSenderName: { flex: 1, color: "#ff9b7f", fontSize: 14, lineHeight: 18, fontWeight: "800" },
-  messageMenuRow: { height: 17, alignSelf: "stretch", alignItems: "flex-end", justifyContent: "center", marginTop: -3, marginBottom: 1 },
-  messageMenuButton: { width: 30, height: 22, alignItems: "center", justifyContent: "center" },
-  messageMenuText: { fontSize: 12, letterSpacing: 1, fontWeight: "700" },
-  myMessageMenuText: { color: "#BFD6C8" },
-  theirMessageMenuText: { color: "#7B715E" },
   messageContext: { borderLeftWidth: 4, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, minWidth: 190 },
   myMessageContext: { borderLeftColor: "#D6A95F", backgroundColor: "rgba(246,237,218,0.92)" },
   theirMessageContext: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },

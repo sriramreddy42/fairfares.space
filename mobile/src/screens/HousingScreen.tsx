@@ -514,6 +514,7 @@ export function HousingScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailPost, setDetailPost] = useState<HousingPost | null>(null);
   const [detailImageIndex, setDetailImageIndex] = useState(0);
+  const [detailPreviewImage, setDetailPreviewImage] = useState("");
   const detailCarouselRef = useRef<ScrollView>(null);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
@@ -3450,7 +3451,9 @@ export function HousingScreen({
                       onMomentumScrollEnd={(event) => setDetailImageIndex(Math.round(event.nativeEvent.contentOffset.x / detailImageWidth))}
                     >
                       {detailImages.map((image, index) => (
-                        <Image key={`${image}-${index}`} source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
+                        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => setDetailPreviewImage(absoluteAssetUrl(image))} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
+                          <Image source={{ uri: absoluteAssetUrl(image) }} style={[styles.detailImage, { width: detailImageWidth }]} />
+                        </TouchableOpacity>
                       ))}
                     </ScrollView>
                     {detailImages.length > 1 ? (
@@ -3479,6 +3482,11 @@ export function HousingScreen({
                 )}
                 <Text style={styles.detailTitle}>{detailPost.title}</Text>
                 <Text style={styles.detailMeta}>{detailPost.location}{detailPost.area ? ` · ${detailPost.area}` : ""}</Text>
+                <View style={styles.detailSummaryRow}>
+                  <Text style={styles.detailSummaryPill}>{detailPost.expiryLabel || `${Math.max(0, detailPost.daysLeft)} days left`}</Text>
+                  {detailPost.posterName ? <Text style={styles.detailSummaryPill}>Posted by {detailPost.posterName}</Text> : null}
+                  {detailPost.accommodates ? <Text style={styles.detailSummaryPill}>Accommodates {detailPost.accommodates}</Text> : null}
+                </View>
                 <View style={styles.detailMap}>
                   <Text style={styles.detailMapTitle}>Map view</Text>
                   <Text style={styles.detailMapText}>
@@ -3498,13 +3506,33 @@ export function HousingScreen({
                   <Text style={styles.detailFact}>Move-in: {detailPost.moveIn || "Open"}</Text>
                   <Text style={styles.detailFact}>Bath: {detailPost.bathroomType || "Open"}</Text>
                   <Text style={styles.detailFact}>Lease: {detailPost.leaseTerm || "Flexible"}</Text>
+                  <Text style={styles.detailFact}>Gender: {detailPost.genderPreference || "Open"}</Text>
+                  <Text style={styles.detailFact}>Roommates: {detailPost.roommateCount || "Open"}</Text>
+                  <Text style={styles.detailFact}>Radius: {detailPost.radiusMiles || "Open"} mi</Text>
+                  <Text style={styles.detailFact}>Intent: {detailPost.roommateIntent ? "Roommate match" : "Listing"}</Text>
                 </View>
+                {detailPost.amenities?.length ? (
+                  <View style={styles.detailAmenities}>
+                    <Text style={styles.detailSectionTitle}>Amenities</Text>
+                    <View style={styles.detailGrid}>
+                      {detailPost.amenities.slice(0, 12).map((amenity) => <Text key={amenity} style={styles.detailFact}>{amenity}</Text>)}
+                    </View>
+                  </View>
+                ) : null}
                 <TouchableOpacity style={[styles.detailMessage, detailPost.sample && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
                   <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
           </View>
+        </View>
+      </Modal>
+      <Modal visible={Boolean(detailPreviewImage)} transparent animationType="fade" onRequestClose={() => setDetailPreviewImage("")}>
+        <View style={styles.detailPhotoBackdrop}>
+          <TouchableOpacity style={styles.detailPhotoClose} onPress={() => setDetailPreviewImage("")} accessibilityLabel="Close housing photo">
+            <Text style={styles.detailPhotoCloseText}>×</Text>
+          </TouchableOpacity>
+          {detailPreviewImage ? <Image source={{ uri: detailPreviewImage }} style={styles.detailPhotoFull} resizeMode="contain" /> : null}
         </View>
       </Modal>
     </ScrollView>
@@ -4095,8 +4123,8 @@ const styles = StyleSheet.create({
   localityStats: { flexDirection: "row", gap: 10 },
   localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, overflow: "hidden", fontWeight: "600" },
   avgRent: { color: theme.colors.green, fontSize: 17, fontWeight: "700" },
-  detailBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.74)", padding: theme.spacing.md, justifyContent: "center" },
-  detailCard: { maxHeight: "88%", backgroundColor: theme.colors.panel, borderRadius: 28, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
+  detailBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.74)", paddingHorizontal: theme.spacing.sm, paddingTop: Platform.OS === "ios" ? 54 : theme.spacing.md, paddingBottom: theme.spacing.md, justifyContent: "center" },
+  detailCard: { maxHeight: "94%", backgroundColor: theme.colors.panel, borderRadius: 28, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   detailEyebrow: { color: theme.colors.accent, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   detailClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
@@ -4104,7 +4132,7 @@ const styles = StyleSheet.create({
   detailContent: { padding: theme.spacing.md, gap: theme.spacing.md },
   detailCarouselWrap: { borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: "#202a25" },
   detailCarousel: { width: "100%" },
-  detailImage: { height: 190, borderRadius: theme.radius.md },
+  detailImage: { height: 210, borderRadius: theme.radius.md },
   detailImageDots: { position: "absolute", bottom: 12, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.48)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 7 },
   detailImageDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.48)" },
   detailImageDotActive: { width: 16, backgroundColor: "#ffffff" },
@@ -4114,6 +4142,8 @@ const styles = StyleSheet.create({
   detailImageFallback: { width: "100%", height: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25" },
   detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
   detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },
+  detailSummaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  detailSummaryPill: { color: theme.colors.text, backgroundColor: "rgba(47,115,78,0.35)", borderWidth: 1, borderColor: "rgba(78,199,119,0.30)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "800" },
   detailMap: { backgroundColor: theme.colors.bg, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
   detailMapTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "700" },
   detailMapText: { color: theme.colors.green, fontSize: 15, fontWeight: "700" },
@@ -4122,9 +4152,15 @@ const styles = StyleSheet.create({
   detailDescription: { color: theme.colors.soft, fontSize: 14, lineHeight: 20 },
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   detailFact: { color: theme.colors.soft, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 7, fontWeight: "600" },
+  detailAmenities: { gap: 8 },
+  detailSectionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
+  detailPhotoBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 54 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 18, paddingHorizontal: 10 },
+  detailPhotoClose: { position: "absolute", top: Platform.OS === "ios" ? 54 : 24, right: 14, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center", zIndex: 3 },
+  detailPhotoCloseText: { color: "#fff", fontSize: 30, lineHeight: 32, marginTop: -2 },
+  detailPhotoFull: { flex: 1, width: "100%", height: "100%" },
   ridePopularSection: { gap: 12 },
   ridePopularHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
   ridePopularTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },

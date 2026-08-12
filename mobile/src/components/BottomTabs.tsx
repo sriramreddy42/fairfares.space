@@ -37,7 +37,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
   useEffect(() => {
     if (!barWidth) return;
     const slotWidth = (barWidth - 12) / tabs.length;
-    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 64) / 2;
+    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 52) / 2;
     Animated.parallel([
       Animated.spring(indicatorX, {
         toValue: targetX,
@@ -57,7 +57,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
     const width = event.nativeEvent.layout.width;
     setBarWidth(width);
     const slotWidth = (width - 12) / tabs.length;
-    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 64) / 2);
+    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 52) / 2);
   };
 
   if (hidden) {
@@ -75,8 +75,8 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
               active === "messenger" && styles.chittiIndicator,
               active === "messenger" && Platform.OS !== "ios" && styles.chittiFallbackIndicator
             ]}
-            tintColor={active === "messenger" ? "#17653C" : "#FFFFFF"}
-            fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(255,255,255,0.13)"}
+            tintColor={active === "messenger" ? "#17653C" : "#163A2D"}
+            fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(34,92,65,0.62)"}
             intensity={72}
           />
         </Animated.View>
@@ -91,6 +91,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
                 style={[
                   styles.iconImage,
                   { width: tab.iconWidth, height: tab.iconHeight },
+                  isActive && tab.key !== "messenger" && styles.activeIcon,
                   !isActive && styles.inactiveIcon,
                   active === "messenger" && tab.key !== "messenger" && styles.chittiNavIcon
                 ]}
@@ -131,7 +132,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(220,171,84,0.26)"
   },
   item: {
-    width: 60,
+    width: 56,
     height: 60,
     borderRadius: 26,
     alignItems: "center",
@@ -143,8 +144,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 9,
-    width: 64,
-    height: 54
+    width: 52,
+    height: 52
   },
   liquidIndicator: {
     flex: 1,
@@ -155,8 +156,8 @@ const styles = StyleSheet.create({
     overflow: "hidden"
   },
   fallbackLiquidIndicator: {
-    backgroundColor: "rgba(255,255,255,0.14)",
-    shadowColor: "#FFFFFF",
+    backgroundColor: "rgba(34,92,65,0.62)",
+    shadowColor: "#35D06F",
     shadowOpacity: 0.16,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   chittiIcon: { height: 34 },
-  activeIcon: {},
+  activeIcon: { tintColor: "#F0C671", opacity: 1 },
   iconImage: {
     width: 23,
     height: 23
