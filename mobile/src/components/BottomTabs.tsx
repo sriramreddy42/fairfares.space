@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Animated, Image, ImageSourcePropType, LayoutChangeEvent, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React from "react";
+import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
-import { AdaptiveGlassView } from "./AdaptiveGlassView";
 
 export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
@@ -28,63 +27,19 @@ type Props = {
 };
 
 export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
-  const [barWidth, setBarWidth] = useState(0);
-  const indicatorX = useRef(new Animated.Value(0)).current;
-  const indicatorStretch = useRef(new Animated.Value(1)).current;
-  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.key === active));
-  const useNativeAnimationDriver = Platform.OS !== "web";
-
-  useEffect(() => {
-    if (!barWidth) return;
-    const slotWidth = (barWidth - 12) / tabs.length;
-    const targetX = 6 + slotWidth * activeIndex + (slotWidth - 52) / 2;
-    Animated.parallel([
-      Animated.spring(indicatorX, {
-        toValue: targetX,
-        damping: 18,
-        stiffness: 155,
-        mass: 0.72,
-        useNativeDriver: useNativeAnimationDriver
-      }),
-      Animated.sequence([
-        Animated.timing(indicatorStretch, { toValue: 1.28, duration: 110, useNativeDriver: useNativeAnimationDriver }),
-        Animated.spring(indicatorStretch, { toValue: 1, damping: 12, stiffness: 190, useNativeDriver: useNativeAnimationDriver })
-      ])
-    ]).start();
-  }, [activeIndex, barWidth, indicatorStretch, indicatorX, useNativeAnimationDriver]);
-
-  const handleLayout = (event: LayoutChangeEvent) => {
-    const width = event.nativeEvent.layout.width;
-    setBarWidth(width);
-    const slotWidth = (width - 12) / tabs.length;
-    indicatorX.setValue(6 + slotWidth * activeIndex + (slotWidth - 52) / 2);
-  };
-
   if (hidden) {
     return null;
   }
 
   return (
-    <AdaptiveGlassView style={[styles.bar, active === "messenger" && styles.chittiBar]} tintColor={active === "messenger" ? "#08281C" : "#171918"} fallbackColor={active === "messenger" ? "rgba(3,16,15,0.97)" : "rgba(25,25,25,0.96)"} interactive onLayout={handleLayout}>
-      {barWidth > 0 ? (
-        <Animated.View pointerEvents="none" style={[styles.indicatorMotion, { transform: [{ translateX: indicatorX }, { scaleX: indicatorStretch }] }]}>
-          <AdaptiveGlassView
-            style={[
-              styles.liquidIndicator,
-              styles.fallbackLiquidIndicator,
-              active === "messenger" && styles.chittiIndicator,
-              active === "messenger" && styles.chittiFallbackIndicator
-            ]}
-            tintColor={active === "messenger" ? "#17653C" : "#163A2D"}
-            fallbackColor={active === "messenger" ? "rgba(24,111,61,0.68)" : "rgba(34,92,65,0.62)"}
-            intensity={72}
-          />
-        </Animated.View>
-      ) : null}
+    <View style={[styles.bar, active === "messenger" && styles.chittiBar]}>
+      <View pointerEvents="none" style={[styles.navTint, active === "messenger" && styles.chittiNavTint]} />
+      <View pointerEvents="none" style={styles.navTopHighlight} />
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
-          <TouchableOpacity key={tab.key} style={styles.item} onPress={() => onChange(tab.key)}>
+          <TouchableOpacity key={tab.key} style={[styles.item, isActive && styles.activeItem, isActive && active === "messenger" && styles.chittiActiveItem]} onPress={() => onChange(tab.key)}>
+            {isActive ? <View pointerEvents="none" style={styles.activeItemHighlight} /> : null}
             <View style={[styles.icon, tab.key === "messenger" && styles.chittiIcon]}>
               <Image
                 source={tab.icon}
@@ -103,7 +58,7 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
           </TouchableOpacity>
         );
       })}
-    </AdaptiveGlassView>
+    </View>
   );
 }
 
@@ -115,66 +70,54 @@ const styles = StyleSheet.create({
     bottom: 0,
     marginHorizontal: 12,
     marginTop: 4,
-    marginBottom: 8,
-    height: 72,
-    backgroundColor: "rgba(21,24,23,0.86)",
+    marginBottom: 9,
+    height: 68,
+    backgroundColor: "rgba(20,21,21,0.90)",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: "rgba(255,255,255,0.16)",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-around",
-    paddingHorizontal: 6,
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
     overflow: "hidden",
     shadowColor: "#000",
-    shadowOpacity: 0.34,
-    shadowRadius: 18,
+    shadowOpacity: 0.42,
+    shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
     elevation: 14
   },
   chittiBar: {
-    backgroundColor: "rgba(5,31,25,0.88)",
-    borderColor: "rgba(220,171,84,0.26)"
+    backgroundColor: "rgba(20,21,21,0.90)",
+    borderColor: "rgba(255,255,255,0.16)"
   },
+  navTint: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.025)" },
+  chittiNavTint: { backgroundColor: "rgba(255,255,255,0.025)" },
+  navTopHighlight: { position: "absolute", left: 22, right: 22, top: 1, height: 1, backgroundColor: "rgba(255,255,255,0.20)" },
   item: {
-    width: 56,
-    height: 60,
-    borderRadius: 26,
+    width: 52,
+    height: 56,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
     zIndex: 1
   },
-  indicatorMotion: {
-    position: "absolute",
-    left: 0,
-    top: 9,
-    width: 52,
-    height: 52
-  },
-  liquidIndicator: {
-    flex: 1,
-    borderRadius: 19,
-    backgroundColor: "transparent",
+  activeItem: {
+    backgroundColor: "rgba(13,20,18,0.92)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.22)",
-    overflow: "hidden"
-  },
-  fallbackLiquidIndicator: {
-    backgroundColor: "rgba(34,92,65,0.62)",
-    shadowColor: "#35D06F",
-    shadowOpacity: 0.16,
+    borderColor: "rgba(236,190,103,0.72)",
+    overflow: "hidden",
+    shadowColor: "#F0C671",
+    shadowOpacity: 0.22,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
     elevation: 4
   },
-  chittiIndicator: {
-    borderColor: "rgba(91,211,118,0.40)"
+  chittiActiveItem: {
+    borderColor: "rgba(236,190,103,0.54)"
   },
-  chittiFallbackIndicator: {
-    backgroundColor: "rgba(24,111,61,0.68)",
-    shadowColor: "#35D06F"
-  },
+  activeItemHighlight: { position: "absolute", left: 9, right: 9, top: 1, height: 1, backgroundColor: "rgba(255,246,220,0.44)" },
   icon: {
     width: 38,
     height: 26,
@@ -188,19 +131,19 @@ const styles = StyleSheet.create({
     height: 23
   },
   inactiveIcon: {
-    opacity: 0.72
+    opacity: 0.68
   },
-  chittiNavIcon: { tintColor: "#e4b45f", opacity: 0.9 },
+  chittiNavIcon: { tintColor: undefined, opacity: 0.92 },
   label: {
-    color: theme.colors.muted,
-    fontSize: 10,
+    color: "#a8a8a8",
+    fontSize: 9.5,
     fontWeight: "800"
   },
   activeLabel: {
-    color: theme.colors.text
+    color: "#ffffff"
   },
-  chittiLabel: { color: "#d6a95c", fontWeight: "600" },
-  chittiActiveLabel: { color: "#f0c671", fontSize: 9 },
+  chittiLabel: { color: "#a8a8a8", fontWeight: "800" },
+  chittiActiveLabel: { color: "#ffffff", fontSize: 9.5 },
   badge: {
     position: "absolute",
     top: -7,

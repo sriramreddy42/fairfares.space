@@ -119,6 +119,12 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
 const housingSearchPhrases = ["Search housing anywhere in the USA", "Search a city, area, or building", "Find roommates near your preferred area"];
 const rideSearchPhrases = ["Search your ride here", "Where do you want to go?", "Find carpool options near you"];
 const rentalSearchPhrases = ["Search rental cars anywhere in the USA", "Find airport pickup cars", "Compare daily and weekly rates"];
+const cityLocalityPresets: Record<string, string[]> = {
+  denver: ["Downtown Denver", "Capitol Hill", "Cherry Creek", "Five Points", "LoDo", "RiNo", "Highlands", "DU Area", "Aurora", "Lakewood", "Boulder"],
+  "los angeles": ["Downtown LA", "Hollywood", "Koreatown", "Santa Monica", "Westwood", "Culver City", "Pasadena", "Glendale", "Long Beach", "Irvine"],
+  austin: ["Downtown Austin", "West Campus", "North Austin", "South Congress", "Riverside", "The Domain", "Round Rock", "Cedar Park"],
+  miami: ["Downtown Miami", "Brickell", "Wynwood", "Coral Gables", "Doral", "Miami Beach", "Aventura", "Kendall"]
+};
 const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Distance ↑", value: "distanceAsc" },
   { label: "Distance ↓", value: "distanceDesc" },
@@ -404,6 +410,28 @@ function dollars(value: unknown) {
   return `$${numeric.toFixed(2)}`;
 }
 
+function normalizeLocalityKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/,\s*(co|ca|tx|fl|usa)$/i, "");
+}
+
+function cleanLocalityName(value: string, fallbackCity: string) {
+  const clean = value
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:co|ca|tx|fl|usa)\b\.?$/i, "")
+    .replace(/[,\s]+$/g, "")
+    .trim();
+  const cityOnly = normalizeLocalityKey(fallbackCity || "");
+  const cleanKey = normalizeLocalityKey(clean);
+  if (!clean || cleanKey === cityOnly || cleanKey === "area open") return "";
+  return clean;
+}
+
+function localityPresetsForCity(city: string) {
+  const cityKey = normalizeLocalityKey(city).replace(/\s+county$/i, "");
+  const match = Object.entries(cityLocalityPresets).find(([key]) => cityKey.includes(key) || key.includes(cityKey));
+  return match?.[1] || [];
+}
+
 const initialRentalSearch: RentalSearchInput = {
   pickupLocation: "Denver International Airport (DEN)",
   returnLocation: "Denver International Airport (DEN)",
@@ -517,7 +545,7 @@ export function HousingScreen({
   const [detailPreviewImage, setDetailPreviewImage] = useState("");
   const [detailPreviewImageIndex, setDetailPreviewImageIndex] = useState(0);
   const [detailCarouselWidth, setDetailCarouselWidth] = useState(0);
-  const [detailImageLoadState, setDetailImageLoadState] = useState<Record<string, "loading" | "loaded" | "error">>({});
+  const [detailImageErrors, setDetailImageErrors] = useState<Record<string, boolean>>({});
   const detailCarouselRef = useRef<ScrollView>(null);
   const detailPreviewCarouselRef = useRef<ScrollView>(null);
   const detailScrollRef = useRef<ScrollView>(null);
@@ -688,25 +716,35 @@ export function HousingScreen({
     });
   }, [posts, selectedSort]);
   const localities = useMemo(() => {
-    const groups = new Map<string, { total: number; count: number; offered: number; needed: number }>();
+    const city = data?.location.city || "Denver, CO";
+    const groups = new Map<string, { name: string; total: number; count: number; offered: number; needed: number; preset: boolean }>();
+    localityPresetsForCity(city).forEach((name) => {
+      groups.set(normalizeLocalityKey(name), { name, total: 0, count: 0, offered: 0, needed: 0, preset: true });
+    });
     posts.filter((post) => !post.sample).forEach((post) => {
-      const name = (post.area || post.location || data?.location.city || "Area open").trim();
+      const name = cleanLocalityName(post.area || post.location || "", city);
       if (!name) return;
-      const current = groups.get(name) || { total: 0, count: 0, offered: 0, needed: 0 };
+      const key = normalizeLocalityKey(name);
+      const current = groups.get(key) || { name, total: 0, count: 0, offered: 0, needed: 0, preset: false };
       if (post.rentValue > 0) {
         current.total += post.rentValue;
         current.count += 1;
       }
       if (post.mode === "HAVE_PLACE") current.offered += 1;
       if (post.mode === "NEED_PLACE") current.needed += 1;
-      groups.set(name, current);
+      current.preset = current.preset && current.offered + current.needed === 0;
+      groups.set(key, current);
     });
-    return Array.from(groups.entries()).map(([name, value]) => ({
-      name,
-      offered: value.offered,
-      needed: value.needed,
-      rent: value.count ? `$${Math.round(value.total / value.count)}` : "Open"
-    }));
+    return Array.from(groups.values())
+      .sort((left, right) => (right.offered + right.needed) - (left.offered + left.needed) || Number(left.preset) - Number(right.preset) || left.name.localeCompare(right.name))
+      .slice(0, 12)
+      .map((value) => ({
+        name: value.name,
+        offered: value.offered,
+        needed: value.needed,
+        rent: value.count ? `$${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
+        preset: value.preset
+      }));
   }, [data?.location.city, posts]);
   const rentalRows = rentalSearched ? rentalCars : [];
   const rentalLocationOptions = useMemo(() => {
@@ -729,14 +767,16 @@ export function HousingScreen({
 
   useEffect(() => {
     setDetailImageIndex(0);
+    setDetailPreviewImage("");
+    setDetailPreviewImageIndex(0);
     setDetailCarouselWidth(0);
-    setDetailImageLoadState({});
+    setDetailImageErrors({});
     detailScrollOffsetRef.current = 0;
     setDetailCanScrollMore(false);
   }, [detailPost?.id]);
 
-  function updateDetailImageLoadState(uri: string, state: "loading" | "loaded" | "error") {
-    setDetailImageLoadState((current) => ({ ...current, [uri]: state }));
+  function markDetailImageError(uri: string) {
+    setDetailImageErrors((current) => ({ ...current, [uri]: true }));
   }
 
   function handleDetailCarouselLayout(event: LayoutChangeEvent) {
@@ -757,6 +797,7 @@ export function HousingScreen({
     setDetailPreviewImageIndex(index);
     setDetailPreviewImage(absoluteAssetUrl(image));
     requestAnimationFrame(() => detailPreviewCarouselRef.current?.scrollTo({ x: index * viewportWidth, animated: false }));
+    setTimeout(() => detailPreviewCarouselRef.current?.scrollTo({ x: index * viewportWidth, animated: false }), 80);
   }
 
   function showDetailPreviewImage(index: number) {
@@ -3420,10 +3461,16 @@ export function HousingScreen({
               <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
                 <Text style={styles.localityTitle}>{locality.name}</Text>
                 <View style={styles.localityStats}>
-                  <Text style={styles.localityChip}>{locality.offered} offered</Text>
-                  <Text style={styles.localityChip}>{locality.needed} needed</Text>
+                  {locality.preset ? (
+                    <Text style={styles.localityChip}>Browse area</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.localityChip}>{locality.offered} offered</Text>
+                      <Text style={styles.localityChip}>{locality.needed} needed</Text>
+                    </>
+                  )}
                 </View>
-                <Text style={styles.avgRent}>Avg Rent: {locality.rent}</Text>
+                <Text style={styles.avgRent}>{locality.preset ? "Explore listings nearby" : `Avg Rent: ${locality.rent}`}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -3488,6 +3535,12 @@ export function HousingScreen({
                   setDetailCanScrollMore(contentOffset.y + layoutMeasurement.height < contentSize.height - 36);
                 }}
               >
+                <Text style={styles.detailTitle}>{detailPost.title}</Text>
+                <Text style={styles.detailMeta}>{detailPost.location}{detailPost.area ? ` · ${detailPost.area}` : ""}</Text>
+                <View style={styles.detailDescriptionCard}>
+                  <Text style={styles.detailSectionTitle}>Description</Text>
+                  <Text style={styles.detailDescription}>{detailPost.description || "No description yet."}</Text>
+                </View>
                 {detailImages.length ? (
                   <View style={styles.detailCarouselWrap} onLayout={handleDetailCarouselLayout}>
                     <ScrollView
@@ -3500,7 +3553,7 @@ export function HousingScreen({
                     >
                       {detailImages.map((image, index) => {
                         const uri = absoluteAssetUrl(image);
-                        const loadState = detailImageLoadState[uri];
+                        const loadError = Boolean(detailImageErrors[uri]);
                         return (
                           <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} onPress={() => openDetailPreviewImage(index)} accessibilityRole="imagebutton" accessibilityLabel="Open housing photo full screen">
                             <View style={[styles.detailImageFrame, { width: detailImageWidth }]}>
@@ -3508,13 +3561,11 @@ export function HousingScreen({
                                 source={{ uri }}
                                 style={styles.detailImage}
                                 resizeMode="cover"
-                                onLoadStart={() => updateDetailImageLoadState(uri, "loading")}
-                                onLoad={() => updateDetailImageLoadState(uri, "loaded")}
-                                onError={() => updateDetailImageLoadState(uri, "error")}
+                                onError={() => markDetailImageError(uri)}
                               />
-                              {loadState !== "loaded" ? (
-                                <View style={styles.detailImageLoading}>
-                                  {loadState === "error" ? <Text style={styles.detailImageErrorText}>Photo unavailable</Text> : <ActivityIndicator color={theme.colors.green} />}
+                              {loadError ? (
+                                <View pointerEvents="none" style={styles.detailImageLoading}>
+                                  <Text style={styles.detailImageErrorText}>Photo unavailable</Text>
                                 </View>
                               ) : null}
                             </View>
@@ -3546,12 +3597,6 @@ export function HousingScreen({
                 ) : (
                   <View style={styles.detailImageFallback} />
                 )}
-                <Text style={styles.detailTitle}>{detailPost.title}</Text>
-                <Text style={styles.detailMeta}>{detailPost.location}{detailPost.area ? ` · ${detailPost.area}` : ""}</Text>
-                <View style={styles.detailDescriptionCard}>
-                  <Text style={styles.detailSectionTitle}>Description</Text>
-                  <Text style={styles.detailDescription}>{detailPost.description || "No description yet."}</Text>
-                </View>
                 <TouchableOpacity style={styles.detailMapCompact} onPress={() => openPostMap(detailPost)} accessibilityRole="button" accessibilityLabel="Open housing location map">
                   <View style={styles.detailMapCopy}>
                     <Text style={styles.detailMapTitle}>Map view</Text>
@@ -3599,9 +3644,7 @@ export function HousingScreen({
               </TouchableOpacity>
             ) : null}
           </View>
-        </View>
-      </Modal>
-      <Modal visible={Boolean(detailPreviewImage)} transparent animationType="fade" onRequestClose={() => setDetailPreviewImage("")}>
+          {detailPreviewImage ? (
         <View style={styles.detailPhotoBackdrop}>
           <TouchableOpacity style={styles.detailPhotoClose} onPress={() => setDetailPreviewImage("")} accessibilityLabel="Close housing photo">
             <Text style={styles.detailPhotoCloseText}>×</Text>
@@ -3621,24 +3664,16 @@ export function HousingScreen({
                 }}
               >
                 {detailImages.map((image, index) => (
-                  <ScrollView
+                  <View
                     key={`${image}-preview-${index}`}
-                    style={[styles.detailPhotoScroll, { width: viewportWidth }]}
-                    contentContainerStyle={styles.detailPhotoScrollContent}
-                    maximumZoomScale={3}
-                    minimumZoomScale={1}
-                    bouncesZoom
-                    showsHorizontalScrollIndicator={false}
-                    showsVerticalScrollIndicator={false}
+                    style={[styles.detailPhotoPage, { width: viewportWidth, height: detailPhotoHeight }]}
                   >
-                    {Math.abs(index - detailPreviewImageIndex) <= 1 ? (
                       <Image
                         source={{ uri: absoluteAssetUrl(image) }}
                         style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight }]}
                         resizeMode="contain"
                       />
-                    ) : <View style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight }]} />}
-                  </ScrollView>
+                  </View>
                 ))}
               </ScrollView>
               {detailImages.length > 1 ? (
@@ -3651,6 +3686,8 @@ export function HousingScreen({
                 </>
               ) : null}
             </>
+          ) : null}
+        </View>
           ) : null}
         </View>
       </Modal>
@@ -4284,12 +4321,11 @@ const styles = StyleSheet.create({
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   detailScrollHint: { position: "absolute", bottom: 10, alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(9,13,18,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   detailScrollHintText: { color: "#fff", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -7 },
-  detailPhotoBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 54 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 18, paddingHorizontal: 10 },
+  detailPhotoBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 50, elevation: 50, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 54 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 18, paddingHorizontal: 10 },
   detailPhotoClose: { position: "absolute", top: Platform.OS === "ios" ? 54 : 24, right: 14, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center", zIndex: 3 },
   detailPhotoCloseText: { color: "#fff", fontSize: 30, lineHeight: 32, marginTop: -2 },
   detailPhotoPager: { flex: 1, marginHorizontal: -10 },
-  detailPhotoScroll: { flex: 1 },
-  detailPhotoScrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", minWidth: "100%" },
+  detailPhotoPage: { alignItems: "center", justifyContent: "center" },
   detailPhotoFull: { maxWidth: "100%" },
   detailPhotoNav: { position: "absolute", top: "50%", width: 48, height: 48, marginTop: -24, borderRadius: 24, backgroundColor: "rgba(22,22,24,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", zIndex: 2 },
   detailPhotoNavLeft: { left: 14 },

@@ -7,11 +7,12 @@ import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { Alert, Animated, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
+  authenticatedAssetSource,
   addChatGroupMember,
   blockChatUser,
   createChatCommunity,
@@ -86,7 +87,27 @@ type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
 type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number };
+type ThreadMessageItem = {
+  message: ChatMessage;
+  index: number;
+  skipForMediaGroup: boolean;
+  mediaGroup: ChatMessage[];
+  discoveredUrl: string;
+  isPhotoMessage: boolean;
+  messageRunEnds: boolean;
+  replyTarget: ChatMessage | null;
+  showDateDivider: boolean;
+};
+const CHAT_MESSAGE_CACHE_LIMIT = 50;
+const WEB_CHAT_MESSAGE_CACHE_LIMIT = 20;
+const CHAT_IMAGE_PREFETCH_LIMIT = 8;
+const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
+const chatConversationCacheName = (userId: number) => `fairfares.fchat.conversations.v1.${userId}`;
+const chatMessageCacheName = (userId: number, conversationId: string) => `fairfares.fchat.messages.v1.${userId}.${conversationId}`;
+const chatImagePreviewCache = new Map<string, string>();
+const chatImagePreviewInflight = new Map<string, Promise<string>>();
+const encryptedChatImagePreviewCache = new Map<string, string>();
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#061713", accent: "#176B4A" },
   { id: "ocean", label: "Ocean", color: "#071E24", accent: "#147D78" },
@@ -111,6 +132,214 @@ const emojiSearchTerms: Record<string, string> = {
   "🙏": "please thanks prayer", "🎉": "party celebrate", "🔥": "fire", "😍": "love eyes", "📍": "location pin",
   "🚗": "car ride", "🏠": "home house", "🔑": "key rent", "📅": "calendar date", "✅": "check done yes"
 };
+
+function recentChatMessages(messages: ChatMessage[]) {
+  const byId = new Map<number, ChatMessage>();
+  messages.forEach((message) => {
+    const id = Number(message.id);
+    if (Number.isFinite(id)) byId.set(id, message);
+  });
+  return [...byId.values()]
+    .sort((left, right) => chatDate(left.createdAt).getTime() - chatDate(right.createdAt).getTime() || Number(left.id) - Number(right.id))
+    .slice(-(Platform.OS === "web" ? WEB_CHAT_MESSAGE_CACHE_LIMIT : CHAT_MESSAGE_CACHE_LIMIT));
+}
+
+function mergeChatMessages(existingMessages: ChatMessage[], incomingMessages: ChatMessage[]) {
+  const byId = new Map<number, ChatMessage>();
+  existingMessages.forEach((message) => {
+    const id = Number(message.id);
+    if (Number.isFinite(id)) byId.set(id, message);
+  });
+  incomingMessages.forEach((message) => {
+    const id = Number(message.id);
+    if (Number.isFinite(id)) byId.set(id, message);
+  });
+  return recentChatMessages([...byId.values()]);
+}
+
+function chatSortTimestamp(value: string) {
+  if (!value) return 0;
+  const normalized = value && !value.includes("T") ? value.replace(" ", "T") + "Z" : value;
+  const time = new Date(normalized).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function recentChatConversations(conversations: ChatConversation[]) {
+  const byId = new Map<string, ChatConversation>();
+  conversations.forEach((conversation) => {
+    if (conversation.id) byId.set(conversation.id, conversation);
+  });
+  return [...byId.values()]
+    .sort((left, right) => chatSortTimestamp(right.lastMessageAt) - chatSortTimestamp(left.lastMessageAt))
+    .slice(0, 50);
+}
+
+function mergeChatConversations(existingConversations: ChatConversation[], incomingConversations: ChatConversation[]) {
+  const byId = new Map<string, ChatConversation>();
+  existingConversations.forEach((conversation) => {
+    if (conversation.id) byId.set(conversation.id, conversation);
+  });
+  incomingConversations.forEach((conversation) => {
+    if (!conversation.id) return;
+    byId.set(conversation.id, {
+      ...byId.get(conversation.id),
+      ...conversation
+    });
+  });
+  return recentChatConversations([...byId.values()]);
+}
+
+async function readCachedChatConversations(userId: number) {
+  if (!userId) return [];
+  try {
+    const stored = await AsyncStorage.getItem(chatConversationCacheName(userId));
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    const conversations = Array.isArray(parsed?.conversations) ? parsed.conversations : Array.isArray(parsed) ? parsed : [];
+    return recentChatConversations(conversations as ChatConversation[]);
+  } catch {
+    return [];
+  }
+}
+
+async function writeCachedChatConversations(userId: number, conversations: ChatConversation[]) {
+  if (!userId || !conversations.length) return;
+  const recent = recentChatConversations(conversations);
+  if (!recent.length) return;
+  try {
+    await AsyncStorage.setItem(chatConversationCacheName(userId), JSON.stringify({
+      cachedAt: new Date().toISOString(),
+      conversations: recent
+    }));
+  } catch {
+    // Cache writes must never break the inbox.
+  }
+}
+
+async function readCachedChatMessages(userId: number, conversationId: string) {
+  if (!userId || !conversationId) return [];
+  try {
+    const stored = await AsyncStorage.getItem(chatMessageCacheName(userId, conversationId));
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    const messages = Array.isArray(parsed?.messages) ? parsed.messages : Array.isArray(parsed) ? parsed : [];
+    return recentChatMessages(messages as ChatMessage[]);
+  } catch {
+    return [];
+  }
+}
+
+async function writeCachedChatMessages(userId: number, conversationId: string, messages: ChatMessage[]) {
+  if (!userId || !conversationId || !messages.length) return;
+  const recent = recentChatMessages(messages).map(safeCachedChatMessage);
+  if (!recent.length) return;
+  try {
+    await AsyncStorage.setItem(chatMessageCacheName(userId, conversationId), JSON.stringify({
+      cachedAt: new Date().toISOString(),
+      messages: recent
+    }));
+  } catch {
+    // Web localStorage is small; cache failure should not affect chat rendering.
+  }
+}
+
+function safeCachedChatMessage(message: ChatMessage): ChatMessage {
+  const metadata = message.metadata ? { ...message.metadata } : undefined;
+  if (metadata) {
+    delete metadata.decryptedDataUrl;
+    if (Platform.OS === "web") {
+      delete metadata.encryptedKeyPayload;
+    }
+  }
+  const cached: ChatMessage = {
+    ...message,
+    metadata
+  };
+  return cached;
+}
+
+function cacheableChatImageUrls(messages: ChatMessage[]) {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const message of [...messages].reverse()) {
+    if (urls.length >= CHAT_IMAGE_PREFETCH_LIMIT) break;
+    if (message.type !== "IMAGE" || !message.attachmentUrl || message.metadata?.encryptedKeyPayload) continue;
+    if (seen.has(message.attachmentUrl)) continue;
+    seen.add(message.attachmentUrl);
+    urls.push(message.attachmentUrl);
+  }
+  return urls;
+}
+
+function rememberChatImagePreview(url: string, localUri: string) {
+  chatImagePreviewCache.delete(url);
+  chatImagePreviewCache.set(url, localUri);
+  while (chatImagePreviewCache.size > CHAT_IMAGE_MEMORY_CACHE_LIMIT) {
+    const oldestKey = chatImagePreviewCache.keys().next().value;
+    if (!oldestKey) break;
+    chatImagePreviewCache.delete(oldestKey);
+  }
+}
+
+function stablePreviewHash(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function loadChatImagePreview(url: string) {
+  const cached = chatImagePreviewCache.get(url);
+  if (cached) return Promise.resolve(cached);
+  const inflight = chatImagePreviewInflight.get(url);
+  if (inflight) return inflight;
+  const request = getAuthenticatedImagePreviewUri(url)
+    .then((localUri) => {
+      if (localUri) rememberChatImagePreview(url, localUri);
+      return localUri;
+    })
+    .finally(() => {
+      chatImagePreviewInflight.delete(url);
+    });
+  chatImagePreviewInflight.set(url, request);
+  return request;
+}
+
+function encryptedPreviewExtension(keyPayload: string) {
+  try {
+    const payload = JSON.parse(keyPayload) as { mimeType?: string };
+    if (payload.mimeType === "image/png") return "png";
+    if (payload.mimeType === "image/webp") return "webp";
+  } catch {
+    // The decrypt step will surface invalid payloads if the preview is not cached.
+  }
+  return "jpg";
+}
+
+function encryptedPreviewCacheKey(attachmentUrl: string, keyPayload: string) {
+  return `${attachmentUrl}:${stablePreviewHash(keyPayload)}`;
+}
+
+function encryptedPreviewLocalUri(attachmentUrl: string, keyPayload: string) {
+  const cacheRoot = FileSystem.cacheDirectory;
+  if (!cacheRoot) return "";
+  const safeUrl = attachmentUrl.replace(/[^A-Za-z0-9]+/g, "-").slice(-64);
+  return `${cacheRoot}fchat-decrypted-${safeUrl}-${stablePreviewHash(keyPayload)}.${encryptedPreviewExtension(keyPayload)}`;
+}
+
+async function warmChatImagePreviewCache(messages: ChatMessage[]) {
+  if (Platform.OS === "web") return;
+  const urls = cacheableChatImageUrls(messages);
+  await Promise.all(urls.map(async (url) => {
+    if (chatImagePreviewCache.has(url)) return;
+    try {
+      await loadChatImagePreview(url);
+    } catch {
+      // Rendering still uses the authenticated native source; prefetch is best-effort only.
+    }
+  }));
+}
 
 function initials(label: string) {
   const clean = label.trim();
@@ -273,10 +502,10 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
   const hintOpacity = translateX.interpolate({ inputRange: [0, 18, 52], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
   const hintScale = translateX.interpolate({ inputRange: [0, 52], outputRange: [0.76, 1], extrapolate: "clamp" });
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx > (Platform.OS === "web" ? 14 : 8) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.35),
     onPanResponderMove: (_event, gesture) => {
       const raw = Math.max(0, gesture.dx);
-      const eased = Math.min(68, raw * 0.62 + Math.max(0, raw - 42) * 0.18);
+      const eased = Math.min(68, raw * (Platform.OS === "web" ? 0.72 : 0.62) + Math.max(0, raw - 42) * 0.18);
       translateX.setValue(eased);
     },
     onPanResponderRelease: (_event, gesture) => {
@@ -387,6 +616,31 @@ function chatFileBadge(name?: string, mimeType?: string) {
 }
 
 function AuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
+  if (Platform.OS !== "web") {
+    return <NativeAuthenticatedChatImage attachmentUrl={attachmentUrl} compact={compact} />;
+  }
+  return <WebAuthenticatedChatImage attachmentUrl={attachmentUrl} compact={compact} />;
+}
+
+function NativeAuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
+  const [cachedPreviewUri, setCachedPreviewUri] = useState(() => chatImagePreviewCache.get(attachmentUrl) || "");
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  useEffect(() => {
+    setPreviewFailed(false);
+    setCachedPreviewUri(chatImagePreviewCache.get(attachmentUrl) || "");
+  }, [attachmentUrl]);
+
+  if (previewFailed) {
+    return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Photo preview unavailable</Text></View>;
+  }
+  if (cachedPreviewUri) {
+    return <AdaptiveChatImage uri={cachedPreviewUri} compact={compact} onError={() => setPreviewFailed(true)} />;
+  }
+  return <AdaptiveChatImage source={authenticatedAssetSource(attachmentUrl)} compact={compact} onError={() => setPreviewFailed(true)} />;
+}
+
+function WebAuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
   const [previewSource, setPreviewSource] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
 
@@ -415,41 +669,58 @@ function AuthenticatedChatImage({ attachmentUrl, compact = false }: { attachment
   return <AdaptiveChatImage uri={previewSource} compact={compact} onError={() => setPreviewFailed(true)} />;
 }
 
-function AdaptiveChatImage({ uri, compact = false, onError }: { uri: string; compact?: boolean; onError?: () => void }) {
-  const [aspectRatio, setAspectRatio] = useState(0.86);
-  useEffect(() => {
-    if (compact) return;
-    Image.getSize(uri, (width, height) => {
-      if (width > 0 && height > 0) setAspectRatio(Math.max(0.62, Math.min(1.7, width / height)));
-    }, () => undefined);
-  }, [compact, uri]);
-  return <Image source={{ uri }} style={[styles.messageImage, !compact && { aspectRatio }, compact && styles.collageImage]} resizeMode="cover" onError={onError} />;
+function AdaptiveChatImage({ uri, source, compact = false, onError }: { uri?: string; source?: { uri: string; headers?: Record<string, string> }; compact?: boolean; onError?: () => void }) {
+  return <Image source={source || { uri: uri || "" }} style={[styles.messageImage, compact && styles.collageImage]} resizeMode="cover" onError={onError} />;
 }
 
 function EncryptedChatImage({ attachmentUrl, keyPayload, compact = false }: { attachmentUrl: string; keyPayload: string; compact?: boolean }) {
-  const [uri, setUri] = useState("");
+  const previewCacheKey = encryptedPreviewCacheKey(attachmentUrl, keyPayload);
+  const [uri, setUri] = useState(() => encryptedChatImagePreviewCache.get(previewCacheKey) || "");
   const [failed, setFailed] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
-    getAuthenticatedAssetDataUrl(attachmentUrl)
-      .then((encryptedDataUrl) => decryptAttachmentBase64(encryptedDataUrl.split(",", 2)[1] || "", keyPayload))
-      .then(async (decrypted) => {
+    setFailed(false);
+    const cachedUri = encryptedChatImagePreviewCache.get(previewCacheKey);
+    if (cachedUri) {
+      setUri(cachedUri);
+      return () => { cancelled = true; };
+    }
+
+    void (async () => {
+      try {
+        if (Platform.OS !== "web") {
+          const localUri = encryptedPreviewLocalUri(attachmentUrl, keyPayload);
+          if (!localUri) throw new Error("Photo preview storage is unavailable.");
+          const existing = await FileSystem.getInfoAsync(localUri);
+          if (existing.exists && Number(existing.size || 0) > 0) {
+            encryptedChatImagePreviewCache.set(previewCacheKey, localUri);
+            if (!cancelled) setUri(localUri);
+            return;
+          }
+        } else {
+          setUri("");
+        }
+
+        const encryptedDataUrl = await getAuthenticatedAssetDataUrl(attachmentUrl);
+        const decrypted = decryptAttachmentBase64(encryptedDataUrl.split(",", 2)[1] || "", keyPayload);
         let previewUri = `data:${decrypted.mimeType};base64,${decrypted.base64}`;
         if (Platform.OS !== "web") {
-          const cacheRoot = FileSystem.cacheDirectory;
-          if (!cacheRoot) throw new Error("Photo preview storage is unavailable.");
-          const extension = decrypted.mimeType === "image/png" ? "png" : decrypted.mimeType === "image/webp" ? "webp" : "jpg";
-          previewUri = `${cacheRoot}fchat-decrypted-${attachmentUrl.replace(/[^A-Za-z0-9]+/g, "-").slice(-64)}.${extension}`;
+          previewUri = encryptedPreviewLocalUri(attachmentUrl, keyPayload);
+          if (!previewUri) throw new Error("Photo preview storage is unavailable.");
           const existing = await FileSystem.getInfoAsync(previewUri);
           if (!existing.exists || Number(existing.size || 0) === 0) {
             await FileSystem.writeAsStringAsync(previewUri, decrypted.base64, { encoding: FileSystem.EncodingType.Base64 });
           }
         }
+        encryptedChatImagePreviewCache.set(previewCacheKey, previewUri);
         if (!cancelled) setUri(previewUri);
-      })
-      .catch(() => { if (!cancelled) setFailed(true); });
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
     return () => { cancelled = true; };
-  }, [attachmentUrl, keyPayload]);
+  }, [attachmentUrl, keyPayload, previewCacheKey]);
   if (failed) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Encrypted preview unavailable</Text></View>;
   if (!uri) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Decrypting photo…</Text></View>;
   return <AdaptiveChatImage uri={uri} compact={compact} />;
@@ -479,17 +750,24 @@ function ChitthiVideoPlayer({ uri }: { uri: string }) {
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
-  const messagesScrollRef = useRef<ScrollView>(null);
+  const messagesScrollRef = useRef<FlatList<ThreadMessageItem>>(null);
   const composerRef = useRef<TextInput>(null);
   const activeConversationIdRef = useRef("");
   const messagesContentHeightRef = useRef(0);
   const messagesViewportHeightRef = useRef(0);
   const messagesScrollOffsetRef = useRef(0);
   const prependScrollAnchorRef = useRef<{ height: number; offset: number } | null>(null);
+  const prependScrollSettleRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  const latestScrollFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const loadingOlderMessagesRef = useRef(false);
   const messagesUserDraggingRef = useRef(false);
+  const userTouchedThreadRef = useRef(false);
   const shouldAutoScrollToEndRef = useRef(true);
   const lastAutoScrolledMessageKeyRef = useRef("");
+  const openingThreadToLatestRef = useRef(false);
+  const openingThreadQuietUntilRef = useRef(0);
+  const openingThreadSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
@@ -502,6 +780,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const locationExpiresAt = useRef(0);
   const locationLastSentAt = useRef(0);
   const signedIn = Boolean(data?.user);
+  const currentUserId = Number(data?.user?.id || 0);
   const [tab, setTab] = useState<MessengerTab>("All");
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
@@ -571,7 +850,40 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [suggestionCity, setSuggestionCity] = useState(data?.location.city || "");
   const suggestionRequestId = useRef(0);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
+  const pendingChatContext = Boolean(pendingPost || pendingRide);
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
+  const threadMessageItems = useMemo<ThreadMessageItem[]>(() => {
+    const messageById = new Map<number, ChatMessage>();
+    const mediaGroups = new Map<string, ChatMessage[]>();
+    messages.forEach((message) => {
+      messageById.set(Number(message.id), message);
+    });
+    visibleMessages.forEach((message) => {
+      const mediaGroupId = String(message.metadata?.mediaGroupId || "");
+      if (!mediaGroupId || message.type !== "IMAGE") return;
+      const group = mediaGroups.get(mediaGroupId) || [];
+      group.push(message);
+      mediaGroups.set(mediaGroupId, group);
+    });
+    mediaGroups.forEach((group, key) => {
+      mediaGroups.set(key, group.sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
+    });
+    return visibleMessages.map((message, index) => {
+      const mediaGroupId = String(message.metadata?.mediaGroupId || "");
+      const mediaGroup = mediaGroupId ? mediaGroups.get(mediaGroupId) || [] : [];
+      return {
+        message,
+        index,
+        skipForMediaGroup: Boolean(mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId),
+        mediaGroup,
+        discoveredUrl: message.text ? firstDiscoveredUrl(message.text) : "",
+        isPhotoMessage: message.type === "IMAGE" && Boolean(message.attachmentUrl),
+        messageRunEnds: mediaGroup.length > 1 || endsMessageRun(visibleMessages, index),
+        replyTarget: message.replyToMessageId ? messageById.get(Number(message.replyToMessageId)) || null : null,
+        showDateDivider: index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt)
+      };
+    }).reverse();
+  }, [messages, visibleMessages]);
   const activeGroup = useMemo(
     () => communities.find((item) => item.id === activeConversation?.communityId) || null,
     [communities, activeConversation?.communityId]
@@ -584,17 +896,135 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       .filter((member) => !query || member.name.toLowerCase().includes(query));
   }, [groupMembers, groupMemberSearch]);
 
+  function scrollThreadToLatest(animated = false) {
+    shouldAutoScrollToEndRef.current = true;
+    if (latestScrollFrameRef.current) cancelAnimationFrame(latestScrollFrameRef.current);
+    latestScrollFrameRef.current = requestAnimationFrame(() => {
+      messagesScrollRef.current?.scrollToOffset({ offset: 0, animated });
+      latestScrollFrameRef.current = null;
+    });
+  }
+
+  function markThreadTouched() {
+    userTouchedThreadRef.current = true;
+    shouldAutoScrollToEndRef.current = false;
+    cancelThreadLatestSettle();
+  }
+
+  function cancelThreadLatestSettle() {
+    openingThreadToLatestRef.current = false;
+    if (openingThreadSettleTimer.current) {
+      clearTimeout(openingThreadSettleTimer.current);
+      openingThreadSettleTimer.current = null;
+    }
+  }
+
+  function finishThreadLatestLayout(delay = 60) {
+    if (openingThreadSettleTimer.current) clearTimeout(openingThreadSettleTimer.current);
+    openingThreadSettleTimer.current = setTimeout(() => {
+      openingThreadToLatestRef.current = false;
+      openingThreadSettleTimer.current = null;
+    }, delay);
+  }
+
+  function prepareThreadForLatestLayout() {
+    if (userTouchedThreadRef.current) return;
+    openingThreadToLatestRef.current = true;
+    openingThreadQuietUntilRef.current = Date.now() + 900;
+    if (openingThreadSettleTimer.current) clearTimeout(openingThreadSettleTimer.current);
+    shouldAutoScrollToEndRef.current = true;
+    finishThreadLatestLayout(120);
+  }
+
+  async function loadCachedThreadMessages(conversationId: string) {
+    const memoryMessages = messageCache.current.get(conversationId);
+    if (memoryMessages?.length) return recentChatMessages(memoryMessages);
+    const diskMessages = await readCachedChatMessages(currentUserId, conversationId);
+    if (diskMessages.length) messageCache.current.set(conversationId, diskMessages);
+    return diskMessages;
+  }
+
+  function showCachedThreadMessages(conversationId: string, cachedMessages: ChatMessage[]) {
+    if (!cachedMessages.length) return false;
+    prepareThreadForLatestLayout();
+    replaceThreadMessages(conversationId, cachedMessages);
+    setThreadLoading(false);
+    return true;
+  }
+
+  function activateThreadConversation(conversationId: string) {
+    activeConversationIdRef.current = conversationId;
+    setActiveConversationId(conversationId);
+  }
+
+  function replaceThreadMessages(conversationId: string, nextMessages: ChatMessage[]) {
+    if (activeConversationIdRef.current && activeConversationIdRef.current !== conversationId) return;
+    messagesConversationIdRef.current = conversationId;
+    setMessages(nextMessages);
+  }
+
+  function mergeThreadMessages(conversationId: string, incomingMessages: ChatMessage[]) {
+    if (activeConversationIdRef.current && activeConversationIdRef.current !== conversationId) return;
+    const sameConversation = messagesConversationIdRef.current === conversationId;
+    messagesConversationIdRef.current = conversationId;
+    setMessages((current) => {
+      const baseMessages = sameConversation ? current : [];
+      const merged = mergeChatMessages(baseMessages, incomingMessages);
+      messageCache.current.set(conversationId, merged);
+      return merged;
+    });
+  }
+
+  function clearThreadMessages() {
+    messagesConversationIdRef.current = "";
+    setMessages([]);
+  }
+
+  function settlePrependedScroll(anchor: { height: number; offset: number }, nextHeight: number) {
+    const targetY = Math.max(0, nextHeight - anchor.height + anchor.offset);
+    messagesScrollRef.current?.scrollToOffset({ offset: targetY, animated: false });
+    if (prependScrollSettleRef.current) cancelAnimationFrame(prependScrollSettleRef.current);
+    prependScrollSettleRef.current = requestAnimationFrame(() => {
+      messagesScrollRef.current?.scrollToOffset({ offset: targetY, animated: false });
+      prependScrollSettleRef.current = null;
+    });
+  }
+
   useEffect(() => {
-    if (activeConversationId) messageCache.current.set(activeConversationId, messages);
+    if (!activeConversationId || messagesConversationIdRef.current !== activeConversationId) return;
+    const recent = recentChatMessages(messages);
+    messageCache.current.set(activeConversationId, recent);
+    if (currentUserId && recent.length) void writeCachedChatMessages(currentUserId, activeConversationId, recent);
+  }, [activeConversationId, currentUserId, messages]);
+
+  useEffect(() => {
+    if (!activeConversationId || messagesConversationIdRef.current !== activeConversationId || Platform.OS === "web") return;
+    const recent = recentChatMessages(messages);
+    if (!recent.length) return;
+    void warmChatImagePreviewCache(recent);
   }, [activeConversationId, messages]);
 
   useEffect(() => {
-    setConversations(data?.chat.conversations || []);
-    setHasMoreConversations((data?.chat.conversations || []).length >= 30);
+    if (!currentUserId || !conversations.length) return;
+    void writeCachedChatConversations(currentUserId, conversations);
+  }, [conversations, currentUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const bootstrapConversations = data?.chat.conversations || [];
+    if (bootstrapConversations.length) {
+      setConversations((current) => mergeChatConversations(current, bootstrapConversations));
+    } else if (currentUserId) {
+      void readCachedChatConversations(currentUserId).then((cachedConversations) => {
+        if (!cancelled && cachedConversations.length) setConversations((current) => mergeChatConversations(current, cachedConversations));
+      });
+    }
+    setHasMoreConversations(bootstrapConversations.length >= 30);
     // A later bootstrap refresh may contain the default/current-city groups.
     // Do not let that stale payload replace an explicit searched-city result.
     if (!String(preferredSuggestionCity || "").trim()) setCommunities(data?.communities || []);
-  }, [data?.chat.conversations, data?.communities, preferredSuggestionCity]);
+    return () => { cancelled = true; };
+  }, [currentUserId, data?.chat.conversations, data?.communities, preferredSuggestionCity]);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -602,7 +1032,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const showSubscription = Keyboard.addListener(showEvent, (event) => {
       setKeyboardVisible(true);
       setKeyboardHeight(Math.max(0, event.endCoordinates?.height || 0));
-      if (shouldAutoScrollToEndRef.current) requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: false }));
+      if (shouldAutoScrollToEndRef.current) scrollThreadToLatest(false);
     });
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
       setKeyboardVisible(false);
@@ -618,6 +1048,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     AsyncStorage.getItem("fairfares.fchat.recent-emojis")
       .then((value) => { if (value) setRecentEmojis(JSON.parse(value).slice(0, 16)); })
       .catch(() => undefined);
+    return () => {
+      if (openingThreadSettleTimer.current) clearTimeout(openingThreadSettleTimer.current);
+      if (prependScrollSettleRef.current) cancelAnimationFrame(prependScrollSettleRef.current);
+      if (latestScrollFrameRef.current) cancelAnimationFrame(latestScrollFrameRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -684,18 +1119,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
     if (activeConversationId) {
+      userTouchedThreadRef.current = false;
       shouldAutoScrollToEndRef.current = true;
       lastAutoScrolledMessageKeyRef.current = "";
     }
   }, [activeConversationId]);
 
   useEffect(() => {
-    if (!inThread || threadLoading || loadingOlderMessagesRef.current || messagesUserDraggingRef.current) return;
+    if (!inThread || threadLoading || openingThreadToLatestRef.current || Date.now() < openingThreadQuietUntilRef.current || loadingOlderMessagesRef.current || messagesUserDraggingRef.current || userTouchedThreadRef.current) return;
     const lastMessage = visibleMessages[visibleMessages.length - 1];
     const messageKey = `${activeConversationId}:${lastMessage?.id || "empty"}:${visibleMessages.length}`;
     if (!lastMessage || messageKey === lastAutoScrolledMessageKeyRef.current || !shouldAutoScrollToEndRef.current) return;
     lastAutoScrolledMessageKeyRef.current = messageKey;
-    requestAnimationFrame(() => messagesScrollRef.current?.scrollToEnd({ animated: false }));
+    scrollThreadToLatest(false);
   }, [activeConversationId, inThread, threadLoading, visibleMessages]);
 
   useEffect(() => {
@@ -930,10 +1366,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!conversationId || !hasMoreMessages || !nextBeforeMessageId || loadingOlderMessagesRef.current) return;
     loadingOlderMessagesRef.current = true;
     setLoadingOlderMessages(true);
-    const scrollAnchor = {
-      height: messagesContentHeightRef.current,
-      offset: messagesScrollOffsetRef.current
-    };
     try {
       const [payload, preparedDecryption] = await Promise.all([
         getChatMessages(conversationId, nextBeforeMessageId),
@@ -946,7 +1378,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ? await decryptMessages(conversationId, payload.messages || [], Promise.resolve(preparedDecryption.context))
         : payload.messages || [];
       if (activeConversationIdRef.current !== conversationId) return;
-      prependScrollAnchorRef.current = scrollAnchor;
+      prependScrollAnchorRef.current = null;
       shouldAutoScrollToEndRef.current = false;
       setMessages((current) => {
         const byId = new Map<number, ChatMessage>();
@@ -1002,14 +1434,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     let cancelled = false;
     onThreadModeChange?.(true);
     setThreadLoading(true);
+    void readCachedChatMessages(currentUserId, notificationConversationId).then((cachedMessages) => {
+      if (cancelled || !cachedMessages.length) return;
+      messageCache.current.set(notificationConversationId, cachedMessages);
+      activateThreadConversation(notificationConversationId);
+      showCachedThreadMessages(notificationConversationId, cachedMessages);
+    });
     void getChatMessages(notificationConversationId)
       .then(async (payload) => {
         if (cancelled) return;
+        if (activeConversationIdRef.current && activeConversationIdRef.current !== notificationConversationId) return;
         const conversation = payload.conversation;
-        setActiveConversationId(notificationConversationId);
+        activateThreadConversation(notificationConversationId);
         setActiveConversation(conversation);
         setActiveSubject(conversation.subject || "Chitthi");
-        setMessages(await decryptMessages(notificationConversationId, payload.messages || []));
+        const decryptedMessages = await decryptMessages(notificationConversationId, payload.messages || []);
+        prepareThreadForLatestLayout();
+        mergeThreadMessages(notificationConversationId, decryptedMessages);
         updateMessagePagination(payload);
         setConversations((current) => current.map((item) => item.id === notificationConversationId ? { ...item, unread: 0 } : item));
         onClearNotificationConversation?.();
@@ -1021,30 +1462,35 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         if (!cancelled) setThreadLoading(false);
       });
     return () => { cancelled = true; };
-  }, [notificationConversationId, signedIn]);
+  }, [currentUserId, notificationConversationId, signedIn]);
 
   useEffect(() => {
     if (pendingPost) {
-      setActiveConversationId("");
+      activateThreadConversation("");
       setActiveConversation(null);
       setActiveSubject(pendingPost.title);
-      setMessages([]);
+      clearThreadMessages();
       setHasMoreMessages(false);
       setNextBeforeMessageId(0);
       setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
       let cancelled = false;
-      setThreadLoading(true);
+      setThreadLoading(false);
       void openChatForPost(pendingPost.id)
         .then(async (response) => {
           if (cancelled) return;
           const conversation = response.conversation;
-          setActiveConversationId(conversation.id);
+          activateThreadConversation(conversation.id);
           setActiveConversation(conversation);
           setActiveSubject(conversation.subject || pendingPost.title);
-          const payload = await getChatMessages(conversation.id);
+          const cachedMessages = await loadCachedThreadMessages(conversation.id);
+          if (!cancelled) showCachedThreadMessages(conversation.id, cachedMessages);
+          const payload = await getChatMessages(conversation.id, 0, 20);
           if (cancelled) return;
+          if (activeConversationIdRef.current && activeConversationIdRef.current !== conversation.id) return;
           setActiveConversation(payload.conversation || conversation);
-          setMessages(await decryptMessages(conversation.id, payload.messages || []));
+          const decryptedMessages = await decryptMessages(conversation.id, payload.messages || []);
+          prepareThreadForLatestLayout();
+          mergeThreadMessages(conversation.id, decryptedMessages);
           updateMessagePagination(payload);
         })
         .catch((error) => {
@@ -1061,26 +1507,31 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   useEffect(() => {
     if (pendingRide) {
-      setActiveConversationId("");
+      activateThreadConversation("");
       setActiveConversation(null);
       setActiveSubject(rideContextLabel(pendingRide));
-      setMessages([]);
+      clearThreadMessages();
       setHasMoreMessages(false);
       setNextBeforeMessageId(0);
       setMessageText(`Hi, I am interested in this ride from ${pendingRide.origin} to ${pendingRide.destination}. Is it still available?`);
       let cancelled = false;
-      setThreadLoading(true);
+      setThreadLoading(false);
       void openChatForRide(pendingRide.id)
         .then(async (response) => {
           if (cancelled) return;
           const conversation = response.conversation;
-          setActiveConversationId(conversation.id);
+          activateThreadConversation(conversation.id);
           setActiveConversation(conversation);
           setActiveSubject(conversation.subject || rideContextLabel(pendingRide));
-          const payload = await getChatMessages(conversation.id);
+          const cachedMessages = await loadCachedThreadMessages(conversation.id);
+          if (!cancelled) showCachedThreadMessages(conversation.id, cachedMessages);
+          const payload = await getChatMessages(conversation.id, 0, 20);
           if (cancelled) return;
+          if (activeConversationIdRef.current && activeConversationIdRef.current !== conversation.id) return;
           setActiveConversation(payload.conversation || conversation);
-          setMessages(await decryptMessages(conversation.id, payload.messages || []));
+          const decryptedMessages = await decryptMessages(conversation.id, payload.messages || []);
+          prepareThreadForLatestLayout();
+          mergeThreadMessages(conversation.id, decryptedMessages);
           updateMessagePagination(payload);
         })
         .catch((error) => {
@@ -1140,7 +1591,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const message = error instanceof Error ? error.message.toLowerCase() : "";
           if (!cancelled && activeConversation?.communityId && (message.includes("conversation not found") || message.includes("join this group"))) {
             cancelled = true;
-            setMessages([]);
+            clearThreadMessages();
             setConversations((current) => current.filter((conversation) => conversation.id !== activeConversationId));
             closeThread();
             Alert.alert("Group access ended", "You are no longer a member of this group, so its messages are no longer available.");
@@ -1312,10 +1763,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void decryptConversationPreviews(conversationPayload).then((decrypted) => {
         if (messengerRefreshVersion.current !== refreshVersion) return;
         const previewById = new Map(decrypted.map((conversation) => [conversation.id, conversation.lastMessage]));
-        setConversations((current) => current.map((conversation) => ({
-          ...conversation,
-          lastMessage: previewById.get(conversation.id) || conversation.lastMessage
-        })));
+        setConversations((current) => {
+          const next = current.map((conversation) => ({
+            ...conversation,
+            lastMessage: previewById.get(conversation.id) || conversation.lastMessage
+          }));
+          return next;
+        });
       });
     } catch (error) {
       if (showError) Alert.alert("Messenger failed", error instanceof Error ? error.message : "Could not load chats.");
@@ -1333,11 +1787,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ...conversation,
         lastMessage: safeConversationPreview(conversation)
       }));
-      setConversations((current) => {
-        const byId = new Map(current.map((conversation) => [conversation.id, conversation]));
-        immediatePage.forEach((conversation) => byId.set(conversation.id, conversation));
-        return [...byId.values()];
-      });
+      setConversations((current) => mergeChatConversations(current, immediatePage));
       setHasMoreConversations(page.length >= 30);
       void decryptConversationPreviews(page).then((decrypted) => {
         const previewById = new Map(decrypted.map((conversation) => [conversation.id, conversation.lastMessage]));
@@ -1359,15 +1809,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     onThreadModeChange?.(true);
+    userTouchedThreadRef.current = false;
     shouldAutoScrollToEndRef.current = true;
-    setActiveConversationId(conversation.id);
+    activateThreadConversation(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
-    const cachedMessages = messageCache.current.get(conversation.id);
-    setMessages(cachedMessages || []);
+    const cachedMessages = await loadCachedThreadMessages(conversation.id);
+    showCachedThreadMessages(conversation.id, cachedMessages);
+    if (!cachedMessages.length) clearThreadMessages();
     setHasMoreMessages(false);
     setNextBeforeMessageId(0);
-    setThreadLoading(!cachedMessages);
+    setThreadLoading(!cachedMessages.length);
     try {
       // Message metadata and encrypted envelopes are independent requests. Running
       // them together removes a full network round trip from normal thread opens.
@@ -1377,6 +1829,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           .then((context) => ({ context }))
           .catch(() => ({ context: null }))
       ]);
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== conversation.id) return;
       setActiveSubject(payload.conversation.subject || conversation.subject);
       setActiveConversation({
         ...conversation,
@@ -1395,8 +1848,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ? await decryptMessages(conversation.id, payload.messages || [], Promise.resolve(preparedDecryption.context))
         : payload.messages || [];
       if (!preparedDecryption.context) setEncryptionReady(false);
-      messageCache.current.set(conversation.id, decryptedMessages);
-      setMessages(decryptedMessages);
+      prepareThreadForLatestLayout();
+      mergeThreadMessages(conversation.id, decryptedMessages);
       updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
@@ -1414,6 +1867,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
+    userTouchedThreadRef.current = false;
     shouldAutoScrollToEndRef.current = true;
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
     let queuedOffline = false;
@@ -1458,6 +1912,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
         setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
+        scrollThreadToLatest(false);
         const sentKind = attachments[0].kind;
         setPendingAttachment(null);
         setPendingImages([]);
@@ -1506,6 +1961,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         try {
           const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyingTo?.id || 0);
           setMessages((current) => [...current, { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }]);
+          scrollThreadToLatest(false);
           setReplyingTo(null);
         } catch (error) {
           if (!isRetryableChatNetworkError(error)) throw error;
@@ -1524,6 +1980,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           };
           await enqueueEncryptedMessage(outboxItem);
           setMessages((current) => [...current, queuedMessage(outboxItem, identity)]);
+          scrollThreadToLatest(false);
           setReplyingTo(null);
           queuedOffline = true;
         }
@@ -1667,14 +2124,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const found = await findChatPersonByPhone(value);
       const response = await openChatWithPerson(found.person.id);
-      setActiveConversationId(response.conversation.id);
+      activateThreadConversation(response.conversation.id);
       setActiveConversation(response.conversation);
       setActiveSubject(found.person.name);
       setSearch("");
       setCreatingGroup(false);
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      prepareThreadForLatestLayout();
+      mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
@@ -1689,12 +2149,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setLoading(true);
     try {
       const response = await openChatWithPerson(person.id);
-      setActiveConversationId(response.conversation.id);
+      activateThreadConversation(response.conversation.id);
       setActiveConversation(response.conversation);
       setActiveSubject(person.name);
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      prepareThreadForLatestLayout();
+      mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
@@ -1721,12 +2184,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setLoading(true);
     try {
       const response = await openIssuesAndSuggestionsChat();
-      setActiveConversationId(response.conversation.id);
+      activateThreadConversation(response.conversation.id);
       setActiveConversation(response.conversation);
       setActiveSubject(response.conversation.otherName || "Sriram Reddy Bandari");
       onThreadModeChange?.(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      prepareThreadForLatestLayout();
+      mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
@@ -1830,7 +2296,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id, community.suggestionCity, community.suggestionPurpose)).community;
       setCommunities((current) => current.map((item) => (item.id === joinedCommunity.id ? joinedCommunity : item)));
       const response = await openCommunityChat(joinedCommunity.id);
-      setActiveConversationId(response.conversation.id);
+      activateThreadConversation(response.conversation.id);
       setActiveSubject(response.conversation.subject || joinedCommunity.name);
       setActiveConversation({
         id: response.conversation.id,
@@ -1846,7 +2312,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setTab("All");
       setThreadLoading(true);
       const payload = await getChatMessages(response.conversation.id);
-      setMessages(await decryptMessages(response.conversation.id, payload.messages || []));
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      prepareThreadForLatestLayout();
+      mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
@@ -2465,10 +2934,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function closeThread() {
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
     stopLiveLocation(false);
-    setActiveConversationId("");
+    activateThreadConversation("");
     setActiveConversation(null);
     setActiveSubject("");
-    setMessages([]);
+    clearThreadMessages();
     setHasMoreMessages(false);
     setNextBeforeMessageId(0);
     setLoadingOlderMessages(false);
@@ -2636,74 +3105,98 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
-        <ScrollView
-          ref={messagesScrollRef}
-          style={styles.threadMessages}
-          contentContainerStyle={styles.threadMessagesContent}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-          scrollEventThrottle={32}
-          onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
-          onScrollBeginDrag={(event) => {
-            messagesUserDraggingRef.current = true;
-            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
-            messagesScrollOffsetRef.current = offset;
-            if (offset <= 140) void loadOlderMessages();
-          }}
-          onScrollEndDrag={(event) => {
-            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
-            messagesScrollOffsetRef.current = offset;
-            if (offset <= 140) void loadOlderMessages();
-          }}
-          onMomentumScrollEnd={(event) => {
-            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
-            messagesScrollOffsetRef.current = offset;
-            if (messagesUserDraggingRef.current && offset <= 140) void loadOlderMessages();
-            messagesUserDraggingRef.current = false;
-          }}
-          onScroll={(event) => {
-            const offset = Math.max(0, event.nativeEvent.contentOffset.y);
-            messagesScrollOffsetRef.current = offset;
-            const distanceFromBottom = messagesContentHeightRef.current - (offset + messagesViewportHeightRef.current);
-            shouldAutoScrollToEndRef.current = distanceFromBottom <= 120;
-            if (messagesUserDraggingRef.current && offset <= 140) void loadOlderMessages();
-          }}
-          onContentSizeChange={(_width, height) => {
-            const anchor = prependScrollAnchorRef.current;
-            messagesContentHeightRef.current = height;
-            if (anchor) {
-              prependScrollAnchorRef.current = null;
-              messagesScrollRef.current?.scrollTo({ y: Math.max(0, height - anchor.height + anchor.offset), animated: false });
-              return;
+        <View style={styles.threadMessages}>
+          <FlatList
+            ref={messagesScrollRef}
+            style={styles.threadMessagesList}
+            data={threadMessageItems}
+            inverted
+            keyExtractor={(item) => String(item.message.id)}
+            contentContainerStyle={styles.threadMessagesContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            scrollEventThrottle={32}
+            initialNumToRender={12}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={32}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS !== "web"}
+            onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
+            onScrollBeginDrag={(event) => {
+              markThreadTouched();
+              messagesUserDraggingRef.current = true;
+              const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+              messagesScrollOffsetRef.current = offset;
+              const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
+              if (!loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
+            }}
+            onScrollEndDrag={(event) => {
+              const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+              messagesScrollOffsetRef.current = offset;
+              const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
+              if (!loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
+            }}
+            onMomentumScrollEnd={(event) => {
+              const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+              messagesScrollOffsetRef.current = offset;
+              const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
+              if (messagesUserDraggingRef.current && !loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
+              messagesUserDraggingRef.current = false;
+            }}
+            onScroll={(event) => {
+              const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+              messagesScrollOffsetRef.current = offset;
+              messagesContentHeightRef.current = Math.max(messagesContentHeightRef.current, event.nativeEvent.contentSize.height);
+              messagesViewportHeightRef.current = event.nativeEvent.layoutMeasurement.height;
+              shouldAutoScrollToEndRef.current = offset <= 120;
+              if (!shouldAutoScrollToEndRef.current) markThreadTouched();
+              const distanceFromOlderEdge = Math.max(0, event.nativeEvent.contentSize.height - (offset + event.nativeEvent.layoutMeasurement.height));
+              if (messagesUserDraggingRef.current && !loadingOlderMessagesRef.current && distanceFromOlderEdge <= 140) void loadOlderMessages();
+            }}
+            onContentSizeChange={(_width, height) => {
+              const anchor = prependScrollAnchorRef.current;
+              messagesContentHeightRef.current = height;
+              if (anchor) {
+                prependScrollAnchorRef.current = null;
+                settlePrependedScroll(anchor, height);
+                return;
+              }
+              if (openingThreadToLatestRef.current && shouldAutoScrollToEndRef.current && !messagesUserDraggingRef.current) {
+                const lastMessage = visibleMessages[visibleMessages.length - 1];
+                lastAutoScrolledMessageKeyRef.current = `${activeConversationId}:${lastMessage?.id || "empty"}:${visibleMessages.length}`;
+                openingThreadToLatestRef.current = false;
+                if (openingThreadSettleTimer.current) {
+                  clearTimeout(openingThreadSettleTimer.current);
+                  openingThreadSettleTimer.current = null;
+                }
+              }
+            }}
+            ListFooterComponent={
+              <View style={styles.threadListFooter}>
+                {loadingOlderMessages ? <View pointerEvents="none" style={[styles.olderMessagesStatusWrap, styles.invertedListChrome]}><Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text></View> : null}
+                {!loadingOlderMessages && hasMoreMessages ? (
+                  <TouchableOpacity style={[styles.olderMessagesButton, styles.invertedListChrome]} onPress={() => void loadOlderMessages()}>
+                    <Text style={styles.olderMessagesButtonText}>Load earlier messages</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             }
-          }}
-        >
-          {loadingOlderMessages ? <Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text> : null}
-          {!loadingOlderMessages && hasMoreMessages ? (
-            <TouchableOpacity style={styles.olderMessagesButton} onPress={() => void loadOlderMessages()}>
-              <Text style={styles.olderMessagesButtonText}>Load earlier messages</Text>
-            </TouchableOpacity>
-          ) : null}
-          {threadLoading && !messages.length ? <View style={styles.loadingThreadShell}><Text style={styles.emptyText}>Loading messages…</Text></View> : null}
-          {!threadLoading && !messages.length ? (
-            <View style={styles.emptyThread}>
-              <Text style={styles.emptyThreadTitle}>No messages yet.</Text>
-              <Text style={styles.emptyThreadCopy}>Send a message to start the conversation.</Text>
-            </View>
-          ) : null}
-          {visibleMessages.map((message, index) => {
-            const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-            if (mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId) return null;
-            const mediaGroup = mediaGroupId
-              ? visibleMessages.filter((candidate) => candidate.type === "IMAGE" && candidate.metadata?.mediaGroupId === mediaGroupId).sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0))
-              : [];
-            const discoveredUrl = message.text ? firstDiscoveredUrl(message.text) : "";
-            const isPhotoMessage = message.type === "IMAGE" && Boolean(message.attachmentUrl);
-            const messageRunEnds = mediaGroup.length > 1 || endsMessageRun(visibleMessages, index);
-            const replyTarget = message.replyToMessageId ? messages.find((item) => item.id === message.replyToMessageId) : null;
+            ListEmptyComponent={
+              <View style={[styles.threadListEmpty, styles.invertedListChrome]}>
+                {threadLoading && !messages.length && !pendingChatContext ? <View style={styles.loadingThreadShell}><Text style={styles.emptyText}>Loading messages…</Text></View> : null}
+                {!threadLoading && !messages.length && !pendingChatContext ? (
+                  <View style={styles.emptyThread}>
+                    <Text style={styles.emptyThreadTitle}>No messages yet.</Text>
+                    <Text style={styles.emptyThreadCopy}>Send a message to start the conversation.</Text>
+                  </View>
+                ) : null}
+              </View>
+            }
+            renderItem={({ item }) => {
+            const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isPhotoMessage, messageRunEnds, replyTarget, showDateDivider } = item;
+            if (skipForMediaGroup) return null;
             return (
-            <React.Fragment key={message.id}>
-            {index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt) ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
+            <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
@@ -2800,10 +3293,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {(message.reactions || []).length ? <View style={styles.messageReactions}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
               </TouchableOpacity>
             </View></SwipeToReply>
-            </React.Fragment>
+            {showDateDivider ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
+            </View>
             );
-          })}
-        </ScrollView>
+            }}
+          />
+        </View>
 
         <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setActionMessage(null)}>
           <View style={styles.messageActionBackdrop}>
@@ -3522,10 +4017,16 @@ const styles = StyleSheet.create({
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#D6A95F" },
   threadMessages: { flex: 1 },
+  threadMessagesList: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2 },
-  olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingVertical: 10 },
+  threadListFooter: { overflow: "visible" },
+  threadListEmpty: { minHeight: 360, flexGrow: 1, alignItems: "center", justifyContent: "center" },
+  olderMessagesStatusWrap: { alignItems: "center", marginBottom: 8 },
+  olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: "rgba(3,16,15,0.82)", overflow: "hidden" },
   olderMessagesButton: { alignSelf: "center", minHeight: 38, justifyContent: "center", paddingHorizontal: 16, marginBottom: 8, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.06)" },
   olderMessagesButtonText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
+  invertedListChrome: { transform: [{ scaleY: -1 }] },
+  threadMessageCell: { overflow: "visible" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5, position: "relative", overflow: "visible" },
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
@@ -3540,7 +4041,7 @@ const styles = StyleSheet.create({
   smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
   smallAvatarSpacer: { width: 26 },
-  emptyThread: { alignItems: "center", marginTop: "auto", marginBottom: "auto", gap: 6 },
+  emptyThread: { alignItems: "center", gap: 6 },
   emptyThreadTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyThreadCopy: { color: theme.colors.muted, fontSize: 14, fontWeight: "500" },
   loadingThreadShell: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center" },
@@ -3854,7 +4355,7 @@ const styles = StyleSheet.create({
   myWebsitePreviewText: { color: "#16334a" },
   myWebsitePreviewDetail: { color: "#526474" },
   photoMediaWrap: { position: "relative", borderRadius: 15, overflow: "visible" },
-  messageImage: { width: 286, maxHeight: 430, borderRadius: 15, backgroundColor: theme.colors.panel2 },
+  messageImage: { width: 286, height: 300, borderRadius: 15, backgroundColor: theme.colors.panel2 },
   messageCollage: { width: 246, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", marginBottom: 6 },
   collageCell: { width: 121.5, height: 121.5, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },
   collageImage: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },

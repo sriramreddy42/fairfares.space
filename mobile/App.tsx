@@ -63,6 +63,17 @@ const STATIC_IMAGE_SOURCES = [
   require("./assets/launch-cityscape-v2.jpg"),
   require("./assets/launch-car-mobile.png")
 ];
+const CRITICAL_BRAND_IMAGE_SOURCES = [
+  appAssets.logo,
+  appAssets.chittiMascot,
+  appAssets.chittiLettersGold,
+  appAssets.navHome,
+  appAssets.navServices,
+  appAssets.navActivity,
+  appAssets.profile,
+  require("./assets/launch-cityscape-v2.jpg"),
+  require("./assets/launch-car-mobile.png")
+];
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -72,6 +83,16 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true
   })
 });
+
+function CriticalBrandAssetPreloader() {
+  return (
+    <View pointerEvents="none" style={styles.criticalAssetPreloader} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {CRITICAL_BRAND_IMAGE_SOURCES.map((source, index) => (
+        <Image key={index} source={source} style={styles.criticalAssetImage} resizeMode="contain" />
+      ))}
+    </View>
+  );
+}
 
 const emptyListingForm: MobileHousingPostInput = {
   postMode: "HAVE_PLACE",
@@ -426,11 +447,11 @@ function FairFaresApp() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === "web" || typeof Image.resolveAssetSource !== "function") return;
+    if (typeof Image.resolveAssetSource !== "function") return;
     const task = InteractionManager.runAfterInteractions(() => {
       const metroAssetUris = STATIC_IMAGE_SOURCES
         .map((source) => Image.resolveAssetSource(source)?.uri || "")
-        .filter((uri) => /^https?:\/\//i.test(uri));
+        .filter(Boolean);
       void Promise.allSettled([...new Set(metroAssetUris)].map((uri) => Image.prefetch(uri)));
     });
     return () => task.cancel();
@@ -1598,6 +1619,7 @@ function FairFaresApp() {
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView style={[styles.safe, activeTab === "messenger" && styles.chittiSafe]} edges={["top", "right", "bottom", "left"]}>
       <StatusBar style="light" backgroundColor={activeTab === "messenger" ? "#052017" : theme.colors.bg} translucent={false} />
+      <CriticalBrandAssetPreloader />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
         {loading ? (
           <View style={styles.loader}>
@@ -2314,6 +2336,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   chittiSafe: { backgroundColor: "#052017" },
   appContent: { flex: 1 },
+  criticalAssetPreloader: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", left: -10, top: -10 },
+  criticalAssetImage: { width: 1, height: 1 },
   listingSuccessBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
   listingSuccessCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", backgroundColor: "#171a18", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", gap: 12 },
   listingSuccessIcon: { width: 70, height: 70, borderRadius: 35, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,197,94,0.18)", borderWidth: 2, borderColor: theme.colors.green },
