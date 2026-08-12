@@ -188,7 +188,18 @@ CLOUDFLARE_R2_BUCKET=fairfares-attachments
 CLOUDFLARE_R2_PREFIX=fairfares
 ```
 
-When all credentials are present, new Chitthi attachments are written to R2 and SQLite stores only a private `r2://` reference. Downloads continue through FairFares' authenticated attachment endpoint, so the bucket must remain private. Without these variables, local development continues using `data/uploads/chat`.
+When all credentials are present, Chitthi clients encrypt attachments locally, upload only `application/octet-stream` ciphertext through a short-lived presigned PUT, and finalize after the backend verifies the exact size and SHA-256 checksum. SQLite stores only a private `r2://` reference. Recipients receive device-scoped, short-lived presigned GET URLs and confirm only after decrypted media is durable on that device. The bucket must remain private.
+
+Configure browser CORS with exact production and development origins (never `*`):
+
+```bash
+FAIRFARES_R2_ALLOWED_ORIGINS=https://www.fairfare.space,http://localhost:8010 \
+python3 scripts/configure_r2_cors.py
+```
+
+The default URL lifetime is 10 minutes and is capped at 15 minutes. Unfinalized uploads expire after 24 hours; the existing Chitthi maintenance endpoint deletes those orphans and finalized media older than seven days. These can be tuned with `FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS`, `FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS`, and `FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS`.
+
+The legacy server-relay attachment endpoint remains temporarily available for older app builds. Current web, iOS, and Android clients use direct encrypted R2 transfer. Without R2 variables, legacy local development continues using `data/uploads/chat`, while the direct-transfer authorization endpoint reports that storage is unavailable.
 
 After configuring R2, migrate existing local attachments in a safe first pass:
 

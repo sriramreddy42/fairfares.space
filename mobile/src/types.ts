@@ -132,6 +132,10 @@ export type ChatMessage = {
     expiresAt?: string;
     live?: boolean;
     stopped?: boolean;
+    mediaExpired?: boolean;
+    expiredAt?: string;
+    deletedFromStorage?: boolean;
+    retentionDays?: number;
   };
   contextType?: "HOUSING" | "CARPOOL" | string;
   contextId?: string;

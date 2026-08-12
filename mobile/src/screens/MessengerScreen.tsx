@@ -12,11 +12,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
-  authenticatedAssetSource,
   addChatGroupMember,
   blockChatUser,
   createChatCommunity,
   createChatGroupInvite,
+  confirmChatAttachmentDownloaded,
+  getEncryptedChatAttachmentDownloadUrl,
   deleteChatMessage,
   editChatMessage,
   findChatPersonByPhone,
@@ -30,6 +31,7 @@ import {
   getChatConversations,
   getChatMessages,
   getAuthenticatedAssetDataUrl,
+  downloadAuthenticatedAssetToFile,
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
   joinChatGroupInvite,
@@ -47,7 +49,7 @@ import {
   reactToChatMessage,
   removeChatGroupMember,
   sendEncryptedChatMessage,
-  sendEncryptedChatAttachment,
+  sendDirectEncryptedChatAttachment,
   sendChatRichMessage,
   transferChatGroupOwnership,
   updateChatGroupPhoto,
@@ -66,6 +68,7 @@ import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 import { useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
+import { cleanupPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -331,6 +334,31 @@ function encryptedPreviewLocalUri(attachmentUrl: string, keyPayload: string) {
   if (!cacheRoot) return "";
   const safeUrl = attachmentUrl.replace(/[^A-Za-z0-9]+/g, "-").slice(-64);
   return `${cacheRoot}chitthi-decrypted-${safeUrl}-${stablePreviewHash(keyPayload)}.${encryptedPreviewExtension(keyPayload)}`;
+}
+
+function encryptedAttachmentMetadata(keyPayload: string) {
+  try {
+    return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE" };
+  } catch {
+    return {};
+  }
+}
+
+function attachmentFileExtension(fileName: string, mimeType: string) {
+  const namedExtension = fileName.match(/\.([A-Za-z0-9]{1,8})$/)?.[1]?.toLowerCase();
+  if (namedExtension) return namedExtension;
+  if (mimeType === "video/quicktime") return "mov";
+  if (mimeType.startsWith("video/")) return "mp4";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType.startsWith("image/")) return "jpg";
+  if (mimeType === "application/pdf") return "pdf";
+  return "bin";
+}
+
+function encryptedAttachmentLocalUri(userId: number, messageId: number, fileName: string, mimeType: string) {
+  const extension = attachmentFileExtension(fileName, mimeType);
+  return persistentChitthiMediaUri(userId, messageId, extension);
 }
 
 async function warmChatImagePreviewCache(messages: ChatMessage[]) {
@@ -630,10 +658,26 @@ function AuthenticatedChatImage({ attachmentUrl, compact = false }: { attachment
 function NativeAuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
   const [cachedPreviewUri, setCachedPreviewUri] = useState(() => chatImagePreviewCache.get(attachmentUrl) || "");
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(() => !chatImagePreviewCache.has(attachmentUrl));
 
   useEffect(() => {
+    let cancelled = false;
+    const cached = chatImagePreviewCache.get(attachmentUrl) || "";
     setPreviewFailed(false);
-    setCachedPreviewUri(chatImagePreviewCache.get(attachmentUrl) || "");
+    setCachedPreviewUri(cached);
+    setPreviewLoading(!cached);
+    if (cached) return () => { cancelled = true; };
+    void loadChatImagePreview(attachmentUrl)
+      .then((localUri) => {
+        if (!cancelled) setCachedPreviewUri(localUri);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [attachmentUrl]);
 
   if (previewFailed) {
@@ -642,7 +686,10 @@ function NativeAuthenticatedChatImage({ attachmentUrl, compact = false }: { atta
   if (cachedPreviewUri) {
     return <AdaptiveChatImage uri={cachedPreviewUri} compact={compact} onError={() => setPreviewFailed(true)} />;
   }
-  return <AdaptiveChatImage source={authenticatedAssetSource(attachmentUrl)} compact={compact} onError={() => setPreviewFailed(true)} />;
+  if (previewLoading) {
+    return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Loading photo…</Text></View>;
+  }
+  return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Photo preview unavailable</Text></View>;
 }
 
 function WebAuthenticatedChatImage({ attachmentUrl, compact = false }: { attachmentUrl: string; compact?: boolean }) {
@@ -738,6 +785,9 @@ function PendingPhotoPreview({ uri, compact = false, full = false }: { uri: stri
 }
 
 function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
+  if (message.metadata?.mediaExpired || !message.attachmentUrl) {
+    return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Media expired</Text></View>;
+  }
   if (message.metadata?.decryptedDataUrl) {
     return <AdaptiveChatImage uri={message.metadata.decryptedDataUrl} compact={compact} />;
   }
@@ -748,8 +798,29 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
 }
 
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
-  const player = useVideoPlayer(uri, (instance) => { instance.loop = false; });
+  const player = useVideoPlayer(uri, (instance) => { instance.loop = false; instance.play(); });
   return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" allowsFullscreen />;
+}
+
+function CircularDownloadProgress({ progress }: { progress: number }) {
+  const percent = Math.max(0, Math.min(100, Math.round(progress)));
+  const segments = 24;
+  const activeSegments = Math.ceil((percent / 100) * segments);
+  return (
+    <View style={styles.downloadProgressCircle} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percent }}>
+      {Array.from({ length: segments }, (_, index) => (
+        <View
+          key={index}
+          style={[
+            styles.downloadProgressSegment,
+            index < activeSegments && styles.downloadProgressSegmentActive,
+            { transform: [{ rotate: `${index * (360 / segments)}deg` }, { translateY: -25 }] }
+          ]}
+        />
+      ))}
+      <View style={styles.downloadProgressCenter}><Text style={styles.downloadProgressText}>{percent}%</Text></View>
+    </View>
+  );
 }
 
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
@@ -819,6 +890,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [pollClosesInHours, setPollClosesInHours] = useState(24);
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
+  const [localMediaMessageIds, setLocalMediaMessageIds] = useState<number[]>([]);
+  const [downloadingMediaMessageIds, setDownloadingMediaMessageIds] = useState<number[]>([]);
+  const [mediaDownloadProgress, setMediaDownloadProgress] = useState<Record<number, number>>({});
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
@@ -1026,6 +1100,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!currentUserId || !conversations.length) return;
     void writeCachedChatConversations(currentUserId, conversations);
   }, [conversations, currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId || Platform.OS === "web") return;
+    void cleanupPersistentChitthiMedia().catch(() => undefined);
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId || Platform.OS === "web") {
+      setLocalMediaMessageIds([]);
+      return;
+    }
+    let cancelled = false;
+    const mediaMessages = recentChatMessages(messages).filter((message) => ["IMAGE", "VIDEO", "FILE"].includes(message.type));
+    void Promise.all(mediaMessages.map(async (message) => {
+      let mimeType = message.metadata?.mimeType || "application/octet-stream";
+      const encryptedMetadata = message.metadata?.encryptedKeyPayload ? encryptedAttachmentMetadata(message.metadata.encryptedKeyPayload) : {};
+      if (encryptedMetadata.mimeType) mimeType = encryptedMetadata.mimeType;
+      const fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: encryptedMetadata.fileName || message.metadata?.fileName } }, mimeType);
+      const uri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
+      return await persistentChitthiMediaExists(uri) ? message.id : 0;
+    })).then((ids) => {
+      if (!cancelled) setLocalMediaMessageIds(ids.filter((id) => id > 0));
+    }).catch(() => {
+      if (!cancelled) setLocalMediaMessageIds([]);
+    });
+    return () => { cancelled = true; };
+  }, [currentUserId, messages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1348,7 +1449,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
           : message;
         const clearText = decryptEnvelope(envelope, identity);
-        if (message.type === "ENCRYPTED_ATTACHMENT" && message.attachmentUrl && clearText) {
+        if (message.type === "ENCRYPTED_ATTACHMENT" && (message.attachmentUrl || message.metadata?.mediaExpired) && clearText) {
           const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number };
           return {
             ...message,
@@ -1951,8 +2052,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
           const caption = index === 0 ? cleanMessage : "";
           const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...mediaMetadata }, identity, keyPayload.keys);
-          const response = await sendEncryptedChatAttachment(activeConversationId, encrypted.ciphertextBase64, encrypted.envelopes, index + 1 < attachments.length);
-          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: `data:${attachment.mimeType};base64,${fileBase64}`, ...mediaMetadata } });
+          const response = await sendDirectEncryptedChatAttachment(activeConversationId, encrypted, attachment.mimeType, index + 1 < attachments.length);
+          if (Platform.OS !== "web") {
+            const localUri = encryptedAttachmentLocalUri(currentUserId, response.message.id, attachment.name, attachment.mimeType);
+            if (localUri) {
+              // The server has already accepted the message. A local-storage
+              // failure must not present it as unsent or encourage duplicates.
+              await writePersistentChitthiMedia(localUri, fileBase64)
+                .then(() => {
+                  setLocalMediaMessageIds((current) => current.includes(response.message.id) ? current : [...current, response.message.id]);
+                  return cleanupPersistentChitthiMedia(localUri);
+                })
+                .catch(() => undefined);
+            }
+          }
+          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" || attachment.kind === "IMAGE" ? `data:${attachment.mimeType};base64,${fileBase64}` : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
         setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
@@ -1962,7 +2076,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setPendingImages([]);
         setPendingPhotoPreviewOpen(false);
         setMessageText("");
-        setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : "File sent");
+        setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
         setTimeout(() => setAttachmentStatus(""), 1600);
         if (startedFromCardContext) onCardMessageSent?.();
         onClearPendingPost?.();
@@ -1970,7 +2084,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         void refreshMessenger({ showLoader: false, showError: false });
       } catch (error) {
         setAttachmentStatus("");
-        Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
+        Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : attachments[0].kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
       } finally {
         setThreadLoading(false);
       }
@@ -2530,7 +2644,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const media = await pickChatMedia(4, 1600, 0.76);
+      const media = await pickChatMedia(4);
       if (!media.length) return;
       if (media[0].kind === "VIDEO") {
         setPendingImages([]);
@@ -2556,7 +2670,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const photo = await takeChatPhoto(1600, 0.82);
+      const photo = await takeChatPhoto();
       if (!photo) return;
       setPendingImages([]);
       setPendingAttachment({ ...photo, kind: "IMAGE" });
@@ -2740,13 +2854,73 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return clean || `chitthi-${message.id}${fallbackExtension}`;
   }
 
-  async function materializeAttachment(message: ChatMessage) {
-    if (!message.attachmentUrl && !message.metadata?.decryptedDataUrl) return;
-    let dataUrl = message.metadata?.decryptedDataUrl || await getAuthenticatedAssetDataUrl(message.attachmentUrl);
+  async function materializeAttachment(message: ChatMessage, onProgress?: (progress: number) => void) {
     let mimeType = message.metadata?.mimeType || "application/octet-stream";
+    if (message.type === "IMAGE" && !mimeType.startsWith("image/")) mimeType = "image/jpeg";
+    if (message.type === "VIDEO" && !mimeType.startsWith("video/")) mimeType = "video/mp4";
     let fileName = safeAttachmentName(message, mimeType);
-    if (message.metadata?.encryptedKeyPayload && !message.metadata?.decryptedDataUrl) {
-      const decrypted = decryptAttachmentBase64(dataUrl.split(",", 2)[1] || "", message.metadata.encryptedKeyPayload);
+    const encryptedKeyPayload = message.metadata?.encryptedKeyPayload;
+    const encryptedMetadata = encryptedKeyPayload ? encryptedAttachmentMetadata(encryptedKeyPayload) : {};
+    if (encryptedMetadata.mimeType) mimeType = encryptedMetadata.mimeType;
+    if (encryptedMetadata.fileName) {
+      fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: encryptedMetadata.fileName } }, mimeType);
+    }
+    const confirmLocalDownload = async () => {
+      // Browser data URLs are memory-only, so they must not trigger permanent
+      // cloud deletion. Native receipts are sent only after a durable file exists.
+      if (Platform.OS !== "web" && !message.mine && message.id > 0) {
+        const identity = await ensureChatDeviceIdentity();
+        await confirmChatAttachmentDownloaded(message.id, identity.deviceId).catch(() => undefined);
+      }
+    };
+    if (Platform.OS !== "web") {
+      const localUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
+      if (localUri) {
+        if (await persistentChitthiMediaExists(localUri)) {
+          onProgress?.(100);
+          await confirmLocalDownload();
+          return { uri: localUri, name: fileName, mimeType };
+        }
+      }
+    }
+    if (!message.attachmentUrl && !message.metadata?.decryptedDataUrl) {
+      throw new Error("This media is no longer available.");
+    }
+    if (Platform.OS !== "web" && message.type === "IMAGE" && message.attachmentUrl && !encryptedKeyPayload && !message.metadata?.decryptedDataUrl) {
+      const localPreviewUri = await loadChatImagePreview(message.attachmentUrl);
+      return { uri: localPreviewUri, name: fileName, mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg" };
+    }
+    if (Platform.OS !== "web" && encryptedKeyPayload && message.attachmentUrl) {
+      const cacheRoot = FileSystem.cacheDirectory;
+      if (!cacheRoot) throw new Error("Attachment storage is unavailable on this device.");
+      const encryptedUri = `${cacheRoot}chitthi-download-${message.id}-${stablePreviewHash(encryptedKeyPayload)}.ffenc`;
+      const localUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
+      if (!localUri) throw new Error("Attachment storage is unavailable on this device.");
+      try {
+        const identity = await ensureChatDeviceIdentity();
+        const downloadAuthorization = await getEncryptedChatAttachmentDownloadUrl(message.id, identity.deviceId);
+        await downloadAuthenticatedAssetToFile(downloadAuthorization.downloadUrl, encryptedUri, (progress) => onProgress?.(Math.round(progress * 88)), false);
+        onProgress?.(90);
+        const ciphertextBase64 = await FileSystem.readAsStringAsync(encryptedUri, { encoding: FileSystem.EncodingType.Base64 });
+        const decrypted = decryptAttachmentBase64(ciphertextBase64, encryptedKeyPayload);
+        onProgress?.(94);
+        mimeType = decrypted.mimeType || mimeType;
+        fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: decrypted.fileName } }, mimeType);
+        const finalUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType) || localUri;
+        await writePersistentChitthiMedia(finalUri, decrypted.base64);
+        onProgress?.(99);
+        await cleanupPersistentChitthiMedia(finalUri).catch(() => undefined);
+        setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+        await confirmLocalDownload();
+        onProgress?.(100);
+        return { uri: finalUri, name: fileName, mimeType };
+      } finally {
+        await FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => undefined);
+      }
+    }
+    let dataUrl = message.metadata?.decryptedDataUrl || await getAuthenticatedAssetDataUrl(message.attachmentUrl);
+    if (encryptedKeyPayload && !message.metadata?.decryptedDataUrl) {
+      const decrypted = decryptAttachmentBase64(dataUrl.split(",", 2)[1] || "", encryptedKeyPayload);
       mimeType = decrypted.mimeType || mimeType;
       fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: decrypted.fileName } }, mimeType);
       dataUrl = `data:${mimeType};base64,${decrypted.base64}`;
@@ -2754,10 +2928,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (Platform.OS === "web") return { uri: dataUrl, name: fileName, mimeType };
     const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
     if (!base64) throw new Error("The downloaded attachment is empty.");
-    const cacheRoot = FileSystem.cacheDirectory;
-    if (!cacheRoot) throw new Error("Attachment storage is unavailable on this device.");
-    const localUri = `${cacheRoot}${Date.now()}-${fileName}`;
-    await FileSystem.writeAsStringAsync(localUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+    const localUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
+    if (!localUri) throw new Error("Attachment storage is unavailable on this device.");
+    await writePersistentChitthiMedia(localUri, base64);
+    onProgress?.(99);
+    await cleanupPersistentChitthiMedia(localUri).catch(() => undefined);
+    setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+    if (encryptedKeyPayload) await confirmLocalDownload();
+    onProgress?.(100);
     return { uri: localUri, name: fileName, mimeType };
   }
 
@@ -2777,16 +2955,31 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   async function openAttachment(message: ChatMessage) {
+    if (downloadingMediaMessageIds.includes(message.id)) return;
+    const alreadyOnDevice = localMediaMessageIds.includes(message.id);
     try {
-      setAttachmentStatus("Preparing attachment…");
-      const item = await materializeAttachment(message);
+      if (!alreadyOnDevice && Platform.OS !== "web") {
+        setDownloadingMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+        setMediaDownloadProgress((current) => ({ ...current, [message.id]: 0 }));
+      }
+      const item = await materializeAttachment(message, (progress) => {
+        if (!alreadyOnDevice && Platform.OS !== "web") {
+          setMediaDownloadProgress((current) => ({ ...current, [message.id]: Math.max(current[message.id] || 0, progress) }));
+        }
+      });
       if (!item) return;
       if (message.type === "IMAGE" || message.type === "VIDEO") setAttachmentPreview({ ...item, messageId: message.id, type: message.type, createdAt: message.createdAt });
       else await downloadAttachment(item);
     } catch (error) {
       Alert.alert("Attachment unavailable", error instanceof Error ? error.message : "Could not open this attachment.");
     } finally {
-      setAttachmentStatus("");
+      setDownloadingMediaMessageIds((current) => current.filter((id) => id !== message.id));
+      setMediaDownloadProgress((current) => {
+        const next = { ...current };
+        delete next[message.id];
+        return next;
+      });
+      setTimeout(() => setAttachmentStatus(""), 1200);
     }
   }
 
@@ -2956,7 +3149,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               : await FileSystem.readAsStringAsync(attachment.uri, { encoding: FileSystem.EncodingType.Base64 });
             const kind = message.type as "IMAGE" | "VIDEO" | "FILE";
             const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
-            await sendEncryptedChatAttachment(conversationId, encrypted.ciphertextBase64, encrypted.envelopes);
+            await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
           } else {
             const text = shareableMessageText({ ...message, senderName: "" });
             if (!text) continue;
@@ -3245,6 +3438,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             renderItem={({ item }) => {
             const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isPhotoMessage, messageRunEnds, replyTarget, showDateDivider } = item;
             if (skipForMediaGroup) return null;
+            const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
+            const mediaProgress = mediaDownloadProgress[message.id] || 0;
             return (
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd]}>
@@ -3283,16 +3478,29 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {message.attachmentUrl ? (
                   message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <TouchableOpacity style={styles.videoMessageCard} onPress={() => void openAttachment(message)} accessibilityLabel="Play video">
+                      {mediaDownloading ? (
+                        <View style={styles.videoDownloadOverlay} pointerEvents="none">
+                          {Platform.OS === "web" ? <View style={styles.videoDownloadBlurFallback} /> : <BlurView intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
+                          <CircularDownloadProgress progress={mediaProgress} />
+                        </View>
+                      ) : null}
                       <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
                       <Text style={styles.videoMessageTitle}>Video</Text>
-                      <Text style={styles.videoMessageMeta}>Tap to play securely</Text>
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity style={styles.fileCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel={`Open or save ${String(message.metadata?.fileName || "Chitthi file")}`}>
                       <View style={[styles.attachmentIcon, styles.fileIcon, styles.fileCardIcon]}><Text style={styles.fileCardBadge}>{chatFileBadge(String(message.metadata?.fileName || ""), String(message.metadata?.mimeType || ""))}</Text></View>
-                      <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "Chitthi file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB · Tap to open or save</Text></View>
+                      <View style={styles.fileCardCopy}><Text style={styles.fileCardName} numberOfLines={2}>{message.metadata?.fileName || "Chitthi file"}</Text><Text style={styles.fileCardMeta}>{Math.max(1, Math.round(Number(message.metadata?.size || 0) / 1024))} KB</Text></View>
                     </TouchableOpacity>
                   )
+                ) : null}
+                {!message.attachmentUrl && message.metadata?.mediaExpired ? (
+                  <TouchableOpacity style={styles.expiredMediaCard} onPress={() => void openAttachment(message)} accessibilityRole="button" accessibilityLabel="Open downloaded media on this device">
+                    <Text style={styles.expiredMediaIcon}>{message.type === "VIDEO" ? "🎥" : message.type === "FILE" ? "📎" : "📷"}</Text>
+                    <View style={styles.expiredMediaCopy}>
+                      <Text style={styles.expiredMediaTitle}>{localMediaMessageIds.includes(message.id) ? (message.type === "VIDEO" ? "Video" : message.type === "FILE" ? "File" : "Photo") : "Media unavailable"}</Text>
+                    </View>
+                  </TouchableOpacity>
                 ) : null}
                 {message.type === "POLL" ? (
                   <View style={styles.richCard}>
@@ -3417,7 +3625,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <View style={styles.mediaViewerBottom}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaViewerThumbnails}>
-                {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl)).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
+                {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl) && !item.metadata?.mediaExpired).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
               </ScrollView>
               <View style={styles.mediaViewerActions}>
                 <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()}><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Share or save</Text></TouchableOpacity>
@@ -4296,6 +4504,11 @@ const styles = StyleSheet.create({
   fileCardCopy: { flex: 1 },
   fileCardName: { color: "#f5f7fa", fontSize: 13, lineHeight: 17, fontWeight: "500" },
   fileCardMeta: { color: "#aeb5c0", fontSize: 10, marginTop: 3, fontWeight: "500" },
+  expiredMediaCard: { flexDirection: "row", alignItems: "center", gap: 10, minWidth: 220, maxWidth: 280, borderRadius: 14, padding: 12, backgroundColor: "rgba(24,28,34,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", marginBottom: 5 },
+  expiredMediaIcon: { width: 40, height: 40, borderRadius: 20, overflow: "hidden", textAlign: "center", textAlignVertical: "center", backgroundColor: "rgba(255,255,255,0.12)", fontSize: 20, lineHeight: 40 },
+  expiredMediaCopy: { flex: 1, minWidth: 0 },
+  expiredMediaTitle: { color: "#f5f7fa", fontSize: 13, fontWeight: "900" },
+  expiredMediaText: { color: "#aeb5c0", fontSize: 10, lineHeight: 14, marginTop: 2, fontWeight: "700" },
   richCard: { minWidth: 230, maxWidth: 290, borderRadius: 14, padding: 12, backgroundColor: "rgba(255,255,255,0.90)", marginBottom: 4, gap: 6 },
   locationCard: { minWidth: 220, maxWidth: 290, borderRadius: 14, padding: 12, backgroundColor: "rgba(255,255,255,0.92)", marginBottom: 4, flexDirection: "row", alignItems: "center", gap: 11 },
   locationIcon: { width: 40, height: 40, borderRadius: 20, overflow: "hidden", textAlign: "center", textAlignVertical: "center", backgroundColor: "#d8f6e8", color: "#087f55", fontSize: 24, lineHeight: 40 },
@@ -4435,10 +4648,16 @@ const styles = StyleSheet.create({
   photoForwardActionMine: { right: undefined, left: -47 },
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
   videoMessageCard: { width: 246, minHeight: 180, borderRadius: 15, backgroundColor: "#181c22", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 4 },
+  videoDownloadOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 8, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  videoDownloadBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(8,18,15,0.48)" },
+  downloadProgressCircle: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(3,18,12,0.74)", borderWidth: 1, borderColor: "rgba(50,215,135,0.25)" },
+  downloadProgressSegment: { position: "absolute", left: 33, top: 31, width: 5, height: 10, borderRadius: 3, backgroundColor: "rgba(219,255,236,0.16)" },
+  downloadProgressSegmentActive: { backgroundColor: "#26D980" },
+  downloadProgressCenter: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(4,30,20,0.94)", alignItems: "center", justifyContent: "center" },
+  downloadProgressText: { color: "#E8FFF3", fontSize: 12, fontWeight: "900" },
   videoMessagePlay: { width: 58, height: 58, borderRadius: 29, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", paddingLeft: 4 },
   videoMessagePlayText: { color: "#fff", fontSize: 25 },
   videoMessageTitle: { color: "#fff", fontSize: 15, fontWeight: "900" },
-  videoMessageMeta: { color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: "700" },
   myBubbleText: { color: "#FFF9ED" },
   theirBubbleText: { color: "#18342A" },
   bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", alignSelf: "flex-end", gap: 3, marginTop: 1, minHeight: 14 },

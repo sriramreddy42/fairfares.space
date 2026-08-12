@@ -226,7 +226,12 @@ export function encryptAttachmentForDevices(
     v: 1, type: "ATTACHMENT", key: util.encodeBase64(fileKey), nonce: util.encodeBase64(fileNonce), ...metadata
   });
   const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
-  return { ciphertextBase64: util.encodeBase64(ciphertext), envelopes: encryptForDevices(keyPayload, identity, keys, preview) };
+  return {
+    ciphertextBase64: util.encodeBase64(ciphertext),
+    ciphertextSha256: util.encodeBase64(sha256(ciphertext)),
+    encryptedSize: ciphertext.byteLength,
+    envelopes: encryptForDevices(keyPayload, identity, keys, preview)
+  };
 }
 
 export function decryptAttachmentBase64(ciphertextBase64: string, keyPayload: string) {

@@ -190,7 +190,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     headers.Authorization = `Bearer ${authToken}`;
   }
   let lastError = "";
-  const isAttachmentUpload = path === "/api/chat/attachments";
+  const isAttachmentUpload = path === "/api/chat/attachments" || path === "/api/chat/e2ee/attachments";
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
@@ -316,6 +316,35 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
   if (result.status < 200 || result.status >= 300) {
     await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
     throw new Error(`Could not load photo preview (${result.status}).`);
+  }
+  return result.uri;
+}
+
+export async function downloadAuthenticatedAssetToFile(value: string, destination: string, onProgress?: (progress: number) => void, includeAuthorization = true) {
+  if (Platform.OS === "web") throw new Error("Native attachment storage is unavailable on web.");
+  const directUrl = absoluteAssetUrl(value);
+  if (!directUrl) throw new Error("Attachment URL is missing.");
+  const headers: Record<string, string> = {};
+  if (includeAuthorization && authToken) headers.Authorization = `Bearer ${authToken}`;
+  await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+  const download = FileSystem.createDownloadResumable(directUrl, destination, { headers }, (event) => {
+    const expected = Number(event.totalBytesExpectedToWrite || 0);
+    const written = Number(event.totalBytesWritten || 0);
+    if (expected > 0) onProgress?.(Math.max(0, Math.min(1, written / expected)));
+  });
+  const result = await download.downloadAsync();
+  if (!result) {
+    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    throw new Error("The attachment download was interrupted.");
+  }
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    throw new Error(`Could not download attachment (${result.status}).`);
+  }
+  const info = await FileSystem.getInfoAsync(result.uri);
+  if (!info.exists || Number(info.size || 0) <= 0) {
+    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    throw new Error("The downloaded attachment is empty.");
   }
   return result.uri;
 }
@@ -895,6 +924,66 @@ export async function sendEncryptedChatAttachment(conversationId: string, cipher
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ conversationId, ciphertextBase64, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent })
   });
+}
+
+export async function authorizeEncryptedChatAttachment(conversationId: string, encryptedSize: number, ciphertextSha256: string, mediaMimeType: string) {
+  return request<{ ok: boolean; uploadId: string; uploadUrl: string; headers: Record<string, string>; expiresIn: number }>("/api/chat/e2ee/attachments/authorize", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, encryptedSize, ciphertextSha256, mediaMimeType })
+  });
+}
+
+export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<string, string>, ciphertextBase64: string) {
+  if (Platform.OS === "web") {
+    const binary = atob(ciphertextBase64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const response = await fetch(uploadUrl, { method: "PUT", headers, body: bytes });
+    if (!response.ok) throw new Error(`Encrypted upload failed (${response.status}).`);
+    return;
+  }
+  if (!FileSystem.cacheDirectory) throw new Error("Encrypted upload storage is unavailable.");
+  const temporaryPath = `${FileSystem.cacheDirectory}chitthi-upload-${Date.now()}-${Math.random().toString(36).slice(2)}.ffenc`;
+  try {
+    await FileSystem.writeAsStringAsync(temporaryPath, ciphertextBase64, { encoding: FileSystem.EncodingType.Base64 });
+    const result = await FileSystem.uploadAsync(uploadUrl, temporaryPath, {
+      httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+    });
+    if (result.status < 200 || result.status >= 300) throw new Error(`Encrypted upload failed (${result.status}).`);
+  } finally {
+    await FileSystem.deleteAsync(temporaryPath, { idempotent: true }).catch(() => undefined);
+  }
+}
+
+export async function finalizeEncryptedChatAttachment(uploadId: string, envelopes: Array<Record<string, unknown>>, silent = false) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uploadId, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent })
+  });
+}
+
+export async function sendDirectEncryptedChatAttachment(
+  conversationId: string,
+  encrypted: { ciphertextBase64: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
+  mediaMimeType: string,
+  silent = false
+) {
+  const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
+  await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
+  return finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent);
+}
+
+export async function getEncryptedChatAttachmentDownloadUrl(messageId: number, deviceId: string) {
+  return request<{ ok: boolean; downloadUrl: string; encryptedSize: number; ciphertextSha256: string; mediaMimeType: string }>("/api/chat/e2ee/attachments/download-url", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messageId, deviceId })
+  });
+}
+
+export async function confirmChatAttachmentDownloaded(messageId: number, deviceId: string) {
+  return request<{ ok: boolean; recorded: boolean; deleted: boolean }>("/api/chat/attachments/downloaded", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messageId, deviceId })
+  }, { silentServerFailure: true, attempts: 2 });
 }
 
 export async function saveChatKeyBackup(encryptedPayload: string) {

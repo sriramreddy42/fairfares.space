@@ -12,31 +12,39 @@ function preferredImageEncoding() {
   };
 }
 
-async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: number, prefix: string, maxWidth: number, quality: number) {
+async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: number, prefix: string, maxWidth: number, quality: number, maxBytes = 0) {
   const encoding = preferredImageEncoding();
-  const actions = asset.width && asset.width > maxWidth ? [{ resize: { width: maxWidth } }] : [];
-  const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-    base64: false,
-    compress: quality,
-    format: encoding.format
-  });
-  if (Platform.OS === "web") {
-    const blob = await fetch(compressed.uri).then((response) => response.blob());
-    return {
+  let currentWidth = maxWidth;
+  let currentQuality = quality;
+  let best = {
+    uri: asset.uri,
+    blob: undefined as Blob | undefined,
+    size: Number(asset.fileSize || 0)
+  };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const actions = asset.width && asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
+    const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+      base64: false,
+      compress: currentQuality,
+      format: encoding.format
+    });
+    const blob = Platform.OS === "web" ? await fetch(compressed.uri).then((response) => response.blob()) : undefined;
+    const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(compressed.uri);
+    best = {
       uri: compressed.uri,
       blob,
-      name: `${prefix}-${Date.now()}-${index + 1}.${encoding.extension}`,
-      mimeType: encoding.mimeType,
-      size: blob.size,
-      kind: "IMAGE" as const
+      size: blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : 0)
     };
+    if (!maxBytes || best.size <= maxBytes || currentWidth <= 720) break;
+    currentWidth = Math.max(720, Math.round(currentWidth * 0.82));
+    currentQuality = Math.max(0.42, currentQuality - 0.1);
   }
-  const info = await FileSystem.getInfoAsync(compressed.uri);
   return {
-    uri: compressed.uri,
+    uri: best.uri,
+    blob: best.blob,
     name: `${prefix}-${Date.now()}-${index + 1}.${encoding.extension}`,
     mimeType: encoding.mimeType,
-    size: info.exists && "size" in info ? Number(info.size || 0) : 0,
+    size: best.size,
     kind: "IMAGE" as const
   };
 }
@@ -76,7 +84,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   return images;
 }
 
-export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76) {
+export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error("Allow photo access to upload pictures.");
@@ -89,11 +97,11 @@ export async function pickChatImages(limit = 4, maxWidth = 1600, quality = 0.76)
   });
   if (result.canceled || !result.assets.length) return [];
   return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
-    compressedUpload(asset, index, "chitthi", maxWidth, quality)
+    compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes)
   ));
 }
 
-export async function pickChatMedia(limit = 4, maxWidth = 1600, quality = 0.76) {
+export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error("Allow photo access to upload pictures or videos.");
@@ -103,7 +111,12 @@ export async function pickChatMedia(limit = 4, maxWidth = 1600, quality = 0.76) 
     mediaTypes: ["images", "videos"],
     quality,
     selectionLimit,
-    videoMaxDuration: 120
+    videoMaxDuration: 120,
+    // iOS exports the selected video as messaging-friendly H.264/AAC before
+    // Chitthi reads and encrypts it. Android ignores these iOS-only options and
+    // is still protected by the measured post-picker byte limit below.
+    videoExportPreset: ImagePicker.VideoExportPreset.H264_960x540,
+    videoQuality: ImagePicker.UIImagePickerControllerQualityType.IFrame960x540
   });
   if (result.canceled || !result.assets.length) return [];
   const selectedVideo = result.assets.find((asset) => asset.type === "video");
@@ -111,23 +124,28 @@ export async function pickChatMedia(limit = 4, maxWidth = 1600, quality = 0.76) 
     const blob = Platform.OS === "web" ? await fetch(selectedVideo.uri).then((response) => response.blob()) : undefined;
     const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(selectedVideo.uri);
     const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(selectedVideo.fileSize || 0));
-    if (size > 14_000_000) throw new Error("Choose a video smaller than 14 MB.");
+    if (!size) throw new Error("Could not determine the selected video size.");
+    if (size > 12_000_000) {
+      throw new Error(Platform.OS === "ios"
+        ? "This video is still larger than 12 MB after compression. Choose a shorter video."
+        : "Choose a video smaller than 12 MB. Android video compression requires the production app build.");
+    }
     const mimeType = selectedVideo.mimeType || "video/mp4";
     return [{
       uri: selectedVideo.uri,
       blob,
-      name: selectedVideo.fileName || `chitthi-video-${Date.now()}.mp4`,
+      name: selectedVideo.fileName || `chitthi-video-${Date.now()}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
       mimeType,
       size,
       kind: "VIDEO" as const
     }];
   }
   return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
-    compressedUpload(asset, index, "chitthi", maxWidth, quality)
+    compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes)
   ));
 }
 
-export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
+export async function takeChatPhoto(maxWidth = 1280, quality = 0.64, maxBytes = 400_000) {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) throw new Error("Allow camera access to take a photo.");
   const result = await ImagePicker.launchCameraAsync({
@@ -138,5 +156,5 @@ export async function takeChatPhoto(maxWidth = 1600, quality = 0.82) {
   });
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
-  return compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality);
+  return compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality, maxBytes);
 }

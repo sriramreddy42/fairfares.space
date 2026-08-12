@@ -99,7 +99,15 @@ ALLOWED_CHAT_FILE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 MAX_CHAT_FILE_BYTES = 8_000_000
-MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 15_000_000
+MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 12_000_000
+ALLOWED_CHITTHI_MEDIA_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/webp",
+    "video/mp4", "video/quicktime", "video/webm",
+} | ALLOWED_CHAT_FILE_MIME_TYPES
+CHITTHI_ATTACHMENT_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS", 7)
+CHITTHI_ATTACHMENT_CLEANUP_BATCH = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_CLEANUP_BATCH", 250)
+CHITTHI_PRESIGNED_URL_SECONDS = min(900, positive_int_env("FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS", 600))
+CHITTHI_UNFINALIZED_UPLOAD_HOURS = positive_int_env("FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS", 24)
 R2_ACCOUNT_ID = os.environ.get("CLOUDFLARE_R2_ACCOUNT_ID", "").strip()
 R2_ACCESS_KEY_ID = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "").strip()
 R2_SECRET_ACCESS_KEY = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "").strip()
@@ -141,6 +149,8 @@ _OPERATIONAL_ALERTS: dict[str, float] = {}
 _OPERATIONAL_ALERTS_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
+_CHITTHI_MEDIA_CLEANUP_LOCK = threading.Lock()
+_CHITTHI_MEDIA_CLEANUP_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
@@ -1104,6 +1114,210 @@ def r2_storage_client():
     return _R2_CLIENT
 
 
+def valid_sha256_base64(value: object) -> str:
+    checksum = str(value or "").strip()
+    try:
+        decoded = base64.b64decode(checksum, validate=True)
+    except (TypeError, ValueError):
+        return ""
+    return checksum if len(decoded) == hashlib.sha256().digest_size else ""
+
+
+def chitthi_r2_object_key() -> str:
+    date_path = datetime.now(UTC).strftime("%Y/%m/%d")
+    prefix = "/".join(part for part in (R2_OBJECT_PREFIX, "chitthi", date_path) if part)
+    return f"{prefix}/{secrets.token_urlsafe(24)}.ffenc"
+
+
+def create_chitthi_upload_authorization(
+    *, user_id: int, conversation_public_id: str, encrypted_size: int,
+    ciphertext_sha256: str, media_mime_type: str,
+) -> tuple[dict[str, object] | None, str]:
+    """Authorize one exact encrypted object upload; raw media metadata is never stored in R2."""
+    if not r2_storage_configured():
+        return None, "Direct encrypted media storage is not configured."
+    checksum = valid_sha256_base64(ciphertext_sha256)
+    media_type = str(media_mime_type or "").strip().lower()
+    if encrypted_size <= 0 or encrypted_size > MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024:
+        return None, "Encrypted attachment is missing or too large."
+    if media_type not in ALLOWED_CHITTHI_MEDIA_MIME_TYPES:
+        return None, "This media type is not supported."
+    if not checksum:
+        return None, "A valid encrypted attachment checksum is required."
+    with db() as con:
+        conversation = get_chat_conversation_by_public_id(con, conversation_public_id, user_id)
+        if not conversation:
+            return None, "Conversation not found."
+        block_error = chat_conversation_block_error(con, conversation, user_id)
+        if block_error:
+            return None, block_error
+        upload_id = secrets.token_urlsafe(32)
+        object_key = chitthi_r2_object_key()
+        con.execute(
+            """INSERT INTO chat_attachment_uploads
+               (public_id, conversation_id, uploader_user_id, object_key, expected_size,
+                expected_checksum, media_mime_type, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
+            (upload_id, int(conversation["id"]), user_id, object_key, encrypted_size,
+             checksum, media_type, f"+{CHITTHI_UNFINALIZED_UPLOAD_HOURS} hours"),
+        )
+    params = {
+        "Bucket": R2_BUCKET_NAME,
+        "Key": object_key,
+        "ContentType": "application/octet-stream",
+        "ContentLength": encrypted_size,
+        "ChecksumSHA256": checksum,
+        "Metadata": {"upload-id": upload_id},
+    }
+    upload_url = r2_storage_client().generate_presigned_url(
+        "put_object", Params=params, ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
+    )
+    return {
+        "uploadId": upload_id,
+        "uploadUrl": upload_url,
+        "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
+        "headers": {
+            "Content-Type": "application/octet-stream",
+            "x-amz-checksum-sha256": checksum,
+            "x-amz-meta-upload-id": upload_id,
+        },
+        "maxBytes": MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024,
+    }, ""
+
+
+def finalize_chitthi_upload(
+    *, user: sqlite3.Row, upload_id: str, envelopes: list[dict[str, object]],
+    client_message_id: str,
+) -> tuple[sqlite3.Row | None, str]:
+    """Publish an encrypted attachment only after R2 verifies the authorized object."""
+    current_user_id = int(user["id"])
+    with db() as con:
+        upload = con.execute(
+            """SELECT * FROM chat_attachment_uploads
+               WHERE public_id = ? AND uploader_user_id = ? AND finalized_at IS NULL
+                 AND datetime(expires_at) > datetime('now') LIMIT 1""",
+            (upload_id, current_user_id),
+        ).fetchone()
+        if not upload:
+            return None, "Upload authorization was not found or has expired."
+        conversation = con.execute(
+            """SELECT conversations.* FROM chat_conversations conversations
+               JOIN chat_participants participants ON participants.conversation_id = conversations.id
+               WHERE conversations.id = ? AND participants.user_id = ? LIMIT 1""",
+            (int(upload["conversation_id"]), current_user_id),
+        ).fetchone()
+        if not conversation:
+            return None, "Conversation not found."
+        block_error = chat_conversation_block_error(con, conversation, current_user_id)
+        if block_error:
+            return None, block_error
+        try:
+            head = r2_storage_client().head_object(
+                Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), ChecksumMode="ENABLED",
+            )
+        except Exception:
+            return None, "Encrypted upload is not available yet."
+        actual_size = int(head.get("ContentLength") or 0)
+        actual_checksum = str(head.get("ChecksumSHA256") or "")
+        metadata = head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        if (actual_size != int(upload["expected_size"])
+                or not secrets.compare_digest(actual_checksum, str(upload["expected_checksum"]))
+                or not secrets.compare_digest(str(metadata.get("upload-id") or ""), upload_id)):
+            return None, "Encrypted upload verification failed."
+        message, error = save_encrypted_chat_message(
+            con, conversation, user, envelopes, clean_text_value(client_message_id, 120),
+        )
+        if not message:
+            return None, error
+        attachment_reference = f"r2://{R2_BUCKET_NAME}/{upload['object_key']}"
+        message_metadata = {
+            "encrypted": True,
+            "size": actual_size,
+            "mediaMimeType": str(upload["media_mime_type"]),
+            "ciphertextSha256": str(upload["expected_checksum"]),
+            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at")),
+            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+        }
+        con.execute(
+            "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ?, metadata_json = ? WHERE id = ?",
+            (attachment_reference, json.dumps(message_metadata, sort_keys=True), int(message["id"])),
+        )
+        con.execute(
+            "UPDATE chat_attachment_uploads SET finalized_at = CURRENT_TIMESTAMP, message_id = ? WHERE id = ?",
+            (int(message["id"]), int(upload["id"])),
+        )
+        return con.execute(
+            """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+               FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+               WHERE messages.id = ?""",
+            (int(message["id"]),),
+        ).fetchone(), ""
+
+
+def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, int]:
+    scanned = deleted = failed = 0
+    batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
+    with db() as con:
+        rows = con.execute(
+            """SELECT id, object_key FROM chat_attachment_uploads
+               WHERE finalized_at IS NULL AND datetime(expires_at) <= datetime('now')
+               ORDER BY id LIMIT ?""",
+            (batch_limit,),
+        ).fetchall()
+        for row in rows:
+            scanned += 1
+            try:
+                r2_storage_client().delete_object(Bucket=R2_BUCKET_NAME, Key=str(row["object_key"]))
+                con.execute("DELETE FROM chat_attachment_uploads WHERE id = ?", (int(row["id"]),))
+                deleted += 1
+            except Exception:
+                failed += 1
+    return {"scanned": scanned, "deleted": deleted, "failed": failed}
+
+
+def create_chitthi_download_authorization(
+    *, message_id: int, user_id: int, device_id: str,
+) -> tuple[dict[str, object] | None, str]:
+    device_id = clean_text_value(device_id, 100)
+    if message_id <= 0 or not device_id:
+        return None, "A valid message and device are required."
+    with db() as con:
+        message = con.execute(
+            """SELECT messages.attachment_url, messages.metadata_json
+               FROM chat_messages messages
+               JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
+               JOIN chat_message_envelopes envelopes ON envelopes.message_id = messages.id
+               WHERE messages.id = ? AND participants.user_id = ?
+                 AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?
+                 AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
+                 AND messages.deleted_at IS NULL AND messages.attachment_url != ''
+               LIMIT 1""",
+            (message_id, user_id, user_id, device_id),
+        ).fetchone()
+    if not message:
+        return None, "Attachment not found for this device."
+    reference = str(message["attachment_url"] or "")
+    if not reference.startswith(f"r2://{R2_BUCKET_NAME}/") or not r2_storage_configured():
+        return None, "Direct download is not available for this attachment."
+    object_key = reference.replace(f"r2://{R2_BUCKET_NAME}/", "", 1)
+    download_url = r2_storage_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": R2_BUCKET_NAME, "Key": object_key, "ResponseContentType": "application/octet-stream"},
+        ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
+    )
+    try:
+        metadata = json.loads(str(message["metadata_json"] or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    return {
+        "downloadUrl": download_url,
+        "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
+        "encryptedSize": int(metadata.get("size") or 0),
+        "ciphertextSha256": str(metadata.get("ciphertextSha256") or ""),
+        "mediaMimeType": str(metadata.get("mediaMimeType") or ""),
+    }, ""
+
+
 def save_file_payload_to_r2(
     *,
     folder_name: str,
@@ -1227,6 +1441,210 @@ def stored_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     if value.startswith("r2://"):
         return r2_upload_parts(value)
     return local_upload_parts(value)
+
+
+def delete_stored_upload_reference(value: str) -> bool:
+    """Delete one stored upload object without broad globs or folder deletion."""
+    if value.startswith("r2://"):
+        if not r2_storage_configured():
+            return False
+        location = value.replace("r2://", "", 1)
+        bucket, separator, object_key = location.partition("/")
+        if not separator or bucket != R2_BUCKET_NAME or not object_key:
+            return False
+        client = r2_storage_client()
+        if client is None:
+            return False
+        client.delete_object(Bucket=bucket, Key=object_key)
+        return True
+    if value.startswith("local://uploads/chat/"):
+        upload_root = (DB_PATH.parent / "uploads" / "chat").resolve()
+        relative = value.replace("local://uploads/chat/", "", 1)
+        target = (upload_root / relative).resolve()
+        if not target.is_relative_to(upload_root):
+            return False
+        if target.is_file():
+            target.unlink()
+        return True
+    return False
+
+
+def chitthi_attachment_expiry_timestamp(created_at: object | None = None) -> str:
+    created = parse_sql_datetime(created_at) if created_at else None
+    if created is None:
+        created = datetime.utcnow()
+    expires_at = created + timedelta(days=max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS))
+    return expires_at.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def cleanup_expired_chitthi_attachments(*, force: bool = True, limit: int | None = None) -> dict[str, int]:
+    """Remove expired encrypted Chitthi media blobs while preserving message rows.
+
+    This protects R2/local storage without touching marketplace listing images,
+    profile photos, posters, or normal public assets.
+    """
+    if not force:
+        database_key = str(DB_PATH.resolve())
+        now = time.monotonic()
+        with _CHITTHI_MEDIA_CLEANUP_LOCK:
+            last_run = _CHITTHI_MEDIA_CLEANUP_LAST_RUN.get(database_key, 0.0)
+            if now - last_run < 60 * 60:
+                return {"scanned": 0, "deleted": 0, "failed": 0, "skipped": 0}
+            _CHITTHI_MEDIA_CLEANUP_LAST_RUN[database_key] = now
+    scanned = deleted = failed = skipped = 0
+    batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT id, attachment_url, metadata_json, created_at
+            FROM chat_messages
+            WHERE message_type = 'ENCRYPTED_ATTACHMENT'
+              AND attachment_url != ''
+              AND datetime(created_at, ?) <= datetime('now')
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (f"+{max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)} days", batch_limit),
+        ).fetchall()
+        for row in rows:
+            scanned += 1
+            attachment_url = row_value(row, "attachment_url")
+            try:
+                metadata = json.loads(row_value(row, "metadata_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if metadata.get("mediaExpired"):
+                skipped += 1
+                continue
+            try:
+                if not delete_stored_upload_reference(attachment_url):
+                    failed += 1
+                    continue
+                metadata.update({
+                    "mediaExpired": True,
+                    "expiredAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    "deletedFromStorage": True,
+                    "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+                })
+                con.execute(
+                    "UPDATE chat_messages SET attachment_url = '', metadata_json = ? WHERE id = ?",
+                    (json.dumps(metadata, sort_keys=True), int(row_value(row, "id") or 0)),
+                )
+                deleted += 1
+            except Exception:
+                failed += 1
+        con.commit()
+    return {"scanned": scanned, "deleted": deleted, "failed": failed, "skipped": skipped}
+
+
+def record_chitthi_attachment_download(message_id: int, user_id: int, device_id: str = "") -> dict[str, object]:
+    """Record a recipient download and delete cloud media once all recipients have it.
+
+    Recipient membership is based on the message's encrypted envelopes so users
+    who join a group later do not block cleanup for media they could not decrypt.
+    """
+    device_id = clean_text_value(device_id, 100)
+    if message_id <= 0 or user_id <= 0 or not device_id:
+        return {"recorded": False, "deleted": False}
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT id, conversation_id, sender_id, attachment_url, metadata_json
+            FROM chat_messages
+            WHERE id = ? AND message_type = 'ENCRYPTED_ATTACHMENT' AND attachment_url != ''
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        if not row:
+            return {"recorded": False, "deleted": False}
+        sender_id = int(row_value(row, "sender_id") or 0)
+        if user_id == sender_id:
+            return {"recorded": False, "deleted": False, "recipientCount": 0}
+        intended_device = con.execute(
+            """SELECT 1 FROM chat_message_envelopes
+               WHERE message_id = ? AND recipient_user_id = ? AND recipient_device_id = ? LIMIT 1""",
+            (message_id, user_id, device_id),
+        ).fetchone()
+        if not intended_device:
+            return {"recorded": False, "deleted": False}
+        con.execute(
+            """
+            INSERT INTO chat_attachment_device_receipts (message_id, user_id, device_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(message_id, user_id, device_id) DO UPDATE SET downloaded_at = CURRENT_TIMESTAMP
+            """,
+            (message_id, user_id, device_id),
+        )
+        recipient_rows = con.execute(
+            """
+            SELECT DISTINCT recipient_user_id, recipient_device_id
+            FROM chat_message_envelopes
+            WHERE message_id = ? AND recipient_user_id != ?
+            """,
+            (message_id, sender_id),
+        ).fetchall()
+        recipient_devices = {
+            (int(row_value(item, "recipient_user_id") or 0), str(row_value(item, "recipient_device_id") or ""))
+            for item in recipient_rows
+        }
+        recipient_devices = {item for item in recipient_devices if item[0] and item[1]}
+        if not recipient_devices:
+            con.commit()
+            return {"recorded": True, "deleted": False, "recipientCount": 0}
+        receipt_rows = con.execute(
+            """SELECT DISTINCT user_id, device_id
+               FROM chat_attachment_device_receipts WHERE message_id = ?""",
+            (message_id,),
+        ).fetchall()
+        downloaded_devices = {
+            (int(row_value(item, "user_id") or 0), str(row_value(item, "device_id") or ""))
+            for item in receipt_rows
+        }
+        if not recipient_devices.issubset(downloaded_devices):
+            con.commit()
+            return {
+                "recorded": True,
+                "deleted": False,
+                "recipientCount": len(recipient_devices),
+                "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
+            }
+        attachment_url = row_value(row, "attachment_url")
+        try:
+            metadata = json.loads(row_value(row, "metadata_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if not delete_stored_upload_reference(attachment_url):
+            con.commit()
+            return {
+                "recorded": True,
+                "deleted": False,
+                "recipientCount": len(recipient_devices),
+                "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
+            }
+        metadata.update({
+            "mediaExpired": True,
+            "expiredAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "deletedFromStorage": True,
+            "downloadedByAll": True,
+            "downloadedByAllAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+        })
+        con.execute(
+            "UPDATE chat_messages SET attachment_url = '', metadata_json = ? WHERE id = ?",
+            (json.dumps(metadata, sort_keys=True), message_id),
+        )
+        con.commit()
+        return {
+            "recorded": True,
+            "deleted": True,
+            "recipientCount": len(recipient_devices),
+            "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
+        }
 
 
 def migrate_local_chat_attachments_to_r2(limit: int = 500, delete_local: bool = False) -> dict[str, int]:
@@ -5268,6 +5686,45 @@ def init_db() -> None:
                 FOREIGN KEY(recipient_user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_attachment_download_receipts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_id, user_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_attachment_uploads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                conversation_id INTEGER NOT NULL,
+                uploader_user_id INTEGER NOT NULL,
+                object_key TEXT NOT NULL UNIQUE,
+                expected_size INTEGER NOT NULL,
+                expected_checksum TEXT NOT NULL,
+                media_mime_type TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT NOT NULL,
+                finalized_at TEXT,
+                message_id INTEGER,
+                FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id),
+                FOREIGN KEY(uploader_user_id) REFERENCES users(id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_attachment_device_receipts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_id, user_id, device_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_message_reactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id INTEGER NOT NULL,
@@ -6334,6 +6791,9 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_user ON chat_device_keys(user_id, revoked_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_envelopes_recipient ON chat_message_envelopes(message_id, recipient_user_id, recipient_device_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_envelopes_device_message ON chat_message_envelopes(recipient_user_id, recipient_device_id, message_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_attachment_receipts_message ON chat_attachment_download_receipts(message_id, user_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_attachment_uploads_expiry ON chat_attachment_uploads(finalized_at, expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_attachment_device_receipts_message ON chat_attachment_device_receipts(message_id, user_id, device_id)")
         con.execute("UPDATE chat_communities SET visibility = 'PRIVATE' WHERE created_by_user_id IS NOT NULL AND visibility = 'PUBLIC'")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
@@ -20095,17 +20555,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/e2ee/messages": self.api_send_encrypted_chat_message,
             "/api/chat/e2ee/relay": self.api_relay_encrypted_chat_message,
             "/api/chat/e2ee/attachments": self.api_send_encrypted_chat_attachment,
+            "/api/chat/e2ee/attachments/authorize": self.api_authorize_encrypted_chat_attachment,
+            "/api/chat/e2ee/attachments/finalize": self.api_finalize_encrypted_chat_attachment,
+            "/api/chat/e2ee/attachments/download-url": self.api_encrypted_chat_attachment_download_url,
             "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
             "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
             "/api/chat/people/by-contacts": self.api_chat_people_by_contacts,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/attachments": self.api_send_chat_attachment,
+            "/api/chat/attachments/downloaded": self.api_confirm_chat_attachment_downloaded,
             "/api/chat/rich-messages": self.api_send_chat_rich_message,
             "/api/chat/polls/vote": self.api_vote_chat_poll,
             "/api/chat/messages/edit": self.api_edit_chat_message,
             "/api/chat/messages/delete": self.api_delete_chat_message,
             "/api/chat/messages/report": self.api_report_chat_message,
             "/api/chat/messages/react": self.api_react_chat_message,
+            "/api/maintenance/chitthi-media": self.api_run_chitthi_media_cleanup,
             "/api/mobile/diagnostics": self.api_mobile_diagnostics,
             "/api/chat/read": self.api_mark_chat_read,
             "/api/chat/typing": self.api_chat_typing,
@@ -21191,6 +21656,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
+        try:
+            cleanup_expired_chitthi_attachments(force=False, limit=25)
+            if r2_storage_configured():
+                cleanup_unfinalized_chitthi_uploads(limit=25)
+        except Exception:
+            pass
         params = urllib.parse.parse_qs(parsed.query)
         try:
             limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
@@ -21291,6 +21762,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
+        try:
+            cleanup_expired_chitthi_attachments(force=False, limit=25)
+            if r2_storage_configured():
+                cleanup_unfinalized_chitthi_uploads(limit=25)
+        except Exception:
+            pass
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         before_message_id = int(float_from_value(params.get("before", ["0"])[0] or "0"))
@@ -22165,13 +22642,79 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             con.execute(
                 "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ?, metadata_json = ? WHERE id = ?",
-                (attachment_url, json.dumps({"encrypted": True, "size": len(ciphertext)}), int(message["id"])),
+                (
+                    attachment_url,
+                    json.dumps({
+                        "encrypted": True,
+                        "size": len(ciphertext),
+                        "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at")),
+                        "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+                    }),
+                    int(message["id"]),
+                ),
             )
             message = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ?", (int(message["id"]),)).fetchone()
             if not bool(payload.get("silent")):
                 con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)}, 201)
+
+    def api_authorize_encrypted_chat_attachment(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to upload encrypted attachments."}, 401)
+            return
+        payload = self.read_json_body()
+        authorization, error = create_chitthi_upload_authorization(
+            user_id=int(user["id"]),
+            conversation_public_id=clean_text_value(payload.get("conversationId"), 80),
+            encrypted_size=int(float_from_value(payload.get("encryptedSize")) or 0),
+            ciphertext_sha256=str(payload.get("ciphertextSha256") or ""),
+            media_mime_type=str(payload.get("mediaMimeType") or ""),
+        )
+        if not authorization:
+            status = 503 if not r2_storage_configured() else 400
+            self.send_json({"ok": False, "message": error}, status)
+            return
+        self.send_json({"ok": True, **authorization}, 201)
+
+    def api_finalize_encrypted_chat_attachment(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to finalize encrypted attachments."}, 401)
+            return
+        payload = self.read_json_body()
+        envelopes = payload.get("envelopes") if isinstance(payload.get("envelopes"), list) else []
+        message, error = finalize_chitthi_upload(
+            user=user,
+            upload_id=clean_text_value(payload.get("uploadId"), 100),
+            envelopes=envelopes,
+            client_message_id=clean_text_value(payload.get("clientMessageId"), 120),
+        )
+        if not message:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        with db() as con:
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (int(message["conversation_id"]),)).fetchone()
+            if conversation and not bool(payload.get("silent")):
+                self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_encrypted_chat_attachment_download_url(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to download encrypted attachments."}, 401)
+            return
+        payload = self.read_json_body()
+        authorization, error = create_chitthi_download_authorization(
+            message_id=int(float_from_value(payload.get("messageId")) or 0),
+            user_id=int(user["id"]),
+            device_id=str(payload.get("deviceId") or ""),
+        )
+        if not authorization:
+            self.send_json({"ok": False, "message": error}, 404)
+            return
+        self.send_json({"ok": True, **authorization})
 
     def api_save_chat_e2ee_backup(self) -> None:
         user = self.current_user()
@@ -22569,6 +23112,40 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def api_confirm_chat_attachment_downloaded(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to confirm attachment downloads."}, 401)
+            return
+        payload = self.read_json_body()
+        message_id = int(float_from_value(payload.get("messageId")) or 0)
+        if message_id <= 0:
+            self.send_json({"ok": False, "message": "A valid message is required."}, 400)
+            return
+        user_id = int(user["id"])
+        with db() as con:
+            authorized = con.execute(
+                """
+                SELECT 1
+                FROM chat_messages messages
+                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
+                WHERE messages.id = ? AND participants.user_id = ?
+                  AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
+                  AND messages.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (message_id, user_id),
+            ).fetchone()
+        if not authorized:
+            self.send_json({"ok": False, "message": "Attachment not found."}, 404)
+            return
+        device_id = clean_text_value(payload.get("deviceId"), 100)
+        if not device_id:
+            self.send_json({"ok": False, "message": "A valid device is required."}, 400)
+            return
+        result = record_chitthi_attachment_download(message_id, user_id, device_id)
+        self.send_json({"ok": True, **result})
 
     def api_edit_chat_message(self) -> None:
         user = self.current_user()
@@ -28508,6 +29085,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
         result = run_email_automations(self.public_origin())
         self.send_json(result)
+
+    def api_run_chitthi_media_cleanup(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        configured_token = os.environ.get("FAIRFARES_CRON_TOKEN", "").strip()
+        supplied_token = query.get("token", [""])[0].strip()
+        if configured_token:
+            if not hmac.compare_digest(configured_token, supplied_token):
+                self.send_json({"ok": False, "message": "Invalid maintenance token."}, 403)
+                return
+        else:
+            user = self.require_owner_admin("/admin/system")
+            if not user:
+                return
+        try:
+            limit = max(1, min(int(query.get("limit", [str(CHITTHI_ATTACHMENT_CLEANUP_BATCH)])[0] or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
+        except ValueError:
+            limit = CHITTHI_ATTACHMENT_CLEANUP_BATCH
+        result = cleanup_expired_chitthi_attachments(force=True, limit=limit)
+        orphan_result = cleanup_unfinalized_chitthi_uploads(limit=limit) if r2_storage_configured() else {"scanned": 0, "deleted": 0, "failed": 0}
+        self.send_json({"ok": True, **result, "orphanUploads": orphan_result, "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)})
 
     def unsubscribe_marketing(self) -> None:
         parsed = urllib.parse.urlparse(self.path)

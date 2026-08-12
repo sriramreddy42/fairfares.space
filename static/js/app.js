@@ -2123,6 +2123,125 @@ async function sendEncryptedChitthi(conversationId, text) {
   return payload;
 }
 
+async function chitthiSha256Base64(bytes) {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return chitthiToBase64(new Uint8Array(digest));
+}
+
+async function compressChitthiImage(file, maxDimension = 2048, quality = 0.82) {
+  if (!file?.type?.startsWith("image/") || file.type === "image/gif" || file.size < 350000) return file;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d", { alpha: false }).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const blob = await new Promise((resolve, reject) => canvas.toBlob(
+    (result) => result ? resolve(result) : reject(new Error("Could not compress this image.")),
+    outputType,
+    quality
+  ));
+  return blob.size < file.size ? new File([blob], file.name, { type: outputType, lastModified: file.lastModified }) : file;
+}
+
+async function chitthiAttachmentEnvelopes(conversationId, attachmentKey, attachmentNonce, file, identity) {
+  const keysResponse = await fetch(`/api/chat/e2ee/keys?conversation_id=${encodeURIComponent(conversationId)}`, { headers: { Accept: "application/json" } });
+  const keysPayload = await keysResponse.json();
+  if (!keysResponse.ok || !keysPayload.ok) throw new Error(keysPayload.message || "Could not load Chitthi keys.");
+  if (!keysPayload.ready) throw new Error(keysPayload.warning || "Every participant must open the latest Chitthi before encryption can start.");
+  const descriptor = new TextEncoder().encode(JSON.stringify({
+    v: 1,
+    kind: "attachment",
+    key: chitthiToBase64(attachmentKey),
+    nonce: chitthiToBase64(attachmentNonce),
+    name: String(file.name || "attachment").slice(0, 200),
+    type: file.type,
+    size: file.size
+  }));
+  const senderSecretKey = chitthiFromBase64(identity.secretKey);
+  return (keysPayload.keys || []).map((key) => {
+    const nonce = window.nacl.randomBytes(window.nacl.box.nonceLength);
+    const ciphertext = window.nacl.box(descriptor, nonce, chitthiFromBase64(key.publicKey), senderSecretKey);
+    return { recipientUserId: key.userId, recipientDeviceId: key.deviceId, senderPublicKey: identity.publicKey, nonce: chitthiToBase64(nonce), ciphertext: chitthiToBase64(ciphertext) };
+  });
+}
+
+async function uploadEncryptedChitthiAttachment(conversationId, sourceFile, { silent = false } = {}) {
+  if (!window.nacl?.secretbox || !crypto?.subtle) throw new Error("Secure attachment encryption is unavailable on this device.");
+  const identity = await getChitthiBrowserIdentity();
+  if (!identity) throw new Error("Chitthi encryption is unavailable on this device.");
+  const file = await compressChitthiImage(sourceFile);
+  const clearBytes = new Uint8Array(await file.arrayBuffer());
+  const attachmentKey = window.nacl.randomBytes(window.nacl.secretbox.keyLength);
+  const attachmentNonce = window.nacl.randomBytes(window.nacl.secretbox.nonceLength);
+  const encryptedBytes = window.nacl.secretbox(clearBytes, attachmentNonce, attachmentKey);
+  clearBytes.fill(0);
+  if (encryptedBytes.byteLength > 12000000) throw new Error("Encrypted attachments are currently limited to 12 MB.");
+  const ciphertextSha256 = await chitthiSha256Base64(encryptedBytes);
+  const authorizationResponse = await fetch("/api/chat/e2ee/attachments/authorize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ conversationId, encryptedSize: encryptedBytes.byteLength, ciphertextSha256, mediaMimeType: file.type })
+  });
+  const authorization = await authorizationResponse.json();
+  if (!authorizationResponse.ok || !authorization.ok) throw new Error(authorization.message || "Could not authorize the encrypted upload.");
+  const uploadResponse = await fetch(authorization.uploadUrl, { method: "PUT", headers: authorization.headers, body: encryptedBytes });
+  if (!uploadResponse.ok) throw new Error("The encrypted upload did not reach secure storage.");
+  const envelopes = await chitthiAttachmentEnvelopes(conversationId, attachmentKey, attachmentNonce, file, identity);
+  attachmentKey.fill(0);
+  const finalizeResponse = await fetch("/api/chat/e2ee/attachments/finalize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ uploadId: authorization.uploadId, envelopes, silent, clientMessageId: crypto.randomUUID?.() || String(Date.now()) })
+  });
+  const finalized = await finalizeResponse.json();
+  if (!finalizeResponse.ok || !finalized.ok) throw new Error(finalized.message || "Could not publish the encrypted attachment.");
+  return finalized.message;
+}
+
+async function downloadEncryptedChitthiAttachment(messageId, envelope) {
+  const identity = await getChitthiBrowserIdentity();
+  if (!identity || !envelope) throw new Error("This device does not have the attachment key.");
+  const descriptorText = decryptChitthiEnvelope(envelope, identity);
+  let descriptor;
+  try { descriptor = JSON.parse(descriptorText); } catch { descriptor = null; }
+  if (descriptor?.v !== 1 || descriptor?.kind !== "attachment") throw new Error("The encrypted attachment key is invalid.");
+  const authorizationResponse = await fetch("/api/chat/e2ee/attachments/download-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ messageId, deviceId: identity.deviceId })
+  });
+  const authorization = await authorizationResponse.json();
+  if (!authorizationResponse.ok || !authorization.ok) throw new Error(authorization.message || "Could not authorize this download.");
+  const downloadResponse = await fetch(authorization.downloadUrl, { headers: { Accept: "application/octet-stream" } });
+  if (!downloadResponse.ok) throw new Error("The encrypted attachment could not be downloaded.");
+  const encryptedBytes = new Uint8Array(await downloadResponse.arrayBuffer());
+  const actualChecksum = await chitthiSha256Base64(encryptedBytes);
+  if (actualChecksum !== authorization.ciphertextSha256) throw new Error("The encrypted attachment checksum did not match.");
+  const clearBytes = window.nacl.secretbox.open(encryptedBytes, chitthiFromBase64(descriptor.nonce), chitthiFromBase64(descriptor.key));
+  if (!clearBytes) throw new Error("The attachment could not be authenticated or decrypted.");
+  return { blob: new Blob([clearBytes], { type: descriptor.type }), name: descriptor.name, deviceId: identity.deviceId };
+}
+
+async function confirmChitthiAttachmentStored(messageId, deviceId) {
+  const response = await fetch("/api/chat/attachments/downloaded", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ messageId, deviceId })
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok || !payload.recorded) throw new Error(payload.message || "Could not confirm durable attachment storage.");
+  return payload;
+}
+
+window.ChitthiMediaTransport = Object.freeze({
+  upload: uploadEncryptedChitthiAttachment,
+  download: downloadEncryptedChitthiAttachment,
+  confirmStored: confirmChitthiAttachmentStored
+});
+
 function chatEscape(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",

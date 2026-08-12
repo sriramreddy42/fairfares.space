@@ -515,6 +515,24 @@ class ChatRealtimeTest(unittest.TestCase):
             download = urllib.request.Request(f"http://127.0.0.1:{server.server_port}{result['message']['attachmentUrl']}", headers={"Authorization": "Bearer recipient-token"})
             with urllib.request.urlopen(download, timeout=3) as response:
                 self.assertEqual(response.read(), ciphertext)
+            with app.db() as con:
+                before_confirmation = con.execute("SELECT attachment_url FROM chat_messages WHERE id = ?", (int(result["message"]["id"]),)).fetchone()
+            self.assertTrue(before_confirmation["attachment_url"])
+
+            confirmation = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/attachments/downloaded",
+                data=json.dumps({"messageId": int(result["message"]["id"]), "deviceId": "recipient-device-01"}).encode(),
+                method="POST",
+                headers={"Authorization": "Bearer recipient-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(confirmation, timeout=3) as response:
+                confirmed = json.loads(response.read().decode())
+            self.assertTrue(confirmed["recorded"])
+            self.assertTrue(confirmed["deleted"])
+            with app.db() as con:
+                after_confirmation = con.execute("SELECT attachment_url, metadata_json FROM chat_messages WHERE id = ?", (int(result["message"]["id"]),)).fetchone()
+            self.assertEqual(after_confirmation["attachment_url"], "")
+            self.assertIn("downloadedByAll", after_confirmation["metadata_json"])
 
             backup_payload = "encrypted-only-" + ("Z" * 120)
             backup_request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/backup", data=json.dumps({"encryptedPayload": backup_payload}).encode(), method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
