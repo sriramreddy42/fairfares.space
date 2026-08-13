@@ -619,7 +619,7 @@ function FairFaresApp() {
   useEffect(() => {
     const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
       const type = String(response?.notification.request.content.data?.type || "");
-      if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE") {
+      if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
         setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
         setPendingPost(null);
         setPendingRide(null);

@@ -841,6 +841,14 @@ function ChatMessagePhoto({ message, resolvePreview, compact = false }: { messag
   if (message.metadata?.encryptedKeyPayload) {
     return <EncryptedChatImage message={message} resolvePreview={resolvePreview} compact={compact} />;
   }
+  // Disk-cached E2EE messages deliberately omit the decrypted descriptor and
+  // thumbnail because both can contain sensitive material. On first open,
+  // wait for the freshly fetched device envelope instead of passing encrypted
+  // ciphertext to the ordinary image-preview endpoint and flashing a false
+  // "preview unavailable" error.
+  if (message.metadata?.encrypted) {
+    return <View pointerEvents="none" style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><ActivityIndicator size="small" color="#D6A95F" /></View>;
+  }
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
 
@@ -2163,6 +2171,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     activateThreadConversation(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
+    // Disk-cache hydration and secure identity preparation are independent.
+    // Start both at tap time so a cold AsyncStorage read never delays the
+    // message/envelope request that unlocks encrypted photo previews.
+    const identityPromise = ensureChatDeviceIdentity();
     const cachedMessages = await loadCachedThreadMessages(conversation.id);
     showCachedThreadMessages(conversation.id, cachedMessages);
     if (!cachedMessages.length) clearThreadMessages();
@@ -2173,11 +2185,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Fetch only this device's envelopes for the visible page in the same
       // bounded response as its message rows. This avoids downloading the
       // conversation's entire envelope history before thumbnails can render.
-      const identity = await ensureChatDeviceIdentity();
-      const [payload, keyPayload] = await Promise.all([
-        getChatMessages(conversation.id, 0, 20, identity.deviceId),
-        getChatDeviceKeys(conversation.id).catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }))
-      ]);
+      const identity = await identityPromise;
+      // Receiving only needs this device's page-scoped envelopes. Destination
+      // send-key readiness is useful for the composer but must not hold the
+      // first photo preview behind another network round trip.
+      const keyPayloadPromise = getChatDeviceKeys(conversation.id)
+        .then((keyPayload) => {
+          if (activeConversationIdRef.current === conversation.id) setEncryptionReady(Boolean(keyPayload.ready));
+          return keyPayload;
+        })
+        .catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }));
+      const payload = await getChatMessages(conversation.id, 0, 20, identity.deviceId);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== conversation.id) return;
       setActiveSubject(payload.conversation.subject || conversation.subject);
       setActiveConversation({
@@ -2202,8 +2220,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const decryptedMessages = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
         identity,
         envelopePayload,
-        keyPayload
+        // Decryption is independent of the send-key directory. Its eventual
+        // result updates encryptionReady through keyPayloadPromise above.
+        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
       }));
+      void keyPayloadPromise;
       prepareThreadForLatestLayout();
       mergeThreadMessages(conversation.id, decryptedMessages);
       updateMessagePagination(payload);
@@ -3583,6 +3604,32 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Let React commit the busy state before CPU-heavy encryption starts.
       // Without this frame handoff the native button can look unresponsive.
       await allowBusyUiToPaint();
+      // Prepare each reusable media descriptor once, concurrently with device
+      // identity and destination-key requests. Previously an old photo without
+      // an embedded thumbnail was downloaded and thumbnailed again for every
+      // selected destination, serially extending the forwarding delay.
+      const preparedDescriptors = new Map<number, Promise<{ descriptor: string; error?: unknown }>>();
+      chosenMessages.forEach((message) => {
+        const existingDescriptor = typeof message.metadata?.encryptedKeyPayload === "string" ? message.metadata.encryptedKeyPayload : "";
+        if (message.id <= 0 || !existingDescriptor || !["IMAGE", "VIDEO", "FILE"].includes(message.type)) return;
+        preparedDescriptors.set(message.id, (async () => {
+          try {
+            const parsed = JSON.parse(existingDescriptor) as Record<string, unknown>;
+            let thumbnailBase64 = typeof parsed.thumbnailBase64 === "string" ? parsed.thumbnailBase64 : "";
+            if (message.type === "IMAGE" && !thumbnailBase64) {
+              const localAttachment = await materializeAttachment(message);
+              thumbnailBase64 = await createLightweightChatThumbnail(localAttachment.uri).catch(() => "");
+            }
+            return { descriptor: JSON.stringify({
+              ...parsed,
+              forwarded: true,
+              ...(thumbnailBase64 ? { thumbnailBase64 } : {})
+            }) };
+          } catch (error) {
+            return { descriptor: "", error };
+          }
+        })());
+      });
       const [identity, destinationKeys] = await Promise.all([
         ensureChatDeviceIdentity(),
         Promise.all(selectedForwardConversationIds.map(async (conversationId) => ({ conversationId, keyPayload: await getChatDeviceKeys(conversationId) })))
@@ -3596,23 +3643,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {
             const existingDescriptor = typeof message.metadata?.encryptedKeyPayload === "string" ? message.metadata.encryptedKeyPayload : "";
             if (message.id > 0 && existingDescriptor) {
-              let forwardedDescriptor = existingDescriptor;
-              try {
-                const parsed = JSON.parse(existingDescriptor) as Record<string, unknown>;
-                let thumbnailBase64 = typeof parsed.thumbnailBase64 === "string" ? parsed.thumbnailBase64 : "";
-                if (message.type === "IMAGE" && !thumbnailBase64) {
-                  setForwardingStatus(`Creating preview for message ${messageIndex + 1} of ${chosenMessages.length}…`);
-                  const localAttachment = await materializeAttachment(message);
-                  thumbnailBase64 = await createLightweightChatThumbnail(localAttachment.uri).catch(() => "");
-                }
-                forwardedDescriptor = JSON.stringify({
-                  ...parsed,
-                  forwarded: true,
-                  ...(thumbnailBase64 ? { thumbnailBase64 } : {})
-                });
-              } catch {
+              const preparedDescriptor = await preparedDescriptors.get(message.id)!;
+              if (preparedDescriptor.error || !preparedDescriptor.descriptor) {
                 throw new Error("This attachment descriptor is invalid and cannot be forwarded securely.");
               }
+              const forwardedDescriptor = preparedDescriptor.descriptor;
               const preview = message.text || (message.type === "IMAGE" ? "Forwarded a photo" : message.type === "VIDEO" ? "Forwarded a video" : "Forwarded a file");
               const envelopes = encryptForDevices(forwardedDescriptor, identity, keyPayload.keys, preview);
               try {

@@ -23066,6 +23066,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Choose a supported reaction."}, 400)
             return
         current_user_id = int(user["id"])
+        reaction_added = False
+        notification_target_id = 0
+        notification_title = ""
+        notification_body = ""
+        notification_data: dict[str, object] = {}
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
             if not conversation:
@@ -23086,6 +23091,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "INSERT INTO chat_message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?) ON CONFLICT(message_id, user_id) DO UPDATE SET emoji = excluded.emoji, updated_at = CURRENT_TIMESTAMP",
                     (message_id, current_user_id, emoji),
                 )
+                reaction_added = True
+            notification_target_id = int(row_value(message, "sender_id") or 0)
+            if reaction_added and notification_target_id and notification_target_id != current_user_id:
+                target_participant = con.execute(
+                    "SELECT muted_at FROM chat_participants WHERE conversation_id = ? AND user_id = ? LIMIT 1",
+                    (int(conversation["id"]), notification_target_id),
+                ).fetchone()
+                if target_participant and not row_value(target_participant, "muted_at"):
+                    is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
+                    reactor_name = str(row_value(user, "name") or "FairFares member")
+                    conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
+                    community_id = int(row_value(conversation, "community_id") or 0)
+                    avatar_url = (
+                        chat_notification_group_avatar_url(self.public_origin(), community_id)
+                        if is_group and community_id
+                        else chat_notification_avatar_url(self.public_origin(), current_user_id)
+                    )
+                    # Match normal Chitthi notification conventions: direct
+                    # chats lead with the member; groups lead with the group and
+                    # identify the acting member in the body. Never include E2EE
+                    # message content in a server-generated reaction alert.
+                    notification_title = conversation_name if is_group else reactor_name
+                    notification_body = f"{reactor_name} reacted {emoji} to your message" if is_group else f"Reacted {emoji} to your message"
+                    notification_data = {
+                        "type": "CHITTHI_REACTION",
+                        "event": f"REACTION:{current_user_id}:{emoji}",
+                        "conversationId": row_value(conversation, "public_id"),
+                        "messageId": message_id,
+                        "senderId": current_user_id,
+                        "senderName": reactor_name,
+                        "senderAvatarUrl": avatar_url,
+                        "groupAvatarUrl": avatar_url if is_group else "",
+                        "conversationName": conversation_name,
+                        "isGroup": is_group,
+                        "subtitle": reactor_name if is_group else conversation_name,
+                        "reaction": emoji,
+                    }
+        if notification_data:
+            send_mobile_push_for_users(
+                [notification_target_id], notification_title, notification_body, notification_data,
+            )
         self.send_json({"ok": True, "message": chat_message_payload(message, current_user_id)})
 
     def api_relay_encrypted_chat_message(self) -> None:
