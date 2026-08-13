@@ -3,6 +3,34 @@ import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
 
+// Large enough to remain recognizable in a chat bubble, while keeping the
+// complete per-device encrypted descriptor below the backend's 12 KB envelope
+// ceiling even after JSON, NaCl and base64 overhead.
+const CHAT_THUMBNAIL_MAX_BYTES = 5_000;
+
+function decodedBase64Size(value: string) {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+}
+
+export async function createLightweightChatThumbnail(uri: string) {
+  let width = 240;
+  let quality = 0.52;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const thumbnail = await ImageManipulator.manipulateAsync(uri, [{ resize: { width } }], {
+      base64: true,
+      compress: quality,
+      format: ImageManipulator.SaveFormat.JPEG
+    });
+    const base64 = thumbnail.base64 || "";
+    if (base64 && decodedBase64Size(base64) <= CHAT_THUMBNAIL_MAX_BYTES) return base64;
+    width = Math.max(112, Math.round(width * 0.82));
+    quality = Math.max(0.3, quality - 0.07);
+  }
+  // A thumbnail is an optimization, never a reason to block the attachment.
+  return "";
+}
+
 function preferredImageEncoding() {
   const webp = Platform.OS !== "ios";
   return {
@@ -39,12 +67,14 @@ async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: numb
     currentWidth = Math.max(720, Math.round(currentWidth * 0.82));
     currentQuality = Math.max(0.42, currentQuality - 0.1);
   }
+  const thumbnailBase64 = await createLightweightChatThumbnail(best.uri).catch(() => "");
   return {
     uri: best.uri,
     blob: best.blob,
     name: `${prefix}-${Date.now()}-${index + 1}.${encoding.extension}`,
     mimeType: encoding.mimeType,
     size: best.size,
+    thumbnailBase64,
     kind: "IMAGE" as const
   };
 }

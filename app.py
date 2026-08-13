@@ -1474,6 +1474,74 @@ def finalize_chitthi_upload(
         ).fetchone(), ""
 
 
+def forward_chitthi_attachment(
+    *, user: sqlite3.Row, source_message_id: int, destination_conversation_public_id: str,
+    envelopes: list[dict[str, object]], client_message_id: str,
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    """Create a new E2EE message referencing an existing immutable ciphertext object.
+
+    Only the client-held attachment descriptor (including its random media key)
+    is re-encrypted for destination devices. The backend validates both sides
+    but never receives or decrypts that descriptor.
+    """
+    current_user_id = int(user["id"])
+    if source_message_id <= 0:
+        return None, None, "A valid source attachment is required."
+    with db() as con:
+        source = con.execute(
+            """SELECT messages.* FROM chat_messages messages
+               JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
+               WHERE messages.id = ? AND participants.user_id = ?
+                 AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
+                 AND messages.deleted_at IS NULL AND messages.attachment_url != ''
+                 AND datetime(messages.created_at, ?) > datetime('now')
+               LIMIT 1""",
+            (source_message_id, current_user_id, f"+{max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)} days"),
+        ).fetchone()
+        if not source:
+            return None, None, "Source attachment was not found."
+        attachment_reference = str(row_value(source, "attachment_url") or "")
+        if not attachment_reference.startswith(f"r2://{R2_BUCKET_NAME}/"):
+            return None, None, "This attachment cannot be forwarded without uploading it again."
+        try:
+            source_metadata = json.loads(str(row_value(source, "metadata_json") or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            source_metadata = {}
+        if not isinstance(source_metadata, dict) or source_metadata.get("mediaExpired"):
+            return None, None, "This attachment has expired."
+        destination = get_chat_conversation_by_public_id(con, destination_conversation_public_id, current_user_id)
+        if not destination:
+            return None, None, "Destination conversation was not found."
+        block_error = chat_conversation_block_error(con, destination, current_user_id)
+        if block_error:
+            return None, None, block_error
+        message, error = save_encrypted_chat_message(
+            con, destination, user, envelopes, clean_text_value(client_message_id, 120),
+        )
+        if not message:
+            return None, None, error
+        forwarded_metadata = {
+            "encrypted": True,
+            "size": int(source_metadata.get("size") or 0),
+            "mediaMimeType": clean_text_value(source_metadata.get("mediaMimeType"), 120),
+            "ciphertextSha256": clean_text_value(source_metadata.get("ciphertextSha256"), 120),
+            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at")),
+            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+            "reusedCiphertext": True,
+        }
+        con.execute(
+            "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ?, metadata_json = ? WHERE id = ?",
+            (attachment_reference, json.dumps(forwarded_metadata, sort_keys=True), int(message["id"])),
+        )
+        saved = con.execute(
+            """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+               FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+               WHERE messages.id = ?""",
+            (int(message["id"]),),
+        ).fetchone()
+        return saved, destination, ""
+
+
 def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, int]:
     scanned = deleted = failed = 0
     batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
@@ -1747,7 +1815,15 @@ def cleanup_expired_chitthi_attachments(*, force: bool = True, limit: int | None
                 skipped += 1
                 continue
             try:
-                if not delete_stored_upload_reference(attachment_url):
+                # Forwarded messages can safely share the same immutable
+                # encrypted R2 object. Delete it only when this is the final
+                # live message reference; every message keeps independent
+                # envelopes, receipts and retention metadata.
+                other_reference = con.execute(
+                    "SELECT 1 FROM chat_messages WHERE id != ? AND attachment_url = ? LIMIT 1",
+                    (int(row_value(row, "id") or 0), attachment_url),
+                ).fetchone()
+                if not other_reference and not delete_stored_upload_reference(attachment_url):
                     failed += 1
                     continue
                 metadata.update({
@@ -1809,7 +1885,11 @@ def cleanup_deleted_chitthi_messages(*, force: bool = True, limit: int | None = 
             message_id = int(row_value(row, "id") or 0)
             attachment_url = str(row_value(row, "attachment_url") or "")
             try:
-                if attachment_url and not delete_stored_upload_reference(attachment_url):
+                other_reference = con.execute(
+                    "SELECT 1 FROM chat_messages WHERE id != ? AND attachment_url = ? LIMIT 1",
+                    (message_id, attachment_url),
+                ).fetchone() if attachment_url else None
+                if attachment_url and not other_reference and not delete_stored_upload_reference(attachment_url):
                     failed += 1
                     continue
                 # Keep relational cleanup atomic per message. If one dependent
@@ -20965,6 +21045,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/e2ee/attachments/multipart/complete": self.api_complete_encrypted_chat_attachment_multipart,
             "/api/chat/e2ee/attachments/multipart/abort": self.api_abort_encrypted_chat_attachment_multipart,
             "/api/chat/e2ee/attachments/finalize": self.api_finalize_encrypted_chat_attachment,
+            "/api/chat/e2ee/attachments/forward": self.api_forward_encrypted_chat_attachment,
             "/api/chat/e2ee/attachments/download-url": self.api_encrypted_chat_attachment_download_url,
             "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
             "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
@@ -22181,11 +22262,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         before_message_id = int(float_from_value(params.get("before", ["0"])[0] or "0"))
+        device_id = clean_text_value(params.get("device_id", [""])[0], 100)
         limit = max(1, min(50, int(float_from_value(params.get("limit", ["30"])[0] or "30") or 30)))
         if not conversation_public_id:
             self.send_json({"ok": False, "message": "Conversation is required."}, 400)
             return
         current_user_id = int(user["id"])
+        page_envelopes: list[sqlite3.Row] = []
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
             if not conversation:
@@ -22236,6 +22319,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """.format(placeholders=",".join("?" for _ in messages)),
                     (conversation["id"], *[int(row_value(message, "id") or 0) for message in messages]),
                 ).fetchall()
+                if device_id:
+                    page_envelopes = con.execute(
+                        """SELECT message_id, sender_public_key, nonce, ciphertext
+                           FROM chat_message_envelopes
+                           WHERE recipient_user_id = ? AND recipient_device_id = ?
+                             AND message_id IN ({placeholders})
+                           ORDER BY message_id ASC""".format(placeholders=",".join("?" for _ in messages)),
+                        (current_user_id, device_id, *[int(row_value(message, "id") or 0) for message in messages]),
+                    ).fetchall()
             seen_row = con.execute(
                 """
                 SELECT MAX(last_read_message_id) AS seen_message_id
@@ -22260,6 +22352,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "conversation": chat_row_payload(conversation, current_user_id),
                 "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
+                "envelopes": [{
+                    "messageId": int(row_value(envelope, "message_id") or 0),
+                    "senderPublicKey": row_value(envelope, "sender_public_key"),
+                    "nonce": row_value(envelope, "nonce"),
+                    "ciphertext": row_value(envelope, "ciphertext"),
+                } for envelope in page_envelopes],
                 "hasMore": has_more,
                 "nextBefore": int(row_value(messages[0], "id") or 0) if has_more and messages else 0,
             }
@@ -23104,6 +23202,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (int(message["conversation_id"]),)).fetchone()
             if conversation and not bool(payload.get("silent")):
+                self.notify_chat_recipients(con, conversation, user, message)
+        self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
+
+    def api_forward_encrypted_chat_attachment(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to forward encrypted attachments."}, 401)
+            return
+        payload = self.read_json_body()
+        envelopes = payload.get("envelopes") if isinstance(payload.get("envelopes"), list) else []
+        message, conversation, error = forward_chitthi_attachment(
+            user=user,
+            source_message_id=int(float_from_value(payload.get("sourceMessageId")) or 0),
+            destination_conversation_public_id=clean_text_value(payload.get("conversationId"), 80),
+            envelopes=envelopes,
+            client_message_id=clean_text_value(payload.get("clientMessageId"), 120),
+        )
+        if not message or not conversation:
+            self.send_json({"ok": False, "message": error}, 409)
+            return
+        if not bool(payload.get("silent")):
+            with db() as con:
                 self.notify_chat_recipients(con, conversation, user, message)
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
 

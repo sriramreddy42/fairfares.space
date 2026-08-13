@@ -194,7 +194,11 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     headers.Authorization = `Bearer ${authToken}`;
   }
   let lastError = "";
-  const isAttachmentUpload = path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments");
+  // Reference forwarding only writes a message row and reuses ciphertext that
+  // is already in R2. Do not give it the two-minute transfer timeout (or the
+  // upload-specific error copy) used by endpoints that move attachment bytes.
+  const isAttachmentUpload = (path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments"))
+    && path !== "/api/chat/e2ee/attachments/forward";
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
@@ -215,7 +219,14 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
         try {
           payload = JSON.parse(text) as T & { error?: string; message?: string };
         } catch {
-          throw new Error(`FairFares server at ${baseUrl} returned a non-JSON response.`);
+          // An HTML 404/5xx from a proxy is an HTTP response, not a dropped
+          // upload. Preserve its status so request() fails immediately instead
+          // of retrying it with the long attachment timeout.
+          const responseError = new Error(`FairFares server returned an unexpected response (HTTP ${response.status}).`) as Error & {
+            fairFaresHttpStatus?: number;
+          };
+          responseError.fairFaresHttpStatus = response.status;
+          throw responseError;
         }
         if (!response.ok) {
           const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
@@ -849,13 +860,14 @@ export async function getChatCommunities(city = "") {
   return payload.communities || [];
 }
 
-export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30) {
+export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30, deviceId = "") {
   const params = new URLSearchParams({
     conversation_id: conversationId,
     limit: String(Math.max(1, Math.min(50, Math.floor(limit || 30))))
   });
   if (beforeMessageId > 0) params.set("before", String(Math.floor(beforeMessageId)));
-  return request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; hasMore: boolean; nextBefore: number }>(
+  if (deviceId) params.set("device_id", deviceId);
+  return request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }>; hasMore: boolean; nextBefore: number }>(
     `/api/chat/messages?${params.toString()}`
   );
 }
@@ -1103,6 +1115,25 @@ export async function finalizeEncryptedChatAttachment(uploadId: string, envelope
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId, envelopes, clientMessageId, silent })
+  }, { attempts: 3 });
+}
+
+export async function forwardEncryptedChatAttachment(
+  sourceMessageId: number,
+  conversationId: string,
+  envelopes: Array<Record<string, unknown>>,
+  silent = false
+) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/forward", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sourceMessageId,
+      conversationId,
+      envelopes,
+      silent,
+      clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    })
   }, { attempts: 3 });
 }
 

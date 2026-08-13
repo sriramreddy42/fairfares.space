@@ -89,6 +89,67 @@ class FakeR2Client:
 
 
 class R2StorageTest(unittest.TestCase):
+    def test_forward_rewraps_descriptor_without_copying_ciphertext_and_cleanup_is_reference_safe(self):
+        self.addCleanup(app.refresh_storage_paths)
+        client = FakeR2Client()
+        object_key = "fairfares/chitthi/shared-forward.ffenc"
+        reference = f"r2://fairfares-attachments/{object_key}"
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "R2_BUCKET_NAME", "fairfares-attachments"), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            app.refresh_storage_paths(); app.init_db()
+            with app.db() as con:
+                for name in ("Original", "Forwarder", "Destination"):
+                    con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'x', 1)", (name, f"{name.lower()}@example.com"))
+                original_id, forwarder_id, destination_id = [int(row[0]) for row in con.execute("SELECT id FROM users ORDER BY id")]
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('source-chat')")
+                source_conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('destination-chat')")
+                destination_conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                for user_id in (original_id, forwarder_id):
+                    con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (source_conversation_id, user_id))
+                for user_id in (forwarder_id, destination_id):
+                    con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (destination_conversation_id, user_id))
+                forwarder_key = base64.b64encode(b"F" * 32).decode()
+                destination_key = base64.b64encode(b"D" * 32).decode()
+                con.execute("INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'forwarder-device', ?)", (forwarder_id, forwarder_key))
+                con.execute("INSERT INTO chat_device_keys (user_id, device_id, public_key) VALUES (?, 'destination-device', ?)", (destination_id, destination_key))
+                con.execute(
+                    """INSERT INTO chat_messages
+                       (conversation_id, sender_id, message_type, message_text, attachment_url, metadata_json, client_message_id, created_at)
+                       VALUES (?, ?, 'ENCRYPTED_ATTACHMENT', 'encrypted', ?, ?, 'source-media', CURRENT_TIMESTAMP)""",
+                    (source_conversation_id, original_id, reference, json.dumps({"encrypted": True, "size": 17, "mediaMimeType": "image/jpeg", "ciphertextSha256": "checksum"})),
+                )
+                source_message_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                forwarder = con.execute("SELECT * FROM users WHERE id = ?", (forwarder_id,)).fetchone()
+            client.put_object(Bucket="fairfares-attachments", Key=object_key, Body=b"immutable-cipher", ContentType="application/octet-stream")
+            envelopes = [
+                {"recipientUserId": forwarder_id, "recipientDeviceId": "forwarder-device", "senderPublicKey": forwarder_key, "nonce": "n1", "ciphertext": "rewrapped1"},
+                {"recipientUserId": destination_id, "recipientDeviceId": "destination-device", "senderPublicKey": forwarder_key, "nonce": "n2", "ciphertext": "rewrapped2"},
+            ]
+            forwarded, conversation, error = app.forward_chitthi_attachment(
+                user=forwarder, source_message_id=source_message_id,
+                destination_conversation_public_id="destination-chat", envelopes=envelopes,
+                client_message_id="forwarded-media",
+            )
+            self.assertFalse(error)
+            self.assertEqual(int(conversation["id"]), destination_conversation_id)
+            self.assertEqual(forwarded["attachment_url"], reference)
+            self.assertTrue(json.loads(forwarded["metadata_json"])["reusedCiphertext"])
+            self.assertEqual(len(client.objects), 1)
+
+            with app.db() as con:
+                con.execute("UPDATE chat_messages SET created_at = datetime('now', '-10 days') WHERE id = ?", (source_message_id,))
+            cleanup = app.cleanup_expired_chitthi_attachments()
+            self.assertEqual(cleanup["deleted"], 1)
+            self.assertIn(("fairfares-attachments", object_key), client.objects)
+            with app.db() as con:
+                self.assertEqual(con.execute("SELECT attachment_url FROM chat_messages WHERE id = ?", (int(forwarded["id"]),)).fetchone()[0], reference)
+
     def test_chitthi_rollout_defaults_safe_and_internal_ids_override_percentage(self):
         with mock.patch.object(app, "CHITTHI_MULTIPART_ROLLOUT_ENABLED", True), \
              mock.patch.object(app, "CHITTHI_ROLLOUT_PERCENT", 0), \
