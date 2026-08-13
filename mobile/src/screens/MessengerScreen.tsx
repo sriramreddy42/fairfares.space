@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Constants from "expo-constants";
 import * as Contacts from "expo-contacts";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
+import { sha256 } from "@noble/hashes/sha256";
+import { utf8ToBytes } from "@noble/hashes/utils";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { ActivityIndicator, Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import Reanimated, { useAnimatedKeyboard, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
@@ -70,11 +71,12 @@ import { createLightweightChatThumbnail, pickChatMedia, pickCompressedImages, ta
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
-import { awaitChatIdentityRecovery, chatIdentityRecoveryError } from "../utils/chatRecovery";
+import { awaitChatIdentityRecovery, chatIdentityRecoveryError, markChatIdentityValidated, recoveredChatIdentities } from "../utils/chatRecovery";
 import { useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 import { cleanupPersistentChitthiMedia, copyPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
 import { decryptChunkedAttachmentFile, deleteChunkedTemporaryFile, encryptAttachmentFileForDevices, parseChunkedAttachmentDescriptor } from "../utils/chitthiChunkedCrypto";
+import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -96,9 +98,11 @@ type Props = {
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
-type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string };
-const IS_EXPO_GO = Constants.appOwnership === "expo";
-const EXPO_GO_SAFE_ENCRYPTION_BYTES = 12_000_000;
+type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; ownedCacheFile?: boolean };
+// JavaScript chunk crypto is only a compatibility path. Keeping this ceiling
+// conservative prevents iOS from terminating Expo Go or a stale dev client
+// under combined picker, thumbnail, crypto and React Native memory pressure.
+const JAVASCRIPT_MEDIA_SAFE_BYTES = 6_000_000;
 type ThreadMessageItem = {
   message: ChatMessage;
   index: number;
@@ -124,6 +128,19 @@ const legacyChatMessageCacheName = (userId: number, conversationId: string) => `
 const chatImagePreviewCache = new Map<string, string>();
 const chatImagePreviewInflight = new Map<string, Promise<string>>();
 const encryptedChatImagePreviewCache = new Map<string, string>();
+
+function chatDiagnostic(stage: string, details: Record<string, unknown> = {}) {
+  if (__DEV__) console.info("[Chitthi messenger]", { stage, ...details });
+}
+
+function releasePendingAttachments(attachments: PendingChatAttachment[]) {
+  if (Platform.OS === "web") return;
+  attachments.forEach((attachment) => {
+    if (attachment.ownedCacheFile && attachment.uri.startsWith(FileSystem.cacheDirectory || "__never__")) {
+      void FileSystem.deleteAsync(attachment.uri, { idempotent: true }).catch(() => undefined);
+    }
+  });
+}
 const wallpaperChoices = [
   { id: "midnight", label: "Midnight", color: "#061713", accent: "#176B4A" },
   { id: "ocean", label: "Ocean", color: "#071E24", accent: "#147D78" },
@@ -309,11 +326,7 @@ function rememberEncryptedChatImagePreview(key: string, uri: string) {
 }
 
 function stablePreviewHash(value: string) {
-  let hash = 5381;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
-  }
-  return (hash >>> 0).toString(36);
+  return Array.from(sha256(utf8ToBytes(value)).slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function loadChatImagePreview(url: string) {
@@ -357,7 +370,7 @@ function encryptedPreviewLocalUri(attachmentUrl: string, keyPayload: string) {
 
 function encryptedAttachmentMetadata(keyPayload: string) {
   try {
-    return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE"; thumbnailBase64?: string };
+    return JSON.parse(keyPayload) as { fileName?: string; mimeType?: string; kind?: "IMAGE" | "VIDEO" | "FILE"; thumbnailBase64?: string; size?: number };
   } catch {
     return {};
   }
@@ -484,6 +497,15 @@ function isEncryptedPlaceholder(value: string) {
 
 function encryptedOverviewPreview(clearText: string) {
   if (!clearText) return "New message";
+  if (clearText.startsWith("FFFORWARD:")) {
+    try {
+      const forwarded = JSON.parse(clearText.slice(10)) as { text?: unknown };
+      const text = typeof forwarded.text === "string" ? forwarded.text.trim() : "";
+      return text || "Forwarded message";
+    } catch {
+      return "Forwarded message";
+    }
+  }
   if (clearText.startsWith("FFRICH:")) {
     try {
       const rich = JSON.parse(clearText.slice(7)) as { type?: string; metadata?: Record<string, unknown> };
@@ -512,7 +534,7 @@ function encryptedOverviewPreview(clearText: string) {
 function safeConversationPreview(conversation: ChatConversation) {
   return isEncryptedPlaceholder(conversation.lastMessage)
     ? "📨 New Letter"
-    : conversation.lastMessage || conversation.rideRoute || conversation.subject || "No messages yet.";
+    : encryptedOverviewPreview(conversation.lastMessage) || conversation.rideRoute || conversation.subject || "No messages yet.";
 }
 
 function discoveredMessageParts(value: string) {
@@ -782,13 +804,12 @@ function EncryptedChatImage({ message, resolvePreview, compact = false }: { mess
 
         let previewUri = "";
         if (Platform.OS !== "web") {
-          if (!resolvePreview) throw new Error("The encrypted preview resolver is unavailable.");
-          // Use the same authenticated, resumable, checksum-verified and
-          // chunk-aware materialization path as tapping the attachment. A
-          // second preview downloader had drifted from the playback path. The
-          // API intentionally exposes /api/chat/attachments/{id}, not its
-          // private r2:// reference, so URL-shape checks cannot select crypto.
-          previewUri = await resolvePreview(message);
+          // Never download and decrypt the full attachment just to populate a
+          // bubble. Several visible legacy photos could otherwise materialize
+          // concurrently and cause iOS memory-pressure termination. New media
+          // carries a tiny encrypted thumbnail; legacy media remains tap-only
+          // until the user explicitly opens it.
+          throw new Error("This legacy photo has no embedded thumbnail. Tap to open it.");
         } else {
           const encryptedDataUrl = await getAuthenticatedAssetDataUrl(attachmentUrl);
           const decrypted = decryptAttachmentBase64(encryptedDataUrl.split(",", 2)[1] || "", keyPayload);
@@ -805,10 +826,14 @@ function EncryptedChatImage({ message, resolvePreview, compact = false }: { mess
         rememberEncryptedChatImagePreview(previewCacheKey, previewUri);
         if (!cancelled) setUri(previewUri);
       } catch (error) {
-        if (__DEV__) console.warn("Chitthi encrypted photo preview failed", {
-          messageId: message.id,
-          reason: error instanceof Error ? error.message : String(error)
-        });
+        const reason = error instanceof Error ? error.message : String(error);
+        // Legacy encrypted photos predate embedded thumbnails. Their tap-only
+        // placeholder is intentional and must not look like a crypto failure
+        // in development logs. Preserve warnings for genuine download,
+        // checksum, authorization, descriptor, and decryption failures.
+        if (__DEV__ && !reason.startsWith("This legacy photo has no embedded thumbnail.")) {
+          console.warn("Chitthi encrypted photo preview failed", { messageId: message.id, reason });
+        }
         if (!cancelled) setFailed(true);
       }
     })();
@@ -884,7 +909,21 @@ function QuotedReply({ target, mine }: { target: ChatMessage | null; mine: boole
 }
 
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
-  const player = useVideoPlayer(uri, (instance) => { instance.loop = false; instance.play(); });
+  const [playbackError, setPlaybackError] = useState("");
+  const player = useVideoPlayer({ uri, contentType: "progressive" }, (instance) => {
+    instance.loop = false;
+    instance.play();
+  });
+  useEffect(() => {
+    const subscription = player.addListener("statusChange", ({ status, error }) => {
+      if (status === "error") setPlaybackError(error?.message || "This video's codec is not supported on this device.");
+      else if (status === "readyToPlay") setPlaybackError("");
+    });
+    return () => subscription.remove();
+  }, [player]);
+  if (playbackError) {
+    return <View style={[styles.attachmentPreviewVideo, styles.videoPlaybackError]}><Text style={styles.videoPlaybackErrorText}>Video cannot be played</Text><Text style={styles.videoPlaybackErrorDetail}>{playbackError}</Text></View>;
+  }
   return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" fullscreenOptions={{ enable: true }} />;
 }
 
@@ -931,7 +970,12 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
 
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
-  const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 12, maxVideoSizeBytes: 12_000_000, enableMultipartUpload: false, cryptoThrottleMs: 10, rolloutCohort: "control" as const };
+  const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" as const };
+  const nativeMediaAccelerationAvailable = Platform.OS !== "web" && FairFaresCrypto.available;
+  const effectiveAttachmentLimitBytes = nativeMediaAccelerationAvailable
+    ? chitthiFeatures.maxVideoSizeBytes
+    : Math.min(JAVASCRIPT_MEDIA_SAFE_BYTES, chitthiFeatures.maxVideoSizeBytes);
+  const effectiveAttachmentLimitMb = Math.round(effectiveAttachmentLimitBytes / 1_000_000);
   const ThreadKeyboardBody = Platform.OS === "web" ? StaticKeyboardBody : NativeKeyboardTrackingBody;
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const signedIn = Boolean(data?.user);
@@ -961,7 +1005,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const jumpToLatestVisibleRef = useRef(false);
   const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
-  const multipartResumeUserRef = useRef(0);
+  const multipartResumeStateRef = useRef({ userId: 0, running: false, lastAttemptAt: 0 });
+  const attachmentCryptoAbortRef = useRef<AbortController | null>(null);
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
@@ -1033,6 +1078,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
   const [identityRecoveryWarning, setIdentityRecoveryWarning] = useState("");
   const [encryptionReady, setEncryptionReady] = useState(false);
+  const [encryptionStatusDetail, setEncryptionStatusDetail] = useState("");
   const [wallpaper, setWallpaper] = useState("midnight");
   const [customWallpaper, setCustomWallpaper] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -1245,11 +1291,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   useEffect(() => {
-    if (!currentUserId || multipartResumeUserRef.current === currentUserId) return;
-    multipartResumeUserRef.current = currentUserId;
-    void resumePendingEncryptedChatUploads().then((resumed) => {
-      if (resumed.length) void refreshMessenger({ showLoader: false, showError: false });
+    if (!currentUserId) return;
+    let cancelled = false;
+    const resume = async () => {
+      const state = multipartResumeStateRef.current;
+      const now = Date.now();
+      if (state.running || (state.userId === currentUserId && now - state.lastAttemptAt < 5_000)) return;
+      state.userId = currentUserId;
+      state.running = true;
+      state.lastAttemptAt = now;
+      try {
+        const resumed = await resumePendingEncryptedChatUploads();
+        if (!cancelled && resumed.length) void refreshMessenger({ showLoader: false, showError: false });
+      } catch {
+        // Offline/background transitions are expected. The encrypted file and
+        // durable multipart state remain available for the next foreground.
+      } finally {
+        state.running = false;
+      }
+    };
+    void resume();
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") void resume();
     });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
   }, [currentUserId]);
 
   useEffect(() => {
@@ -1303,6 +1371,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const bootstrapConversations = data?.chat.conversations || [];
     const userChanged = messengerUserIdRef.current !== currentUserId;
     if (userChanged) {
+      chatDiagnostic("account-boundary", { fromUserId: messengerUserIdRef.current, toUserId: currentUserId });
       messengerUserIdRef.current = currentUserId;
       messageCache.current.clear();
       attachmentMaterializationJobs.current.clear();
@@ -1324,6 +1393,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       deviceRegistrationPromise.current = null;
       setDeviceIdentity(null);
       setEncryptionReady(false);
+      setEncryptionStatusDetail("");
+      setIdentityRecoveryWarning("");
       setConversations(bootstrapConversations);
     } else if (bootstrapConversations.length) {
       setConversations((current) => mergeChatConversations(current, bootstrapConversations));
@@ -1466,13 +1537,37 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setIdentityRecoveryWarning(chatIdentityRecoveryError(userId));
         // Preserve the device key even if the network registration must retry.
         setDeviceIdentity(identity);
+        chatDiagnostic("identity-ready", { userId, device: `…${identity.deviceId.slice(-6)}`, recoveryWarning: Boolean(chatIdentityRecoveryError(userId)) });
         await ensureDeviceRegistration(identity);
-        if (activeConversationId) {
-          const keyPayload = await getChatDeviceKeys(activeConversationId);
-          if (!cancelled) setEncryptionReady(Boolean(keyPayload.ready));
+        chatDiagnostic("registration-ready", { userId, device: `…${identity.deviceId.slice(-6)}` });
+        // Read the live ref after registration. Capturing the state value here
+        // retained the previous account's thread across logout/login and
+        // turned its authorization failure into an identity retry loop.
+        const conversationId = activeConversationIdRef.current;
+        if (conversationId) {
+          try {
+            const keyPayload = await getChatDeviceKeys(conversationId);
+            if (!cancelled && activeConversationIdRef.current === conversationId) {
+              setEncryptionReady(Boolean(keyPayload.ready));
+              setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+              chatDiagnostic("directory-status", { userId, conversationId, ready: keyPayload.ready, keyCount: keyPayload.keys.length, warning: keyPayload.warning || "" });
+            }
+          } catch (error) {
+            // Registration already succeeded. Conversation status is fetched
+            // again when a valid thread opens and must not restart recovery.
+            if (!cancelled && activeConversationIdRef.current === conversationId) {
+              setEncryptionReady(false);
+              setEncryptionStatusDetail(error instanceof Error ? error.message : "Conversation encryption status is temporarily unavailable.");
+            }
+          }
         }
-      } catch {
-        if (!cancelled) retryTimer = setTimeout(() => void initialize(), 3000);
+      } catch (error) {
+        chatDiagnostic("identity-initialize-failed", { userId, error: error instanceof Error ? error.message : String(error) });
+        if (!cancelled) {
+          setEncryptionReady(false);
+          setEncryptionStatusDetail(error instanceof Error ? error.message : "This device could not register its encryption key.");
+          retryTimer = setTimeout(() => void initialize(), 3000);
+        }
       }
     };
     void initialize();
@@ -1606,11 +1701,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function prepareMessageDecryption(conversationId: string) {
     const identity = await ensureChatDeviceIdentity();
+    const identities = recoveredChatIdentities(Number(data?.user?.id || 0), identity);
     // Receiving only depends on this device's envelopes. Send-key readiness is
     // a separate concern and must never prevent valid incoming ciphertext from
     // being decrypted (for example during a brief key-directory outage).
-    const [envelopePayload, keyPayload] = await Promise.all([
-      getChatEncryptedEnvelopes(conversationId, identity.deviceId),
+    const [envelopePayloads, keyPayload] = await Promise.all([
+      Promise.all(identities.map(async (candidate) => {
+        const payload = await getChatEncryptedEnvelopes(conversationId, candidate.deviceId);
+        return payload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }));
+      })),
       getChatDeviceKeys(conversationId).catch(() => ({
         ok: false,
         keys: [],
@@ -1618,7 +1717,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         warning: "Encryption keys are temporarily unavailable."
       }))
     ]);
-    return { identity, envelopePayload, keyPayload };
+    chatDiagnostic("envelopes-loaded", { userId: Number(data?.user?.id || 0), conversationId, identities: identities.length, counts: envelopePayloads.map((items) => items.length), directoryReady: keyPayload.ready });
+    return { identity, identities, envelopePayload: { ok: true, envelopes: envelopePayloads.flat() }, keyPayload };
   }
 
   async function decryptMessages(
@@ -1627,17 +1727,44 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     preparedContext?: ReturnType<typeof prepareMessageDecryption>
   ) {
     try {
-      const { identity, envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
+      const { identity, identities = [identity], envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
       setEncryptionReady(Boolean(keyPayload.ready));
-      const byMessage = new Map(envelopePayload.envelopes.map((item) => [item.messageId, item]));
-      return nextMessages.map((message) => {
-        const envelope = byMessage.get(message.id);
-        if (!envelope) return isEncryptedPlaceholder(message.text)
-          ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
-          : message;
+      setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+      const byMessage = new Map<number, typeof envelopePayload.envelopes>();
+      envelopePayload.envelopes.forEach((item) => {
+        const current = byMessage.get(item.messageId) || [];
+        current.push(item);
+        byMessage.set(item.messageId, current);
+      });
+      let decryptedCount = 0;
+      let unavailableCount = 0;
+      let missingEnvelopeCount = 0;
+      let authenticationFailureCount = 0;
+      const decryptedMessages = nextMessages.map((message) => {
+        const envelopes = byMessage.get(message.id) || [];
+        if (!envelopes.length) {
+          if (isEncryptedPlaceholder(message.text)) {
+            unavailableCount += 1;
+            missingEnvelopeCount += 1;
+          }
+          return isEncryptedPlaceholder(message.text) ? { ...message, text: unavailableEncryptedMessageText, canEdit: false } : message;
+        }
         try {
-          const clearText = decryptEnvelope(envelope, identity);
+          let clearText = "";
+          for (const envelope of envelopes) {
+            const candidates = identities.filter((candidate) => !("recipientDeviceId" in envelope) || envelope.recipientDeviceId === candidate.deviceId);
+            for (const candidate of candidates.length ? candidates : identities) {
+              try {
+                clearText = decryptEnvelope(envelope, candidate);
+                if (clearText) break;
+              } catch {
+                // Try the next recovered identity for this historical message.
+              }
+            }
+            if (clearText) break;
+          }
           if (!clearText) throw new Error("Envelope authentication failed.");
+          decryptedCount += 1;
           if (message.type === "ENCRYPTED_ATTACHMENT" && (message.attachmentUrl || message.metadata?.mediaExpired)) {
             const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; thumbnailBase64?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number; forwarded?: boolean };
             return {
@@ -1657,14 +1784,25 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           }
           return { ...message, text: clearText, canEdit: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
         } catch {
+          unavailableCount += 1;
+          authenticationFailureCount += 1;
           // A corrupt, expired, or old-device envelope must affect only that
           // message. Previously it rejected Promise.all and exposed encrypted
           // placeholders for every otherwise decryptable message in the page.
           return { ...message, text: unavailableEncryptedMessageText, canEdit: false };
         }
       });
-    } catch {
+      chatDiagnostic("decrypt-page", { userId: Number(data?.user?.id || 0), conversationId, messages: nextMessages.length, envelopes: envelopePayload.envelopes.length, identities: identities.length, decrypted: decryptedCount, unavailable: unavailableCount, missingEnvelope: missingEnvelopeCount, authenticationFailure: authenticationFailureCount });
+      // Successful authenticated decryption of the complete fetched page is
+      // stronger proof than re-deriving the password-wrapped backup on every
+      // relogin. Never set this shortcut when even one encrypted row failed.
+      if (decryptedCount > 0 && unavailableCount === 0 && identities.length === 1) {
+        void markChatIdentityValidated(Number(data?.user?.id || 0), identity);
+      }
+      return decryptedMessages;
+    } catch (error) {
       setEncryptionReady(false);
+      setEncryptionStatusDetail(error instanceof Error ? error.message : "Encrypted message envelopes could not be retrieved.");
       // Never render the backend's encrypted storage placeholder as if it were
       // message content when envelope retrieval is temporarily unavailable.
       return nextMessages.map((message) => isEncryptedPlaceholder(message.text)
@@ -1720,11 +1858,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         getChatDeviceKeys(conversationId).catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }))
       ]);
       if (activeConversationIdRef.current !== conversationId) return;
-      const envelopePayload = Array.isArray(payload.envelopes)
+      const currentEnvelopePayload = Array.isArray(payload.envelopes)
         ? { ok: true, envelopes: payload.envelopes }
         : await getChatEncryptedEnvelopes(conversationId, identity.deviceId);
+      const identities = recoveredChatIdentities(Number(data?.user?.id || 0), identity);
+      const historicalEnvelopes = await Promise.all(identities
+        .filter((candidate) => candidate.deviceId !== identity.deviceId)
+        .map(async (candidate) => (await getChatEncryptedEnvelopes(conversationId, candidate.deviceId)).envelopes
+          .map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }))));
+      const envelopePayload = {
+        ok: true,
+        envelopes: [
+          ...currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })),
+          ...historicalEnvelopes.flat()
+        ]
+      };
       const olderMessages = await decryptMessages(conversationId, payload.messages || [], Promise.resolve({
         identity,
+        identities,
         envelopePayload,
         keyPayload
       }));
@@ -1732,9 +1883,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       prependScrollAnchorRef.current = null;
       shouldAutoScrollToEndRef.current = false;
       setMessages((current) => {
-        const byId = new Map<number, ChatMessage>();
-        [...olderMessages, ...current].forEach((message) => byId.set(Number(message.id), message));
-        const merged = [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
+        // Message IDs are the pagination cursor, not the presentation clock.
+        // Imported/migrated history can receive a newer database ID while
+        // retaining an older createdAt value. Reuse the canonical merge so day
+        // dividers and bubbles always remain chronological after pagination.
+        const merged = mergeChatMessages(current, olderMessages);
         messageCache.current.set(conversationId, merged);
         return merged;
       });
@@ -1926,14 +2079,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const receiptById = new Map((payload.receipts || []).map((receipt) => [Number(receipt.id), receipt]));
           const reactionsById = new Map((payload.reactionUpdates || []).map((update) => [Number(update.messageId), update.reactions || []]));
           setMessages((current) => {
-            const byId = new Map<number, ChatMessage>();
-            current.forEach((message) => {
+            const updated = current.map((message) => {
               const receipt = receiptById.get(Number(message.id));
               const reactions = reactionsById.get(Number(message.id));
-              byId.set(Number(message.id), { ...message, ...(receipt || {}), ...(reactions ? { reactions } : {}) });
+              return { ...message, ...(receipt || {}), ...(reactions ? { reactions } : {}) };
             });
-            incomingMessages.forEach((message) => byId.set(Number(message.id), message));
-            return [...byId.values()].sort((left, right) => Number(left.id) - Number(right.id));
+            return mergeChatMessages(updated, incomingMessages);
           });
           if ((payload.messages || []).some((message) => !message.mine)) {
             const nextConversations = await decryptConversationPreviews(await getChatConversations());
@@ -2191,10 +2342,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // first photo preview behind another network round trip.
       const keyPayloadPromise = getChatDeviceKeys(conversation.id)
         .then((keyPayload) => {
-          if (activeConversationIdRef.current === conversation.id) setEncryptionReady(Boolean(keyPayload.ready));
+          if (activeConversationIdRef.current === conversation.id) {
+            setEncryptionReady(Boolean(keyPayload.ready));
+            setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+          }
           return keyPayload;
         })
-        .catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }));
+        .catch((error) => {
+          if (activeConversationIdRef.current === conversation.id) {
+            setEncryptionReady(false);
+            setEncryptionStatusDetail(error instanceof Error ? error.message : "Encryption keys are temporarily unavailable.");
+          }
+          return { ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." };
+        });
       const payload = await getChatMessages(conversation.id, 0, 20, identity.deviceId);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== conversation.id) return;
       setActiveSubject(payload.conversation.subject || conversation.subject);
@@ -2214,11 +2374,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // During rolling deploys an older backend does not include page-scoped
       // envelopes yet. Fall back to the established endpoint instead of
       // replacing correctly decrypted cached messages with "unavailable".
-      const envelopePayload = Array.isArray(payload.envelopes)
+      const currentEnvelopePayload = Array.isArray(payload.envelopes)
         ? { ok: true, envelopes: payload.envelopes }
         : await getChatEncryptedEnvelopes(conversation.id, identity.deviceId);
+      const identities = recoveredChatIdentities(Number(data?.user?.id || 0), identity);
+      const historicalEnvelopes = await Promise.all(identities
+        .filter((candidate) => candidate.deviceId !== identity.deviceId)
+        .map(async (candidate) => (await getChatEncryptedEnvelopes(conversation.id, candidate.deviceId)).envelopes
+          .map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }))));
+      const envelopePayload = {
+        ok: true,
+        envelopes: [
+          ...currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })),
+          ...historicalEnvelopes.flat()
+        ]
+      };
       const decryptedMessages = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
         identity,
+        identities,
         envelopePayload,
         // Decryption is independent of the send-key directory. Its eventual
         // result updates encryptionReady through keyPayloadPromise above.
@@ -2262,16 +2435,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     const attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
     if (attachments.length) {
-      const overRemoteLimit = attachments.find((attachment) => attachment.size > chitthiFeatures.maxVideoSizeBytes);
+      const overRemoteLimit = attachments.find((attachment) => attachment.size > effectiveAttachmentLimitBytes);
       if (overRemoteLimit) {
-        Alert.alert("Current upload limit", `${overRemoteLimit.name} exceeds your current ${chitthiFeatures.maxVideoSizeMb} MB Chitthi rollout limit.`);
+        Alert.alert("Current upload limit", `${overRemoteLimit.name} exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
         return;
       }
-      const oversizedExpoGoAttachment = IS_EXPO_GO && attachments.find((attachment) => attachment.size > EXPO_GO_SAFE_ENCRYPTION_BYTES);
-      if (oversizedExpoGoAttachment) {
+      const oversizedFallbackAttachment = !nativeMediaAccelerationAvailable && attachments.find((attachment) => attachment.size > JAVASCRIPT_MEDIA_SAFE_BYTES);
+      if (oversizedFallbackAttachment) {
         Alert.alert(
           "Development build required",
-          `${oversizedExpoGoAttachment.name} is too large for Expo Go's JavaScript-only encryption runtime. Expo Go can be terminated by iOS memory pressure. Test files above 12 MB with the FairFares EAS development or production build.`
+          `${oversizedFallbackAttachment.name} requires FairFares native media processing. This runtime has only the memory-limited JavaScript fallback. Install the latest FairFares EAS development or production build for files up to 100 MB.`
         );
         return;
       }
@@ -2331,11 +2504,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           // never in this send-critical JavaScript path.
           const encryptedMediaMetadata = {
             ...mediaMetadata,
+            size: attachment.size,
             ...(attachment.thumbnailBase64 ? { thumbnailBase64: attachment.thumbnailBase64 } : {})
           };
           const caption = index === 0 ? cleanMessage : "";
           let fileBase64 = "";
           let encryptedTemporaryUri = "";
+          const cryptoAbort = new AbortController();
+          attachmentCryptoAbortRef.current = cryptoAbort;
           const encrypted = Platform.OS === "web"
             ? (() => undefined)()
             : await encryptAttachmentFileForDevices(
@@ -2344,8 +2520,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 identity,
                 keyPayload.keys,
                 (progress) => setAttachmentStatus(`Encrypting ${attachment.name}… ${Math.round(progress * 100)}%`),
-                cryptoThrottleForSize(attachment.size)
+                cryptoThrottleForSize(attachment.size),
+                cryptoAbort.signal
               );
+          attachmentCryptoAbortRef.current = null;
           if (Platform.OS === "web") {
             fileBase64 = await new Promise<string>(async (resolve, reject) => {
                 try {
@@ -2387,9 +2565,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
-        setMessages((current) => [...current.filter((item) => item.id !== optimisticAttachmentId && !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
+        setMessages((current) => mergeChatMessages(
+          current.filter((item) => item.id !== optimisticAttachmentId),
+          sentMessages
+        ));
         scrollThreadToLatest(false);
         const sentKind = attachments[0].kind;
+        releasePendingAttachments(attachments);
         setPendingAttachment(null);
         setPendingImages([]);
         setPendingPhotoPreviewOpen(false);
@@ -2409,6 +2591,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setAttachmentStatus("");
         Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : attachments[0].kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
       } finally {
+        attachmentCryptoAbortRef.current = null;
         setAttachmentSending(false);
       }
       return;
@@ -3009,8 +3192,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const media = await pickChatMedia(4, 1280, 0.62, 350_000, IS_EXPO_GO ? Math.min(EXPO_GO_SAFE_ENCRYPTION_BYTES, chitthiFeatures.maxVideoSizeBytes) : chitthiFeatures.maxVideoSizeBytes);
+      const media = await pickChatMedia(4, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
       if (!media.length) return;
+      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       if (media[0].kind === "VIDEO") {
         setPendingImages([]);
         setPendingAttachment(media[0]);
@@ -3037,6 +3221,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const photo = await takeChatPhoto();
       if (!photo) return;
+      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingImages([]);
       setPendingAttachment({ ...photo, kind: "IMAGE" });
     } catch (error) {
@@ -3082,6 +3267,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const file = await pickChatFile();
       if (!file) return;
+      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingImages([]);
       setPendingAttachment({ kind: "FILE", ...file });
     } catch (error) {
@@ -3109,7 +3295,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
     const message = { ...response.message, type, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } } as ChatMessage;
-    setMessages((current) => [...current.filter((item) => item.id !== message.id), message].sort((a, b) => a.id - b.id));
+    setMessages((current) => mergeChatMessages(current, [message]));
     return message;
   }
 
@@ -3127,7 +3313,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setThreadLoading(true);
       if (richComposer === "POLL") {
         const response = await sendChatRichMessage(activeConversationId, "POLL", { ...metadata, allowMultiple: pollMultiple, anonymous: true, closesInHours: pollClosesInHours });
-        setMessages((current) => [...current.filter((item) => item.id !== response.message.id), response.message].sort((a, b) => a.id - b.id));
+        setMessages((current) => mergeChatMessages(current, [response.message]));
       } else {
         await sendEncryptedRichMessage(richComposer, metadata);
       }
@@ -3219,9 +3405,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function cryptoThrottleForSize(size: number) {
-    // Small launch-tier files already yield after every 256 KB chunk; an
-    // additional fixed sleep is perceptible and unnecessary. Preserve the
-    // remotely configured safety throttle for future files above 12 MB.
+    // Every 256 KB chunk already yields to the event loop. Avoid a fixed sleep
+    // unless operations explicitly enable one as a safety override.
     return size <= 12_000_000 ? 0 : chitthiFeatures.cryptoThrottleMs;
   }
 
@@ -3236,6 +3421,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     let fileName = safeAttachmentName(message, mimeType);
     const encryptedKeyPayload = message.metadata?.encryptedKeyPayload;
     const encryptedMetadata = encryptedKeyPayload ? encryptedAttachmentMetadata(encryptedKeyPayload) : {};
+    const chunkedDescriptor = encryptedKeyPayload ? parseChunkedAttachmentDescriptor(encryptedKeyPayload) : null;
+    const authenticatedPlaintextSize = chunkedDescriptor?.plaintextSize || (Number.isSafeInteger(encryptedMetadata.size) && Number(encryptedMetadata.size) > 0 ? Number(encryptedMetadata.size) : 0);
     if (encryptedMetadata.mimeType) mimeType = encryptedMetadata.mimeType;
     if (encryptedMetadata.fileName) {
       fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: encryptedMetadata.fileName } }, mimeType);
@@ -3251,11 +3438,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (Platform.OS !== "web") {
       const localUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
       if (localUri) {
-        if (await persistentChitthiMediaExists(localUri)) {
+        const localInfo = await FileSystem.getInfoAsync(localUri);
+        const localSize = localInfo.exists ? Number(localInfo.size || 0) : 0;
+        const exactSizeValid = !authenticatedPlaintextSize || localSize === authenticatedPlaintextSize;
+        if (localSize > 0 && exactSizeValid) {
           onProgress?.(100);
           await confirmLocalDownload();
           return { uri: localUri, name: fileName, mimeType };
         }
+        if (localInfo.exists) await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => undefined);
       }
     }
     if (!message.attachmentUrl && !message.metadata?.decryptedDataUrl) {
@@ -3283,7 +3474,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           (progress) => onProgress?.(Math.round(progress * 88))
         );
         onProgress?.(90);
-        const chunkedDescriptor = parseChunkedAttachmentDescriptor(encryptedKeyPayload);
         if (chunkedDescriptor) {
           mimeType = chunkedDescriptor.mimeType || mimeType;
           fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: chunkedDescriptor.fileName } }, mimeType);
@@ -3395,7 +3585,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         }
       });
       if (!item) return;
-      if (message.type === "IMAGE" || message.type === "VIDEO") setAttachmentPreview({ ...item, messageId: message.id, type: message.type, createdAt: message.createdAt });
+      if (message.type === "IMAGE" || message.type === "VIDEO") {
+        if (message.type === "IMAGE") {
+          const keyPayload = String(message.metadata?.encryptedKeyPayload || "");
+          if (keyPayload) rememberEncryptedChatImagePreview(encryptedPreviewCacheKey(message.attachmentUrl, keyPayload), item.uri);
+          setMessages((current) => current.map((entry) => entry.id === message.id
+            ? { ...entry, metadata: { ...entry.metadata, decryptedDataUrl: item.uri } }
+            : entry));
+        }
+        setAttachmentPreview({ ...item, messageId: message.id, type: message.type, createdAt: message.createdAt });
+      }
       else await downloadAttachment(item);
     } catch (error) {
       Alert.alert("Attachment unavailable", error instanceof Error ? error.message : "Could not open this attachment.");
@@ -3671,7 +3870,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             if (kind === "IMAGE" && !thumbnailBase64) {
               thumbnailBase64 = await createLightweightChatThumbnail(attachment.uri).catch(() => "");
             }
-            const forwardMetadata = { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind, forwarded: true, ...(thumbnailBase64 ? { thumbnailBase64 } : {}) };
+            const materializedInfo = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(attachment.uri);
+            const plaintextSize = materializedInfo?.exists && "size" in materializedInfo ? Number(materializedInfo.size || 0) : 0;
+            const forwardMetadata = { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind, size: plaintextSize || undefined, forwarded: true, ...(thumbnailBase64 ? { thumbnailBase64 } : {}) };
             if (Platform.OS === "web") {
               const fileBase64 = attachment.uri.slice(attachment.uri.indexOf(",") + 1);
               const encrypted = encryptAttachmentForDevices(fileBase64, forwardMetadata, identity, keyPayload.keys);
@@ -3743,6 +3944,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setGroupMembers([]);
     setGroupMemberSearch("");
     setAttachmentStatus("");
+    releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
     setPendingAttachment(null);
     setPendingImages([]);
     setAttachmentPreview(null);
@@ -3787,7 +3989,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Encryption setup pending"}`}
+              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : encryptionStatusDetail || "Encryption setup pending"}`}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
@@ -3885,9 +4087,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.threadMessages}>
-          {identityRecoveryWarning ? (
+          {identityRecoveryWarning || (!encryptionReady && encryptionStatusDetail) ? (
             <View style={styles.encryptionRecoveryWarning}>
-              <Text style={styles.encryptionRecoveryWarningText}>Older encrypted messages are unavailable on this device. New messages are protected and will open normally.</Text>
+              <Text style={styles.encryptionRecoveryWarningText}>{identityRecoveryWarning || encryptionStatusDetail}</Text>
             </View>
           ) : null}
           <FlatList
@@ -3895,6 +4097,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             style={styles.threadMessagesList}
             data={threadMessageItems}
             inverted
+            // Keep the same bubble pinned while envelopes decrypt, thumbnails
+            // resolve, older pages arrive, or realtime updates insert rows.
+            // This is the native recycler's anchor and works with an inverted
+            // list without estimating variable-height message layouts in JS.
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
             keyExtractor={(item) => String(item.message.id)}
             contentContainerStyle={styles.threadMessagesContent}
             keyboardShouldPersistTaps="always"
@@ -3902,11 +4109,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // Keep scroll-linked keyboard dismissal responsive on 60/90/120 Hz
             // devices. Keyboard translation itself remains native/UI-thread.
             scrollEventThrottle={16}
-            initialNumToRender={12}
-            maxToRenderPerBatch={8}
-            updateCellsBatchingPeriod={32}
-            windowSize={7}
-            removeClippedSubviews={Platform.OS !== "web"}
+            // Message rows can contain authenticated media, link previews and
+            // rich cards. Keep JS batches below a frame budget; the native
+            // recycler fills the remaining window incrementally.
+            initialNumToRender={8}
+            maxToRenderPerBatch={4}
+            updateCellsBatchingPeriod={48}
+            windowSize={5}
+            // iOS inverted lists are implemented with transforms. Clipping
+            // variable-height media cells there can detach/re-attach the
+            // visible anchor and produce a jump. Android's recycler benefits
+            // from clipping and does not have that transform interaction.
+            removeClippedSubviews={Platform.OS === "android"}
             onLayout={(event) => { messagesViewportHeightRef.current = event.nativeEvent.layout.height; }}
             onScrollToIndexFailed={({ index, averageItemLength }) => {
               messagesScrollRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: false });
@@ -3993,6 +4207,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const mediaProgress = mediaDownloadProgress[message.id] || 0;
             return (
             <View key={message.id} style={styles.threadMessageCell}>
+            {showDateDivider ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
@@ -4121,7 +4336,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {(message.reactions || []).length ? <View style={styles.messageReactions}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
               </TouchableOpacity>
             </View></SwipeToReply>
-            {showDateDivider ? <View style={styles.dateDivider}><View style={styles.dateDividerLine} /><Text style={styles.dateDividerText}>{chatDayLabel(message.createdAt)}</Text><View style={styles.dateDividerLine} /></View> : null}
             </View>
             );
             }}
@@ -4370,7 +4584,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
-        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text></View> : null}
+        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel attachment encryption"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
         {pendingImages.length ? (
           <TouchableOpacity style={styles.pendingAttachmentCard} onPress={() => setPendingPhotoPreviewOpen(true)} activeOpacity={0.84} accessibilityLabel={`Preview ${pendingImages.length} selected photos`}>
@@ -4378,13 +4592,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}><PendingPhotoPreview uri={image.uri} compact />{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
             </View>
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} photos selected</Text><Text style={styles.pendingAttachmentMeta}>Collage ready to send</Text></View>
-            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => setPendingImages([])} accessibilityLabel="Remove selected photos"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingImages); setPendingImages([]); }} accessibilityLabel="Remove selected photos"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </TouchableOpacity>
         ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
-            {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}><Text style={styles.pendingVideoPreviewText}>▶</Text></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
+            {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{pendingAttachment.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${pendingAttachment.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" || pendingAttachment.kind === "VIDEO" ? "Ready to send" : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text></View>
-            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => setPendingAttachment(null)} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingAttachment ? [pendingAttachment] : []); setPendingAttachment(null); }} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </View>
         ) : null}
 
@@ -4982,8 +5196,9 @@ const styles = StyleSheet.create({
   customWallpaperPlus: { color: "#fff", fontSize: 28, fontWeight: "500", marginBottom: 2 },
   wallpaperReset: { marginTop: 12, minHeight: 40, borderRadius: 12, borderWidth: 1, borderColor: "#c9c3ba", alignItems: "center", justifyContent: "center" },
   wallpaperResetText: { color: "#39352f", fontWeight: "900", fontSize: 13 },
-  attachmentStatus: { position: "absolute", bottom: 66, alignSelf: "center", backgroundColor: "rgba(15,23,42,0.94)", borderRadius: 18, paddingHorizontal: 15, paddingVertical: 9, zIndex: 30 },
+  attachmentStatus: { position: "absolute", bottom: 66, alignSelf: "center", backgroundColor: "rgba(15,23,42,0.94)", borderRadius: 18, paddingHorizontal: 15, paddingVertical: 9, zIndex: 30, flexDirection: "row", alignItems: "center", gap: 10 },
   attachmentStatusText: { color: "#fff", fontWeight: "900", fontSize: 12 },
+  attachmentStatusCancel: { color: "#ffb4b4", fontWeight: "900", fontSize: 12 },
   attachmentPreviewBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 56 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 20, paddingHorizontal: 14 },
   attachmentPreviewHeader: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 12 },
   attachmentPreviewName: { flex: 1, color: "#fff", fontSize: 15, fontWeight: "700" },
@@ -5012,6 +5227,9 @@ const styles = StyleSheet.create({
   mediaViewerStage: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
   mediaViewerImage: { width: "100%", height: "100%", maxHeight: 680 },
   attachmentPreviewVideo: { width: "100%", height: "100%", maxHeight: 680, backgroundColor: "#000" },
+  videoPlaybackError: { alignItems: "center", justifyContent: "center", padding: 28, gap: 10 },
+  videoPlaybackErrorText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  videoPlaybackErrorDetail: { color: "#bbb", fontSize: 13, lineHeight: 19, textAlign: "center" },
   mediaViewerBottom: { paddingTop: 8, paddingBottom: Platform.OS === "ios" ? 28 : 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.12)", backgroundColor: "#000", gap: 10 },
   mediaViewerThumbnails: { minHeight: 66, paddingHorizontal: 12, alignItems: "center", gap: 7 },
   mediaViewerThumbnail: { width: 52, height: 62, borderRadius: 7, overflow: "hidden", backgroundColor: "#17191d", borderWidth: 2, borderColor: "transparent" },
@@ -5052,7 +5270,9 @@ const styles = StyleSheet.create({
   pendingAttachmentCard: { minHeight: 68, borderRadius: 16, backgroundColor: "rgba(247,249,253,0.97)", borderWidth: 1, borderColor: "#d6dce7", padding: 8, marginTop: 6, marginHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 10 },
   pendingAttachmentImage: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#dde3ec" },
   pendingVideoPreview: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#20252d", alignItems: "center", justifyContent: "center" },
-  pendingVideoPreviewText: { color: "#fff", fontSize: 27, marginLeft: 3 },
+  pendingVideoThumbnail: { ...StyleSheet.absoluteFillObject, width: 72, height: 72, borderRadius: 12 },
+  pendingVideoPlayBadge: { width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(0,0,0,0.56)", alignItems: "center", justifyContent: "center" },
+  pendingVideoPreviewText: { color: "#fff", fontSize: 18, marginLeft: 2 },
   pendingCollagePreview: { width: 76, height: 76, flexDirection: "row", flexWrap: "wrap", gap: 2, overflow: "hidden", borderRadius: 12, backgroundColor: "#d7dde7" },
   pendingCollageCell: { width: 37, height: 37, overflow: "hidden", position: "relative" },
   pendingCollageImage: { width: "100%", height: "100%", borderRadius: 0 },

@@ -49,12 +49,12 @@ services:
       - key: CLOUDFLARE_R2_PREFIX
         value: fairfares
       - key: FAIRFARES_CHITTHI_MULTIPART_ENABLED
-        value: "0"
+        value: "1"
       - key: FAIRFARES_CHITTHI_MAX_VIDEO_MB
-        value: "12"
+        value: "100"
       - key: FAIRFARES_CHITTHI_ROLLOUT_PERCENT
-        value: "0"
+        value: "100"
       - key: FAIRFARES_CHITTHI_ROLLOUT_USER_IDS
         value: ""
       - key: FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS
-        value: "10"
+        value: "0"

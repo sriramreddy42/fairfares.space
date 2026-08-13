@@ -1,6 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 
-export type PickedChatFile = { uri: string; blob?: Blob; name: string; mimeType: string; size: number };
+export type PickedChatFile = { uri: string; blob?: Blob; name: string; mimeType: string; size: number; ownedCacheFile: boolean };
 
 function normalizedMimeType(name: string, provided: string) {
   if (provided && provided !== "application/octet-stream") return provided;
@@ -17,8 +18,11 @@ export async function pickChatFile(): Promise<PickedChatFile | null> {
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
   const size = Number(asset.size || 0);
-  if (size > 8_000_000) throw new Error("Choose a file no larger than 8 MB.");
+  if (!size || size > 8_000_000) {
+    if (asset.uri) await FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined);
+    throw new Error(!size ? "Could not determine the selected file size." : "Choose a file no larger than 8 MB.");
+  }
   const mimeType = normalizedMimeType(asset.name || "attachment", asset.mimeType || "");
   if (!asset.uri) throw new Error("Could not read the selected file.");
-  return { uri: asset.uri, blob: asset.file || undefined, name: asset.name || "attachment", mimeType, size };
+  return { uri: asset.uri, blob: asset.file || undefined, name: asset.name || "attachment", mimeType, size, ownedCacheFile: true };
 }

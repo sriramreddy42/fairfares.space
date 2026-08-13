@@ -110,10 +110,10 @@ MAX_CHAT_FILE_BYTES = 8_000_000
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
 CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
-CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 12)))
-CHITTHI_ROLLOUT_PERCENT = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_ROLLOUT_PERCENT", 0))
-CHITTHI_MULTIPART_ROLLOUT_ENABLED = os.environ.get("FAIRFARES_CHITTHI_MULTIPART_ENABLED", "0").strip() == "1"
-CHITTHI_CRYPTO_THROTTLE_MS = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS", 10))
+CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 100)))
+CHITTHI_ROLLOUT_PERCENT = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_ROLLOUT_PERCENT", 100))
+CHITTHI_MULTIPART_ROLLOUT_ENABLED = os.environ.get("FAIRFARES_CHITTHI_MULTIPART_ENABLED", "1").strip() == "1"
+CHITTHI_CRYPTO_THROTTLE_MS = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS", 0))
 CHITTHI_ROLLOUT_USER_IDS = {
     int(value) for value in os.environ.get("FAIRFARES_CHITTHI_ROLLOUT_USER_IDS", "").split(",")
     if value.strip().isdigit() and int(value) > 0
@@ -125,7 +125,9 @@ ALLOWED_CHITTHI_MEDIA_MIME_TYPES = {
 CHITTHI_ATTACHMENT_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS", 7)
 CHITTHI_ATTACHMENT_CLEANUP_BATCH = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_CLEANUP_BATCH", 250)
 CHITTHI_DELETED_MESSAGE_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_DELETED_MESSAGE_RETENTION_DAYS", 5)
-CHITTHI_PRESIGNED_URL_SECONDS = min(900, positive_int_env("FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS", 600))
+# Background URLSession work can be deferred by iOS for several minutes. 100 MB
+# uploads therefore need more headroom than the old 10-minute small-file limit.
+CHITTHI_PRESIGNED_URL_SECONDS = min(3600, positive_int_env("FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS", 3600))
 CHITTHI_UNFINALIZED_UPLOAD_HOURS = positive_int_env("FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS", 24)
 R2_ACCOUNT_ID = os.environ.get("CLOUDFLARE_R2_ACCOUNT_ID", "").strip()
 R2_ACCESS_KEY_ID = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "").strip()
@@ -1571,6 +1573,25 @@ def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, i
     return {"scanned": scanned, "deleted": deleted, "failed": failed}
 
 
+def start_chitthi_housekeeping_scheduler() -> None:
+    """Run storage/database retention away from latency-sensitive chat reads."""
+    def worker() -> None:
+        # Startup already has substantial database and service initialization.
+        # Defer the first retention pass, then run it hourly. Every cleanup is
+        # bounded so a large backlog cannot monopolize the worker indefinitely.
+        while True:
+            time.sleep(60 * 60)
+            try:
+                cleanup_expired_chitthi_attachments(force=True, limit=250)
+                cleanup_deleted_chitthi_messages(force=True, limit=250)
+                if r2_storage_configured():
+                    cleanup_unfinalized_chitthi_uploads(limit=250)
+            except Exception as exc:
+                print(f"Chitthi housekeeping failed: {exc}")
+
+    threading.Thread(target=worker, daemon=True, name="fairfares-chitthi-housekeeping").start()
+
+
 def create_chitthi_download_authorization(
     *, message_id: int, user_id: int, device_id: str,
 ) -> tuple[dict[str, object] | None, str]:
@@ -1579,7 +1600,7 @@ def create_chitthi_download_authorization(
         return None, "A valid message and device are required."
     with db() as con:
         message = con.execute(
-            """SELECT messages.attachment_url, messages.metadata_json
+            """SELECT messages.id, messages.attachment_url, messages.metadata_json
                FROM chat_messages messages
                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
                JOIN chat_message_envelopes envelopes ON envelopes.message_id = messages.id
@@ -1605,11 +1626,41 @@ def create_chitthi_download_authorization(
         metadata = json.loads(str(message["metadata_json"] or "{}"))
     except (TypeError, json.JSONDecodeError):
         metadata = {}
+    checksum = valid_sha256_base64(metadata.get("ciphertextSha256"))
+    encrypted_size = int(metadata.get("size") or 0)
+    # Compatibility migration for attachments created before whole-object
+    # checksums were persisted. The private object is streamed once, bounded by
+    # the recorded size, then the repaired metadata is reused by all devices.
+    if not checksum and encrypted_size > 0:
+        try:
+            stored = r2_storage_client().get_object(Bucket=R2_BUCKET_NAME, Key=object_key)
+            body = stored["Body"]
+            digest = hashlib.sha256()
+            total = 0
+            try:
+                while True:
+                    chunk = body.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > encrypted_size:
+                        break
+                    digest.update(chunk)
+            finally:
+                if hasattr(body, "close"):
+                    body.close()
+            if total == encrypted_size:
+                checksum = base64.b64encode(digest.digest()).decode()
+                metadata["ciphertextSha256"] = checksum
+                with db() as con:
+                    con.execute("UPDATE chat_messages SET metadata_json = ? WHERE id = ?", (json.dumps(metadata, sort_keys=True), int(message["id"])))
+        except Exception:
+            checksum = ""
     return {
         "downloadUrl": download_url,
         "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
-        "encryptedSize": int(metadata.get("size") or 0),
-        "ciphertextSha256": str(metadata.get("ciphertextSha256") or ""),
+        "encryptedSize": encrypted_size,
+        "ciphertextSha256": checksum,
         "mediaMimeType": str(metadata.get("mediaMimeType") or ""),
     }, ""
 
@@ -17352,11 +17403,18 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
         except (ValueError, TypeError):
             return "A valid device signing key is required."
     with db() as con:
+        existing = con.execute(
+            "SELECT public_key, signing_public_key FROM chat_device_keys WHERE user_id = ? AND device_id = ? LIMIT 1",
+            (user_id, device_id),
+        ).fetchone()
+        if existing and str(row_value(existing, "public_key") or "") != public_key:
+            return "This Chitthi device ID is already bound to a different encryption key."
+        if existing and signing_public_key and row_value(existing, "signing_public_key") and str(row_value(existing, "signing_public_key")) != signing_public_key:
+            return "This Chitthi device ID is already bound to a different signing key."
         con.execute(
             """INSERT INTO chat_device_keys (user_id, device_id, public_key, signing_public_key)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(user_id, device_id) DO UPDATE SET
-                   public_key = excluded.public_key,
                    signing_public_key = CASE WHEN excluded.signing_public_key != '' THEN excluded.signing_public_key ELSE chat_device_keys.signing_public_key END,
                    last_seen_at = CURRENT_TIMESTAMP, revoked_at = NULL""",
             (user_id, device_id, public_key, signing_public_key),
@@ -22145,13 +22203,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
-        try:
-            cleanup_expired_chitthi_attachments(force=False, limit=25)
-            cleanup_deleted_chitthi_messages(force=False, limit=25)
-            if r2_storage_configured():
-                cleanup_unfinalized_chitthi_uploads(limit=25)
-        except Exception:
-            pass
         params = urllib.parse.parse_qs(parsed.query)
         try:
             limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
@@ -22252,13 +22303,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
-        try:
-            cleanup_expired_chitthi_attachments(force=False, limit=25)
-            cleanup_deleted_chitthi_messages(force=False, limit=25)
-            if r2_storage_configured():
-                cleanup_unfinalized_chitthi_uploads(limit=25)
-        except Exception:
-            pass
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         before_message_id = int(float_from_value(params.get("before", ["0"])[0] or "0"))
@@ -23116,7 +23160,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     notification_body = f"{reactor_name} reacted {emoji} to your message" if is_group else f"Reacted {emoji} to your message"
                     notification_data = {
                         "type": "CHITTHI_REACTION",
-                        "event": f"REACTION:{current_user_id}:{emoji}",
+                        # Each actual add/change is a distinct notification.
+                        # A deterministic reactor+emoji event key caused a
+                        # remove-then-add of the same reaction to be discarded
+                        # forever by the durable push-outbox deduplicator.
+                        "event": f"REACTION:{current_user_id}:{emoji}:{uuid.uuid4().hex}",
                         "conversationId": row_value(conversation, "public_id"),
                         "messageId": message_id,
                         "senderId": current_user_id,
@@ -23356,11 +23404,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "message": "Encrypted recovery backup is invalid."}, 400)
             return
         with db() as con:
-            con.execute(
-                """INSERT INTO chat_key_backups (user_id, encrypted_payload) VALUES (?, ?)
-                   ON CONFLICT(user_id) DO UPDATE SET encrypted_payload = excluded.encrypted_payload, updated_at = CURRENT_TIMESTAMP""",
-                (int(user["id"]), encrypted_payload),
-            )
+            existing = con.execute("SELECT encrypted_payload FROM chat_key_backups WHERE user_id = ?", (int(user["id"]),)).fetchone()
+            if existing and str(row_value(existing, "encrypted_payload") or "") != encrypted_payload:
+                self.send_json({
+                    "ok": False,
+                    "message": "A different Chitthi recovery backup already exists. Existing encryption history was preserved."
+                }, 409)
+                return
+            if not existing:
+                con.execute(
+                    "INSERT INTO chat_key_backups (user_id, encrypted_payload) VALUES (?, ?)",
+                    (int(user["id"]), encrypted_payload),
+                )
         self.send_json({"ok": True})
 
     def api_get_chat_e2ee_backup(self) -> None:
@@ -33531,6 +33586,7 @@ if __name__ == "__main__":
     auto_backup_on_startup()
     start_mobile_push_scheduler()
     start_promotional_push_scheduler()
+    start_chitthi_housekeeping_scheduler()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
     server = FairFaresHTTPServer((host, port), FairFaresHandler)

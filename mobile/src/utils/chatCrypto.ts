@@ -4,9 +4,11 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import nacl from "tweetnacl";
 import * as util from "tweetnacl-util";
-import { pbkdf2 } from "@noble/hashes/pbkdf2";
+import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { sha256 } from "@noble/hashes/sha256";
+import { hmac } from "@noble/hashes/hmac";
 import { chacha20poly1305 } from "@noble/ciphers/chacha";
+import { gcm } from "@noble/ciphers/aes";
 
 export type DeviceIdentity = { deviceId: string; publicKey: string; secretKey: string; signingPublicKey: string; signingSecretKey: string };
 export type ConversationDeviceKey = { userId: number; deviceId: string; publicKey: string };
@@ -166,11 +168,59 @@ export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceI
   return identity;
 }
 
+async function deriveRecoveryKey(passphrase: string, salt: Uint8Array) {
+  const passphraseBytes = util.decodeUTF8(passphrase);
+  try {
+    return FairFaresCrypto.available
+      ? util.decodeBase64(await FairFaresCrypto.deriveRecoveryKey(util.encodeBase64(passphraseBytes), util.encodeBase64(salt), 210_000, nacl.secretbox.keyLength))
+      : await deriveRecoveryKeyWithFrameYields(passphraseBytes, salt);
+  } finally {
+    passphraseBytes.fill(0);
+  }
+}
+
+async function deriveRecoveryKeyWithFrameYields(password: Uint8Array, salt: Uint8Array) {
+  // RFC 8018 PBKDF2-HMAC-SHA256. The 32-byte output is exactly one SHA-256
+  // block. Noble's pbkdf2Async yields only to the Promise microtask queue,
+  // which still starves React Native/Hermes rendering. A native timer yield
+  // gives UI events and frames a genuine scheduling opportunity in Expo Go.
+  const iterations = 210_000;
+  const saltBlock = new Uint8Array(salt.byteLength + 4);
+  saltBlock.set(salt);
+  saltBlock.set([0, 0, 0, 1], salt.byteLength);
+  const prf = hmac.create(sha256, password);
+  let working: ReturnType<typeof hmac.create> | undefined;
+  const u = new Uint8Array(sha256.outputLen);
+  const derived = new Uint8Array(sha256.outputLen);
+  try {
+    (working = prf._cloneInto(working)).update(saltBlock).digestInto(u);
+    derived.set(u);
+    let frameStartedAt = Date.now();
+    for (let index = 1; index < iterations; index += 1) {
+      (working = prf._cloneInto(working)).update(u).digestInto(u);
+      for (let byte = 0; byte < derived.byteLength; byte += 1) derived[byte] ^= u[byte];
+      if (Date.now() - frameStartedAt >= 4) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        frameStartedAt = Date.now();
+      }
+    }
+    return derived;
+  } catch (error) {
+    derived.fill(0);
+    throw error;
+  } finally {
+    prf.destroy();
+    working?.destroy();
+    saltBlock.fill(0);
+    u.fill(0);
+  }
+}
+
 export async function createEncryptedIdentityBackup(identity: DeviceIdentity, passphrase: string) {
   if (passphrase.length < 10) throw new Error("Use a recovery passphrase with at least 10 characters.");
   const salt = nacl.randomBytes(16);
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-  const key = pbkdf2(sha256, util.decodeUTF8(passphrase), salt, { c: 210_000, dkLen: nacl.secretbox.keyLength });
+  const key = await deriveRecoveryKey(passphrase, salt);
   const plaintext = util.decodeUTF8(JSON.stringify(identity));
   try {
     const ciphertext = nacl.secretbox(plaintext, nonce, key);
@@ -181,13 +231,13 @@ export async function createEncryptedIdentityBackup(identity: DeviceIdentity, pa
   }
 }
 
-export async function restoreEncryptedIdentityBackup(userId: number, encryptedPayload: string, passphrase: string) {
+export async function restoreEncryptedIdentityBackup(userId: number, encryptedPayload: string, passphrase: string, persist = true) {
   const payload = JSON.parse(encryptedPayload) as { v?: number; salt: string; nonce: string; ciphertext: string };
   if (payload.v !== 1) throw new Error("This Chitthi recovery backup version is unsupported.");
   const salt = util.decodeBase64(payload.salt);
   const nonce = util.decodeBase64(payload.nonce);
   if (salt.byteLength !== 16 || nonce.byteLength !== nacl.secretbox.nonceLength) throw new Error("The Chitthi recovery backup is malformed.");
-  const key = pbkdf2(sha256, util.decodeUTF8(passphrase), salt, { c: 210_000, dkLen: nacl.secretbox.keyLength });
+  const key = await deriveRecoveryKey(passphrase, salt);
   let opened: Uint8Array | null = null;
   try {
     opened = nacl.secretbox.open(util.decodeBase64(payload.ciphertext), nonce, key);
@@ -200,7 +250,7 @@ export async function restoreEncryptedIdentityBackup(userId: number, encryptedPa
       const signingPair = nacl.sign.keyPair();
       identity = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
     }
-    await persistIdentity(userId, identity);
+    if (persist) await persistIdentity(userId, identity);
     return identity;
   } finally {
     opened?.fill(0);
@@ -267,7 +317,45 @@ export function encryptAttachmentForDevices(
 }
 
 export function decryptAttachmentBase64(ciphertextBase64: string, keyPayload: string) {
-  const payload = JSON.parse(keyPayload) as { key: string; nonce: string; fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE" };
+  const payload = JSON.parse(keyPayload) as { v?: number; format?: string; key: string; nonce: string; noncePrefix?: string; chunkSize?: number; chunkCount?: number; plaintextSize?: number; fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE" };
+  if (payload.v === 3 && payload.format === "CHUNKED_AES_GCM_V3") {
+    const key = util.decodeBase64(payload.key);
+    const prefix = util.decodeBase64(payload.noncePrefix || "");
+    const ciphertext = util.decodeBase64(ciphertextBase64);
+    const chunkSize = Number(payload.chunkSize || 0);
+    const chunkCount = Number(payload.chunkCount || 0);
+    const plaintextSize = Number(payload.plaintextSize || 0);
+    if (key.byteLength !== 32 || prefix.byteLength !== 4 || !Number.isSafeInteger(chunkSize) || chunkSize <= 0 || chunkSize > 4 * 1024 * 1024 || !Number.isSafeInteger(chunkCount) || chunkCount <= 0 || !Number.isSafeInteger(plaintextSize) || plaintextSize <= 0 || plaintextSize > 100_000_000 || chunkCount !== Math.ceil(plaintextSize / chunkSize) || ciphertext.byteLength !== plaintextSize + chunkCount * 16) {
+      throw new Error("The encrypted attachment descriptor is invalid.");
+    }
+    const plaintext = new Uint8Array(plaintextSize);
+    let encryptedOffset = 0;
+    let clearOffset = 0;
+    try {
+      for (let index = 0; index < chunkCount; index += 1) {
+        const clearSize = Math.min(chunkSize, plaintextSize - clearOffset);
+        const nonce = new Uint8Array(12);
+        nonce.set(prefix);
+        let counter = index;
+        for (let position = 11; position >= 4; position -= 1) {
+          nonce[position] = counter & 0xff;
+          counter = Math.floor(counter / 256);
+        }
+        const encryptedChunk = ciphertext.subarray(encryptedOffset, encryptedOffset + clearSize + 16);
+        const clearChunk = gcm(key, nonce).decrypt(encryptedChunk);
+        if (clearChunk.byteLength !== clearSize) throw new Error("Attachment authentication failed.");
+        plaintext.set(clearChunk, clearOffset);
+        clearChunk.fill(0);
+        encryptedOffset += clearSize + 16;
+        clearOffset += clearSize;
+      }
+      return { ...payload, base64: util.encodeBase64(plaintext) };
+    } finally {
+      key.fill(0);
+      ciphertext.fill(0);
+      plaintext.fill(0);
+    }
+  }
   const opened = nacl.secretbox.open(util.decodeBase64(ciphertextBase64), util.decodeBase64(payload.nonce), util.decodeBase64(payload.key));
   if (!opened) throw new Error("Attachment authentication failed.");
   return { ...payload, base64: util.encodeBase64(opened) };

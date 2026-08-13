@@ -279,7 +279,7 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
     housing: [],
     communities: [],
     chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] },
-    features: { chitthi: { maxVideoSizeMb: 12, maxVideoSizeBytes: 12_000_000, enableMultipartUpload: false, cryptoThrottleMs: 10, rolloutCohort: "control" } },
+    features: { chitthi: { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" } },
     dashboard: { housingPosts: 0, messages: 0 },
     hasSubmittedHousingExperience: false,
     hasSubmittedMobileReview: false,
@@ -1016,6 +1016,79 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     const existing = completed.get(partNumber);
     return !existing?.etag || existing.size !== expectedSize;
   });
+
+  if (Platform.OS === "ios" && pendingPartNumbers.length) {
+    // Stage and submit every remaining file-backed task before awaiting any of
+    // them. iOS then owns all tasks in its background URLSession and can keep
+    // transferring them after JavaScript is suspended. Staging is sequential,
+    // so only one 8 MiB buffer enters JS memory at a time.
+    const pendingBytes = pendingPartNumbers.reduce((total, partNumber) => total + (partNumber < partCount ? partSize : source.size - partSize * (partCount - 1)), 0);
+    try {
+      const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+      if (Number.isFinite(freeBytes) && freeBytes < pendingBytes + 32 * 1024 * 1024) {
+        throw new Error("Not enough free storage to prepare this attachment for a reliable background upload.");
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Not enough free storage")) throw error;
+      // Storage reporting is advisory and can be unavailable on some iOS builds.
+    }
+    const scheduled: Array<Promise<void>> = [];
+    try {
+      for (const partNumber of pendingPartNumbers) {
+        const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
+        const reader = source.open();
+        reader.offset = (partNumber - 1) * partSize;
+        let bytes: Uint8Array;
+        try {
+          bytes = reader.readBytes(expectedSize);
+        } finally {
+          reader.close();
+        }
+        if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
+        const partSha256 = naclUtil.encodeBase64(sha256(bytes));
+        const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
+        let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
+        try {
+          partFile.create({ overwrite: true, intermediates: true });
+          partFile.write(bytes);
+          partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
+        } catch (error) {
+          if (partFile.exists) partFile.delete();
+          throw error;
+        } finally {
+          bytes.fill(0);
+        }
+        scheduled.push((async () => {
+          try {
+            let uploaded: FileSystem.FileSystemUploadResult | undefined;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              uploaded = await FileSystem.uploadAsync(partAuthorization.uploadUrl, partFile.uri, {
+                httpMethod: "PUT", headers: partAuthorization.headers,
+                uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+                sessionType: FileSystem.FileSystemSessionType.BACKGROUND
+              });
+              if (uploaded.status >= 200 && uploaded.status < 300) break;
+              if (attempt < 2) await wait([500, 1250][attempt]);
+            }
+            if (!uploaded || uploaded.status < 200 || uploaded.status >= 300) throw new Error(`Encrypted upload part ${partNumber} failed (${uploaded?.status || 0}).`);
+            const responseHeaders = uploaded.headers || {};
+            const etag = String(responseHeaders.etag || responseHeaders.ETag || responseHeaders.Etag || "");
+            if (!etag) throw new Error(`Encrypted upload part ${partNumber} did not return an ETag.`);
+            completed.set(partNumber, { partNumber, etag, size: expectedSize });
+          } finally {
+            if (partFile.exists) partFile.delete();
+          }
+        })());
+      }
+    } catch (error) {
+      await Promise.allSettled(scheduled);
+      throw error;
+    }
+    await Promise.all(scheduled);
+    const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
+    await completeEncryptedMultipartUpload(authorization.uploadId, parts);
+    return;
+  }
   let nextPendingIndex = 0;
 
   async function uploadNextPart() {
@@ -1036,17 +1109,25 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
       }
       if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
       const partSha256 = naclUtil.encodeBase64(sha256(bytes));
-      const partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
       const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
-      partFile.create({ overwrite: true, intermediates: true });
-      partFile.write(bytes);
-      bytes.fill(0);
+      let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
+      try {
+        partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
+        partFile.create({ overwrite: true, intermediates: true });
+        partFile.write(bytes);
+      } catch (error) {
+        if (partFile.exists) partFile.delete();
+        throw error;
+      } finally {
+        bytes.fill(0);
+      }
       try {
         let uploaded: FileSystem.FileSystemUploadResult | undefined;
         for (let attempt = 0; attempt < 3; attempt += 1) {
           uploaded = await FileSystem.uploadAsync(partAuthorization.uploadUrl, partFile.uri, {
             httpMethod: "PUT", headers: partAuthorization.headers,
-            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+            sessionType: FileSystem.FileSystemSessionType.BACKGROUND
           });
           if (uploaded.status >= 200 && uploaded.status < 300) break;
           if (attempt < 2) await wait([500, 1250][attempt]);
@@ -1100,7 +1181,8 @@ export async function uploadEncryptedFile(uploadUrl: string, headers: Record<str
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       result = await FileSystem.uploadAsync(uploadUrl, encryptedUri, {
-        httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT
+        httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        sessionType: FileSystem.FileSystemSessionType.BACKGROUND
       });
       if (result.status >= 200 && result.status < 300) return;
     } catch {
@@ -1223,7 +1305,51 @@ export async function resumePendingEncryptedChatUploads() {
       // Keep valid state and encrypted ciphertext for the next foreground retry.
     }
   }
+  await cleanupOrphanedEncryptedChatFiles().catch(() => undefined);
   return finalized;
+}
+
+async function cleanupOrphanedEncryptedChatFiles() {
+  if (Platform.OS === "web") return;
+  const stateKeys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStatePrefix));
+  const retainedUris = new Set<string>();
+  for (const [, raw] of await AsyncStorage.multiGet(stateKeys)) {
+    if (!raw) continue;
+    try {
+      const pending = JSON.parse(raw) as PendingMultipartUpload;
+      if (pending.encryptedUri) retainedUris.add(pending.encryptedUri);
+    } catch {
+      // Malformed state cannot authorize or safely retain an encrypted file.
+    }
+  }
+  const now = Date.now();
+  const boundedPreviews: Array<{ file: File; modifiedAt: number; size: number }> = [];
+  for (const entry of Paths.cache.list()) {
+    if (!(entry instanceof File) || retainedUris.has(entry.uri)) continue;
+    const isPartial = /\/chitthi-[^/]+\.ffenc2\.part$/.test(entry.uri);
+    const isEncrypted = /\/chitthi-[^/]+\.ffenc2$/.test(entry.uri);
+    const isUploadPart = /\/chitthi-upload-[^/]+\.part$/.test(entry.uri);
+    const isInterruptedDownload = /\/chitthi-download-[^/]+(?:\.ffenc|\.ffenc\.range-\d+|\.ffenc\.resume\.json)$/.test(entry.uri);
+    const isPreview = /\/chitthi-(?:preview|decrypted)-[^/]+\.(?:img|jpg|jpeg|png|webp)$/.test(entry.uri);
+    if (!isPartial && !isEncrypted && !isUploadPart && !isInterruptedDownload && !isPreview) continue;
+    const modifiedAt = Number(entry.modificationTime || now);
+    const age = now - modifiedAt;
+    // A background URLSession may still own an upload part while the app is
+    // suspended, so never reap those until the server's 24-hour upload window.
+    const staleAfter = isPartial ? 60 * 60 * 1000 : isPreview ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    if (age >= staleAfter && entry.exists) entry.delete();
+    else if (isPreview) boundedPreviews.push({ file: entry, modifiedAt, size: Number(entry.size || 0) });
+  }
+  // Cache storage is disposable. Bound both item count and bytes so a long-
+  // lived chat account cannot grow previews indefinitely between iOS purges.
+  let previewBytes = boundedPreviews.reduce((total, item) => total + item.size, 0);
+  let previewCount = boundedPreviews.length;
+  for (const item of boundedPreviews.sort((left, right) => left.modifiedAt - right.modifiedAt)) {
+    if (previewCount <= 100 && previewBytes <= 100_000_000) break;
+    if (item.file.exists) item.file.delete();
+    previewCount -= 1;
+    previewBytes -= item.size;
+  }
 }
 
 export async function getEncryptedChatAttachmentDownloadUrl(messageId: number, deviceId: string) {
@@ -1237,11 +1363,31 @@ export async function downloadEncryptedAssetResumably(
   destination: string,
   encryptedSize: number,
   ciphertextSha256: string,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  allowCleanRestart = true
 ) {
   if (Platform.OS === "web" || encryptedSize <= 0) throw new Error("Resumable encrypted download is unavailable.");
+  const legacyMissingChecksum = !ciphertextSha256;
+  if (!legacyMissingChecksum) {
+    let expectedChecksumBytes: Uint8Array;
+    try {
+      expectedChecksumBytes = naclUtil.decodeBase64(ciphertextSha256);
+    } catch {
+      throw new Error("Encrypted download authorization has an invalid checksum.");
+    }
+    if (expectedChecksumBytes.byteLength !== 32) throw new Error("Encrypted download authorization has an invalid checksum.");
+    expectedChecksumBytes.fill(0);
+  }
   const target = new File(destination);
+  const resumeMetadataUri = `${destination}.resume.json`;
+  const expectedResumeMetadata = JSON.stringify({ encryptedSize, ciphertextSha256 });
   target.parentDirectory.create({ idempotent: true, intermediates: true });
+  const existingResumeMetadata = await FileSystem.readAsStringAsync(resumeMetadataUri).catch(() => "");
+  if (legacyMissingChecksum || existingResumeMetadata !== expectedResumeMetadata) {
+    if (target.exists) target.delete();
+    await FileSystem.deleteAsync(resumeMetadataUri, { idempotent: true }).catch(() => undefined);
+  }
+  if (!legacyMissingChecksum) await FileSystem.writeAsStringAsync(resumeMetadataUri, expectedResumeMetadata);
   if (!target.exists) target.create({ overwrite: false, intermediates: true });
   if (target.size > encryptedSize) target.create({ overwrite: true, intermediates: true });
   const digest = sha256.create();
@@ -1276,6 +1422,13 @@ export async function downloadEncryptedAssetResumably(
     if (!result || ![200, 206].includes(result.status)) {
       await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
       throw new Error(`Encrypted range download failed (${result?.status || 0}).`);
+    }
+    if (result.status === 206) {
+      const contentRange = (Object.entries(result.headers || {}).find(([name]) => name.toLowerCase() === "content-range")?.[1] || "").trim();
+      if (contentRange !== `bytes ${start}-${end}/${encryptedSize}`) {
+        await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+        throw new Error("Encrypted range response did not match the requested bytes.");
+      }
     }
     const part = new File(partUri);
     if (!part.exists || part.size !== end - start + 1) {
@@ -1322,10 +1475,16 @@ export async function downloadEncryptedAssetResumably(
     writer.close();
   }
   const actualChecksum = naclUtil.encodeBase64(digest.digest());
-  if (target.size !== encryptedSize || !ciphertextSha256 || actualChecksum !== ciphertextSha256) {
+  if (target.size !== encryptedSize || (!legacyMissingChecksum && actualChecksum !== ciphertextSha256)) {
     target.delete();
+    await FileSystem.deleteAsync(resumeMetadataUri, { idempotent: true }).catch(() => undefined);
+    if (!legacyMissingChecksum && allowCleanRestart) {
+      onProgress?.(0);
+      return downloadEncryptedAssetResumably(downloadUrl, destination, encryptedSize, ciphertextSha256, onProgress, false);
+    }
     throw new Error("Encrypted download checksum verification failed.");
   }
+  await FileSystem.deleteAsync(resumeMetadataUri, { idempotent: true }).catch(() => undefined);
   return target.uri;
 }
 

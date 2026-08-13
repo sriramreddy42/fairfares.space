@@ -1,9 +1,11 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
+import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 
 const LOCAL_MEDIA_DIRECTORY = "chitthi-media";
 const LOCAL_MEDIA_MAX_BYTES = 500_000_000;
 const LOCAL_MEDIA_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+const INCOMPLETE_MEDIA_MAX_AGE_MS = 60 * 60 * 1000;
 
 function safeSegment(value: string | number) {
   return String(value).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
@@ -19,6 +21,17 @@ async function ensureMediaRoot() {
   if (!root) throw new Error("Persistent Chitthi media storage is unavailable.");
   await FileSystem.makeDirectoryAsync(root, { intermediates: true });
   return root;
+}
+
+async function commitMediaFile(temporaryUri: string, uri: string) {
+  if (FairFaresCrypto.available) {
+    await FairFaresCrypto.commitProtectedFile(temporaryUri, uri);
+    return;
+  }
+  // Expo Go has no custom native module. This fallback is used only for its
+  // small-file test path; production iOS uses the protected atomic commit.
+  await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+  await FileSystem.moveAsync({ from: temporaryUri, to: uri });
 }
 
 export function persistentChitthiMediaUri(userId: number, messageId: number, extension: string) {
@@ -41,8 +54,7 @@ export async function writePersistentChitthiMedia(uri: string, base64: string) {
   try {
     await FileSystem.writeAsStringAsync(temporaryUri, base64, { encoding: FileSystem.EncodingType.Base64 });
     if (!await persistentChitthiMediaExists(temporaryUri)) throw new Error("Chitthi media could not be saved on this device.");
-    await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-    await FileSystem.moveAsync({ from: temporaryUri, to: uri });
+    await commitMediaFile(temporaryUri, uri);
     if (!await persistentChitthiMediaExists(uri)) throw new Error("Chitthi media could not be saved on this device.");
   } catch (error) {
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
@@ -58,8 +70,7 @@ export async function copyPersistentChitthiMedia(uri: string, sourceUri: string)
   try {
     await FileSystem.copyAsync({ from: sourceUri, to: temporaryUri });
     if (!await persistentChitthiMediaExists(temporaryUri)) throw new Error("Chitthi media could not be copied to durable storage.");
-    await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-    await FileSystem.moveAsync({ from: temporaryUri, to: uri });
+    await commitMediaFile(temporaryUri, uri);
   } catch (error) {
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
     throw error;
@@ -80,8 +91,13 @@ export async function cleanupPersistentChitthiMedia(protectedUri = "") {
     const info = await FileSystem.getInfoAsync(uri);
     if (!info.exists || info.isDirectory) continue;
     if (name.endsWith(".part")) {
-      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-      deleted += 1;
+      // Another attachment may currently be committing this file. Only reap
+      // partials that could not belong to an active materialization job.
+      const partialModifiedAt = Number(info.modificationTime || 0) * 1000;
+      if (partialModifiedAt > 0 && now - partialModifiedAt > INCOMPLETE_MEDIA_MAX_AGE_MS) {
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+        deleted += 1;
+      }
       continue;
     }
     const modifiedAt = Number(info.modificationTime || 0) * 1000;

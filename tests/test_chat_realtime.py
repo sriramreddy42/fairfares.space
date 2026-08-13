@@ -75,6 +75,32 @@ class ChatRealtimeTest(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=3) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
 
+    def test_chat_read_endpoints_do_not_run_remote_storage_housekeeping(self):
+        server, thread = self.start_server()
+        try:
+            with patch.object(app, "cleanup_expired_chitthi_attachments") as expired, \
+                 patch.object(app, "cleanup_deleted_chitthi_messages") as deleted, \
+                 patch.object(app, "cleanup_unfinalized_chitthi_uploads") as uploads:
+                conversations = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/conversations",
+                    headers={"Authorization": "Bearer sender-token"},
+                )
+                with urllib.request.urlopen(conversations, timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+                messages = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/messages?conversation_id=CHAT-REALTIME&wait=0",
+                    headers={"Authorization": "Bearer sender-token"},
+                )
+                with urllib.request.urlopen(messages, timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+                expired.assert_not_called()
+                deleted.assert_not_called()
+                uploads.assert_not_called()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_event_stream_authorizes_delivers_receipts_and_reconnects(self):
         with app.db() as con:
             sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
@@ -165,6 +191,47 @@ class ChatRealtimeTest(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(unauthorized, timeout=3)
             self.assertEqual(error.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_reaction_add_notifies_message_sender_and_readding_is_a_new_event(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "reaction target", "reaction-target-1")
+            message_id = int(message["id"])
+
+        server, thread = self.start_server()
+        try:
+            def react():
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/messages/react",
+                    data=json.dumps({"conversationId": "CHAT-REALTIME", "messageId": message_id, "emoji": "👍"}).encode("utf-8"),
+                    method="POST",
+                    headers={"Authorization": "Bearer recipient-token", "Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+
+            with patch.object(app, "send_mobile_push_for_users") as push:
+                react()
+                self.assertEqual(push.call_count, 1)
+                first = push.call_args.args
+                self.assertEqual(first[0], [self.sender_id])
+                self.assertEqual(first[3]["type"], "CHITTHI_REACTION")
+                self.assertEqual(first[3]["conversationId"], "CHAT-REALTIME")
+                self.assertEqual(first[3]["messageId"], message_id)
+                self.assertEqual(first[3]["reaction"], "👍")
+                self.assertNotIn("reaction target", first[2])
+                first_event = first[3]["event"]
+
+                react()  # Removing the reaction must not notify.
+                self.assertEqual(push.call_count, 1)
+
+                react()  # Re-adding is a new user action and must notify.
+                self.assertEqual(push.call_count, 2)
+                self.assertNotEqual(first_event, push.call_args.args[3]["event"])
         finally:
             server.shutdown()
             server.server_close()
@@ -539,6 +606,13 @@ class ChatRealtimeTest(unittest.TestCase):
             backup_request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/backup", data=json.dumps({"encryptedPayload": backup_payload}).encode(), method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
             with urllib.request.urlopen(backup_request, timeout=3) as response:
                 self.assertEqual(response.status, 200)
+            duplicate_backup_request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/backup", data=json.dumps({"encryptedPayload": backup_payload}).encode(), method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
+            with urllib.request.urlopen(duplicate_backup_request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+            conflicting_backup_request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/backup", data=json.dumps({"encryptedPayload": "conflicting-" + ("Y" * 120)}).encode(), method="POST", headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as conflicting_error:
+                urllib.request.urlopen(conflicting_backup_request, timeout=3)
+            self.assertEqual(conflicting_error.exception.code, 409)
             with app.db() as con:
                 stored = con.execute("SELECT encrypted_payload FROM chat_key_backups WHERE user_id = ?", (self.sender_id,)).fetchone()["encrypted_payload"]
                 message = con.execute("SELECT message_text, metadata_json FROM chat_messages WHERE client_message_id = 'encrypted-file-1'").fetchone()

@@ -1,0 +1,16 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.fairfares.crypto'
+version = '1.0.0'
+
+android {
+  namespace "com.fairfares.crypto"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+    minSdk 26
+  }
+}

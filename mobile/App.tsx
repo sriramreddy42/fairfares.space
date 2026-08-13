@@ -14,7 +14,7 @@ import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
 import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
-import { beginChatIdentityRecovery, syncChatIdentityRecovery } from "./src/utils/chatRecovery";
+import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
@@ -320,6 +320,7 @@ function FairFaresApp() {
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
   const launchStartedAt = useRef(Date.now());
+  const bootstrapGenerationRef = useRef(0);
   const launchOpacity = useRef(new Animated.Value(1)).current;
   const launchScale = useRef(new Animated.Value(0.94)).current;
   const launchCarOpacity = useRef(new Animated.Value(0)).current;
@@ -428,22 +429,27 @@ function FairFaresApp() {
   }
 
   async function load(showLoader = true) {
+    const generation = bootstrapGenerationRef.current + 1;
+    bootstrapGenerationRef.current = generation;
     if (showLoader) setLoading(true);
     try {
       const payload = await getBootstrap(city);
+      if (bootstrapGenerationRef.current !== generation) return;
       setData(payload);
       setVisiblePosts(payload.housing);
       const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
+      if (bootstrapGenerationRef.current !== generation) return;
       setCars(carResult.status === "fulfilled" ? carResult.value : []);
       setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
     } catch (error) {
+      if (bootstrapGenerationRef.current !== generation) return;
       if (isAuthenticationRejection(error)) {
         await setAuthToken("");
         setData((current) => current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
       }
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
-      if (showLoader) setLoading(false);
+      if (showLoader && bootstrapGenerationRef.current === generation) setLoading(false);
     }
   }
 
@@ -1524,12 +1530,15 @@ function FairFaresApp() {
 
   function completeSocialLogin(user: BootstrapPayload["user"]) {
     if (!user) return;
+    bootstrapGenerationRef.current += 1;
+    setLoading(false);
     setData((current) => current ? { ...current, user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
     setSocialContinuation("");
     setSocialRecoveryEmailHint("");
     setShowSocialRecoveryEmail(false);
     setLoginOpen(false);
     setAuthMessage("");
+    if (activeTab === "profile") setActiveTab("home");
     if (pendingListingAfterLogin) {
       setPendingListingAfterLogin(false);
       openListingFormForUser(user, selectedNeed || "need_place");
@@ -1644,11 +1653,14 @@ function FairFaresApp() {
       // Start recovery before mounting authenticated Chitthi. Messenger waits
       // on this promise and cannot create a competing temporary device key.
       const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
+      bootstrapGenerationRef.current += 1;
+      setLoading(false);
       setData((current) => current ? { ...current, user: payload.user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
       setAuthMessage("Login successful.");
       setLoginOpen(false);
       setIdentifier("");
       setPassword("");
+      if (activeTab === "profile") setActiveTab("home");
       if (pendingListingAfterLogin) {
         setPendingListingAfterLogin(false);
         openListingFormForUser(payload.user, selectedNeed || "need_place");
@@ -1705,9 +1717,12 @@ function FairFaresApp() {
       if (!payload.activationRequired && payload.token) {
         const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
         if (payload.user) {
+          bootstrapGenerationRef.current += 1;
+          setLoading(false);
           setData((current) => current ? { ...current, user: payload.user || null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
         }
         setLoginOpen(false);
+        if (activeTab === "profile") setActiveTab("home");
         if (pendingListingAfterLogin) {
           setPendingListingAfterLogin(false);
           openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
@@ -1722,16 +1737,29 @@ function FairFaresApp() {
   }
 
   async function logoutProfile() {
+    if (authBusy) return;
+    setAuthBusy(true);
+    // Cancel all account-scoped crypto/network work before the global auth
+    // token can be cleared or replaced by another account.
+    invalidateChatIdentityRecovery();
+    bootstrapGenerationRef.current += 1;
+    setLoading(false);
+    // Reset account-scoped UI immediately. Network cleanup must not leave the
+    // old Profile screen mounted or permit a second login while logout can
+    // still clear the token.
+    setData((current) => (current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current));
+    setPendingPost(null);
+    setPendingRide(null);
+    setBottomTabsHidden(false);
+    setActiveTab("home");
     try {
       await unregisterNotificationsForLogout();
       await mobileLogout();
-      setData((current) => (current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current));
-      setPendingPost(null);
-      setPendingRide(null);
-      setActiveTab("home");
-      await load();
+      void load(false);
     } catch (error) {
       Alert.alert("Logout failed", error instanceof Error ? error.message : "Could not log out.");
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -1751,6 +1779,7 @@ function FairFaresApp() {
       <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
     ) : activeTab === "messenger" ? (
       <MessengerScreen
+        key={`messenger-${Number(data?.user?.id || 0)}`}
         data={data}
         preferredSuggestionCity={chitthiSuggestionCity}
         pendingPost={pendingPost}

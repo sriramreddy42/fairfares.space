@@ -3,9 +3,11 @@ import nacl from "tweetnacl";
 import * as util from "tweetnacl-util";
 import { sha256 } from "@noble/hashes/sha256";
 import { ConversationDeviceKey, DeviceIdentity, encryptForDevices } from "./chatCrypto";
+import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 
 export const CHITTHI_CHUNK_SIZE = 256 * 1024;
 export const CHITTHI_CHUNK_FORMAT = "CHUNKED_SECRETBOX_V2";
+export const CHITTHI_NATIVE_CHUNK_FORMAT = "CHUNKED_AES_GCM_V3";
 
 type AttachmentMetadata = {
   fileName: string;
@@ -16,9 +18,9 @@ type AttachmentMetadata = {
 };
 
 export type ChunkedAttachmentDescriptor = AttachmentMetadata & {
-  v: 2;
+  v: 2 | 3;
   type: "ATTACHMENT";
-  format: typeof CHITTHI_CHUNK_FORMAT;
+  format: typeof CHITTHI_CHUNK_FORMAT | typeof CHITTHI_NATIVE_CHUNK_FORMAT;
   key: string;
   noncePrefix: string;
   chunkSize: number;
@@ -41,11 +43,15 @@ function chunkNonce(prefix: Uint8Array, index: number) {
 export function parseChunkedAttachmentDescriptor(value: string): ChunkedAttachmentDescriptor | null {
   try {
     const descriptor = JSON.parse(value) as ChunkedAttachmentDescriptor;
-    if (descriptor.v !== 2 || descriptor.type !== "ATTACHMENT" || descriptor.format !== CHITTHI_CHUNK_FORMAT) return null;
+    const validVersionAndFormat = (descriptor.v === 2 && descriptor.format === CHITTHI_CHUNK_FORMAT)
+      || (descriptor.v === 3 && descriptor.format === CHITTHI_NATIVE_CHUNK_FORMAT);
+    if (!validVersionAndFormat || descriptor.type !== "ATTACHMENT") return null;
     if (!Number.isSafeInteger(descriptor.chunkSize) || descriptor.chunkSize <= 0 || descriptor.chunkSize > 4 * 1024 * 1024) return null;
     if (!Number.isSafeInteger(descriptor.chunkCount) || descriptor.chunkCount <= 0) return null;
     if (!Number.isSafeInteger(descriptor.plaintextSize) || descriptor.plaintextSize <= 0) return null;
-    if (util.decodeBase64(descriptor.key).byteLength !== nacl.secretbox.keyLength || util.decodeBase64(descriptor.noncePrefix).byteLength !== 16) return null;
+    if (descriptor.plaintextSize > 100_000_000 || descriptor.chunkCount !== Math.ceil(descriptor.plaintextSize / descriptor.chunkSize)) return null;
+    const expectedPrefixLength = descriptor.format === CHITTHI_NATIVE_CHUNK_FORMAT ? 4 : 16;
+    if (util.decodeBase64(descriptor.key).byteLength !== nacl.secretbox.keyLength || util.decodeBase64(descriptor.noncePrefix).byteLength !== expectedPrefixLength) return null;
     return descriptor;
   } catch {
     return null;
@@ -75,21 +81,55 @@ export async function encryptAttachmentFileForDevices(
   identity: DeviceIdentity,
   keys: ConversationDeviceKey[],
   onProgress?: (progress: number) => void,
-  throttleMs = 10
+  throttleMs = 0,
+  signal?: AbortSignal
 ) {
   const source = new File(sourceUri);
   if (!source.exists || source.size <= 0) throw new Error("The selected attachment is empty.");
   const output = new File(Paths.cache, `chitthi-${Date.now()}-${Math.random().toString(36).slice(2)}.ffenc2`);
   output.create({ overwrite: true, intermediates: true });
   const fileKey = nacl.randomBytes(nacl.secretbox.keyLength);
-  const noncePrefix = nacl.randomBytes(16);
+  const nativeAccelerated = FairFaresCrypto.available;
+  const noncePrefix = nacl.randomBytes(nativeAccelerated ? 4 : 16);
+  const fileKeyBase64 = util.encodeBase64(fileKey);
+  const noncePrefixBase64 = util.encodeBase64(noncePrefix);
   const chunkCount = Math.ceil(source.size / CHITTHI_CHUNK_SIZE);
+  if (nativeAccelerated) {
+    try {
+      onProgress?.(0);
+      const result = await FairFaresCrypto.encryptFile(
+        source.uri, output.uri, fileKeyBase64, noncePrefixBase64, CHITTHI_CHUNK_SIZE, onProgress, signal
+      );
+      const expectedSize = source.size + chunkCount * 16;
+      if (result.outputSize !== expectedSize || output.size !== expectedSize) throw new Error("Native encryption produced an invalid attachment size.");
+      const descriptor: ChunkedAttachmentDescriptor = {
+        ...metadata, v: 3, type: "ATTACHMENT", format: CHITTHI_NATIVE_CHUNK_FORMAT,
+        key: fileKeyBase64, noncePrefix: noncePrefixBase64,
+        chunkSize: CHITTHI_CHUNK_SIZE, chunkCount, plaintextSize: source.size,
+      };
+      const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
+      onProgress?.(1);
+      return {
+        encryptedUri: output.uri,
+        encryptedSize: result.outputSize,
+        ciphertextSha256: result.sha256Base64,
+        envelopes: encryptForDevices(JSON.stringify(descriptor), identity, keys, preview),
+      };
+    } catch (error) {
+      deleteChunkedTemporaryFile(output.uri);
+      throw error;
+    } finally {
+      fileKey.fill(0);
+      noncePrefix.fill(0);
+    }
+  }
   const digest = sha256.create();
   let lastReportedPercent = -1;
   const reader = source.open();
   const writer = output.open();
   try {
     for (let index = 0; index < chunkCount; index += 1) {
+      if (signal?.aborted) throw new Error("Attachment processing was cancelled.");
       const clearChunk = reader.readBytes(Math.min(CHITTHI_CHUNK_SIZE, source.size - index * CHITTHI_CHUNK_SIZE));
       if (!clearChunk.byteLength) throw new Error("The attachment ended before encryption completed.");
       const encryptedChunk = nacl.secretbox(clearChunk, chunkNonce(noncePrefix, index), fileKey);
@@ -113,19 +153,20 @@ export async function encryptAttachmentFileForDevices(
   } finally {
     reader.close();
     writer.close();
+    fileKey.fill(0);
+    noncePrefix.fill(0);
   }
   const descriptor: ChunkedAttachmentDescriptor = {
     ...metadata,
     v: 2,
     type: "ATTACHMENT",
     format: CHITTHI_CHUNK_FORMAT,
-    key: util.encodeBase64(fileKey),
-    noncePrefix: util.encodeBase64(noncePrefix),
+    key: fileKeyBase64,
+    noncePrefix: noncePrefixBase64,
     chunkSize: CHITTHI_CHUNK_SIZE,
     chunkCount,
     plaintextSize: source.size,
   };
-  fileKey.fill(0);
   const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
   return {
     encryptedUri: output.uri,
@@ -145,6 +186,17 @@ export async function decryptChunkedAttachmentFile(
   if (!descriptor) throw new Error("The chunked attachment descriptor is invalid.");
   const encrypted = new File(encryptedUri);
   if (!encrypted.exists || encrypted.size !== expectedChunkedCiphertextSize(descriptor)) throw new Error("The encrypted attachment size is invalid.");
+  if (descriptor.format === CHITTHI_NATIVE_CHUNK_FORMAT) {
+    if (!FairFaresCrypto.available) throw new Error("This attachment requires the latest FairFares native build.");
+    onProgress?.(0);
+    const result = await FairFaresCrypto.decryptFile(
+      encryptedUri, destinationUri, descriptor.key, descriptor.noncePrefix,
+      descriptor.chunkSize, descriptor.plaintextSize, descriptor.chunkCount, onProgress
+    );
+    if (result.outputSize !== descriptor.plaintextSize) throw new Error("The decrypted attachment size is invalid.");
+    onProgress?.(1);
+    return destinationUri;
+  }
   const destination = new File(destinationUri);
   destination.parentDirectory.create({ idempotent: true, intermediates: true });
   const partial = new File(`${destinationUri}.part`);

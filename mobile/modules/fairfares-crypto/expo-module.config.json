@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "ios"],
+  "android": {
+    "modules": ["com.fairfares.crypto.FairFaresCryptoModule"]
+  },
+  "ios": {
+    "modules": ["FairFaresCryptoModule"]
+  }
+}

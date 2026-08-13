@@ -319,6 +319,19 @@ class ChatPrivateGroupsTest(unittest.TestCase):
                 (self.owner, "owner-device-invalid"),
             ).fetchone())
 
+    def test_device_id_cannot_be_silently_rebound_to_another_key(self):
+        original_key = base64.b64encode(b"A" * 32).decode("ascii")
+        replacement_key = base64.b64encode(b"B" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.owner, "immutable-device-01", original_key))
+        error = app.register_chat_device_key(self.owner, "immutable-device-01", replacement_key)
+        self.assertIn("already bound", error.lower())
+        with app.db() as con:
+            stored = con.execute(
+                "SELECT public_key FROM chat_device_keys WHERE user_id = ? AND device_id = ?",
+                (self.owner, "immutable-device-01"),
+            ).fetchone()
+        self.assertEqual(stored["public_key"], original_key)
+
     def test_removed_group_member_is_excluded_from_future_device_envelopes(self):
         group = self.create_group()
         token, _ = app.create_chat_group_invite(group["id"], self.owner)

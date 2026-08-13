@@ -197,22 +197,22 @@ FAIRFARES_R2_ALLOWED_ORIGINS=https://www.fairfare.space,http://localhost:8010 \
 python3 scripts/configure_r2_cors.py
 ```
 
-The default URL lifetime is 10 minutes and is capped at 15 minutes. Unfinalized uploads expire after 24 hours; the existing Chitthi maintenance endpoint deletes those orphans and finalized media older than seven days. These can be tuned with `FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS`, `FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS`, and `FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS`.
+The default URL lifetime is one hour and is capped at one hour so iOS background scheduling has enough headroom for 100 MB transfers. Unfinalized uploads expire after 24 hours; the existing Chitthi maintenance endpoint deletes those orphans and finalized media older than seven days. These can be tuned with `FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS`, `FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS`, and `FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS`.
 
 The legacy server-relay attachment endpoint remains temporarily available for older app builds. Current web, iOS, and Android clients use direct encrypted R2 transfer. Without R2 variables, legacy local development continues using `data/uploads/chat`, while the direct-transfer authorization endpoint reports that storage is unavailable.
 
-Native Chitthi attachments use the versioned `CHUNKED_SECRETBOX_V2` format. iOS and Android encrypt new files in 256 KiB chunks through Expo file handles; every chunk is independently encrypted and authenticated with a nonce derived from a random per-file prefix and its chunk index. The chunk size is versioned in each descriptor, so existing 1 MiB chunked attachments and version-1 whole-file attachments remain readable; web recipients can decrypt both versions.
+New native Chitthi attachments use the versioned `CHUNKED_AES_GCM_V3` format with platform-native CryptoKit/JCA acceleration. Files are processed in bounded 256 KiB authenticated chunks with a unique nonce derived from a random per-file prefix and chunk index. The app retains `CHUNKED_SECRETBOX_V2` decryption for older native ciphertext; browser recipients retain a compatible AES-GCM decoder but remain capped at 12 MB when sending.
 
 Native clients accept media up to 100 MB. Ciphertext above 12 MB uses resumable R2 multipart transfer with uniform 8 MiB parts. Every presigned part is bound to its exact number, byte length, and SHA-256 checksum; the backend reconciles R2 part ETags and sizes, completes the upload, then streams the completed private object once to verify the authorized whole-object SHA-256 before publishing the message. Interrupted native uploads retain only encrypted `.ffenc2` data and encrypted envelope state and resume when Chitthi next opens. Native downloads use authenticated 8 MiB HTTP ranges, retain partial ciphertext across retries, verify the whole-object SHA-256, authenticate each secretbox chunk, save the plaintext durably, and only then send the per-device receipt. Browser sending remains limited to 12 MB because its legacy encryption path still processes the whole attachment in memory.
 
-The production rollout is server-controlled and defaults safely to 12 MB with multipart disabled. Render can raise it without a mobile release:
+The production configuration enables resumable multipart media transfers up to 100 MB for native iOS and Android builds. Browser and Expo Go sending remain capped at 12 MB because their JavaScript-only path processes more attachment data in memory. The limit remains server-controlled and can be reduced without a mobile release:
 
 ```bash
 FAIRFARES_CHITTHI_MULTIPART_ENABLED=1
-FAIRFARES_CHITTHI_MAX_VIDEO_MB=25
-FAIRFARES_CHITTHI_ROLLOUT_PERCENT=5
+FAIRFARES_CHITTHI_MAX_VIDEO_MB=100
+FAIRFARES_CHITTHI_ROLLOUT_PERCENT=100
 FAIRFARES_CHITTHI_ROLLOUT_USER_IDS=123,456
-FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS=10
+FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS=0
 ```
 
 Explicit user IDs are always placed in the internal cohort. Everyone else is assigned deterministically to the configured percentage, so users do not move in and out of the test group between launches. The backend returns the effective configuration in mobile bootstrap and enforces the same byte limit during authorization; clients cannot unlock multipart by altering local state. Expo Go always applies an additional hard 12 MB safety ceiling.

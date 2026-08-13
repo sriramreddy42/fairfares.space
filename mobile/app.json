@@ -38,6 +38,10 @@
         "NSLocationWhenInUseUsageDescription": "FairFares uses your location to set ride pickup, find nearby drivers, and estimate distance.",
         "NSCameraUsageDescription": "Allow FairFares to take a photo that you choose to send in Chitthi.",
         "NSPhotoLibraryUsageDescription": "Allow FairFares to select photos and videos that you choose to send in Chitthi.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
         "ITSAppUsesNonExemptEncryption": false
       }
     },
