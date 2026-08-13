@@ -15,9 +15,10 @@ type Props = {
   messageSent?: boolean;
   onSendMessage?: (post: HousingPost, message: string) => Promise<void>;
   onSeeConversation?: (post: HousingPost) => void;
+  ownListing?: boolean;
 };
 
-export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false, messageSent = false, onSendMessage, onSeeConversation }: Props) {
+export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
   const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
   const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
@@ -76,7 +77,12 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, com
       </View>
       {!post.sample ? (
         <View style={styles.inlineMessageCard}>
-          {messageSent ? (
+          {ownListing ? (
+            <View style={styles.ownListingRow}>
+              <View style={styles.ownListingCheck}><Text style={styles.ownListingCheckText}>✓</Text></View>
+              <View style={styles.ownListingCopy}><Text style={styles.ownListingTitle}>Your listing</Text><Text style={styles.ownListingHint}>Manage it from Activity</Text></View>
+            </View>
+          ) : messageSent ? (
             <>
               <View style={styles.sentHeading}>
                 <View style={styles.sentCheck}><Text style={styles.sentCheckText}>✓</Text></View>
@@ -269,5 +275,11 @@ const styles = StyleSheet.create({
   sentCheckText: { color: theme.colors.green, fontSize: 14, lineHeight: 17, fontWeight: "900" },
   sentTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
   seeConversation: { height: 38, borderRadius: 19, backgroundColor: "rgba(94,196,122,0.14)", borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", alignItems: "center", justifyContent: "center" },
-  seeConversationText: { color: theme.colors.green, fontSize: 12, lineHeight: 16, fontWeight: "900" }
+  seeConversationText: { color: theme.colors.green, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  ownListingRow: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8 },
+  ownListingCheck: { width: 27, height: 27, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(94,196,122,0.14)", borderWidth: 1, borderColor: "rgba(94,196,122,0.4)" },
+  ownListingCheckText: { color: theme.colors.green, fontSize: 14, fontWeight: "900" },
+  ownListingCopy: { flex: 1, minWidth: 0 },
+  ownListingTitle: { color: theme.colors.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  ownListingHint: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, fontWeight: "600" }
 });

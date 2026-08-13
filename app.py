@@ -11150,30 +11150,31 @@ def messaged_listing_ids_for_user(user_id: int) -> dict[str, list[str]]:
         rows = con.execute(
             """
             SELECT DISTINCT
-                   CASE
-                     WHEN messages.context_type = 'HOUSING' AND messages.context_public_id != ''
-                     THEN messages.context_public_id
-                     ELSE posts.public_id
-                   END AS post_public_id,
-                   CASE
-                     WHEN messages.context_type = 'RIDE' AND messages.context_public_id != ''
-                     THEN messages.context_public_id
-                     ELSE rides.public_id
-                   END AS ride_public_id
-            FROM chat_conversations conversations
+                   CASE WHEN messages.context_type = 'HOUSING' THEN messages.context_public_id END AS post_public_id,
+                   CASE WHEN messages.context_type IN ('RIDE', 'CARPOOL') THEN messages.context_public_id END AS ride_public_id
+            FROM chat_messages messages
             JOIN chat_participants participant
-              ON participant.conversation_id = conversations.id
+              ON participant.conversation_id = messages.conversation_id
              AND participant.user_id = ?
-            JOIN chat_messages messages
-              ON messages.conversation_id = conversations.id
-             AND messages.sender_id = ?
+            LEFT JOIN accommodation_posts context_post
+              ON messages.context_type = 'HOUSING'
+             AND context_post.public_id = messages.context_public_id
+            LEFT JOIN ride_posts context_ride
+              ON messages.context_type IN ('RIDE', 'CARPOOL')
+             AND context_ride.public_id = messages.context_public_id
+            LEFT JOIN users context_post_contact
+              ON messages.context_type = 'HOUSING'
+             AND lower(context_post_contact.email) = lower(context_post.contact_email)
+            WHERE messages.sender_id = ?
              AND messages.deleted_at IS NULL
-            LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
-            LEFT JOIN ride_posts rides ON rides.id = conversations.ride_post_id
-            WHERE posts.public_id IS NOT NULL OR rides.public_id IS NOT NULL
-               OR (messages.context_type IN ('HOUSING', 'RIDE') AND messages.context_public_id != '')
+              AND messages.context_public_id != ''
+              AND messages.context_type IN ('HOUSING', 'RIDE', 'CARPOOL')
+              AND (
+                   (messages.context_type = 'HOUSING' AND COALESCE(messages.context_owner_user_id, context_post.user_id, context_post_contact.id, 0) != ?)
+                OR (messages.context_type IN ('RIDE', 'CARPOOL') AND COALESCE(context_ride.user_id, 0) != ?)
+              )
             """,
-            (user_id, user_id),
+            (user_id, user_id, user_id, user_id),
         ).fetchall()
     return {
         "postIds": sorted({str(row_value(row, "post_public_id") or "") for row in rows if row_value(row, "post_public_id")}),
@@ -22823,8 +22824,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # Persisting context per message avoids losing history when one
                 # direct conversation is reused for another listing by the same owner.
                 con.execute(
-                    "UPDATE chat_messages SET context_type = 'HOUSING', context_public_id = ? WHERE id = ? AND sender_id = ?",
-                    (context_post_id, int(message["id"]), int(user["id"])),
+                    """
+                    UPDATE chat_messages
+                    SET context_type = ?, context_public_id = ?, context_title = ?, context_subtitle = ?,
+                        context_owner_user_id = ?, context_owner_name = ?
+                    WHERE id = ? AND sender_id = ?
+                    """,
+                    (
+                        listing_context["type"], listing_context["id"], listing_context["title"],
+                        listing_context["subtitle"], listing_owner_id, listing_context["ownerName"],
+                        int(message["id"]), int(user["id"]),
+                    ),
                 )
                 message = con.execute("SELECT * FROM chat_messages WHERE id = ?", (int(message["id"]),)).fetchone()
             if not bool(form.get("silent")):

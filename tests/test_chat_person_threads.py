@@ -231,9 +231,16 @@ class ChatPersonThreadsTest(unittest.TestCase):
                     "UPDATE chat_messages SET context_type = 'HOUSING', context_public_id = ? WHERE id = ?",
                     (post_id, int(message["id"])),
                 )
+            self.insert_housing_post(con, sender_id, "FFH-OWN-LISTING", "Sender's own listing")
+            own_message = app.save_chat_message(con, conversation_id, sender, "invalid self context", "own-listing-context")
+            con.execute(
+                "UPDATE chat_messages SET context_type = 'HOUSING', context_public_id = 'FFH-OWN-LISTING' WHERE id = ?",
+                (int(own_message["id"]),),
+            )
 
         started = time.monotonic()
         contexts = app.messaged_listing_ids_for_user(sender_id)
+        owner_contexts = app.messaged_listing_ids_for_user(owner_id)
         first_duration = time.monotonic() - started
         with ThreadPoolExecutor(max_workers=16) as executor:
             repeated = list(executor.map(lambda _: app.messaged_listing_ids_for_user(sender_id), range(64)))
@@ -241,7 +248,9 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(len(contexts["postIds"]), listing_count)
         self.assertEqual(contexts["postIds"][0], "FFH-CONTEXT-0000")
         self.assertEqual(contexts["postIds"][-1], "FFH-CONTEXT-0249")
+        self.assertNotIn("FFH-OWN-LISTING", contexts["postIds"])
         self.assertEqual(contexts["rideIds"], [])
+        self.assertEqual(owner_contexts, {"postIds": [], "rideIds": []})
         self.assertTrue(all(result == contexts for result in repeated))
         self.assertLess(first_duration, 1.0)
 

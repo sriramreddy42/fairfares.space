@@ -3477,7 +3477,7 @@ export function HousingScreen({
       </View> : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.housingCardRow} snapToInterval={housingCardWidth + 10} decelerationRate="fast">
         {sortedPosts.length ? (
-          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} messageSent={sentPostIds.includes(post.id)} onSendMessage={onSendPostMessage} onSeeConversation={onOpenPostConversation} />)
+          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} messageSent={sentPostIds.includes(post.id)} onSendMessage={onSendPostMessage} onSeeConversation={onOpenPostConversation} ownListing={Boolean(data?.user?.id && Number(post.posterUserId) === Number(data.user.id))} />)
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
@@ -3489,7 +3489,7 @@ export function HousingScreen({
       {localities.length ? (
         <>
           <SectionHeader title="Explore localities" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.localityRow}>
             {localities.map((locality) => (
               <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
                 <Text style={styles.localityTitle}>{locality.name}</Text>
@@ -3661,8 +3661,8 @@ export function HousingScreen({
                     </View>
                   </View>
                 ) : null}
-                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, detailPost.sample && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
-                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
+                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, (detailPost.sample || Number(detailPost.posterUserId) === Number(data?.user?.id || 0)) && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && Number(detailPost.posterUserId) !== Number(data?.user?.id || 0) && onMessage(detailPost)} disabled={detailPost.sample || Number(detailPost.posterUserId) === Number(data?.user?.id || 0)}>
+                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? "Your listing" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
@@ -4306,11 +4306,12 @@ const styles = StyleSheet.create({
   roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
   roomIcon: { width: 50, height: 50 },
   roomLabel: { color: theme.colors.soft, fontWeight: "700", fontSize: 14 },
-  localityCard: { width: 270, borderRadius: theme.radius.lg, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, marginRight: theme.spacing.md, padding: theme.spacing.md, gap: 14 },
-  localityTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
-  localityStats: { flexDirection: "row", gap: 10 },
-  localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, overflow: "hidden", fontWeight: "600" },
-  avgRent: { color: theme.colors.green, fontSize: 17, fontWeight: "700" },
+  localityRow: { gap: 9, paddingRight: 2 },
+  localityCard: { width: 210, minHeight: 104, borderRadius: 18, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 12, paddingVertical: 11, gap: 8 },
+  localityTitle: { color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "600" },
+  localityStats: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: "rgba(79,124,255,0.62)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 4, overflow: "hidden", fontSize: 10, lineHeight: 13, fontWeight: "600" },
+  avgRent: { color: theme.colors.green, fontSize: 13, lineHeight: 17, fontWeight: "600" },
   detailBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.74)", paddingHorizontal: theme.spacing.sm, paddingTop: Platform.OS === "ios" ? 54 : theme.spacing.md, paddingBottom: theme.spacing.md, justifyContent: "center" },
   detailCard: { maxHeight: "94%", backgroundColor: theme.colors.panel, borderRadius: 28, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },

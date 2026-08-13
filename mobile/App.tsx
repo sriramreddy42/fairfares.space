@@ -266,6 +266,7 @@ function FairFaresApp() {
   const [pendingRide, setPendingRide] = useState<RidePost | null>(null);
   const [sentCardPostIds, setSentCardPostIds] = useState<string[]>([]);
   const [sentCardRideIds, setSentCardRideIds] = useState<string[]>([]);
+  const [sentCardOwnerUserId, setSentCardOwnerUserId] = useState(0);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
@@ -506,10 +507,12 @@ function FairFaresApp() {
     if (!data?.user) {
       setSentCardPostIds([]);
       setSentCardRideIds([]);
+      setSentCardOwnerUserId(0);
       return;
     }
     setSentCardPostIds(data.chat.messagedPostIds || []);
     setSentCardRideIds(data.chat.messagedRideIds || []);
+    setSentCardOwnerUserId(Number(data.user.id || 0));
   }, [data?.user?.id, data?.chat.messagedPostIds, data?.chat.messagedRideIds]);
 
   useEffect(() => {
@@ -824,6 +827,7 @@ function FairFaresApp() {
       setLoginOpen(true);
       return;
     }
+    if (Number(post.posterUserId || 0) === Number(data.user.id || 0)) return;
     try {
       const opened = await openChatForPost(post.id);
       setData((current) => current ? {
@@ -857,6 +861,7 @@ function FairFaresApp() {
       setLoginOpen(true);
       throw new Error("Sign in to message this seller.");
     }
+    if (Number(post.posterUserId || 0) === userId) throw new Error("You cannot message your own listing.");
     try {
       const identity = await getOrCreateDeviceIdentity(userId);
       await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey || "");
@@ -882,12 +887,24 @@ function FairFaresApp() {
   }
 
   function markCardMessageSent(context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) {
+    const currentUserId = Number(data?.user?.id || 0);
+    setSentCardOwnerUserId(currentUserId);
     if (context.postId) {
       setSentCardPostIds((current) => current.includes(context.postId!) ? current : [...current, context.postId!]);
     }
     if (context.rideId) {
       setSentCardRideIds((current) => current.includes(context.rideId!) ? current : [...current, context.rideId!]);
     }
+    setData((current) => {
+      if (!current?.user || Number(current.user.id || 0) !== currentUserId) return current;
+      const postIds = context.postId && !current.chat.messagedPostIds.includes(context.postId)
+        ? [...current.chat.messagedPostIds, context.postId]
+        : current.chat.messagedPostIds;
+      const rideIds = context.rideId && !current.chat.messagedRideIds.includes(context.rideId)
+        ? [...current.chat.messagedRideIds, context.rideId]
+        : current.chat.messagedRideIds;
+      return { ...current, chat: { ...current.chat, messagedPostIds: postIds, messagedRideIds: rideIds } };
+    });
     setReviewPromptContext({
       name: context.name?.trim() || "FairFares member",
       photoUrl: absoluteAssetUrl(context.photoUrl || ""),
@@ -1509,7 +1526,7 @@ function FairFaresApp() {
 
   function completeSocialLogin(user: BootstrapPayload["user"]) {
     if (!user) return;
-    setData((current) => current ? { ...current, user } : current);
+    setData((current) => current ? { ...current, user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
     setSocialContinuation("");
     setSocialRecoveryEmailHint("");
     setShowSocialRecoveryEmail(false);
@@ -1626,7 +1643,7 @@ function FairFaresApp() {
     try {
       const payload = await mobileLogin(identifier, password);
       const authenticatedPassword = password;
-      setData((current) => current ? { ...current, user: payload.user } : current);
+      setData((current) => current ? { ...current, user: payload.user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
       setAuthMessage("Login successful.");
       setLoginOpen(false);
       setIdentifier("");
@@ -1686,7 +1703,7 @@ function FairFaresApp() {
       setSignupConsentAccepted(false);
       if (!payload.activationRequired && payload.token) {
         if (payload.user) {
-          setData((current) => current ? { ...current, user: payload.user || null } : current);
+          setData((current) => current ? { ...current, user: payload.user || null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
         }
         setLoginOpen(false);
         if (pendingListingAfterLogin) {
@@ -1847,8 +1864,8 @@ function FairFaresApp() {
         selectedSort={selectedSort}
         onMessage={openMessage}
         onRideMessage={openRideMessage}
-        sentPostIds={sentCardPostIds}
-        sentRideIds={sentCardRideIds}
+        sentPostIds={sentCardOwnerUserId === Number(data?.user?.id || 0) ? sentCardPostIds : []}
+        sentRideIds={sentCardOwnerUserId === Number(data?.user?.id || 0) ? sentCardRideIds : []}
         onSendPostMessage={sendPostMessageInline}
         onOpenPostConversation={(post) => void openPostConversation(post)}
         onOpenMessenger={() => setActiveTab("messenger")}
@@ -1893,8 +1910,8 @@ function FairFaresApp() {
         selectedSort={selectedSort}
         onMessage={openMessage}
         onRideMessage={openRideMessage}
-        sentPostIds={sentCardPostIds}
-        sentRideIds={sentCardRideIds}
+        sentPostIds={sentCardOwnerUserId === Number(data?.user?.id || 0) ? sentCardPostIds : []}
+        sentRideIds={sentCardOwnerUserId === Number(data?.user?.id || 0) ? sentCardRideIds : []}
         onSendPostMessage={sendPostMessageInline}
         onOpenPostConversation={(post) => void openPostConversation(post)}
         onOpenMessenger={() => setActiveTab("messenger")}
