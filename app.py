@@ -1352,26 +1352,20 @@ def complete_chitthi_multipart_upload(
                 Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
                 MultipartUpload={"Parts": normalized},
             )
-        stored = r2_storage_client().get_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
-        body = stored["Body"]
-        digest = hashlib.sha256()
-        total = 0
-        try:
-            while True:
-                chunk = body.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > expected_size:
-                    return None, "Encrypted multipart upload is larger than authorized."
-                digest.update(chunk)
-        finally:
-            if hasattr(body, "close"):
-                body.close()
-        actual_checksum = base64.b64encode(digest.digest()).decode()
-        if total != expected_size or not secrets.compare_digest(actual_checksum, str(upload["expected_checksum"])):
+        # Every part URL is signed for its exact number, byte length and
+        # SHA-256 header; R2 rejects a payload that does not match that signed
+        # checksum. list_parts above then binds completion to R2's ETags and
+        # exact expected sizes. Re-downloading up to 100 MB here only to hash it
+        # again pinned the request and starved unrelated mobile GETs. A HEAD is
+        # sufficient to verify that R2 assembled the authorized object and
+        # retained this upload's unguessable metadata marker. Receivers still
+        # verify the original whole-ciphertext SHA-256 before decryption.
+        head = r2_storage_client().head_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+        metadata = head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        if (int(head.get("ContentLength") or 0) != expected_size
+                or not secrets.compare_digest(str(metadata.get("upload-id") or ""), str(upload["public_id"]))):
             r2_storage_client().delete_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
-            return None, "Encrypted multipart checksum verification failed."
+            return None, "Encrypted multipart upload verification failed."
     except Exception:
         return None, "Could not complete the encrypted multipart upload."
     with db() as con:
@@ -18251,7 +18245,13 @@ def save_chat_message(
     ).fetchone()
 
 
-def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id: int = 0) -> dict[str, object]:
+def chat_message_payload(
+    row: sqlite3.Row,
+    current_user_id: int,
+    seen_message_id: int = 0,
+    reactions_by_message: dict[int, list[dict[str, object]]] | None = None,
+    include_sender_photo: bool = True,
+) -> dict[str, object]:
     sender_id = int(row_value(row, "sender_id") or 0)
     message_id = int(row_value(row, "id") or 0)
     mine = sender_id == current_user_id
@@ -18296,17 +18296,22 @@ def chat_message_payload(row: sqlite3.Row, current_user_id: int, seen_message_id
             status = "delivered"
         else:
             status = "sent"
-    with db() as reaction_con:
-        reaction_rows = reaction_con.execute(
-            "SELECT emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id = ? GROUP BY emoji ORDER BY MIN(id)",
-            (current_user_id, message_id),
-        ).fetchall()
-    reactions = [{"emoji": row_value(item, "emoji"), "count": int(row_value(item, "total") or 0), "mine": bool(int(row_value(item, "mine") or 0))} for item in reaction_rows]
+    if reactions_by_message is not None:
+        reactions = reactions_by_message.get(message_id, [])
+    else:
+        # Single-message mutation responses retain the compact fallback. Page
+        # endpoints provide a batched map to avoid an N+1 database query.
+        with db() as reaction_con:
+            reaction_rows = reaction_con.execute(
+                "SELECT emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id = ? GROUP BY emoji ORDER BY MIN(id)",
+                (current_user_id, message_id),
+            ).fetchall()
+        reactions = [{"emoji": row_value(item, "emoji"), "count": int(row_value(item, "total") or 0), "mine": bool(int(row_value(item, "mine") or 0))} for item in reaction_rows]
     return {
         "id": message_id,
         "senderId": sender_id,
         "senderName": row_value(row, "sender_name"),
-        "senderPhotoUrl": row_value(row, "sender_photo_url"),
+        "senderPhotoUrl": row_value(row, "sender_photo_url") if include_sender_photo else "",
         "mine": mine,
         "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
@@ -22307,12 +22312,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         before_message_id = int(float_from_value(params.get("before", ["0"])[0] or "0"))
         device_id = clean_text_value(params.get("device_id", [""])[0], 100)
+        compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
         limit = max(1, min(50, int(float_from_value(params.get("limit", ["30"])[0] or "30") or 30)))
         if not conversation_public_id:
             self.send_json({"ok": False, "message": "Conversation is required."}, 400)
             return
         current_user_id = int(user["id"])
         page_envelopes: list[sqlite3.Row] = []
+        reactions_by_message: dict[int, list[dict[str, object]]] = {}
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
             if not conversation:
@@ -22372,6 +22379,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                            ORDER BY message_id ASC""".format(placeholders=",".join("?" for _ in messages)),
                         (current_user_id, device_id, *[int(row_value(message, "id") or 0) for message in messages]),
                     ).fetchall()
+                message_ids = [int(row_value(message, "id") or 0) for message in messages]
+                placeholders = ",".join("?" for _ in message_ids)
+                reaction_rows = con.execute(
+                    f"SELECT message_id, emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(id)",
+                    (current_user_id, *message_ids),
+                ).fetchall()
+                reactions_by_message = {message_id: [] for message_id in message_ids}
+                for reaction in reaction_rows:
+                    reactions_by_message[int(row_value(reaction, "message_id") or 0)].append({
+                        "emoji": row_value(reaction, "emoji"),
+                        "count": int(row_value(reaction, "total") or 0),
+                        "mine": bool(int(row_value(reaction, "mine") or 0)),
+                    })
             seen_row = con.execute(
                 """
                 SELECT MAX(last_read_message_id) AS seen_message_id
@@ -22395,7 +22415,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             {
                 "ok": True,
                 "conversation": chat_row_payload(conversation, current_user_id),
-                "messages": [chat_message_payload(message, current_user_id, seen_message_id) for message in messages],
+                # A profile photo can be a legacy data URL. Return it once per
+                # sender instead of duplicating hundreds of KB into every row.
+                "senders": {
+                    str(int(row_value(message, "sender_id") or 0)): {
+                        "name": row_value(message, "sender_name"),
+                        "photoUrl": row_value(message, "sender_photo_url"),
+                    }
+                    for message in messages
+                    if int(row_value(message, "sender_id") or 0) > 0
+                },
+                "messages": [chat_message_payload(message, current_user_id, seen_message_id, reactions_by_message, not compact_senders) for message in messages],
                 "envelopes": [{
                     "messageId": int(row_value(envelope, "message_id") or 0),
                     "senderPublicKey": row_value(envelope, "sender_public_key"),
@@ -22422,6 +22452,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         after_message_id = max(0, int(float_from_value(params.get("after", ["0"])[0] or "0")))
+        compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
         wait_seconds = min(7.5, max(0.0, float_from_value(params.get("wait", ["7"])[0] or "7")))
         if not conversation_public_id:
             self.send_json({"ok": False, "message": "Conversation is required."}, 400)
@@ -22532,7 +22563,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "messages": [chat_message_payload(message, current_user_id) for message in messages],
+                # Realtime rows use the same normalized sender directory as
+                # history pages. Legacy data-URL avatars can be hundreds of KB
+                # and must never be duplicated into every incoming message.
+                "senders": {
+                    str(int(row_value(message, "sender_id") or 0)): {
+                        "name": row_value(message, "sender_name"),
+                        "photoUrl": row_value(message, "sender_photo_url"),
+                    }
+                    for message in messages
+                    if int(row_value(message, "sender_id") or 0) > 0
+                },
+                "messages": [chat_message_payload(message, current_user_id, 0, None, not compact_senders) for message in messages],
                 "receipts": receipts,
                 "typing": typing,
                 "reactionUpdates": reaction_updates,

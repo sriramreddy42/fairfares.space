@@ -17,6 +17,7 @@ class FakeR2Client:
         self.objects = {}
         self.multipart_uploads = {}
         self.next_multipart_id = 1
+        self.get_object_calls = 0
 
     def put_object(self, **kwargs):
         self.objects[(kwargs["Bucket"], kwargs["Key"])] = {
@@ -27,6 +28,7 @@ class FakeR2Client:
         }
 
     def get_object(self, **kwargs):
+        self.get_object_calls += 1
         stored = self.objects[(kwargs["Bucket"], kwargs["Key"])]
         payload = stored["Body"]
 
@@ -163,7 +165,7 @@ class R2StorageTest(unittest.TestCase):
         self.assertTrue(internal["enableMultipartUpload"])
         self.assertEqual(internal["rolloutCohort"], "internal")
 
-    def test_multipart_upload_is_resumable_and_whole_object_checksum_is_verified(self):
+    def test_multipart_upload_is_resumable_and_completion_does_not_redownload_object(self):
         self.addCleanup(app.refresh_storage_paths)
         client = FakeR2Client()
         encrypted = b"eightbyt" + b"final"
@@ -225,6 +227,7 @@ class R2StorageTest(unittest.TestCase):
             )
             self.assertFalse(completion_error)
             self.assertTrue(completion["completed"])
+            self.assertEqual(client.get_object_calls, 0)
             envelopes = [
                 {"recipientUserId": sender_id, "recipientDeviceId": "sender-device", "senderPublicKey": sender_key, "nonce": "n1", "ciphertext": "c1"},
                 {"recipientUserId": recipient_id, "recipientDeviceId": "recipient-device", "senderPublicKey": sender_key, "nonce": "n2", "ciphertext": "c2"},
