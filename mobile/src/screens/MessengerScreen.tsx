@@ -8,7 +8,7 @@ import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, FlatList, Image, Keyboard, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from "react-native";
 import Reanimated, { useAnimatedKeyboard, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
@@ -69,6 +69,7 @@ import { pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/ima
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
+import { awaitChatIdentityRecovery, chatIdentityRecoveryError } from "../utils/chatRecovery";
 import { useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 import { cleanupPersistentChitthiMedia, copyPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
@@ -736,7 +737,9 @@ function AdaptiveChatImage({ uri, source, compact = false, onError }: { uri?: st
   return <Image source={source || { uri: uri || "" }} style={[styles.messageImage, compact && styles.collageImage]} resizeMode="cover" onError={onError} />;
 }
 
-function EncryptedChatImage({ attachmentUrl, keyPayload, compact = false }: { attachmentUrl: string; keyPayload: string; compact?: boolean }) {
+function EncryptedChatImage({ message, resolvePreview, compact = false }: { message: ChatMessage; resolvePreview?: (message: ChatMessage) => Promise<string>; compact?: boolean }) {
+  const attachmentUrl = message.attachmentUrl;
+  const keyPayload = String(message.metadata?.encryptedKeyPayload || "");
   const previewCacheKey = encryptedPreviewCacheKey(attachmentUrl, keyPayload);
   const [uri, setUri] = useState(() => encryptedChatImagePreviewCache.get(previewCacheKey) || "");
   const [failed, setFailed] = useState(false);
@@ -765,26 +768,44 @@ function EncryptedChatImage({ attachmentUrl, keyPayload, compact = false }: { at
           setUri("");
         }
 
-        const encryptedDataUrl = await getAuthenticatedAssetDataUrl(attachmentUrl);
-        const decrypted = decryptAttachmentBase64(encryptedDataUrl.split(",", 2)[1] || "", keyPayload);
-        let previewUri = `data:${decrypted.mimeType};base64,${decrypted.base64}`;
+        let previewUri = "";
         if (Platform.OS !== "web") {
-          previewUri = encryptedPreviewLocalUri(attachmentUrl, keyPayload);
-          if (!previewUri) throw new Error("Photo preview storage is unavailable.");
-          const existing = await FileSystem.getInfoAsync(previewUri);
-          if (!existing.exists || Number(existing.size || 0) === 0) {
-            await FileSystem.writeAsStringAsync(previewUri, decrypted.base64, { encoding: FileSystem.EncodingType.Base64 });
+          if (!resolvePreview) throw new Error("The encrypted preview resolver is unavailable.");
+          // Use the same authenticated, resumable, checksum-verified and
+          // chunk-aware materialization path as tapping the attachment. A
+          // second preview downloader had drifted from the playback path. The
+          // API intentionally exposes /api/chat/attachments/{id}, not its
+          // private r2:// reference, so URL-shape checks cannot select crypto.
+          previewUri = await resolvePreview(message);
+        } else {
+          const encryptedDataUrl = await getAuthenticatedAssetDataUrl(attachmentUrl);
+          const decrypted = decryptAttachmentBase64(encryptedDataUrl.split(",", 2)[1] || "", keyPayload);
+          previewUri = `data:${decrypted.mimeType};base64,${decrypted.base64}`;
+          if (Platform.OS !== "web") {
+            previewUri = encryptedPreviewLocalUri(attachmentUrl, keyPayload);
+            if (!previewUri) throw new Error("Photo preview storage is unavailable.");
+            const existing = await FileSystem.getInfoAsync(previewUri);
+            if (!existing.exists || Number(existing.size || 0) === 0) {
+              await FileSystem.writeAsStringAsync(previewUri, decrypted.base64, { encoding: FileSystem.EncodingType.Base64 });
+            }
           }
         }
         encryptedChatImagePreviewCache.set(previewCacheKey, previewUri);
         if (!cancelled) setUri(previewUri);
-      } catch {
+      } catch (error) {
+        if (__DEV__) console.warn("Chitthi encrypted photo preview failed", {
+          messageId: message.id,
+          reason: error instanceof Error ? error.message : String(error)
+        });
         if (!cancelled) setFailed(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [attachmentUrl, keyPayload, previewCacheKey]);
-  if (failed) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Encrypted preview unavailable</Text></View>;
+  }, [attachmentUrl, keyPayload, message.id, previewCacheKey]);
+  // Keep this placeholder non-interactive so the enclosing media Pressable
+  // owns tap and long-press on Android. Nested touch responders prevented the
+  // message action sheet from opening when a preview had failed.
+  if (failed) return <View pointerEvents="none" style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Tap to open photo</Text></View>;
   if (!uri) return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Decrypting photo…</Text></View>;
   return <AdaptiveChatImage uri={uri} compact={compact} />;
 }
@@ -795,7 +816,7 @@ function PendingPhotoPreview({ uri, compact = false, full = false }: { uri: stri
   return <Image source={{ uri }} style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, full && styles.pendingFullPreviewImage]} resizeMode={full ? "contain" : "cover"} onError={() => setFailed(true)} />;
 }
 
-function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
+function ChatMessagePhoto({ message, resolvePreview, compact = false }: { message: ChatMessage; resolvePreview?: (message: ChatMessage) => Promise<string>; compact?: boolean }) {
   if (message.metadata?.mediaExpired || !message.attachmentUrl) {
     return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Media expired</Text></View>;
   }
@@ -803,7 +824,7 @@ function ChatMessagePhoto({ message, compact = false }: { message: ChatMessage; 
     return <AdaptiveChatImage uri={message.metadata.decryptedDataUrl} compact={compact} />;
   }
   if (message.metadata?.encryptedKeyPayload) {
-    return <EncryptedChatImage attachmentUrl={message.attachmentUrl} keyPayload={message.metadata.encryptedKeyPayload} compact={compact} />;
+    return <EncryptedChatImage message={message} resolvePreview={resolvePreview} compact={compact} />;
   }
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
 }
@@ -916,6 +937,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const messengerLoaderVersion = useRef(0);
   const messengerUserIdRef = useRef(currentUserId);
   const messageCache = useRef(new Map<string, ChatMessage[]>());
+  const attachmentMaterializationJobs = useRef(new Map<string, {
+    promise: Promise<{ uri: string; name: string; mimeType: string }>;
+    progressListeners: Set<(progress: number) => void>;
+  }>());
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingLastSentAt = useRef(0);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
@@ -968,12 +993,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
   const [selectedForwardConversationIds, setSelectedForwardConversationIds] = useState<string[]>([]);
   const [forwardingMessages, setForwardingMessages] = useState(false);
+  const [forwardingStatus, setForwardingStatus] = useState("");
   const [wallpaperPanelOpen, setWallpaperPanelOpen] = useState(false);
   const [chatOptionsOpen, setChatOptionsOpen] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
   const [groupMemberSearch, setGroupMemberSearch] = useState("");
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
+  const [identityRecoveryWarning, setIdentityRecoveryWarning] = useState("");
   const [encryptionReady, setEncryptionReady] = useState(false);
   const [wallpaper, setWallpaper] = useState("midnight");
   const [customWallpaper, setCustomWallpaper] = useState("");
@@ -1392,8 +1419,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const initialize = async () => {
       try {
+        await awaitChatIdentityRecovery(userId);
         const identity = await getOrCreateDeviceIdentity(userId);
         if (cancelled) return;
+        setIdentityRecoveryWarning(chatIdentityRecoveryError(userId));
         // Preserve the device key even if the network registration must retry.
         setDeviceIdentity(identity);
         await ensureDeviceRegistration(identity);
@@ -1435,6 +1464,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function ensureChatDeviceIdentity() {
     const userId = Number(data?.user?.id || 0);
     if (!userId) throw new Error("Sign in to use encrypted Chitthi.");
+    await awaitChatIdentityRecovery(userId);
     const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
     setDeviceIdentity(identity);
     try {
@@ -1535,9 +1565,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function prepareMessageDecryption(conversationId: string) {
     const identity = await ensureChatDeviceIdentity();
-    const [envelopePayload, keyPayload] = await Promise.all([
-      getChatEncryptedEnvelopes(conversationId, identity.deviceId), getChatDeviceKeys(conversationId)
-    ]);
+    // Receiving only depends on this device's envelopes. Send-key readiness is
+    // a separate concern and must never prevent valid incoming ciphertext from
+    // being decrypted (for example during a brief key-directory outage).
+    const envelopePayload = await getChatEncryptedEnvelopes(conversationId, identity.deviceId);
+    const keyPayload = await getChatDeviceKeys(conversationId).catch(() => ({
+      ok: false,
+      keys: [],
+      ready: false,
+      warning: "Encryption keys are temporarily unavailable."
+    }));
     return { identity, envelopePayload, keyPayload };
   }
 
@@ -1550,30 +1587,46 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const { identity, envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
       setEncryptionReady(Boolean(keyPayload.ready));
       const byMessage = new Map(envelopePayload.envelopes.map((item) => [item.messageId, item]));
-      return await Promise.all(nextMessages.map(async (message) => {
+      return nextMessages.map((message) => {
         const envelope = byMessage.get(message.id);
-        if (!envelope) return message.text.includes("End-to-end encrypted message")
+        if (!envelope) return isEncryptedPlaceholder(message.text)
           ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
           : message;
-        const clearText = decryptEnvelope(envelope, identity);
-        if (message.type === "ENCRYPTED_ATTACHMENT" && (message.attachmentUrl || message.metadata?.mediaExpired) && clearText) {
-          const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; thumbnailBase64?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number };
-          return {
-            ...message,
-            type: attachmentInfo.kind,
-            text: attachmentInfo.caption || "",
-            metadata: { ...message.metadata, encrypted: true, kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption, thumbnailDataUrl: attachmentInfo.thumbnailBase64 ? `data:image/jpeg;base64,${attachmentInfo.thumbnailBase64}` : undefined, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
-          };
+        try {
+          const clearText = decryptEnvelope(envelope, identity);
+          if (!clearText) throw new Error("Envelope authentication failed.");
+          if (message.type === "ENCRYPTED_ATTACHMENT" && (message.attachmentUrl || message.metadata?.mediaExpired)) {
+            const attachmentInfo = JSON.parse(clearText) as { kind: "IMAGE" | "VIDEO" | "FILE"; caption?: string; fileName?: string; mimeType?: string; thumbnailBase64?: string; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number; forwarded?: boolean };
+            return {
+              ...message,
+              type: attachmentInfo.kind,
+              text: attachmentInfo.caption || "",
+              metadata: { ...message.metadata, encrypted: true, forwarded: Boolean(attachmentInfo.forwarded), kind: attachmentInfo.kind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, caption: attachmentInfo.caption, thumbnailDataUrl: attachmentInfo.thumbnailBase64 ? `data:image/jpeg;base64,${attachmentInfo.thumbnailBase64}` : undefined, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
+            };
+          }
+          if (clearText.startsWith("FFFORWARD:")) {
+            const forwarded = JSON.parse(clearText.slice(10)) as { text?: string };
+            return { ...message, text: String(forwarded.text || ""), canEdit: false, metadata: { ...message.metadata, encrypted: true, forwarded: true } };
+          }
+          if (clearText.startsWith("FFRICH:")) {
+            const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
+            return { ...message, type: rich.type, text: "", canEdit: false, metadata: { ...rich.metadata, encrypted: true } };
+          }
+          return { ...message, text: clearText, canEdit: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
+        } catch {
+          // A corrupt, expired, or old-device envelope must affect only that
+          // message. Previously it rejected Promise.all and exposed encrypted
+          // placeholders for every otherwise decryptable message in the page.
+          return { ...message, text: unavailableEncryptedMessageText, canEdit: false };
         }
-        if (clearText.startsWith("FFRICH:")) {
-          const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
-          return { ...message, type: rich.type, text: "", canEdit: false, metadata: { ...rich.metadata, encrypted: true } };
-        }
-        return { ...message, text: clearText || "Unable to decrypt this message on this device.", canEdit: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
-      }));
+      });
     } catch {
       setEncryptionReady(false);
-      return nextMessages;
+      // Never render the backend's encrypted storage placeholder as if it were
+      // message content when envelope retrieval is temporarily unavailable.
+      return nextMessages.map((message) => isEncryptedPlaceholder(message.text)
+        ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
+        : message);
     }
   }
 
@@ -2196,6 +2249,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
       setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : `Sending ${attachments[0].name}…`);
       try {
+        await allowBusyUiToPaint();
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getChatDeviceKeys(activeConversationId);
         if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
@@ -2220,7 +2274,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 identity,
                 keyPayload.keys,
                 (progress) => setAttachmentStatus(`Encrypting ${attachment.name}… ${Math.round(progress * 100)}%`),
-                chitthiFeatures.cryptoThrottleMs
+                cryptoThrottleForSize(attachment.size)
               );
           if (Platform.OS === "web") {
             fileBase64 = await new Promise<string>(async (resolve, reject) => {
@@ -3094,7 +3148,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return clean || `chitthi-${message.id}${fallbackExtension}`;
   }
 
-  async function materializeAttachment(message: ChatMessage, onProgress?: (progress: number) => void) {
+  function cryptoThrottleForSize(size: number) {
+    // Small launch-tier files already yield after every 256 KB chunk; an
+    // additional fixed sleep is perceptible and unnecessary. Preserve the
+    // remotely configured safety throttle for future files above 12 MB.
+    return size <= 12_000_000 ? 0 : chitthiFeatures.cryptoThrottleMs;
+  }
+
+  function allowBusyUiToPaint() {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  async function materializeAttachmentWorker(message: ChatMessage, onProgress?: (progress: number) => void) {
     let mimeType = message.metadata?.mimeType || "application/octet-stream";
     if (message.type === "IMAGE" && !mimeType.startsWith("image/")) mimeType = "image/jpeg";
     if (message.type === "VIDEO" && !mimeType.startsWith("video/")) mimeType = "video/mp4";
@@ -3153,8 +3218,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           mimeType = chunkedDescriptor.mimeType || mimeType;
           fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: chunkedDescriptor.fileName } }, mimeType);
           const finalUri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType) || localUri;
-          decryptChunkedAttachmentFile(encryptedUri, finalUri, encryptedKeyPayload);
-          onProgress?.(99);
+          await decryptChunkedAttachmentFile(encryptedUri, finalUri, encryptedKeyPayload, (progress) => onProgress?.(90 + Math.round(progress * 9)));
           await cleanupPersistentChitthiMedia(finalUri).catch(() => undefined);
           setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
           await confirmLocalDownload();
@@ -3204,6 +3268,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return { uri: localUri, name: fileName, mimeType };
   }
 
+  function materializeAttachment(message: ChatMessage, onProgress?: (progress: number) => void) {
+    const jobKey = `${currentUserId}:${message.id}:${stablePreviewHash(String(message.metadata?.encryptedKeyPayload || message.attachmentUrl || "local"))}`;
+    const existing = attachmentMaterializationJobs.current.get(jobKey);
+    if (existing) {
+      if (onProgress) existing.progressListeners.add(onProgress);
+      return existing.promise.finally(() => {
+        if (onProgress) existing.progressListeners.delete(onProgress);
+      });
+    }
+    const progressListeners = new Set<(progress: number) => void>();
+    if (onProgress) progressListeners.add(onProgress);
+    const reportProgress = (progress: number) => {
+      progressListeners.forEach((listener) => listener(progress));
+    };
+    const promise = materializeAttachmentWorker(message, reportProgress)
+      .finally(() => {
+        const current = attachmentMaterializationJobs.current.get(jobKey);
+        if (current?.promise === promise) attachmentMaterializationJobs.current.delete(jobKey);
+      });
+    attachmentMaterializationJobs.current.set(jobKey, { promise, progressListeners });
+    return promise;
+  }
+
+  async function resolveEncryptedPhotoPreview(message: ChatMessage) {
+    return (await materializeAttachment(message)).uri;
+  }
+
   async function downloadAttachment(item: { uri: string; name: string; mimeType: string }) {
     if (Platform.OS === "web") {
       const anchor = document.createElement("a");
@@ -3226,6 +3317,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       if (!alreadyOnDevice && Platform.OS !== "web") {
         setDownloadingMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
         setMediaDownloadProgress((current) => ({ ...current, [message.id]: 0 }));
+        await allowBusyUiToPaint();
       }
       const item = await materializeAttachment(message, (progress) => {
         if (!alreadyOnDevice && Platform.OS !== "web") {
@@ -3361,6 +3453,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setSelectedMessageIds((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   }
 
+  function handleMessageLongPress(message: ChatMessage) {
+    if (selectedMessageIds.length) {
+      toggleMessageSelection(message);
+      return;
+    }
+    showMessageActions(message);
+  }
+
+  function beginMessageSelection(message: ChatMessage) {
+    const key = messageSelectionKey(message);
+    setSelectedMessageIds((current) => current.includes(key) ? current : [...current, key]);
+    setActionMessage(null);
+  }
+
   function selectedMessages() {
     const selected = new Set(selectedMessageIds);
     return messages.filter((message) => selected.has(messageSelectionKey(message)));
@@ -3394,6 +3500,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setForwardPickerOpen(true);
   }
 
+  function forwardActionMessage(message: ChatMessage) {
+    // Open directly instead of waiting for React state and then reading a
+    // stale selectedMessageIds closure. That race made long-press Forward
+    // occasionally do nothing, especially for media messages.
+    setActionMessage(null);
+    setSelectedMessageIds([messageSelectionKey(message)]);
+    setSelectedForwardConversationIds([]);
+    setForwardPickerOpen(true);
+  }
+
   function forwardMediaFromPreview() {
     const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId);
     if (!source) return;
@@ -3413,22 +3529,38 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const chosenMessages = selectedMessages();
     if (!chosenMessages.length || !selectedForwardConversationIds.length) return;
     setForwardingMessages(true);
+    setForwardingStatus(`Securing ${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} for ${selectedForwardConversationIds.length} chat${selectedForwardConversationIds.length === 1 ? "" : "s"}…`);
     try {
-      const identity = await ensureChatDeviceIdentity();
-      for (const conversationId of selectedForwardConversationIds) {
-        const keyPayload = await getChatDeviceKeys(conversationId);
+      // Let React commit the busy state before CPU-heavy encryption starts.
+      // Without this frame handoff the native button can look unresponsive.
+      await allowBusyUiToPaint();
+      const [identity, destinationKeys] = await Promise.all([
+        ensureChatDeviceIdentity(),
+        Promise.all(selectedForwardConversationIds.map(async (conversationId) => ({ conversationId, keyPayload: await getChatDeviceKeys(conversationId) })))
+      ]);
+      for (const [conversationIndex, destination] of destinationKeys.entries()) {
+        const { conversationId, keyPayload } = destination;
+        setForwardingStatus(`Encrypting for chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
         if (!keyPayload.ready) throw new Error(keyPayload.warning || "A selected chat is not ready for encrypted forwarding.");
-        for (const message of chosenMessages) {
+        for (const [messageIndex, message] of chosenMessages.entries()) {
+          setForwardingStatus(`Forwarding message ${messageIndex + 1} of ${chosenMessages.length} to chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
           if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {
-            const attachment = await materializeAttachment(message);
+            const attachment = await materializeAttachment(message, (progress) => setForwardingStatus(`Preparing message ${messageIndex + 1} of ${chosenMessages.length}… ${Math.round(progress)}%`));
             if (!attachment) continue;
             const kind = message.type as "IMAGE" | "VIDEO" | "FILE";
             if (Platform.OS === "web") {
               const fileBase64 = attachment.uri.slice(attachment.uri.indexOf(",") + 1);
-              const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys);
+              const encrypted = encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind, forwarded: true }, identity, keyPayload.keys);
               await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
             } else {
-              const encrypted = await encryptAttachmentFileForDevices(attachment.uri, { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind }, identity, keyPayload.keys, undefined, chitthiFeatures.cryptoThrottleMs);
+              const encrypted = await encryptAttachmentFileForDevices(
+                attachment.uri,
+                { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind, forwarded: true },
+                identity,
+                keyPayload.keys,
+                (progress) => setForwardingStatus(`Encrypting message ${messageIndex + 1} of ${chosenMessages.length}… ${Math.round(progress * 100)}%`),
+                cryptoThrottleForSize(Number(message.metadata?.size || 0))
+              );
               let encryptedUploadFinalized = false;
               try {
                 await sendDirectEncryptedChatAttachment(conversationId, encrypted, attachment.mimeType);
@@ -3440,7 +3572,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           } else {
             const text = shareableMessageText({ ...message, senderName: "" });
             if (!text) continue;
-            const envelopes = encryptForDevices(text, identity, keyPayload.keys);
+            const envelopes = encryptForDevices(`FFFORWARD:${JSON.stringify({ text })}`, identity, keyPayload.keys, text);
             await sendEncryptedChatMessage(conversationId, envelopes);
           }
         }
@@ -3448,12 +3580,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setForwardPickerOpen(false);
       setSelectedMessageIds([]);
       setSelectedForwardConversationIds([]);
-      await refreshMessenger();
-      Alert.alert("Forwarded", `${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} forwarded securely.`);
+      setAttachmentStatus(`${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} forwarded securely`);
+      setTimeout(() => setAttachmentStatus(""), 1600);
+      void refreshMessenger({ showLoader: false, showError: false });
     } catch (error) {
       Alert.alert("Forward failed", error instanceof Error ? error.message : "Could not forward the selected messages.");
     } finally {
       setForwardingMessages(false);
+      setForwardingStatus("");
     }
   }
 
@@ -3627,6 +3761,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.threadMessages}>
+          {identityRecoveryWarning ? (
+            <View style={styles.encryptionRecoveryWarning}>
+              <Text style={styles.encryptionRecoveryWarningText}>Older encrypted messages are unavailable on this device. New messages are protected and will open normally.</Text>
+            </View>
+          ) : null}
           <FlatList
             ref={messagesScrollRef}
             style={styles.threadMessagesList}
@@ -3634,8 +3773,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             inverted
             keyExtractor={(item) => String(item.message.id)}
             contentContainerStyle={styles.threadMessagesContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
             scrollEventThrottle={32}
             initialNumToRender={12}
             maxToRenderPerBatch={8}
@@ -3702,16 +3841,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }}
             ListFooterComponent={
               <View style={styles.threadListFooter}>
-                {loadingOlderMessages ? <View pointerEvents="none" style={[styles.olderMessagesStatusWrap, styles.invertedListChrome]}><Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text></View> : null}
+                {loadingOlderMessages ? <View pointerEvents="none" style={styles.olderMessagesStatusWrap}><Text style={styles.olderMessagesStatus}>Loading earlier messages…</Text></View> : null}
                 {!loadingOlderMessages && hasMoreMessages ? (
-                  <TouchableOpacity style={[styles.olderMessagesButton, styles.invertedListChrome]} onPress={() => void loadOlderMessages()}>
+                  <TouchableOpacity style={styles.olderMessagesButton} onPress={() => void loadOlderMessages()}>
                     <Text style={styles.olderMessagesButtonText}>Load earlier messages</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
             }
             ListEmptyComponent={
-              <View style={[styles.threadListEmpty, styles.invertedListChrome]}>
+              <View style={styles.threadListEmpty}>
                 {threadLoading && !messages.length && !pendingChatContext ? <View style={styles.loadingThreadShell}><Text style={styles.emptyText}>Loading messages…</Text></View> : null}
                 {!threadLoading && !messages.length && !pendingChatContext ? (
                   <View style={styles.emptyThread}>
@@ -3737,7 +3876,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
-                onLongPress={() => showMessageActions(message)}
+                onLongPress={() => handleMessageLongPress(message)}
                 onPress={() => {
                   if (selectedMessageIds.length) {
                     toggleMessageSelection(message);
@@ -3750,7 +3889,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
-                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={() => jumpToRepliedMessage(Number(message.replyToMessageId))} onLongPress={() => showMessageActions(message)} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
+                {message.metadata?.forwarded ? <View style={styles.forwardedLabel}><Text style={[styles.forwardedLabelText, message.mine && styles.myForwardedLabelText]}>↪ Forwarded</Text></View> : null}
+                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -3768,14 +3908,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {message.attachmentUrl ? (
-                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity disabled={Boolean(message.metadata?.uploading)} onPress={() => void openAttachment(message)} accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void openPhotoGroup(mediaGroup); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={styles.photoMediaWrap}>
-                      <TouchableOpacity
+                      <Pressable
                         style={styles.videoMessageCard}
-                        delayLongPress={350}
-                        onLongPress={() => showMessageActions(message)}
+                        delayLongPress={300}
+                        onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }}
                         disabled={Boolean(message.metadata?.uploading)}
-                        onPress={() => void openAttachment(message)}
+                        onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }}
+                        accessibilityRole="button"
                         accessibilityLabel={message.metadata?.uploading ? "Video uploading" : "Play video"}
                       >
                         {message.metadata?.thumbnailDataUrl ? <Image source={{ uri: message.metadata.thumbnailDataUrl }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
@@ -3787,7 +3928,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                             <CircularDownloadProgress progress={mediaProgress} />
                           </View>
                         ) : null}
-                      </TouchableOpacity>
+                      </Pressable>
                       <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View>
                     </View>
                   ) : (
@@ -3873,11 +4014,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </View>
 
         <Modal visible={Boolean(actionMessage)} transparent animationType="fade" statusBarTranslucent hardwareAccelerated onRequestClose={() => setActionMessage(null)}>
-          <View style={styles.messageActionBackdrop}>
-            {Platform.OS === "web" || actionMessage?.type === "VIDEO" ? <View style={styles.messageActionBlurFallback} /> : <BlurView intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
-            <TouchableOpacity activeOpacity={1} style={styles.messageActionDismissLayer} onPress={() => setActionMessage(null)} accessibilityLabel="Close message actions" />
-            {actionMessage ? (
-              <View style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]}>
+          <TouchableWithoutFeedback onPress={() => setActionMessage(null)} accessibilityRole="button" accessibilityLabel="Close message actions">
+            <View style={styles.messageActionBackdrop}>
+              {Platform.OS === "web" || actionMessage?.type === "VIDEO" ? <View pointerEvents="none" style={styles.messageActionBlurFallback} /> : <BlurView pointerEvents="none" intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
+              {actionMessage ? (
+                <TouchableWithoutFeedback onPress={(event) => event.stopPropagation()}>
+                  <View style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]}>
                 <View style={[styles.messageReactionTray, actionMessage.mine && styles.messageReactionTrayMine]}>
                   {["👍", "❤️", "😂", "😮", "😢", "🙏", "👏"].map((emoji) => (
                     <TouchableOpacity key={emoji} style={styles.messageReactionChoice} onPress={() => void reactToMessage(actionMessage, emoji)} accessibilityRole="button" accessibilityLabel={`React ${emoji}`}>
@@ -3890,7 +4032,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 </View>
                 <View style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]}>
                   <View style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
-                    {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} /> : null}
+                    {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} resolvePreview={resolveEncryptedPhotoPreview} /> : null}
                     {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} /> : null}
                     {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
                     <View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, actionMessage.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(actionMessage.createdAt)}</Text>{actionMessage.mine && messageReceipt(actionMessage.status) ? <Text style={[styles.receiptMark, actionMessage.status === "seen" && styles.receiptSeen, actionMessage.status === "failed" && styles.receiptFailed]}>{messageReceipt(actionMessage.status)}</Text> : null}</View>
@@ -3899,17 +4041,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 </View>
                 <View style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]}>
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); setTimeout(openForwardPicker, 0); }}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => forwardActionMessage(actionMessage)}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
                   {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Share.share({ message: shareableMessageText(actionMessage) || "Chitthi message" }); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>⇧</Text><Text style={styles.messageActionLabel}>Share</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => { setSelectedMessageIds([messageSelectionKey(actionMessage)]); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
                   {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }}><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
                   {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
                   {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
                 </View>
-              </View>
-            ) : null}
-          </View>
+                  </View>
+                </TouchableWithoutFeedback>
+              ) : null}
+            </View>
+          </TouchableWithoutFeedback>
         </Modal>
 
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
@@ -3928,7 +4071,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <View style={styles.mediaViewerBottom}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaViewerThumbnails}>
-                {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl) && !item.metadata?.mediaExpired).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
+                {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl) && !item.metadata?.mediaExpired).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} resolvePreview={resolveEncryptedPhotoPreview} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
               </ScrollView>
               <View style={styles.mediaViewerActions}>
                 <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()}><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Share or save</Text></TouchableOpacity>
@@ -3979,17 +4122,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
 
-        <Modal visible={forwardPickerOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setForwardPickerOpen(false)}>
+        <Modal visible={forwardPickerOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!forwardingMessages) setForwardPickerOpen(false); }}>
           <View style={styles.forwardPickerBackdrop}>
             <View style={styles.forwardPickerCard}>
               <View style={styles.forwardPickerHeader}>
                 <View><Text style={styles.forwardPickerTitle}>Forward messages</Text><Text style={styles.forwardPickerSubtitle}>Choose one or more Chitthi conversations</Text></View>
-                <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setForwardPickerOpen(false)}><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.attachmentPreviewClose} disabled={forwardingMessages} onPress={() => setForwardPickerOpen(false)}><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
               </View>
+              {forwardingMessages ? <View style={styles.forwardSecureProgress} accessibilityRole="progressbar" accessibilityLabel={forwardingStatus || "Forwarding securely"}><ActivityIndicator size="small" color="#71e39b" /><View style={styles.forwardSecureProgressCopy}><Text style={styles.forwardSecureProgressTitle}>Forwarding securely</Text><Text style={styles.forwardSecureProgressText} numberOfLines={2}>{forwardingStatus}</Text></View></View> : null}
               <ScrollView style={styles.forwardPickerList}>
                 {personConversations.filter((conversation) => conversation.id !== activeConversationId).map((conversation) => {
                   const selected = selectedForwardConversationIds.includes(conversation.id);
-                  return <TouchableOpacity key={conversation.id} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
+                  return <TouchableOpacity key={conversation.id} disabled={forwardingMessages} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
                     <View style={styles.forwardPickerAvatar}>{chatPhotoUrl(conversation.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(conversation.otherPhotoUrl) }} style={styles.forwardPickerAvatarImage} /> : <Text style={styles.forwardPickerAvatarText}>{initials(conversation.otherName || conversation.subject)}</Text>}</View>
                     <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "Chitthi conversation"}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
@@ -3998,7 +4142,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {!personConversations.filter((conversation) => conversation.id !== activeConversationId).length ? <Text style={styles.forwardPickerEmpty}>No other conversations yet.</Text> : null}
               </ScrollView>
               <TouchableOpacity style={[styles.forwardPickerSubmit, (!selectedForwardConversationIds.length || forwardingMessages) && styles.forwardPickerSubmitDisabled]} disabled={!selectedForwardConversationIds.length || forwardingMessages} onPress={() => void forwardSelectedMessages()}>
-                <Text style={styles.forwardPickerSubmitText}>{forwardingMessages ? "Forwarding securely…" : `Forward to ${selectedForwardConversationIds.length || "chat"}`}</Text>
+                {forwardingMessages ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.forwardPickerSubmitText}>{forwardingMessages ? "Forwarding securely…" : `Forward to ${selectedForwardConversationIds.length || "chat"}`}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4156,8 +4300,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         <View style={styles.composerDock}>
           {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyMediaKind(replyingTo) || shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View>{replyMediaKind(replyingTo) ? <ReplyMediaPreview message={replyingTo} /> : null}<TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
           <View style={styles.composer}>
-          <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
+          {editingMessageId ? (
+            <TouchableOpacity style={styles.editCancelIcon} onPress={() => { setEditingMessageId(null); setMessageText(""); }} accessibilityLabel="Cancel editing"><Text style={styles.editCancelIconText}>×</Text></TouchableOpacity>
+          ) : <>
+            <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
+          </>}
           <TextInput
             ref={composerRef}
             placeholder={editingMessageId ? "Edit message" : "Write a message…"}
@@ -4165,6 +4313,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             style={styles.composerInput}
             value={messageText}
             onChangeText={handleMessageTextChange}
+            showSoftInputOnFocus
+            focusable
+            onPressIn={() => requestAnimationFrame(() => composerRef.current?.focus())}
+            onFocus={() => {
+              if (emojiPickerOpen) setEmojiPickerOpen(false);
+              shouldAutoScrollToEndRef.current = true;
+            }}
             multiline
           />
           <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, (threadLoading || attachmentSending) && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading || attachmentSending}>
@@ -4172,11 +4327,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
           </View>
         </View>
-        {editingMessageId ? (
-          <TouchableOpacity style={styles.cancelEdit} onPress={() => { setEditingMessageId(null); setMessageText(""); }}>
-            <Text style={styles.cancelEditText}>Cancel edit</Text>
-          </TouchableOpacity>
-        ) : null}
         {Platform.OS === "ios" && safeAreaInsets.bottom > 0 ? <View pointerEvents="none" style={[styles.composerSafeArea, { height: safeAreaInsets.bottom }]} /> : null}
         </ThreadKeyboardBody>
         </View>
@@ -4596,6 +4746,8 @@ const styles = StyleSheet.create({
   threadMessages: { flex: 1 },
   threadMessagesList: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2 },
+  encryptionRecoveryWarning: { marginHorizontal: 10, marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(116,77,18,0.92)", borderWidth: 1, borderColor: "rgba(214,169,95,0.55)", zIndex: 3 },
+  encryptionRecoveryWarningText: { color: "#F3E9D5", fontSize: 12, lineHeight: 17, fontWeight: "700", textAlign: "center" },
   jumpToLatestButton: { position: "absolute", right: 16, bottom: 18, width: 43, height: 43, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(7,35,29,0.94)", borderWidth: 1, borderColor: "rgba(214,169,95,0.55)", shadowColor: "#000", shadowOpacity: 0.26, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
   jumpToLatestButtonText: { color: "#F4D99E", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -6 },
   threadListFooter: { overflow: "visible" },
@@ -4604,7 +4756,6 @@ const styles = StyleSheet.create({
   olderMessagesStatus: { color: theme.colors.muted, textAlign: "center", fontSize: 12, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: "rgba(3,16,15,0.82)", overflow: "hidden" },
   olderMessagesButton: { alignSelf: "center", minHeight: 38, justifyContent: "center", paddingHorizontal: 16, marginBottom: 8, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.06)" },
   olderMessagesButtonText: { color: theme.colors.soft, fontSize: 12, fontWeight: "900" },
-  invertedListChrome: { transform: [{ scaleY: -1 }] },
   threadMessageCell: { overflow: "visible" },
   threadMessageRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 5, position: "relative", overflow: "visible" },
   threadMessageRowMine: { justifyContent: "flex-end" },
@@ -4749,6 +4900,10 @@ const styles = StyleSheet.create({
   forwardPickerHeader: { minHeight: 72, paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   forwardPickerTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "700" },
   forwardPickerSubtitle: { color: theme.colors.muted, fontSize: 12, marginTop: 3 },
+  forwardSecureProgress: { marginHorizontal: 14, marginTop: 12, borderRadius: 14, borderWidth: 1, borderColor: "rgba(113,227,155,0.34)", backgroundColor: "rgba(24,185,132,0.12)", paddingHorizontal: 13, paddingVertical: 11, flexDirection: "row", alignItems: "center", gap: 10 },
+  forwardSecureProgressCopy: { flex: 1, minWidth: 0 },
+  forwardSecureProgressTitle: { color: "#71e39b", fontSize: 13, fontWeight: "700" },
+  forwardSecureProgressText: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   forwardPickerList: { flexGrow: 0 },
   forwardPickerRow: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 15, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   forwardPickerRowSelected: { backgroundColor: "rgba(79,124,255,0.14)" },
@@ -4762,7 +4917,7 @@ const styles = StyleSheet.create({
   forwardPickerCheckSelected: { backgroundColor: theme.colors.blue, borderColor: theme.colors.blue },
   forwardPickerCheckText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   forwardPickerEmpty: { color: theme.colors.muted, textAlign: "center", paddingVertical: 30 },
-  forwardPickerSubmit: { minHeight: 48, marginHorizontal: 14, marginTop: 13, borderRadius: 24, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  forwardPickerSubmit: { minHeight: 48, marginHorizontal: 14, marginTop: 13, borderRadius: 24, backgroundColor: theme.colors.blue, flexDirection: "row", gap: 9, alignItems: "center", justifyContent: "center" },
   forwardPickerSubmitDisabled: { opacity: 0.42 },
   forwardPickerSubmitText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   contactShareArrow: { color: "#8fb5ff", fontSize: 28, fontWeight: "400" },
@@ -4895,6 +5050,8 @@ const styles = StyleSheet.create({
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
+  selectedCollageCell: { borderWidth: 2, borderColor: "#4f7cff" },
+  collageSelectionCheck: { position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 8 },
   messageSelectionCheck: { position: "absolute", top: -9, right: -9, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 5 },
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   myBubble: { backgroundColor: "#176B4A", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(80,174,126,0.65)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
@@ -4903,6 +5060,9 @@ const styles = StyleSheet.create({
   myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
   theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  forwardedLabel: { alignSelf: "flex-start", paddingHorizontal: 7, paddingTop: 3, paddingBottom: 5 },
+  forwardedLabelText: { color: "rgba(214,225,219,0.68)", fontSize: 12, lineHeight: 16, fontWeight: "700", fontStyle: "italic" },
+  myForwardedLabelText: { color: "rgba(216,235,226,0.72)" },
   senderName: { color: "#255744", fontSize: 12, fontWeight: "600" },
   senderTime: { color: "#786F5C", fontSize: 11, fontWeight: "700" },
   photoSenderLine: { maxWidth: 286, paddingHorizontal: 8, paddingTop: 4, marginBottom: 7 },
@@ -4997,7 +5157,6 @@ const styles = StyleSheet.create({
   messageReactionCount: { color: "#F0E4CA", fontSize: 9, fontWeight: "800" },
   messageActionBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "transparent" },
   messageActionBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(3,9,14,0.58)" },
-  messageActionDismissLayer: { ...StyleSheet.absoluteFillObject },
   messageActionStack: { width: "100%", maxWidth: 390, alignSelf: "center", zIndex: 3, elevation: 30 },
   messageActionStackMine: { alignItems: "flex-end" },
   messageReactionTray: { alignSelf: "flex-start", maxWidth: "96%", minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 29, backgroundColor: "rgba(28,31,34,0.97)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.08)", shadowColor: "#000", shadowOpacity: 0.30, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 18, zIndex: 3 },
@@ -5021,8 +5180,8 @@ const styles = StyleSheet.create({
   send: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingHorizontal: 18, minHeight: 46, justifyContent: "center" },
   sendDisabled: { opacity: 0.5 },
   sendText: { color: theme.colors.text, fontWeight: "900" },
-  cancelEdit: { alignSelf: "flex-start", marginTop: 8 },
-  cancelEditText: { color: theme.colors.muted, fontWeight: "900" },
+  editCancelIcon: { width: 43, height: 43, borderRadius: 22, borderWidth: 2, borderColor: "rgba(255,255,255,0.92)", alignItems: "center", justifyContent: "center", marginBottom: 1 },
+  editCancelIconText: { color: "#fff", fontSize: 34, lineHeight: 36, fontWeight: "300", marginTop: -3 },
   list: { flex: 1 },
   listContent: { paddingBottom: 88 },
   loadMoreLetters: { alignSelf: "center", borderWidth: 1, borderColor: theme.colors.warning, borderRadius: theme.radius.pill, paddingHorizontal: 22, paddingVertical: 11, marginTop: 8, marginBottom: 12 },

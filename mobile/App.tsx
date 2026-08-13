@@ -14,7 +14,7 @@ import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
 import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
-import { syncChatIdentityRecovery } from "./src/utils/chatRecovery";
+import { beginChatIdentityRecovery, syncChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
@@ -1510,16 +1510,14 @@ function FairFaresApp() {
       .slice(0, 6);
   }
 
-  function runPostLoginTasks(userId: number, authenticatedPassword = "") {
+  function runPostLoginTasks(userId: number, recovery?: Promise<void>) {
     // Let the modal close and the authenticated screen paint before any key
     // recovery work. InteractionManager also prevents the transition itself
     // from competing with crypto and bootstrap network updates.
     InteractionManager.runAfterInteractions(() => {
       setTimeout(() => {
         void load(false);
-        if (authenticatedPassword) {
-          void syncChatIdentityRecovery(userId, authenticatedPassword).catch(() => undefined);
-        }
+        void recovery?.catch(() => undefined);
       }, 250);
     });
   }
@@ -1643,6 +1641,9 @@ function FairFaresApp() {
     try {
       const payload = await mobileLogin(identifier, password);
       const authenticatedPassword = password;
+      // Start recovery before mounting authenticated Chitthi. Messenger waits
+      // on this promise and cannot create a competing temporary device key.
+      const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
       setData((current) => current ? { ...current, user: payload.user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
       setAuthMessage("Login successful.");
       setLoginOpen(false);
@@ -1654,7 +1655,7 @@ function FairFaresApp() {
       }
       // Authentication is complete at this point. Refreshing the dashboard and
       // preparing Chitthi encryption must not keep the login modal blocked.
-      runPostLoginTasks(Number(payload.user?.id || 0), authenticatedPassword);
+      runPostLoginTasks(Number(payload.user?.id || 0), chatRecovery);
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
     } finally {
@@ -1702,6 +1703,7 @@ function FairFaresApp() {
       setPassword("");
       setSignupConsentAccepted(false);
       if (!payload.activationRequired && payload.token) {
+        const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
         if (payload.user) {
           setData((current) => current ? { ...current, user: payload.user || null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
         }
@@ -1710,7 +1712,7 @@ function FairFaresApp() {
           setPendingListingAfterLogin(false);
           openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
         }
-        runPostLoginTasks(Number(payload.user?.id || 0), authenticatedPassword);
+        runPostLoginTasks(Number(payload.user?.id || 0), chatRecovery);
       }
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Signup failed. Please try again.");

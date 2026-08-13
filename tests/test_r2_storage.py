@@ -614,6 +614,65 @@ class R2StorageTest(unittest.TestCase):
             self.assertIsNone(denied)
             self.assertIn("not found", denied_error.lower())
 
+    def test_deleted_chitthi_message_is_hard_deleted_after_five_days_with_related_data(self):
+        self.addCleanup(app.refresh_storage_paths)
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", ""), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", ""), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", ""), \
+             mock.patch.object(app, "CHITTHI_DELETED_MESSAGE_RETENTION_DAYS", 5):
+            app.refresh_storage_paths(); app.init_db()
+            reference = app.save_chat_file_payload(
+                file_data={"filename": "deleted.ffenc", "mime_type": "application/octet-stream", "payload": b"deleted-ciphertext"},
+                fallback_name="deleted.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=1024,
+            )
+            with app.db() as con:
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Sender', 'purge-sender@example.com', 'x', 1)")
+                sender_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Recipient', 'purge-recipient@example.com', 'x', 1)")
+                recipient_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('purge-conversation')")
+                conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_messages (conversation_id, sender_id, message_type, attachment_url, deleted_at) VALUES (?, ?, 'ENCRYPTED_ATTACHMENT', ?, datetime('now', '-6 days'))", (conversation_id, sender_id, reference))
+                message_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_message_envelopes (message_id, recipient_user_id, recipient_device_id, sender_public_key, nonce, ciphertext) VALUES (?, ?, 'device', 'key', 'nonce', 'cipher')", (message_id, recipient_id))
+                con.execute("INSERT INTO chat_message_reactions (message_id, user_id, emoji) VALUES (?, ?, '👍')", (message_id, recipient_id))
+                con.execute("INSERT INTO chat_attachment_device_receipts (message_id, user_id, device_id) VALUES (?, ?, 'device')", (message_id, recipient_id))
+                con.execute("INSERT INTO chat_messages (conversation_id, sender_id, message_text, reply_to_message_id) VALUES (?, ?, 'reply', ?)", (conversation_id, recipient_id, message_id))
+                reply_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            result = app.cleanup_deleted_chitthi_messages()
+            self.assertEqual(result["deleted"], 1)
+            self.assertIsNone(app.stored_upload_parts(reference))
+            with app.db() as con:
+                self.assertIsNone(con.execute("SELECT id FROM chat_messages WHERE id = ?", (message_id,)).fetchone())
+                self.assertIsNone(con.execute("SELECT id FROM chat_message_envelopes WHERE message_id = ?", (message_id,)).fetchone())
+                self.assertIsNone(con.execute("SELECT id FROM chat_message_reactions WHERE message_id = ?", (message_id,)).fetchone())
+                reply = con.execute("SELECT reply_to_message_id FROM chat_messages WHERE id = ?", (reply_id,)).fetchone()
+                self.assertIsNone(reply["reply_to_message_id"])
+
+    def test_open_report_holds_deleted_chitthi_message_past_five_days(self):
+        self.addCleanup(app.refresh_storage_paths)
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "CHITTHI_DELETED_MESSAGE_RETENTION_DAYS", 5):
+            app.refresh_storage_paths(); app.init_db()
+            with app.db() as con:
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Sender', 'hold-sender@example.com', 'x', 1)")
+                sender_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Reporter', 'hold-reporter@example.com', 'x', 1)")
+                reporter_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('hold-conversation')")
+                conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_messages (conversation_id, sender_id, message_text, deleted_at) VALUES (?, ?, 'deleted', datetime('now', '-6 days'))", (conversation_id, sender_id))
+                message_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_message_reports (message_id, conversation_id, reporter_user_id, reason, status) VALUES (?, ?, ?, 'abuse', 'OPEN')", (message_id, conversation_id, reporter_id))
+            result = app.cleanup_deleted_chitthi_messages()
+            self.assertEqual(result["heldForReport"], 1)
+            self.assertEqual(result["deleted"], 0)
+            with app.db() as con:
+                self.assertIsNotNone(con.execute("SELECT id FROM chat_messages WHERE id = ?", (message_id,)).fetchone())
+
 
 if __name__ == "__main__":
     unittest.main()

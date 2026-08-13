@@ -135,7 +135,12 @@ export async function encryptAttachmentFileForDevices(
   };
 }
 
-export function decryptChunkedAttachmentFile(encryptedUri: string, destinationUri: string, descriptorValue: string) {
+export async function decryptChunkedAttachmentFile(
+  encryptedUri: string,
+  destinationUri: string,
+  descriptorValue: string,
+  onProgress?: (progress: number) => void
+) {
   const descriptor = parseChunkedAttachmentDescriptor(descriptorValue);
   if (!descriptor) throw new Error("The chunked attachment descriptor is invalid.");
   const encrypted = new File(encryptedUri);
@@ -156,6 +161,10 @@ export function decryptChunkedAttachmentFile(encryptedUri: string, destinationUr
       if (!clearChunk || clearChunk.byteLength !== clearSize) throw new Error(`Attachment authentication failed at chunk ${index + 1}.`);
       writer.writeBytes(clearChunk);
       clearChunk.fill(0);
+      onProgress?.((index + 1) / descriptor.chunkCount);
+      // Authentication is synchronous in TweetNaCl. Yield between bounded
+      // chunks so taps, progress, and animations are never frozen by decrypt.
+      if (index + 1 < descriptor.chunkCount) await yieldToUiThread(0);
     }
   } catch (error) {
     try { partial.delete(); } catch { /* best effort */ }

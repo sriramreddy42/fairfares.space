@@ -119,6 +119,7 @@ export type ChatMessage = {
     phone?: string;
     email?: string;
     encrypted?: boolean;
+    forwarded?: boolean;
     uploading?: boolean;
     kind?: "IMAGE" | "VIDEO" | "FILE";
     decryptedDataUrl?: string;

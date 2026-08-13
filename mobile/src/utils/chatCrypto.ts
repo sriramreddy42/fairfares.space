@@ -93,8 +93,23 @@ async function persistIdentity(userId: number, identity: DeviceIdentity) {
 function isDeviceIdentity(value: unknown): value is DeviceIdentity {
   if (!value || typeof value !== "object") return false;
   const identity = value as Partial<DeviceIdentity>;
-  return [identity.deviceId, identity.publicKey, identity.secretKey]
-    .every((part) => typeof part === "string" && part.length > 0);
+  if (typeof identity.deviceId !== "string" || !identity.deviceId || identity.deviceId.length > 200) return false;
+  try {
+    if (typeof identity.publicKey !== "string" || util.decodeBase64(identity.publicKey).byteLength !== nacl.box.publicKeyLength) return false;
+    if (typeof identity.secretKey !== "string" || util.decodeBase64(identity.secretKey).byteLength !== nacl.box.secretKeyLength) return false;
+    const hasSigningPublicKey = typeof identity.signingPublicKey === "string" && identity.signingPublicKey.length > 0;
+    const hasSigningSecretKey = typeof identity.signingSecretKey === "string" && identity.signingSecretKey.length > 0;
+    if (hasSigningPublicKey !== hasSigningSecretKey) return false;
+    if (hasSigningPublicKey) {
+      if (util.decodeBase64(identity.signingPublicKey!).byteLength !== nacl.sign.publicKeyLength) return false;
+      if (util.decodeBase64(identity.signingSecretKey!).byteLength !== nacl.sign.secretKeyLength) return false;
+      const derivedSigningPublicKey = util.encodeBase64(nacl.sign.keyPair.fromSecretKey(util.decodeBase64(identity.signingSecretKey!)).publicKey);
+      if (derivedSigningPublicKey !== identity.signingPublicKey) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function getStoredDeviceIdentity(userId: number): Promise<DeviceIdentity | null> {
@@ -156,24 +171,41 @@ export async function createEncryptedIdentityBackup(identity: DeviceIdentity, pa
   const salt = nacl.randomBytes(16);
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
   const key = pbkdf2(sha256, util.decodeUTF8(passphrase), salt, { c: 210_000, dkLen: nacl.secretbox.keyLength });
-  const ciphertext = nacl.secretbox(util.decodeUTF8(JSON.stringify(identity)), nonce, key);
-  return JSON.stringify({ v: 1, salt: util.encodeBase64(salt), nonce: util.encodeBase64(nonce), ciphertext: util.encodeBase64(ciphertext) });
+  const plaintext = util.decodeUTF8(JSON.stringify(identity));
+  try {
+    const ciphertext = nacl.secretbox(plaintext, nonce, key);
+    return JSON.stringify({ v: 1, salt: util.encodeBase64(salt), nonce: util.encodeBase64(nonce), ciphertext: util.encodeBase64(ciphertext) });
+  } finally {
+    plaintext.fill(0);
+    key.fill(0);
+  }
 }
 
 export async function restoreEncryptedIdentityBackup(userId: number, encryptedPayload: string, passphrase: string) {
-  const payload = JSON.parse(encryptedPayload) as { salt: string; nonce: string; ciphertext: string };
-  const key = pbkdf2(sha256, util.decodeUTF8(passphrase), util.decodeBase64(payload.salt), { c: 210_000, dkLen: nacl.secretbox.keyLength });
-  const opened = nacl.secretbox.open(util.decodeBase64(payload.ciphertext), util.decodeBase64(payload.nonce), key);
-  if (!opened) throw new Error("The recovery passphrase is incorrect.");
-  let identity = JSON.parse(util.encodeUTF8(opened)) as DeviceIdentity;
-  const derivedPublicKey = util.encodeBase64(nacl.box.keyPair.fromSecretKey(util.decodeBase64(identity.secretKey)).publicKey);
-  if (derivedPublicKey !== identity.publicKey) throw new Error("The recovery backup failed integrity verification.");
-  if (!identity.signingPublicKey || !identity.signingSecretKey) {
-    const signingPair = nacl.sign.keyPair();
-    identity = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
+  const payload = JSON.parse(encryptedPayload) as { v?: number; salt: string; nonce: string; ciphertext: string };
+  if (payload.v !== 1) throw new Error("This Chitthi recovery backup version is unsupported.");
+  const salt = util.decodeBase64(payload.salt);
+  const nonce = util.decodeBase64(payload.nonce);
+  if (salt.byteLength !== 16 || nonce.byteLength !== nacl.secretbox.nonceLength) throw new Error("The Chitthi recovery backup is malformed.");
+  const key = pbkdf2(sha256, util.decodeUTF8(passphrase), salt, { c: 210_000, dkLen: nacl.secretbox.keyLength });
+  let opened: Uint8Array | null = null;
+  try {
+    opened = nacl.secretbox.open(util.decodeBase64(payload.ciphertext), nonce, key);
+    if (!opened) throw new Error("The recovery passphrase is incorrect.");
+    let identity = JSON.parse(util.encodeUTF8(opened)) as DeviceIdentity;
+    if (!isDeviceIdentity(identity)) throw new Error("The recovery backup failed identity validation.");
+    const derivedPublicKey = util.encodeBase64(nacl.box.keyPair.fromSecretKey(util.decodeBase64(identity.secretKey)).publicKey);
+    if (derivedPublicKey !== identity.publicKey) throw new Error("The recovery backup failed integrity verification.");
+    if (!identity.signingPublicKey || !identity.signingSecretKey) {
+      const signingPair = nacl.sign.keyPair();
+      identity = { ...identity, signingPublicKey: util.encodeBase64(signingPair.publicKey), signingSecretKey: util.encodeBase64(signingPair.secretKey) };
+    }
+    await persistIdentity(userId, identity);
+    return identity;
+  } finally {
+    opened?.fill(0);
+    key.fill(0);
   }
-  await persistIdentity(userId, identity);
-  return identity;
 }
 
 export function encryptionFingerprint(keys: ConversationDeviceKey[]) {
@@ -215,7 +247,7 @@ export function decryptEnvelope(envelope: { senderPublicKey: string; nonce: stri
 
 export function encryptAttachmentForDevices(
   fileBase64: string,
-  metadata: { fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE" },
+  metadata: { fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE"; forwarded?: boolean },
   identity: DeviceIdentity,
   keys: ConversationDeviceKey[]
 ) {

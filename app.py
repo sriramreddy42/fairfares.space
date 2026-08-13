@@ -124,6 +124,7 @@ ALLOWED_CHITTHI_MEDIA_MIME_TYPES = {
 } | ALLOWED_CHAT_FILE_MIME_TYPES
 CHITTHI_ATTACHMENT_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS", 7)
 CHITTHI_ATTACHMENT_CLEANUP_BATCH = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_CLEANUP_BATCH", 250)
+CHITTHI_DELETED_MESSAGE_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_DELETED_MESSAGE_RETENTION_DAYS", 5)
 CHITTHI_PRESIGNED_URL_SECONDS = min(900, positive_int_env("FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS", 600))
 CHITTHI_UNFINALIZED_UPLOAD_HOURS = positive_int_env("FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS", 24)
 R2_ACCOUNT_ID = os.environ.get("CLOUDFLARE_R2_ACCOUNT_ID", "").strip()
@@ -169,6 +170,8 @@ _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
 _CHITTHI_MEDIA_CLEANUP_LOCK = threading.Lock()
 _CHITTHI_MEDIA_CLEANUP_LAST_RUN: dict[str, float] = {}
+_CHITTHI_MESSAGE_CLEANUP_LOCK = threading.Lock()
+_CHITTHI_MESSAGE_CLEANUP_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
@@ -1762,6 +1765,76 @@ def cleanup_expired_chitthi_attachments(*, force: bool = True, limit: int | None
                 failed += 1
         con.commit()
     return {"scanned": scanned, "deleted": deleted, "failed": failed, "skipped": skipped}
+
+
+def cleanup_deleted_chitthi_messages(*, force: bool = True, limit: int | None = None) -> dict[str, int]:
+    """Hard-delete Chitthi messages five days after a user deletes them.
+
+    Open moderation reports retain their encrypted evidence. Related ciphertext,
+    reactions, download receipts and finalized upload bookkeeping are removed in
+    the same transaction once the message becomes eligible.
+    """
+    if not force:
+        database_key = str(DB_PATH.resolve())
+        now = time.monotonic()
+        with _CHITTHI_MESSAGE_CLEANUP_LOCK:
+            last_run = _CHITTHI_MESSAGE_CLEANUP_LAST_RUN.get(database_key, 0.0)
+            if now - last_run < 60 * 60:
+                return {"scanned": 0, "deleted": 0, "failed": 0, "heldForReport": 0}
+            _CHITTHI_MESSAGE_CLEANUP_LAST_RUN[database_key] = now
+    scanned = deleted = failed = held_for_report = 0
+    batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT messages.id, messages.attachment_url,
+                   EXISTS(
+                     SELECT 1 FROM chat_message_reports reports
+                     WHERE reports.message_id = messages.id
+                       AND UPPER(COALESCE(reports.status, 'OPEN')) NOT IN ('CLOSED', 'RESOLVED')
+                   ) AS has_open_report
+            FROM chat_messages messages
+            WHERE messages.deleted_at IS NOT NULL
+              AND datetime(messages.deleted_at, ?) <= datetime('now')
+            ORDER BY messages.id ASC
+            LIMIT ?
+            """,
+            (f"+{max(1, CHITTHI_DELETED_MESSAGE_RETENTION_DAYS)} days", batch_limit),
+        ).fetchall()
+        for row in rows:
+            scanned += 1
+            if int(row_value(row, "has_open_report") or 0):
+                held_for_report += 1
+                continue
+            message_id = int(row_value(row, "id") or 0)
+            attachment_url = str(row_value(row, "attachment_url") or "")
+            try:
+                if attachment_url and not delete_stored_upload_reference(attachment_url):
+                    failed += 1
+                    continue
+                # Keep relational cleanup atomic per message. If one dependent
+                # table operation fails, do not commit a half-purged message.
+                con.execute("SAVEPOINT purge_chitthi_message")
+                # Avoid leaving a surviving reply pointing at a removed row.
+                con.execute("UPDATE chat_messages SET reply_to_message_id = NULL WHERE reply_to_message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_message_reactions WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_attachment_download_receipts WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_attachment_device_receipts WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_message_reports WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_attachment_uploads WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_messages WHERE id = ?", (message_id,))
+                con.execute("RELEASE SAVEPOINT purge_chitthi_message")
+                deleted += 1
+            except Exception:
+                try:
+                    con.execute("ROLLBACK TO SAVEPOINT purge_chitthi_message")
+                    con.execute("RELEASE SAVEPOINT purge_chitthi_message")
+                except Exception:
+                    pass
+                failed += 1
+        con.commit()
+    return {"scanned": scanned, "deleted": deleted, "failed": failed, "heldForReport": held_for_report}
 
 
 def record_chitthi_attachment_download(message_id: int, user_id: int, device_id: str = "") -> dict[str, object]:
@@ -21993,6 +22066,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             cleanup_expired_chitthi_attachments(force=False, limit=25)
+            cleanup_deleted_chitthi_messages(force=False, limit=25)
             if r2_storage_configured():
                 cleanup_unfinalized_chitthi_uploads(limit=25)
         except Exception:
@@ -22099,6 +22173,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             cleanup_expired_chitthi_attachments(force=False, limit=25)
+            cleanup_deleted_chitthi_messages(force=False, limit=25)
             if r2_storage_configured():
                 cleanup_unfinalized_chitthi_uploads(limit=25)
         except Exception:
@@ -29492,8 +29567,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             limit = CHITTHI_ATTACHMENT_CLEANUP_BATCH
         result = cleanup_expired_chitthi_attachments(force=True, limit=limit)
+        deleted_message_result = cleanup_deleted_chitthi_messages(force=True, limit=limit)
         orphan_result = cleanup_unfinalized_chitthi_uploads(limit=limit) if r2_storage_configured() else {"scanned": 0, "deleted": 0, "failed": 0}
-        self.send_json({"ok": True, **result, "orphanUploads": orphan_result, "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)})
+        self.send_json({"ok": True, **result, "deletedMessages": deleted_message_result, "orphanUploads": orphan_result, "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS), "deletedMessageRetentionDays": max(1, CHITTHI_DELETED_MESSAGE_RETENTION_DAYS)})
 
     def unsubscribe_marketing(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
