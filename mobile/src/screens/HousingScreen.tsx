@@ -25,6 +25,10 @@ type Props = {
   selectedSort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc";
   onMessage: (post: HousingPost) => void;
   onRideMessage: (ride: RidePost) => void;
+  sentPostIds?: string[];
+  sentRideIds?: string[];
+  onSendPostMessage?: (post: HousingPost, message: string) => Promise<void>;
+  onOpenPostConversation?: (post: HousingPost) => void;
   onOpenMessenger: () => void;
   onNeedSelect: (need: string) => void;
   onAreaSelect: (area: string) => void;
@@ -528,6 +532,10 @@ export function HousingScreen({
   selectedSort,
   onMessage,
   onRideMessage,
+  sentPostIds = [],
+  sentRideIds = [],
+  onSendPostMessage,
+  onOpenPostConversation,
   onOpenMessenger,
   onNeedSelect,
   onAreaSelect,
@@ -619,7 +627,7 @@ export function HousingScreen({
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const compactHousingHome = viewportWidth < 560;
   const housingCardWidth = compactHousingHome
-    ? Math.max(164, Math.min(212, (viewportWidth - 38) / 2))
+    ? Math.max(190, Math.min(230, (viewportWidth - 30) / 1.72))
     : 286;
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
@@ -1841,7 +1849,7 @@ export function HousingScreen({
                           </TouchableOpacity>
                         ) : null}
                         <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
-                          <Text style={styles.rideOwnerChatText}>Message</Text>
+                          <Text style={styles.rideOwnerChatText}>{sentRideIds.includes(ride.id) ? "✓ Sent" : "Message"}</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2766,7 +2774,7 @@ export function HousingScreen({
                             </TouchableOpacity>
                             <TouchableOpacity style={[styles.rideChoiceSmallButton, styles.rideChoiceChatButton]} onPress={() => onRideMessage(offer)}>
                               <Image source={appAssets.chittiMascot} style={styles.rideChoiceChatIcon} resizeMode="contain" />
-                              <Text style={styles.rideChoiceSmallButtonText}>Chitthi</Text>
+                              <Text style={styles.rideChoiceSmallButtonText}>{sentRideIds.includes(offer.id) ? "✓ Sent" : "Chitthi"}</Text>
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -2798,7 +2806,7 @@ export function HousingScreen({
                   </View>
                   <TouchableOpacity style={styles.rideInlineChatButton} onPress={() => selectedDriverOffer ? onRideMessage(selectedDriverOffer) : onOpenMessenger()}>
                     <Image source={appAssets.chittiMascot} style={styles.rideInlineChatIcon} resizeMode="contain" />
-                    <Text style={styles.rideInlineChatText}>Chitthi</Text>
+                    <Text style={styles.rideInlineChatText}>{selectedDriverOffer && sentRideIds.includes(selectedDriverOffer.id) ? "✓ Sent" : "Chitthi"}</Text>
                   </TouchableOpacity>
                 </View>
                 <TouchableOpacity style={styles.rideIssueButton} onPress={reportRideIssue}>
@@ -3469,7 +3477,7 @@ export function HousingScreen({
       </View> : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.housingCardRow} snapToInterval={housingCardWidth + 10} decelerationRate="fast">
         {sortedPosts.length ? (
-          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} />)
+          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} messageSent={sentPostIds.includes(post.id)} onSendMessage={onSendPostMessage} onSeeConversation={onOpenPostConversation} />)
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
@@ -3653,8 +3661,8 @@ export function HousingScreen({
                     </View>
                   </View>
                 ) : null}
-                <TouchableOpacity style={[styles.detailMessage, detailPost.sample && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
-                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : "Message"}</Text>
+                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, detailPost.sample && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
+                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
@@ -4344,6 +4352,7 @@ const styles = StyleSheet.create({
   detailAmenities: { gap: 8 },
   detailSectionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
+  detailMessageSent: { backgroundColor: theme.colors.green },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   detailScrollHint: { position: "absolute", bottom: 10, alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(9,13,18,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 12 },

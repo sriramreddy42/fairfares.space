@@ -210,6 +210,41 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(payload["contextTitle"], "Denver → Dayton")
         self.assertEqual(payload["contextSubtitle"], "2026-07-24 · 8:00 AM")
 
+    def test_many_listing_message_contexts_survive_one_reused_person_thread(self):
+        listing_count = 250
+        with app.db() as con:
+            sender_id = self.insert_user(con, "Listing Sender", "listing-sender@example.com")
+            owner_id = self.insert_user(con, "One Lister", "one-lister@example.com")
+            conversation_id = self.insert_direct_conversation(con, sender_id, owner_id, 0, 0)
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (sender_id,)).fetchone()
+            for index in range(listing_count):
+                post_id = f"FFH-CONTEXT-{index:04d}"
+                self.insert_housing_post(con, owner_id, post_id, f"Listing {index}")
+                message = app.save_chat_message(
+                    con,
+                    conversation_id,
+                    sender,
+                    "🔒 End-to-end encrypted message",
+                    f"listing-context-{index}",
+                )
+                con.execute(
+                    "UPDATE chat_messages SET context_type = 'HOUSING', context_public_id = ? WHERE id = ?",
+                    (post_id, int(message["id"])),
+                )
+
+        started = time.monotonic()
+        contexts = app.messaged_listing_ids_for_user(sender_id)
+        first_duration = time.monotonic() - started
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            repeated = list(executor.map(lambda _: app.messaged_listing_ids_for_user(sender_id), range(64)))
+
+        self.assertEqual(len(contexts["postIds"]), listing_count)
+        self.assertEqual(contexts["postIds"][0], "FFH-CONTEXT-0000")
+        self.assertEqual(contexts["postIds"][-1], "FFH-CONTEXT-0249")
+        self.assertEqual(contexts["rideIds"], [])
+        self.assertTrue(all(result == contexts for result in repeated))
+        self.assertLess(first_duration, 1.0)
+
     def test_unread_counts_are_exact_and_isolated_per_profile(self):
         with app.db() as con:
             first_user_id = self.insert_user(con, "First User", "first@example.com")

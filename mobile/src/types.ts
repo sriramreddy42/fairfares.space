@@ -119,6 +119,7 @@ export type ChatMessage = {
     phone?: string;
     email?: string;
     encrypted?: boolean;
+    uploading?: boolean;
     kind?: "IMAGE" | "VIDEO" | "FILE";
     decryptedDataUrl?: string;
     thumbnailDataUrl?: string;
@@ -533,6 +534,8 @@ export type BootstrapPayload = {
   chat: {
     unreadCount: number;
     conversations: ChatConversation[];
+    messagedPostIds: string[];
+    messagedRideIds: string[];
   };
   features: {
     chitthi: {
@@ -548,6 +551,7 @@ export type BootstrapPayload = {
     messages: number;
   };
   hasSubmittedHousingExperience: boolean;
+  hasSubmittedMobileReview: boolean;
   testimonials: Array<{
     id: number;
     name: string;

@@ -267,10 +267,11 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
     location: { city, selected: city, suggested: "Aurora, CO" },
     housing: [],
     communities: [],
-    chat: { unreadCount: 0, conversations: [] },
+    chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] },
     features: { chitthi: { maxVideoSizeMb: 12, maxVideoSizeBytes: 12_000_000, enableMultipartUpload: false, cryptoThrottleMs: 10, rolloutCohort: "control" } },
     dashboard: { housingPosts: 0, messages: 0 },
     hasSubmittedHousingExperience: false,
+    hasSubmittedMobileReview: false,
     testimonials: []
   };
 }
@@ -913,10 +914,10 @@ export async function getChatEncryptedPreviewEnvelopes(messageIds: number[], dev
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/preview-envelopes?${params.toString()}`);
 }
 
-export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0) {
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0, contextPostId = "") {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId })
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId, contextPostId })
   });
 }
 
@@ -998,14 +999,29 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
   if (!source.exists || source.size <= 0 || partSize <= 0 || partCount <= 0) throw new Error("Encrypted multipart upload data is invalid.");
   const remote = await getEncryptedMultipartStatus(authorization.uploadId);
   const completed = new Map(remote.parts.map((part) => [part.partNumber, part]));
-  const reader = source.open();
-  try {
-    for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+  const pendingPartNumbers = Array.from({ length: partCount }, (_, index) => index + 1).filter((partNumber) => {
+    const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
+    const existing = completed.get(partNumber);
+    return !existing?.etag || existing.size !== expectedSize;
+  });
+  let nextPendingIndex = 0;
+
+  async function uploadNextPart() {
+    while (nextPendingIndex < pendingPartNumbers.length) {
+      const partNumber = pendingPartNumbers[nextPendingIndex];
+      nextPendingIndex += 1;
       const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
-      const existing = completed.get(partNumber);
-      if (existing?.etag && existing.size === expectedSize) continue;
+      // Each worker owns its file handle and closes it before network I/O. Two
+      // workers therefore cap plaintext-in-memory ciphertext buffers at two
+      // parts while allowing R2 transfers to overlap.
+      const reader = source.open();
       reader.offset = (partNumber - 1) * partSize;
-      const bytes = reader.readBytes(expectedSize);
+      let bytes: Uint8Array;
+      try {
+        bytes = reader.readBytes(expectedSize);
+      } finally {
+        reader.close();
+      }
       if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
       const partSha256 = naclUtil.encodeBase64(sha256(bytes));
       const partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
@@ -1032,9 +1048,8 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
         if (partFile.exists) partFile.delete();
       }
     }
-  } finally {
-    reader.close();
   }
+  await Promise.all(Array.from({ length: Math.min(2, pendingPartNumbers.length) }, () => uploadNextPart()));
   const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
   await completeEncryptedMultipartUpload(authorization.uploadId, parts);
 }
@@ -1212,36 +1227,64 @@ export async function downloadEncryptedAssetResumably(
   const writer = target.open();
   writer.offset = target.size;
   const rangeBytes = 8 * 1024 * 1024;
+  type DownloadedRange = { start: number; end: number; uri: string };
+
+  async function downloadRange(start: number, end: number): Promise<DownloadedRange> {
+    const partUri = `${destination}.range-${start}`;
+    let result: FileSystem.FileSystemDownloadResult | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+      try {
+        result = await FileSystem.downloadAsync(downloadUrl, partUri, { headers: { Range: `bytes=${start}-${end}` } });
+      } catch {
+        result = undefined;
+      }
+      if (result?.status === 206 || (start === 0 && end + 1 === encryptedSize && result?.status === 200)) break;
+      if (attempt < 2) await wait([500, 1250][attempt]);
+    }
+    if (!result || ![200, 206].includes(result.status)) {
+      await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+      throw new Error(`Encrypted range download failed (${result?.status || 0}).`);
+    }
+    const part = new File(partUri);
+    if (!part.exists || part.size !== end - start + 1) {
+      await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+      throw new Error("Encrypted range download was incomplete.");
+    }
+    return { start, end, uri: partUri };
+  }
+
   try {
     while (writer.offset !== null && writer.offset < encryptedSize) {
-      const start = writer.offset;
-      const end = Math.min(encryptedSize - 1, start + rangeBytes - 1);
-      const partUri = `${destination}.range-${start}`;
-      let result: FileSystem.FileSystemDownloadResult | undefined;
+      const batchStart = writer.offset;
+      const ranges = Array.from({ length: 2 }, (_, index) => {
+        const start = batchStart + index * rangeBytes;
+        return start < encryptedSize ? { start, end: Math.min(encryptedSize - 1, start + rangeBytes - 1) } : null;
+      }).filter((range): range is { start: number; end: number } => Boolean(range));
       try {
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
-          result = await FileSystem.downloadAsync(downloadUrl, partUri, { headers: { Range: `bytes=${start}-${end}` } });
-          if (result.status === 206 || (start === 0 && end + 1 === encryptedSize && result.status === 200)) break;
-          if (attempt < 2) await wait([500, 1250][attempt]);
-        }
-        if (!result || ![200, 206].includes(result.status)) throw new Error(`Encrypted range download failed (${result?.status || 0}).`);
-        const part = new File(partUri);
-        const expected = end - start + 1;
-        if (!part.exists || part.size !== expected) throw new Error("Encrypted range download was incomplete.");
-        const reader = part.open();
-        try {
-          while (reader.offset !== null && reader.offset < part.size) {
-            const bytes = reader.readBytes(Math.min(1024 * 1024, part.size - reader.offset));
-            writer.writeBytes(bytes);
-            digest.update(bytes);
+        const settled = await Promise.allSettled(ranges.map(({ start, end }) => downloadRange(start, end)));
+        const failed = settled.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
+        const downloaded = settled
+          .filter((result): result is PromiseFulfilledResult<DownloadedRange> => result.status === "fulfilled")
+          .map((result) => result.value);
+        downloaded.sort((left, right) => left.start - right.start);
+        for (const range of downloaded) {
+          const part = new File(range.uri);
+          const reader = part.open();
+          try {
+            while (reader.offset !== null && reader.offset < part.size) {
+              const bytes = reader.readBytes(Math.min(1024 * 1024, part.size - reader.offset));
+              writer.writeBytes(bytes);
+              digest.update(bytes);
+            }
+          } finally {
+            reader.close();
           }
-        } finally {
-          reader.close();
+          onProgress?.(Math.max(0, Math.min(1, (writer.offset || 0) / encryptedSize)));
         }
-        onProgress?.(Math.max(0, Math.min(1, (writer.offset || 0) / encryptedSize)));
       } finally {
-        await FileSystem.deleteAsync(partUri, { idempotent: true }).catch(() => undefined);
+        await Promise.all(ranges.map(({ start }) => FileSystem.deleteAsync(`${destination}.range-${start}`, { idempotent: true }).catch(() => undefined)));
       }
     }
   } finally {

@@ -88,7 +88,7 @@ type Props = {
   onClearNotificationConversation?: () => void;
   onThreadModeChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
-  onCardMessageSent?: () => void;
+  onCardMessageSent?: (context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) => void;
 };
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
@@ -885,9 +885,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const { enabled: nearbyRelayEnabled, status: nearbyRelayStatus, custodyVersion: nearbyCustodyVersion, toggle: toggleNearbyRelay } = useNearbyRelay();
   const signedIn = Boolean(data?.user);
   const currentUserId = Number(data?.user?.id || 0);
+  const initialDirectConversation = notificationConversationId
+    ? data?.chat.conversations.find((item) => item.id === notificationConversationId) || null
+    : null;
   const messagesScrollRef = useRef<FlatList<ThreadMessageItem>>(null);
   const composerRef = useRef<TextInput>(null);
-  const activeConversationIdRef = useRef("");
+  const activeConversationIdRef = useRef(notificationConversationId || "");
   const messagesContentHeightRef = useRef(0);
   const messagesViewportHeightRef = useRef(0);
   const messagesScrollOffsetRef = useRef(0);
@@ -924,9 +927,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [hasMoreConversations, setHasMoreConversations] = useState((data?.chat.conversations || []).length >= 30);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
-  const [activeConversationId, setActiveConversationId] = useState("");
-  const [activeSubject, setActiveSubject] = useState(pendingPost?.title || rideContextLabel(pendingRide) || "");
-  const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
+  const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
+  const [activeSubject, setActiveSubject] = useState(initialDirectConversation?.subject || initialDirectConversation?.otherName || pendingPost?.title || rideContextLabel(pendingRide) || "");
+  const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(initialDirectConversation);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [highlightedMessageId, setHighlightedMessageId] = useState(0);
   const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
@@ -938,7 +941,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [sharingLocation, setSharingLocation] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadLoading, setThreadLoading] = useState(Boolean(notificationConversationId));
+  const [attachmentSending, setAttachmentSending] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
@@ -1679,6 +1683,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     if (!notificationConversationId || !signedIn) return;
     let cancelled = false;
+    const knownConversation = conversations.find((item) => item.id === notificationConversationId)
+      || data?.chat.conversations.find((item) => item.id === notificationConversationId);
+    if (knownConversation) {
+      setActiveConversation(knownConversation);
+      setActiveSubject(knownConversation.subject || knownConversation.otherName || "");
+    }
     onThreadModeChange?.(true);
     setThreadLoading(true);
     void readCachedChatMessages(currentUserId, notificationConversationId).then((cachedMessages) => {
@@ -2115,6 +2125,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function sendMessage() {
     const cleanMessage = messageText.trim();
     const startedFromCardContext = Boolean(pendingPost || pendingRide);
+    const cardMessageContext = {
+      postId: pendingPost?.id,
+      rideId: pendingRide?.id,
+      name: pendingPost?.posterName || pendingRide?.ownerName,
+      photoUrl: pendingPost?.photoUrl,
+      listingTitle: pendingPost?.title || pendingRide?.title
+    };
     userTouchedThreadRef.current = false;
     shouldAutoScrollToEndRef.current = true;
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
@@ -2142,7 +2159,41 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
         return;
       }
-      setThreadLoading(true);
+      setAttachmentSending(true);
+      const optimisticAttachment = attachments.length === 1 ? attachments[0] : null;
+      const optimisticAttachmentId = optimisticAttachment ? -Date.now() : 0;
+      if (optimisticAttachment) {
+        const optimisticMessage: ChatMessage = {
+          id: optimisticAttachmentId,
+          senderId: Number(data?.user?.id || 0),
+          senderName: data?.user?.name || "You",
+          mine: true,
+          type: optimisticAttachment.kind,
+          text: cleanMessage,
+          attachmentUrl: optimisticAttachment.uri,
+          metadata: {
+            encrypted: true,
+            uploading: true,
+            kind: optimisticAttachment.kind,
+            fileName: optimisticAttachment.name,
+            mimeType: optimisticAttachment.mimeType,
+            size: optimisticAttachment.size,
+            decryptedDataUrl: optimisticAttachment.kind === "IMAGE" ? optimisticAttachment.uri : undefined,
+          },
+          createdAt: new Date().toISOString(),
+          deliveredAt: "",
+          readAt: "",
+          editedAt: "",
+          deletedAt: "",
+          canEdit: false,
+          status: "pending",
+        };
+        setMessages((current) => [...current, optimisticMessage]);
+        setPendingAttachment(null);
+        setPendingImages([]);
+        setMessageText("");
+        scrollThreadToLatest(false);
+      }
       setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : `Sending ${attachments[0].name}…`);
       try {
         const identity = await ensureChatDeviceIdentity();
@@ -2188,6 +2239,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           let response;
           let encryptedUploadFinalized = false;
           try {
+            setAttachmentStatus(`Uploading ${attachment.name} securely…`);
             response = await sendDirectEncryptedChatAttachment(activeConversationId, encryptedPayload, attachment.mimeType, index + 1 < attachments.length);
             encryptedUploadFinalized = true;
           } finally {
@@ -2211,7 +2263,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, ...mediaMetadata } });
           setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : `Sending ${attachment.name}…`);
         }
-        setMessages((current) => [...current.filter((item) => !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
+        setMessages((current) => [...current.filter((item) => item.id !== optimisticAttachmentId && !sentMessages.some((sent) => sent.id === item.id)), ...sentMessages].sort((a, b) => a.id - b.id));
         scrollThreadToLatest(false);
         const sentKind = attachments[0].kind;
         setPendingAttachment(null);
@@ -2220,15 +2272,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setMessageText("");
         setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
         setTimeout(() => setAttachmentStatus(""), 1600);
-        if (startedFromCardContext) onCardMessageSent?.();
+        if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
         onClearPendingPost?.();
         onClearPendingRide?.();
         void refreshMessenger({ showLoader: false, showError: false });
       } catch (error) {
+        if (optimisticAttachment) {
+          setMessages((current) => current.filter((item) => item.id !== optimisticAttachmentId));
+          setPendingAttachment(optimisticAttachment);
+          setMessageText(cleanMessage);
+        }
         setAttachmentStatus("");
         Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : attachments[0].kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
       } finally {
-        setThreadLoading(false);
+        setAttachmentSending(false);
       }
       return;
     }
@@ -2291,7 +2348,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
           pendingIdentity = identity;
           pendingEnvelopes = envelopes;
-          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId);
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "");
           setMessages((current) => current.map((item) => item.localClientMessageId === clientMessageId
             ? { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }
             : item));
@@ -2327,7 +2384,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           scrollThreadToLatest(false);
           queuedOffline = true;
         }
-        if (startedFromCardContext) onCardMessageSent?.();
+        if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
         onClearPendingPost?.();
         onClearPendingRide?.();
       } else {
@@ -3667,7 +3724,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             renderItem={({ item }) => {
             const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isMediaMessage, messageRunEnds, replyTarget, showDateDivider } = item;
             if (skipForMediaGroup) return null;
-            const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
+            const mediaDownloading = downloadingMediaMessageIds.includes(message.id) || Boolean(message.metadata?.uploading);
             const mediaProgress = mediaDownloadProgress[message.id] || 0;
             return (
             <View key={message.id} style={styles.threadMessageCell}>
@@ -3711,14 +3768,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {message.attachmentUrl ? (
-                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity onPress={() => void openAttachment(message)} accessibilityLabel="Preview photo"><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => <TouchableOpacity key={photo.id} style={styles.collageCell} onPress={() => void openPhotoGroup(mediaGroup)} accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} compact /><View style={styles.collageTimeOverlay}><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore}><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</TouchableOpacity>)}</View> : <TouchableOpacity disabled={Boolean(message.metadata?.uploading)} onPress={() => void openAttachment(message)} accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} /></TouchableOpacity>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={styles.photoMediaWrap}>
                       <TouchableOpacity
                         style={styles.videoMessageCard}
                         delayLongPress={350}
                         onLongPress={() => showMessageActions(message)}
+                        disabled={Boolean(message.metadata?.uploading)}
                         onPress={() => void openAttachment(message)}
-                        accessibilityLabel="Play video"
+                        accessibilityLabel={message.metadata?.uploading ? "Video uploading" : "Play video"}
                       >
                         {message.metadata?.thumbnailDataUrl ? <Image source={{ uri: message.metadata.thumbnailDataUrl }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
                         <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
@@ -4109,7 +4167,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             onChangeText={handleMessageTextChange}
             multiline
           />
-          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
+          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, (threadLoading || attachmentSending) && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading || attachmentSending}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
           </View>

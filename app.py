@@ -7017,6 +7017,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_activity ON chat_conversations(status, last_message_at DESC, updated_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_sender_context ON chat_messages(sender_id, context_type, context_public_id) WHERE deleted_at IS NULL AND context_public_id != ''")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_communities_discovery ON chat_communities(visibility, area_label COLLATE NOCASE, kind, name)")
@@ -11123,6 +11124,61 @@ def has_submitted_housing_experience(user_id: int) -> bool:
                 (user_id,),
             ).fetchone()
         )
+
+
+def has_submitted_mobile_review(user_id: int) -> bool:
+    if user_id <= 0:
+        return False
+    with db() as con:
+        return bool(
+            con.execute(
+                """
+                SELECT 1
+                FROM app_feedback
+                WHERE user_id = ? AND page = 'mobile-review-prompt'
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+        )
+
+
+def messaged_listing_ids_for_user(user_id: int) -> dict[str, list[str]]:
+    if user_id <= 0:
+        return {"postIds": [], "rideIds": []}
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT DISTINCT
+                   CASE
+                     WHEN messages.context_type = 'HOUSING' AND messages.context_public_id != ''
+                     THEN messages.context_public_id
+                     ELSE posts.public_id
+                   END AS post_public_id,
+                   CASE
+                     WHEN messages.context_type = 'RIDE' AND messages.context_public_id != ''
+                     THEN messages.context_public_id
+                     ELSE rides.public_id
+                   END AS ride_public_id
+            FROM chat_conversations conversations
+            JOIN chat_participants participant
+              ON participant.conversation_id = conversations.id
+             AND participant.user_id = ?
+            JOIN chat_messages messages
+              ON messages.conversation_id = conversations.id
+             AND messages.sender_id = ?
+             AND messages.deleted_at IS NULL
+            LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
+            LEFT JOIN ride_posts rides ON rides.id = conversations.ride_post_id
+            WHERE posts.public_id IS NOT NULL OR rides.public_id IS NOT NULL
+               OR (messages.context_type IN ('HOUSING', 'RIDE') AND messages.context_public_id != '')
+            """,
+            (user_id, user_id),
+        ).fetchall()
+    return {
+        "postIds": sorted({str(row_value(row, "post_public_id") or "") for row in rows if row_value(row, "post_public_id")}),
+        "rideIds": sorted({str(row_value(row, "ride_public_id") or "") for row in rows if row_value(row, "ride_public_id")}),
+    }
 
 
 def get_exports_imports_interest_summary() -> dict[str, int]:
@@ -22736,6 +22792,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_json_body()
         conversation_public_id = (form.get("conversationId") or "").strip()
+        context_post_id = clean_text_value(form.get("contextPostId"), 80)
         envelopes = form.get("envelopes") if isinstance(form.get("envelopes"), list) else []
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
@@ -22746,10 +22803,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
                 return
+            if context_post_id:
+                listing_context = chat_listing_context(con, int(user["id"]), context_post_id)
+                listing_owner_id = int(listing_context.get("ownerUserId", "0") or 0)
+                owner_is_participant = bool(listing_owner_id and con.execute(
+                    "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ? LIMIT 1",
+                    (int(conversation["id"]), listing_owner_id),
+                ).fetchone())
+                if not owner_is_participant:
+                    self.send_json({"ok": False, "message": "Listing context does not match this conversation."}, 409)
+                    return
             message, error = save_encrypted_chat_message(con, conversation, user, envelopes, str(form.get("clientMessageId") or ""), int(float_from_value(form.get("replyToMessageId")) or 0))
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
+            if context_post_id:
+                # The client may label a message with a listing only when that
+                # listing is the server-verified context of this conversation.
+                # Persisting context per message avoids losing history when one
+                # direct conversation is reused for another listing by the same owner.
+                con.execute(
+                    "UPDATE chat_messages SET context_type = 'HOUSING', context_public_id = ? WHERE id = ? AND sender_id = ?",
+                    (context_post_id, int(message["id"]), int(user["id"])),
+                )
+                message = con.execute("SELECT * FROM chat_messages WHERE id = ?", (int(message["id"]),)).fetchone()
             if not bool(form.get("silent")):
                 con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
@@ -31342,6 +31419,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         metro_context = accommodation_metro_context(city if "Metro" in city else "", area or city)
         user_id = int(row_value(user, "id") or 0) if user else 0
         chats = get_chat_conversations_for_user(user_id) if user_id else []
+        messaged_listing_ids = messaged_listing_ids_for_user(user_id)
         housing_posts = mobile_housing_posts(city=city, area=area, limit=12)
         self.send_json(
             {
@@ -31357,6 +31435,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "chat": {
                     "unreadCount": sum(int(item.get("unread") or 0) for item in chats),
                     "conversations": chats[:10],
+                    "messagedPostIds": messaged_listing_ids["postIds"],
+                    "messagedRideIds": messaged_listing_ids["rideIds"],
                 },
                 "features": {"chitthi": chitthi_transfer_features(user_id)},
                 "dashboard": {
@@ -31364,6 +31444,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "messages": sum(int(item.get("unread") or 0) for item in chats),
                 },
                 "hasSubmittedHousingExperience": has_submitted_housing_experience(user_id),
+                "hasSubmittedMobileReview": has_submitted_mobile_review(user_id),
                 "testimonials": get_mobile_housing_testimonials(city=city),
             }
         )

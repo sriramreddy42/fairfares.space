@@ -1,6 +1,7 @@
-import React from "react";
-import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useState } from "react";
+import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
+import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { HousingPost } from "../types";
 
@@ -11,9 +12,14 @@ type Props = {
   distanceLabel?: string;
   width?: number;
   compact?: boolean;
+  messageSent?: boolean;
+  onSendMessage?: (post: HousingPost, message: string) => Promise<void>;
+  onSeeConversation?: (post: HousingPost) => void;
 };
 
-export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false }: Props) {
+export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false, messageSent = false, onSendMessage, onSeeConversation }: Props) {
+  const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
+  const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
   const imageUrl = absoluteAssetUrl(postImages[0] || "");
   const fallbackTitle = post.roommateIntent
@@ -67,10 +73,36 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, com
           <Text numberOfLines={2} style={[styles.rent, compact && styles.rentCompact]}>{post.rent || "Rent open"}</Text>
           <Text style={styles.expiry}>{post.expiryLabel}</Text>
         </View>
-        <TouchableOpacity style={[styles.respond, compact && styles.respondCompact, post.sample && styles.respondDisabled]} onPress={() => !post.sample && onMessage(post)} disabled={post.sample}>
-          <Text style={[styles.respondText, post.sample && styles.respondTextDisabled]}>{post.sample ? "Sample only" : "Message"}</Text>
-        </TouchableOpacity>
       </View>
+      {!post.sample ? (
+        <View style={styles.inlineMessageCard}>
+          {messageSent ? (
+            <>
+              <View style={styles.sentHeading}>
+                <View style={styles.sentCheck}><Text style={styles.sentCheckText}>✓</Text></View>
+                <Text style={styles.sentTitle} numberOfLines={1}>Message sent to lister</Text>
+              </View>
+              <TouchableOpacity style={styles.seeConversation} onPress={() => (onSeeConversation || onMessage)(post)}><Text style={styles.seeConversationText}>See conversation</Text></TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <View style={styles.inlineMessageHeading}>
+                <View style={styles.inlineMessageMascotWrap}>
+                  <Image source={appAssets.chittiMascot} style={styles.inlineMessageMascot} resizeMode="contain" />
+                </View>
+                <View style={styles.inlineMessageHeadingCopy}>
+                  <Text style={styles.inlineMessageTitle}>Message lister</Text>
+                  <Text style={styles.inlineMessageHint}>Start a private Chitthi</Text>
+                </View>
+              </View>
+              <View style={[styles.inlineMessageRow, sending && styles.inlineMessageRowBusy]}>
+                <TextInput value={draft} onChangeText={setDraft} style={styles.inlineMessageInput} placeholder="Write a message" placeholderTextColor="#667085" editable={!sending} returnKeyType="send" onSubmitEditing={() => { if (draft.trim() && onSendMessage) void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }} />
+                <TouchableOpacity style={[styles.inlineSend, (sending || !draft.trim()) && styles.inlineSendDisabled]} disabled={sending || !draft.trim() || !onSendMessage} onPress={() => { if (!onSendMessage) return; void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.inlineSendText}>Send</Text>}</TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -215,6 +247,27 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontWeight: "900"
   },
+  respondSent: { borderColor: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)" },
+  respondTextSent: { color: theme.colors.green },
   respondDisabled: { borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
-  respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" }
+  respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" },
+  inlineMessageCard: { borderTopWidth: 1, borderTopColor: theme.colors.line, paddingHorizontal: 10, paddingTop: 9, paddingBottom: 10, gap: 7, backgroundColor: "#1D1D1E" },
+  inlineMessageHeading: { flexDirection: "row", alignItems: "center", gap: 7 },
+  inlineMessageMascotWrap: { width: 29, height: 29, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#10281C", borderWidth: 1, borderColor: "rgba(210,167,89,0.42)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  inlineMessageMascot: { width: 24, height: 24 },
+  inlineMessageHeadingCopy: { flex: 1, minWidth: 0 },
+  inlineMessageTitle: { color: theme.colors.text, fontSize: 12, lineHeight: 15, fontWeight: "900" },
+  inlineMessageHint: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, fontWeight: "700" },
+  inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#3A3A3C", backgroundColor: theme.colors.panel2 },
+  inlineMessageRowBusy: { opacity: 0.8 },
+  inlineMessageInput: { flex: 1, minWidth: 0, height: 34, color: theme.colors.text, paddingHorizontal: 0, paddingVertical: 6, fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  inlineSend: { height: 34, minWidth: 59, borderRadius: 17, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
+  inlineSendDisabled: { backgroundColor: "#3A5742", opacity: 0.62 },
+  inlineSendText: { color: "#0C1A10", fontSize: 12, fontWeight: "900" },
+  sentHeading: { minHeight: 29, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 1 },
+  sentCheck: { width: 25, height: 25, borderRadius: 13, backgroundColor: "rgba(94,196,122,0.18)", borderWidth: 1, borderColor: "rgba(94,196,122,0.56)", alignItems: "center", justifyContent: "center" },
+  sentCheckText: { color: theme.colors.green, fontSize: 14, lineHeight: 17, fontWeight: "900" },
+  sentTitle: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  seeConversation: { height: 38, borderRadius: 19, backgroundColor: "rgba(94,196,122,0.14)", borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", alignItems: "center", justifyContent: "center" },
+  seeConversationText: { color: theme.colors.green, fontSize: 12, lineHeight: 16, fontWeight: "900" }
 });
