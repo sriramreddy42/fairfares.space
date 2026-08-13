@@ -22209,12 +22209,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to view messages."}, 401)
             return
         params = urllib.parse.parse_qs(parsed.query)
+        compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
         try:
             limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
         conversations = get_chat_conversations_for_user(int(user["id"]), limit=limit, offset=offset)
+        if compact_senders:
+            for conversation in conversations:
+                other_user_id = int(conversation.get("otherUserId") or 0)
+                community_id = int(conversation.get("communityId") or 0)
+                conversation["otherPhotoUrl"] = (
+                    chat_notification_group_avatar_url(self.public_origin(), community_id)
+                    if community_id > 0
+                    else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
+                )
         self.send_json({
             "ok": True,
             "conversations": conversations,
@@ -22411,16 +22421,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (last_message_id, conversation["id"], current_user_id, last_message_id),
                 )
+        conversation_payload = chat_row_payload(conversation, current_user_id)
+        if compact_senders:
+            other_user_id = int(conversation_payload.get("otherUserId") or 0)
+            community_id = int(conversation_payload.get("communityId") or 0)
+            conversation_payload["otherPhotoUrl"] = (
+                chat_notification_group_avatar_url(self.public_origin(), community_id)
+                if community_id > 0
+                else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
+            )
         self.send_json(
             {
                 "ok": True,
-                "conversation": chat_row_payload(conversation, current_user_id),
+                "conversation": conversation_payload,
                 # A profile photo can be a legacy data URL. Return it once per
                 # sender instead of duplicating hundreds of KB into every row.
                 "senders": {
                     str(int(row_value(message, "sender_id") or 0)): {
                         "name": row_value(message, "sender_name"),
-                        "photoUrl": row_value(message, "sender_photo_url"),
+                        "photoUrl": (
+                            chat_notification_avatar_url(self.public_origin(), int(row_value(message, "sender_id") or 0))
+                            if compact_senders
+                            else row_value(message, "sender_photo_url")
+                        ),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0
@@ -22569,7 +22592,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "senders": {
                     str(int(row_value(message, "sender_id") or 0)): {
                         "name": row_value(message, "sender_name"),
-                        "photoUrl": row_value(message, "sender_photo_url"),
+                        "photoUrl": (
+                            chat_notification_avatar_url(self.public_origin(), int(row_value(message, "sender_id") or 0))
+                            if compact_senders
+                            else row_value(message, "sender_photo_url")
+                        ),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0
