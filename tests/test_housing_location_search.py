@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -242,6 +243,154 @@ class HousingLocationSearchTest(unittest.TestCase):
         roommate_real_ids = {item["id"] for item in roommate_requests} & controlled_ids
         self.assertEqual(roommate_real_ids, {"ROOMMATE-REQUEST"})
         self.assertTrue(all(item["mode"] == "NEED_PLACE" and item["roommateIntent"] for item in roommate_requests))
+
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        return_value={"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903, "source": "test"},
+    )
+    def test_large_area_search_does_not_lose_nearby_matches_behind_newer_far_rows(self, _mock_point):
+        with app.db() as con:
+            rows = []
+            # Insert the valid nearby inventory first so it is older than the
+            # hundreds of irrelevant rows that follow it.
+            for index in range(180):
+                rows.append((
+                    f"NEAR-{index:03d}", self.user_id, "HAVE_PLACE", "single_room",
+                    f"Near room {index}", "Capitol Hill", "Denver, CO", "Denver, CO",
+                    "Capitol Hill", 39.7392 + (index % 12) * 0.001,
+                    -104.9903 + (index // 12) * 0.001, 850 + (index % 6) * 20,
+                    0, ("open", "female", "male")[index % 3], 0,
+                ))
+            for index in range(420):
+                rows.append((
+                    f"FAR-{index:03d}", self.user_id, "HAVE_PLACE", "single_room",
+                    f"Far room {index}", "Colorado Springs", "Denver, CO", "Denver, CO",
+                    "Far away", 38.8339, -104.8214, 700, 0, "open", 0,
+                ))
+            con.executemany(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description, city, city_area_zip,
+                 area_or_apartment, lat, lng, rent_min, rent_max, gender_preference,
+                 roommate_intent, contact_name, contact_phone, contact_email, visibility_status,
+                 expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        'Poster', '3035550100', 'poster@example.com', 'ACTIVE', '2099-12-31 23:59:59')
+                """,
+                rows,
+            )
+
+        results = app.mobile_housing_posts(
+            city="Denver, CO",
+            area="Capitol Hill, Denver, CO",
+            need="need_place",
+            category="single_room",
+            gender="female",
+            budget="900",
+            radius=5,
+            limit=50,
+        )
+        real_results = [item for item in results if item["id"].startswith("NEAR-")]
+        self.assertEqual(len(real_results), 50)
+        self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in real_results))
+        self.assertTrue(all(item["category"] == "single_room" for item in real_results))
+        self.assertTrue(all(int(item["id"].rsplit("-", 1)[1]) % 3 != 2 for item in real_results))
+        self.assertTrue(all(item["rentValue"] <= 900 for item in real_results))
+        self.assertTrue(all(item["distanceMiles"] is not None and item["distanceMiles"] <= 5 for item in real_results))
+        self.assertFalse(any(item["id"].startswith("FAR-") for item in results))
+        distances = [float(item["distanceMiles"]) for item in real_results]
+        self.assertEqual(distances, sorted(distances))
+        expected_ids = [item["id"] for item in results]
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            repeated = list(executor.map(
+                lambda _: app.mobile_housing_posts(
+                    city="Denver, CO",
+                    area="Capitol Hill, Denver, CO",
+                    need="need_place",
+                    category="single_room",
+                    gender="female",
+                    budget="900",
+                    radius=5,
+                    limit=50,
+                ),
+                range(48),
+            ))
+        self.assertTrue(all([item["id"] for item in batch] == expected_ids for batch in repeated))
+
+    def test_nationwide_city_state_zip_and_address_radius_matrix(self):
+        metros = (
+            ("Seattle, WA", "98101", 47.6062, -122.3321),
+            ("Los Angeles, CA", "90012", 34.0522, -118.2437),
+            ("Phoenix, AZ", "85004", 33.4484, -112.0740),
+            ("Denver, CO", "80202", 39.7392, -104.9903),
+            ("Austin, TX", "78701", 30.2672, -97.7431),
+            ("Miami, FL", "33130", 25.7617, -80.1918),
+            ("Chicago, IL", "60601", 41.8781, -87.6298),
+            ("New York, NY", "10001", 40.7128, -74.0060),
+            ("Boston, MA", "02108", 42.3601, -71.0589),
+            ("Portland, OR", "97205", 45.5152, -122.6784),
+            ("Portland, ME", "04101", 43.6591, -70.2568),
+            ("Springfield, MO", "65806", 37.2090, -93.2923),
+            ("Springfield, IL", "62701", 39.7817, -89.6501),
+            ("Boise, ID", "83702", 43.6150, -116.2023),
+            ("Minneapolis, MN", "55401", 44.9778, -93.2650),
+            ("Atlanta, GA", "30303", 33.7490, -84.3880),
+        )
+        with app.db() as con:
+            rows = []
+            for index, (city_label, zip_code, lat, lng) in enumerate(metros):
+                other_city = metros[(index + 1) % len(metros)][0]
+                rows.extend((
+                    (f"USA-NEAR-{index:02d}", self.user_id, city_label, zip_code, lat + 0.01, lng + 0.01),
+                    (f"USA-EDGE-{index:02d}", self.user_id, city_label, zip_code, lat + 0.08, lng, ),
+                    (f"USA-FAR-{index:02d}", self.user_id, city_label, zip_code, lat + 0.35, lng),
+                    # Deliberately stale coordinates in the searched location,
+                    # but a different saved city/state.
+                    (f"USA-WRONG-{index:02d}", self.user_id, other_city, zip_code, lat + 0.005, lng),
+                ))
+            con.executemany(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description, city, zip_code,
+                 city_area_zip, area_or_apartment, street_address, lat, lng, rent_min,
+                 gender_preference, contact_name, contact_phone, contact_email,
+                 visibility_status, expires_at)
+                VALUES (?, ?, 'HAVE_PLACE', 'single_room', ?, 'Nationwide radius test', ?, ?,
+                        ?, 'Downtown', '100 Main Street', ?, ?, 900, 'open', 'Poster',
+                        '3035550100', 'poster@example.com', 'ACTIVE', '2099-12-31 23:59:59')
+                """,
+                [
+                    (public_id, user_id, public_id, city_label, zip_code, f"{city_label} {zip_code}", lat, lng)
+                    for public_id, user_id, city_label, zip_code, lat, lng in rows
+                ],
+            )
+
+        points = {city_label.lower(): {"label": city_label, "lat": lat, "lng": lng, "source": "test"} for city_label, _, lat, lng in metros}
+
+        def resolve_point(query, *_args, **_kwargs):
+            clean_query = str(query or "").lower()
+            for city_label, point in points.items():
+                if city_label in clean_query:
+                    return point
+            return {"label": str(query or ""), "lat": 0, "lng": 0, "source": "test"}
+
+        with patch.object(app, "accommodation_location_point", side_effect=resolve_point):
+            for index, (city_label, zip_code, _lat, _lng) in enumerate(metros):
+                results = app.mobile_housing_posts(
+                    city=city_label,
+                    area=f"100 Main Street, {city_label} {zip_code}",
+                    need="need_place",
+                    category="single_room",
+                    budget="1000",
+                    radius=10,
+                    limit=20,
+                )
+                controlled_ids = {item["id"] for item in results if item["id"].startswith("USA-")}
+                self.assertEqual(controlled_ids, {f"USA-NEAR-{index:02d}", f"USA-EDGE-{index:02d}"})
+                controlled = [item for item in results if item["id"] in controlled_ids]
+                self.assertEqual([item["id"] for item in controlled], [f"USA-NEAR-{index:02d}", f"USA-EDGE-{index:02d}"])
+                self.assertTrue(all(item["distanceMiles"] is not None and item["distanceMiles"] <= 10 for item in controlled))
 
     def test_full_address_and_uploaded_photo_feed_website_map_and_cards(self):
         with app.db() as con:

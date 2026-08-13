@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -426,6 +427,81 @@ class RideCarpoolMatchingTest(unittest.TestCase):
                         destination_lng=POINTS[rider_destination]["lng"],
                     )
                     self.assertTrue(all("Colorado Springs" not in item["destination"] for item in results))
+
+    @patch.object(app, "google_route_totals", return_value=None)
+    def test_large_route_search_keeps_older_valid_offers_and_excludes_unavailable_routes(self, _mock_routes):
+        with app.db() as con:
+            valid_ids = []
+            for _ in range(40):
+                valid_ids.append(str(self.insert_ride(
+                    con,
+                    self.driver_id,
+                    "CARPOOL_OFFER",
+                    "300 East 17th Ave, Denver, CO",
+                    "Colorado Springs, CO",
+                    max_detour=50,
+                    pickup_distance=50,
+                    seats=3,
+                    pickup_date="2099-08-02",
+                )["public_id"]))
+            # These newer rows previously filled the 250-candidate window and
+            # prevented every valid older offer from being evaluated.
+            for _ in range(320):
+                self.insert_ride(
+                    con,
+                    self.driver_id,
+                    "CARPOOL_OFFER",
+                    "Denver, CO",
+                    "Boulder, CO",
+                    max_detour=10,
+                    pickup_distance=10,
+                    seats=3,
+                    pickup_date="2099-08-02",
+                )
+            zero_seat_id = str(self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "Denver, CO", "Colorado Springs, CO",
+                max_detour=50, pickup_distance=50, seats=0, pickup_date="2099-08-02",
+            )["public_id"])
+            wrong_date_id = str(self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "Denver, CO", "Colorado Springs, CO",
+                max_detour=50, pickup_distance=50, seats=3, pickup_date="2099-08-03",
+            )["public_id"])
+            reverse_id = str(self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "Colorado Springs, CO", "Denver, CO",
+                max_detour=50, pickup_distance=50, seats=3, pickup_date="2099-08-02",
+            )["public_id"])
+
+        query = {
+            "city": "Denver, CO",
+            "ride_type": "CARPOOL_OFFER",
+            "origin": "Littleton, CO",
+            "destination": "Colorado Springs, CO",
+            "pickup_date": "2099-08-02",
+            "limit": 20,
+            "origin_lat": POINTS["Littleton, CO"]["lat"],
+            "origin_lng": POINTS["Littleton, CO"]["lng"],
+            "destination_lat": POINTS["Colorado Springs, CO"]["lat"],
+            "destination_lng": POINTS["Colorado Springs, CO"]["lng"],
+        }
+        first_page = app.mobile_ride_posts(**query)
+        second_page = app.mobile_ride_posts(**query, offset=20)
+        first_ids = [item["id"] for item in first_page]
+        second_ids = [item["id"] for item in second_page]
+        returned_ids = set(first_ids + second_ids)
+
+        self.assertEqual(returned_ids, set(valid_ids))
+        self.assertFalse(set(first_ids) & set(second_ids))
+        self.assertNotIn(zero_seat_id, returned_ids)
+        self.assertNotIn(wrong_date_id, returned_ids)
+        self.assertNotIn(reverse_id, returned_ids)
+        self.assertTrue(all(item["seats"] > 0 for item in first_page + second_page))
+        self.assertTrue(all(item["pickupDate"] == "2099-08-02" for item in first_page + second_page))
+        self.assertTrue(all(item["directionCompatible"] for item in first_page + second_page))
+
+        expected_first_ids = first_ids
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            repeated = list(executor.map(lambda _: app.mobile_ride_posts(**query), range(36)))
+        self.assertTrue(all([item["id"] for item in batch] == expected_first_ids for batch in repeated))
 
     @patch.object(app, "send_mobile_push_for_users")
     def test_accept_decline_status_and_pickup_pin_flow(self, mock_push):

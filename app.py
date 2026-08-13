@@ -7054,6 +7054,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_user_created ON accommodation_posts(user_id, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_mode_category ON accommodation_posts(post_mode, category, visibility_status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_city_status_created ON accommodation_posts(city COLLATE NOCASE, visibility_status, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_geo ON accommodation_posts(visibility_status, lat, lng)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_interests_post_created ON accommodation_interests(post_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_interests_user_created ON accommodation_interests(user_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_images_post_sort ON accommodation_post_images(post_id, sort_order, id)")
@@ -15426,6 +15427,8 @@ def mobile_ride_posts(
     if ride_type:
         clauses.append("ride_posts.ride_type = ?")
         values.append(ride_type)
+        if ride_type == "CARPOOL_OFFER":
+            clauses.append("ride_posts.seats > 0")
     if pickup_date:
         clauses.append("(ride_posts.pickup_date = ? OR ride_posts.start_date = ?)")
         values.extend([pickup_date, pickup_date])
@@ -15446,7 +15449,10 @@ def mobile_ride_posts(
     """
     page_limit = max(1, min(int(limit or 30), 50))
     page_offset = max(0, int(offset or 0))
-    candidate_limit = 250 if route_search else page_limit
+    # Every type/date-compatible route must reach geometric validation. A
+    # newest-first cap here can hide an older valid offer behind unrelated
+    # routes before pickup, direction, and detour checks run.
+    candidate_limit = -1 if route_search else page_limit
     candidate_offset = 0 if route_search else page_offset
     values.extend([candidate_limit, candidate_offset])
     with db() as con:
@@ -15972,8 +15978,33 @@ def mobile_housing_posts(
         values.append(gender)
     budget_value = float_from_value(budget)
     if budget_value:
-        clauses.append("(rent_max = 0 OR rent_max <= ? OR rent_min <= ?)")
+        # A search budget is the maximum the seeker can pay. For a normal
+        # range, matching the lower asking price is sufficient; when only a
+        # maximum was stored, compare that value instead. A missing rent must
+        # not become an automatic match.
+        clauses.append("((rent_min > 0 AND rent_min <= ?) OR (rent_min <= 0 AND rent_max > 0 AND rent_max <= ?))")
         values.extend([budget_value, budget_value])
+    search_radius_miles = max(0.0, min(100.0, float_from_value(radius) or 0.0))
+    focus_query = area or city
+    center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
+    center_lat = float(center_lat or center.get("lat") or 0)
+    center_lng = float(center_lng or center.get("lng") or 0)
+    if area and center_lat and center_lng:
+        # First narrow the database scan to a rectangle around the requested
+        # radius. The exact circular distance is still enforced below. Without
+        # this bound, a recent-row LIMIT can discard older nearby listings before
+        # they ever reach distance ranking.
+        nearby_limit = search_radius_miles or 60.0
+        latitude_delta = nearby_limit / 69.0
+        longitude_scale = max(0.1, math.cos(math.radians(center_lat)))
+        longitude_delta = nearby_limit / (69.0 * longitude_scale)
+        clauses.append("lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?")
+        values.extend([
+            center_lat - latitude_delta,
+            center_lat + latitude_delta,
+            center_lng - longitude_delta,
+            center_lng + longitude_delta,
+        ])
     search_term_groups: list[list[str]] = []
     raw_search_terms = () if (area or "").strip() else (city,)
     for raw_term in raw_search_terms:
@@ -16023,7 +16054,9 @@ def mobile_housing_posts(
     offset = max(0, int(offset or 0))
     # Area searches need a bounded candidate window for distance ranking. Plain
     # city searches can page directly in SQLite.
-    sql_limit = min(100, offset + limit) if area else limit
+    # Area candidates are already bounded geographically and must all reach the
+    # exact-distance sorter; limiting by creation time here produces false misses.
+    sql_limit = -1 if area and center_lat and center_lng else (min(100, offset + limit) if area else limit)
     sql_offset = 0 if area else offset
     where_sql = " AND ".join(clauses)
     with db() as con:
@@ -16050,15 +16083,6 @@ def mobile_housing_posts(
             """,
             (*values, sql_limit, sql_offset),
         ).fetchall()
-    search_radius_miles = float_from_value(radius) or 0
-    if search_radius_miles < 0:
-        search_radius_miles = 0
-    if search_radius_miles > 100:
-        search_radius_miles = 100
-    focus_query = area or city
-    center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
-    center_lat = float(center_lat or center.get("lat") or 0)
-    center_lng = float(center_lng or center.get("lng") or 0)
     area_terms: list[str] = []
     if area:
         area_terms = [area, area.replace(", ", ","), area.replace(",", ", ")]
@@ -16085,14 +16109,27 @@ def mobile_housing_posts(
             city_match = row_matches_terms(row, city_terms)
             nearby_limit = search_radius_miles or 60
             nearby_match = distance is not None and distance <= nearby_limit
-            requested_city = (city.split(",", 1)[0] if city else "").strip().lower()
-            listing_city = (row_value(row, "city").split(",", 1)[0] if row_value(row, "city") else "").strip().lower()
+            requested_city, requested_state = split_city_state(city)
+            listing_city, listing_state = split_city_state(row_value(row, "city"))
+            requested_city = requested_city.strip().lower()
+            requested_state = requested_state.strip().lower()
+            listing_city = listing_city.strip().lower()
+            listing_state = listing_state.strip().lower()
             selected_area_text = area.lower()
+            same_city_and_region = (
+                requested_city == listing_city
+                and (
+                    not requested_state
+                    or not listing_state
+                    or requested_state == listing_state
+                )
+            )
+            listing_city_label = ", ".join(part for part in (listing_city, listing_state) if part)
             city_consistent = (
                 not requested_city
                 or not listing_city
-                or requested_city == listing_city
-                or listing_city in selected_area_text
+                or same_city_and_region
+                or bool(listing_city_label and listing_city_label in selected_area_text)
             )
             if center_lat and center_lng:
                 # A geocoded place search is radius-bound. Text matches must not
