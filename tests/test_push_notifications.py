@@ -233,6 +233,16 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(42, expires_at)))
         self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(43, expires_at)))
 
+    def test_compact_avatar_accepts_legacy_jpeg_alias_and_wrapped_base64(self):
+        jpeg = b"\xff\xd8\xff\xe0legacy-avatar"
+        encoded = app.base64.b64encode(jpeg).decode("ascii")
+        wrapped = f"{encoded[:8]}\n{encoded[8:]}"
+        self.assertEqual(app.chat_avatar_data_url_parts(f"data:image/jpg;base64,{wrapped}"), ("image/jpeg", jpeg))
+
+    def test_compact_avatar_rejects_mislabeled_active_content(self):
+        payload = app.base64.b64encode(b"<svg onload=alert(1)>").decode("ascii")
+        self.assertIsNone(app.chat_avatar_data_url_parts(f"data:image/jpeg;base64,{payload}"))
+
     def test_rental_payload_uses_rental_channel_and_booking_context(self):
         token = "ExpoPushToken[rental-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-rental"}]})

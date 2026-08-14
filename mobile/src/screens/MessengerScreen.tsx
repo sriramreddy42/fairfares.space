@@ -486,9 +486,29 @@ function InitialsAvatar({ photoUrl, label, imageStyle, textStyle }: {
 }) {
   const resolvedPhotoUrl = chatPhotoUrl(photoUrl);
   const [failedPhotoUrl, setFailedPhotoUrl] = useState("");
-  useEffect(() => setFailedPhotoUrl(""), [resolvedPhotoUrl]);
+  const [photoRetry, setPhotoRetry] = useState(0);
+  useEffect(() => {
+    setFailedPhotoUrl("");
+    setPhotoRetry(0);
+  }, [resolvedPhotoUrl]);
   if (resolvedPhotoUrl && failedPhotoUrl !== resolvedPhotoUrl) {
-    return <Image source={authenticatedAssetSource(resolvedPhotoUrl)} style={imageStyle} onError={() => setFailedPhotoUrl(resolvedPhotoUrl)} />;
+    return (
+      <Image
+        key={`${resolvedPhotoUrl}:${photoRetry}`}
+        source={{ ...authenticatedAssetSource(resolvedPhotoUrl), cache: photoRetry ? "reload" : "default" }}
+        style={imageStyle}
+        onError={() => {
+          if (photoRetry === 0) {
+            setPhotoRetry(1);
+            return;
+          }
+          logDevelopmentPerformance("chat-avatar-load-failed", {
+            source: resolvedPhotoUrl.includes("/api/chat/notification-avatar") ? "compact-avatar" : resolvedPhotoUrl.startsWith("data:image/") ? "embedded" : "asset",
+          });
+          setFailedPhotoUrl(resolvedPhotoUrl);
+        }}
+      />
+    );
   }
   return <Text style={textStyle}>{initials(label)}</Text>;
 }

@@ -850,6 +850,41 @@ def data_url_upload_parts(
     return safe_name, mime_type, payload
 
 
+def chat_avatar_data_url_parts(value: str) -> tuple[str, bytes] | None:
+    """Decode legacy profile rasters without weakening the avatar endpoint.
+
+    Older profile writers used MIME aliases such as image/jpg and occasionally
+    wrapped Base64. Browsers render those values directly, but the compact
+    Chitthi avatar endpoint previously rejected them and produced inbox-only
+    missing photos. Validate decoded magic bytes so MIME normalization cannot
+    be used to serve arbitrary active content.
+    """
+    if not value or not value.startswith("data:image/") or ";base64," not in value:
+        return None
+    header, encoded = value.split(";base64,", 1)
+    supplied_mime = header.removeprefix("data:").strip().lower()
+    normalized_mime = {
+        "image/jpg": "image/jpeg",
+        "image/pjpeg": "image/jpeg",
+        "image/x-png": "image/png",
+    }.get(supplied_mime, supplied_mime)
+    if normalized_mime not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+        return None
+    try:
+        payload = base64.b64decode(re.sub(r"\s+", "", encoded), validate=True)
+    except (ValueError, TypeError):
+        return None
+    if not payload or len(payload) > 2_000_000:
+        return None
+    signatures = {
+        "image/jpeg": payload.startswith(b"\xff\xd8\xff"),
+        "image/png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": len(payload) >= 12 and payload.startswith(b"RIFF") and payload[8:12] == b"WEBP",
+        "image/gif": payload.startswith((b"GIF87a", b"GIF89a")),
+    }
+    return (normalized_mime, payload) if signatures.get(normalized_mime, False) else None
+
+
 def google_drive_access_token() -> tuple[bool, str]:
     service_json = (os.environ.get(DRIVE_SERVICE_ACCOUNT_ENV) or "").strip()
     if not service_json:
@@ -24077,14 +24112,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         photo_column = "photo_url" if community_id > 0 else "profile_photo_url"
         photo = str(row_value(avatar_row, photo_column) or "").strip() if avatar_row else ""
-        upload = data_url_upload_parts(
-            photo,
-            f"chitthi-group-avatar-{community_id}" if community_id > 0 else f"chitthi-avatar-{user_id}",
-            allowed_mime_types=ALLOWED_CHAT_IMAGE_MIME_TYPES,
-            max_bytes=2_000_000,
-        )
-        if upload:
-            _, mime_type, payload = upload
+        avatar_data = chat_avatar_data_url_parts(photo)
+        if avatar_data:
+            mime_type, payload = avatar_data
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(payload)))
