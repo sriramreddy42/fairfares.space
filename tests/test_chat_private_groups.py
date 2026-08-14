@@ -3,6 +3,7 @@ import base64
 import tempfile
 import time
 import unittest
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -281,6 +282,35 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertFalse(any(row["id"] == conversation_public_id for row in app.get_chat_conversations_for_user(self.member)))
         with app.db() as con:
             self.assertIsNone(app.get_chat_conversation_by_public_id(con, conversation_public_id, self.member))
+
+    def test_compact_group_apis_keep_public_and_numeric_community_ids_separate(self):
+        group = self.create_group()
+        self.assertTrue(str(group["id"]).startswith("FFG-"))
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+            conversation_public_id = str(conversation["public_id"])
+
+        responses = []
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: owner
+        handler.public_origin = lambda: "https://www.fairfare.space"
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+
+        handler.api_chat_conversations(urllib.parse.urlparse("/api/chat/conversations?compact_senders=1"))
+        inbox, status = responses.pop()
+        self.assertEqual(status, 200)
+        self.assertEqual(inbox["conversations"][0]["communityId"], group["id"])
+        self.assertIn("/api/chat/notification-avatar?community=", inbox["conversations"][0]["otherPhotoUrl"])
+
+        handler.api_chat_messages(urllib.parse.urlparse(
+            f"/api/chat/messages?conversation_id={conversation_public_id}&compact_senders=1"
+        ))
+        thread, status = responses.pop()
+        self.assertEqual(status, 200)
+        self.assertEqual(thread["conversation"]["communityId"], group["id"])
+        self.assertIn("/api/chat/notification-avatar?community=", thread["conversation"]["otherPhotoUrl"])
 
     def test_encrypted_message_stores_only_placeholder_and_per_device_envelopes(self):
         with app.db() as con:

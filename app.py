@@ -17802,6 +17802,9 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "postId": row_value(row, "post_public_id"),
         "rideId": ride_public_id,
         "communityId": community_public_id,
+        # Keep the public group identifier above as the client-facing ID. The
+        # numeric record ID is used only for server-generated avatar URLs.
+        "_communityRecordId": int(row_value(row, "community_id") or 0),
         "kind": row_value(row, "conversation_type") or ("GROUP" if community_public_id else "RIDE" if ride_public_id else "DIRECT"),
         "status": row_value(row, "status") or "ACTIVE",
         "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or row_value(row, "ride_title") or "FairFares chat",
@@ -22332,15 +22335,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             int(user["id"]), limit=limit, offset=0 if decoded_cursor else offset,
             cursor_activity=cursor_activity, cursor_id=cursor_id,
         )
-        if compact_senders:
-            for conversation in conversations:
+        for conversation in conversations:
+            if compact_senders:
                 other_user_id = int(conversation.get("otherUserId") or 0)
-                community_id = int(conversation.get("communityId") or 0)
+                community_id = int(conversation.get("_communityRecordId") or 0)
                 conversation["otherPhotoUrl"] = (
                     chat_notification_group_avatar_url(self.public_origin(), community_id)
                     if community_id > 0
                     else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
                 )
+            conversation.pop("_communityRecordId", None)
         last_conversation = conversations[-1] if conversations else {}
         next_cursor = encode_chat_conversation_cursor(last_conversation.get("lastMessageAt"), last_conversation.get("conversationId")) if len(conversations) == limit else ""
         self.send_json({
@@ -22552,12 +22556,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         conversation_payload = chat_row_payload(conversation, current_user_id)
         if compact_senders:
             other_user_id = int(conversation_payload.get("otherUserId") or 0)
-            community_id = int(conversation_payload.get("communityId") or 0)
+            community_id = int(conversation_payload.get("_communityRecordId") or 0)
             conversation_payload["otherPhotoUrl"] = (
                 chat_notification_group_avatar_url(self.public_origin(), community_id)
                 if community_id > 0
                 else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
             )
+        conversation_payload.pop("_communityRecordId", None)
         self.send_json(
             {
                 "ok": True,
