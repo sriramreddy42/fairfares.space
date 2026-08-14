@@ -18936,17 +18936,28 @@ def group_avatar_delivery_path(photo: object, community_id: int) -> str:
     return value
 
 
+def stable_compact_avatar_path(photo: object, *, user_id: int = 0, community_id: int = 0) -> str:
+    """Return a small, cache-stable in-app avatar URL for private/legacy photos."""
+    value = str(photo or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("data:image/", f"r2://{R2_BUCKET_NAME}/")):
+        version = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+        if community_id > 0:
+            return f"/api/chat/notification-avatar?{urllib.parse.urlencode({'community': int(community_id), 'v': version})}"
+        if user_id > 0:
+            return f"/api/chat/notification-avatar?{urllib.parse.urlencode({'user': int(user_id), 'v': version})}"
+        return ""
+    return value if value.startswith(("https://", "/", "local://uploads/")) else ""
+
+
 def chat_compact_avatar_url(origin: str, photo: object, *, user_id: int = 0, community_id: int = 0) -> str:
     """Keep compact JSON small without proxying already compact URL values."""
     value = str(photo or "").strip()
     if not value:
         return ""
     if value.startswith(("data:image/", f"r2://{R2_BUCKET_NAME}/")):
-        return (
-            chat_notification_group_avatar_url(origin, community_id)
-            if community_id > 0
-            else chat_notification_avatar_url(origin, user_id) if user_id > 0 else ""
-        )
+        return stable_compact_avatar_path(value, user_id=user_id, community_id=community_id)
     # HTTPS and local upload paths are already small strings. Returning them
     # directly avoids a signed endpoint redirect and keeps third-party image
     # requests completely free of FairFares authorization headers.
