@@ -9,7 +9,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import { sha256 } from "@noble/hashes/sha256";
 import * as naclUtil from "tweetnacl-util";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
-import { logDevelopmentPerformance } from "../utils/performanceDiagnostics";
+import { logDevelopmentPerformance, startDevelopmentPerformanceOperation } from "../utils/performanceDiagnostics";
 
 declare const process: {
   env: {
@@ -289,9 +289,10 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
           }, true);
         }
         const expectedLongPoll = path.startsWith("/api/chat/events?");
-        const shouldLogRequestTiming = expectedLongPoll
+        const coreChatFetch = path.startsWith("/api/chat/conversations") || path.startsWith("/api/chat/messages?");
+        const shouldLogRequestTiming = coreChatFetch || (expectedLongPoll
           ? durationMs >= 8000 || parseMs >= 100
-          : durationMs >= 1000 || parseMs >= 100;
+          : durationMs >= 1000 || parseMs >= 100);
         if (__DEV__ && shouldLogRequestTiming) {
           logDevelopmentPerformance("api-request-complete", {
             method,
@@ -1125,16 +1126,26 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     const existing = completed.get(partNumber);
     return !existing?.etag || existing.size !== expectedSize;
   });
+  const metric = startDevelopmentPerformanceOperation("multipart-upload", {
+    sizeMb: Math.round(source.size / 1024 / 1024 * 10) / 10,
+    parts: partCount,
+    resumedParts: completed.size,
+    pendingParts: pendingPartNumbers.length,
+    nativeStaging: Platform.OS === "ios" && FairFaresCrypto.multipartStagingAvailable,
+  });
+  const reportCompleted = () => metric.progress(completed.size / partCount, { completedParts: completed.size });
+  reportCompleted();
 
   if (Platform.OS === "ios" && pendingPartNumbers.length) {
-    // Reading and hashing an 8 MiB part through expo-file-system runs on the
-    // JavaScript thread in Expo Go/older clients and can freeze the entire app
-    // for 20+ seconds. Durable iOS multipart recovery is therefore native-only.
-    // Keep its state/ciphertext intact until a current development or release
-    // build provides the staging worker.
-    if (!FairFaresCrypto.multipartStagingAvailable) {
-      throw new Error("This encrypted upload requires the current FairFares development build to resume safely.");
-    }
+    try {
+      // Reading and hashing an 8 MiB part through expo-file-system runs on the
+      // JavaScript thread in Expo Go/older clients and can freeze the entire app
+      // for 20+ seconds. Durable iOS multipart recovery is therefore native-only.
+      // Keep its state/ciphertext intact until a current development or release
+      // build provides the staging worker.
+      if (!FairFaresCrypto.multipartStagingAvailable) {
+        throw new Error("This encrypted upload requires the current FairFares development build to resume safely.");
+      }
     // Stage and submit every remaining file-backed task before awaiting any of
     // them. iOS then owns all tasks in its background URLSession and can keep
     // transferring them after JavaScript is suspended. Staging is sequential,
@@ -1195,6 +1206,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
             const etag = String(responseHeaders.etag || responseHeaders.ETag || responseHeaders.Etag || "");
             if (!etag) throw new Error(`Encrypted upload part ${partNumber} did not return an ETag.`);
             completed.set(partNumber, { partNumber, etag, size: expectedSize });
+            reportCompleted();
           } finally {
             if (partFile.exists) partFile.delete();
           }
@@ -1206,15 +1218,26 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     }
     await Promise.all(scheduled);
     const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
-    await completeEncryptedMultipartUpload(authorization.uploadId, parts);
-    return;
+    try {
+      await completeEncryptedMultipartUpload(authorization.uploadId, parts);
+      metric.complete({ completedParts: parts.length });
+    } catch (error) {
+      metric.fail(error, { completedParts: parts.length });
+      throw error;
+    }
+      return;
+    } catch (error) {
+      metric.fail(error, { completedParts: completed.size });
+      throw error;
+    }
   }
-  let nextPendingIndex = 0;
+  try {
+    let nextPendingIndex = 0;
 
-  async function uploadNextPart() {
-    while (nextPendingIndex < pendingPartNumbers.length) {
-      const partNumber = pendingPartNumbers[nextPendingIndex];
-      nextPendingIndex += 1;
+    async function uploadNextPart() {
+      while (nextPendingIndex < pendingPartNumbers.length) {
+        const partNumber = pendingPartNumbers[nextPendingIndex];
+        nextPendingIndex += 1;
       const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
       // Each worker owns its file handle and closes it before network I/O. Two
       // workers therefore cap plaintext-in-memory ciphertext buffers at two
@@ -1257,14 +1280,20 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
         const etag = String(responseHeaders.etag || responseHeaders.ETag || responseHeaders.Etag || "");
         if (!etag) throw new Error(`Encrypted upload part ${partNumber} did not return an ETag.`);
         completed.set(partNumber, { partNumber, etag, size: expectedSize });
+        reportCompleted();
       } finally {
         if (partFile.exists) partFile.delete();
       }
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(2, pendingPartNumbers.length) }, () => uploadNextPart()));
+    const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
+    await completeEncryptedMultipartUpload(authorization.uploadId, parts);
+    metric.complete({ completedParts: parts.length });
+  } catch (error) {
+    metric.fail(error, { completedParts: completed.size });
+    throw error;
   }
-  await Promise.all(Array.from({ length: Math.min(2, pendingPartNumbers.length) }, () => uploadNextPart()));
-  const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
-  await completeEncryptedMultipartUpload(authorization.uploadId, parts);
 }
 
 export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<string, string>, ciphertextBase64: string) {
@@ -1348,6 +1377,11 @@ export async function sendDirectEncryptedChatAttachment(
 ) {
   if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new Error("A signed-in account is required to upload an encrypted attachment.");
   const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
+  const metric = startDevelopmentPerformanceOperation("attachment-send", {
+    sizeMb: Math.round(encrypted.encryptedSize / 1024 / 1024 * 10) / 10,
+    transferMode: authorization.transferMode,
+    mediaType: mediaMimeType.split("/", 1)[0] || "unknown",
+  });
   const stateKey = multipartStateKey(ownerUserId, encrypted.ciphertextSha256);
   const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   if (authorization.transferMode === "MULTIPART") {
@@ -1369,7 +1403,10 @@ export async function sendDirectEncryptedChatAttachment(
         if (attempt < 2) await wait([750, 1750][attempt]);
       }
     }
-    if (multipartError) throw multipartError;
+    if (multipartError) {
+      metric.fail(multipartError, { phase: "upload" });
+      throw multipartError;
+    }
     pending.uploaded = true;
     await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
   } else {
@@ -1378,6 +1415,7 @@ export async function sendDirectEncryptedChatAttachment(
       else if (encrypted.ciphertextBase64 && authorization.uploadUrl && authorization.headers) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
       else throw new Error("Encrypted attachment data is missing.");
     } catch (error) {
+      metric.fail(error, { phase: "upload" });
       // Single PUT is restarted from the original media on the next user retry;
       // it has no resumable state, so its encrypted cache must not be orphaned.
       if (encrypted.encryptedUri && Platform.OS !== "web") {
@@ -1390,8 +1428,10 @@ export async function sendDirectEncryptedChatAttachment(
   try {
     const finalized = await finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent, clientMessageId);
     if (authorization.transferMode === "MULTIPART") await AsyncStorage.removeItem(stateKey);
+    metric.complete({ phase: "finalized" });
     return finalized;
   } catch (error) {
+    metric.fail(error, { phase: "finalize" });
     if (authorization.transferMode === "SINGLE" && encrypted.encryptedUri && Platform.OS !== "web") {
       const temporary = new File(encrypted.encryptedUri);
       if (temporary.exists) temporary.delete();
@@ -1535,6 +1575,36 @@ export async function downloadEncryptedAssetResumably(
   onProgress?: (progress: number) => void,
   allowCleanRestart = true
 ) {
+  const metric = startDevelopmentPerformanceOperation("media-download", {
+    sizeMb: Math.round(encryptedSize / 1024 / 1024 * 10) / 10,
+    nativeAssembly: FairFaresCrypto.nativeFileAssemblyAvailable,
+    cleanRestartAllowed: allowCleanRestart,
+  });
+  try {
+    const result = await downloadEncryptedAssetResumablyInternal(
+      downloadUrl, destination, encryptedSize, ciphertextSha256,
+      (progress) => {
+        metric.progress(progress);
+        onProgress?.(progress);
+      },
+      allowCleanRestart
+    );
+    metric.complete();
+    return result;
+  } catch (error) {
+    metric.fail(error);
+    throw error;
+  }
+}
+
+async function downloadEncryptedAssetResumablyInternal(
+  downloadUrl: string,
+  destination: string,
+  encryptedSize: number,
+  ciphertextSha256: string,
+  onProgress?: (progress: number) => void,
+  allowCleanRestart = true
+) {
   // 100 MB plaintext plus authenticated chunk tags stays well below 120 MB.
   // Reject malformed authorization sizes before creating files or allocating
   // range work; never trust remote metadata as a storage bound.
@@ -1670,7 +1740,7 @@ export async function downloadEncryptedAssetResumably(
     await FileSystem.deleteAsync(resumeMetadataUri, { idempotent: true }).catch(() => undefined);
     if (!legacyMissingChecksum && allowCleanRestart) {
       onProgress?.(0);
-      return downloadEncryptedAssetResumably(downloadUrl, destination, encryptedSize, ciphertextSha256, onProgress, false);
+      return downloadEncryptedAssetResumablyInternal(downloadUrl, destination, encryptedSize, ciphertextSha256, onProgress, false);
     }
     throw new Error("Encrypted download checksum verification failed.");
   }

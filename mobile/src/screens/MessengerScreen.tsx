@@ -1398,6 +1398,42 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   useEffect(() => {
+    if (!__DEV__ || Platform.OS !== "ios" || IS_EXPO_GO || !inThread) return;
+    let transitionStartedAt = 0;
+    let expectedDurationMs = 0;
+    let direction: "open" | "close" = "open";
+    const begin = (nextDirection: "open" | "close") => (event: { duration?: number; endCoordinates?: { height?: number } }) => {
+      direction = nextDirection;
+      transitionStartedAt = Date.now();
+      expectedDurationMs = Math.round(Number(event.duration || 0));
+      logDevelopmentPerformance("keyboard-transition-start", {
+        direction,
+        expectedDurationMs,
+        targetHeight: Math.round(Number(event.endCoordinates?.height || 0)),
+        nativeController: true,
+      });
+    };
+    const complete = () => {
+      if (!transitionStartedAt) return;
+      const actualDurationMs = Date.now() - transitionStartedAt;
+      logDevelopmentPerformance("keyboard-transition-complete", {
+        direction,
+        expectedDurationMs,
+        actualDurationMs,
+        driftMs: expectedDurationMs ? actualDurationMs - expectedDurationMs : 0,
+      }, expectedDurationMs > 0 && actualDurationMs - expectedDurationMs > 100);
+      transitionStartedAt = 0;
+    };
+    const subscriptions = [
+      Keyboard.addListener("keyboardWillShow", begin("open")),
+      Keyboard.addListener("keyboardDidShow", complete),
+      Keyboard.addListener("keyboardWillHide", begin("close")),
+      Keyboard.addListener("keyboardDidHide", complete),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [inThread]);
+
+  useEffect(() => {
     if (!currentUserId) return;
     let cancelled = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2417,14 +2453,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     });
   }, [communities, groupSuggestionsDismissed, search, suggestionCity, tab]);
 
-  function communityGlyph(name: string) {
-    const value = name.toLowerCase();
-    if (value.includes("ride") || value.includes("carpool")) return "🚗";
-    if (value.includes("roommate")) return "👥";
-    if (value.includes("housing") || value.includes("room") || value.includes("home")) return "🏠";
-    return "✉️";
-  }
-
   async function refreshMessenger(options: { showLoader?: boolean; showError?: boolean } = {}) {
     if (!signedIn) return;
     const requestedUserId = currentUserId;
@@ -3068,6 +3096,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const communityId = activeConversation?.communityId || "";
     if (!communityId) return;
     setChatOptionsOpen(false);
+    if (!activeGroup?.canManageMembers) {
+      Alert.alert("Group image", "Only group owners and admins can change the group image.");
+      return;
+    }
     try {
       const images = await pickCompressedImages(1, 720, 0.7);
       if (!images[0]) return;
@@ -3935,8 +3967,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     // window that could otherwise enqueue the same encrypted video twice.
     if (downloadingMediaMessageIdsRef.current.has(message.id)) return;
     const operationUserId = currentUserId;
+    let resolvedMessage = message;
     const alreadyOnDevice = localMediaMessageIds.includes(message.id);
     try {
+      // Disk-cached E2EE rows intentionally exclude the decrypted attachment
+      // descriptor because it contains the media key. If an older media row is
+      // tapped before its paginated page has been hydrated, recover that one
+      // descriptor first. Never pass encrypted ciphertext to AVPlayer as if it
+      // were a clear video; malformed input can terminate the native process.
+      if (message.attachmentUrl && message.metadata?.encrypted && !message.metadata?.encryptedKeyPayload) {
+        if (!activeConversationId) throw new Error("Open the conversation again and retry this attachment.");
+        const hydrated = await decryptMessages(activeConversationId, [message]);
+        resolvedMessage = hydrated[0] || message;
+        if (!resolvedMessage.metadata?.encryptedKeyPayload) {
+          throw new Error("This encrypted attachment is not available for this device.");
+        }
+        setMessages((current) => current.map((item) => item.id === message.id ? resolvedMessage : item));
+      }
       if (!alreadyOnDevice && Platform.OS !== "web") {
         downloadingMediaMessageIdsRef.current.add(message.id);
         setDownloadingMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
@@ -3945,7 +3992,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
       let lastRenderedProgress = -5;
       let lastProgressRenderAt = 0;
-      const materialize = () => materializeAttachment(message, (progress) => {
+      const materialize = () => materializeAttachment(resolvedMessage, (progress) => {
         if (!alreadyOnDevice && Platform.OS !== "web") {
           const percent = Math.max(0, Math.min(100, Math.round(progress)));
           const milestone = percent === 100 ? 100 : Math.floor(percent / 5) * 5;
@@ -3959,19 +4006,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           publishMediaProgress(message.id, milestone);
         }
       });
-      const item = message.type === "VIDEO" && !alreadyOnDevice && Platform.OS !== "web"
+      const item = resolvedMessage.type === "VIDEO" && !alreadyOnDevice && Platform.OS !== "web"
         ? await enqueueEncryptedVideoMaterialization(materialize)
         : await materialize();
       if (!item || messengerUserIdRef.current !== operationUserId) return;
-      if (message.type === "IMAGE" || message.type === "VIDEO") {
-        if (message.type === "IMAGE") {
-          const keyPayload = String(message.metadata?.encryptedKeyPayload || "");
-          if (keyPayload) rememberEncryptedChatImagePreview(encryptedPreviewCacheKey(message.attachmentUrl, keyPayload), item.uri);
+      if (resolvedMessage.type === "IMAGE" || resolvedMessage.type === "VIDEO") {
+        if (resolvedMessage.type === "IMAGE") {
+          const keyPayload = String(resolvedMessage.metadata?.encryptedKeyPayload || "");
+          if (keyPayload) rememberEncryptedChatImagePreview(encryptedPreviewCacheKey(resolvedMessage.attachmentUrl, keyPayload), item.uri);
           setMessages((current) => current.map((entry) => entry.id === message.id
             ? { ...entry, metadata: { ...entry.metadata, decryptedDataUrl: item.uri } }
             : entry));
         }
-        setAttachmentPreview({ ...item, messageId: message.id, type: message.type, createdAt: message.createdAt });
+        setAttachmentPreview({ ...item, messageId: resolvedMessage.id, type: resolvedMessage.type, createdAt: resolvedMessage.createdAt });
       }
       else await downloadAttachment(item);
     } catch (error) {
@@ -4419,7 +4466,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <ScrollView style={styles.groupInfoScroll} contentContainerStyle={styles.groupInfoContent}>
               <View style={styles.groupInfoHero}>
-                <TouchableOpacity style={styles.groupInfoAvatar} disabled={!activeGroup?.canManageMembers} onPress={() => void changeActiveGroupPhoto()} accessibilityLabel={activeGroup?.canManageMembers ? "Change group image" : "Group image"}>
+                <TouchableOpacity style={styles.groupInfoAvatar} onPress={() => void changeActiveGroupPhoto()} accessibilityLabel={activeGroup?.canManageMembers ? "Change group image" : "Group image; only owners and admins can change it"}>
                   {chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl) }} style={styles.groupInfoAvatarImage} /> : <Text style={styles.groupInfoAvatarText}>{initials(activeGroup?.name || activeConversation?.otherName || "Group")}</Text>}
                   {activeGroup?.canManageMembers ? <View style={styles.groupInfoEditBadge}><Text style={styles.groupInfoEditBadgeText}>✎</Text></View> : null}
                 </TouchableOpacity>
@@ -5262,7 +5309,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
           <TouchableOpacity key={community.id} style={[styles.chatRow, styles.communityRow]} onPress={() => openCommunityThread(community)}>
-            <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
+            <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(community.name)}</Text>}</View>
             <View style={styles.chatCopy}>
               <Text style={styles.chatKind}>{community.kind === "GROUP" ? "PUBLIC GROUP" : "COMMUNITY"}</Text>
               <Text style={styles.chatName}>{community.name}</Text>
@@ -5311,7 +5358,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             {suggestedCommunities.map((community) => (
               <View key={`suggested-${community.id}`} style={styles.suggestedGroupRow}>
-                <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.communityGlyph}>{communityGlyph(community.name)}</Text>}</View>
+                <View style={[styles.avatar, styles.groupAvatar]}>{community.photoUrl ? <Image source={{ uri: chatPhotoUrl(community.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(community.name)}</Text>}</View>
                 <View style={styles.chatCopy}>
                   <Text style={styles.chatName}>{community.name}</Text>
                   <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
@@ -5946,7 +5993,6 @@ const styles = StyleSheet.create({
   chatCopy: { flex: 1, minWidth: 0 },
   chatKind: { color: "#8f713f", fontSize: 7.25, lineHeight: 9, fontWeight: "700", letterSpacing: 0.75, marginBottom: 1 },
   chatName: { color: "#f5f3eb", fontSize: 16, fontWeight: "600" },
-  communityGlyph: { fontSize: 24 },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "500" },
   chatLast: { color: "#aaaead", marginTop: 4, fontSize: 13 },
   chatLastUnread: { color: "#efbd68", fontWeight: "500" },

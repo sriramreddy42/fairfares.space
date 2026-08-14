@@ -4,6 +4,7 @@ import * as util from "tweetnacl-util";
 import { sha256 } from "@noble/hashes/sha256";
 import { ConversationDeviceKey, DeviceIdentity, encryptForDevices } from "./chatCrypto";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
+import { startDevelopmentPerformanceOperation } from "./performanceDiagnostics";
 
 // One MiB keeps native file encryption streaming and memory-bounded while
 // avoiding hundreds of bridge events and crypto operations for large media.
@@ -94,15 +95,24 @@ export async function encryptAttachmentFileForDevices(
   output.create({ overwrite: true, intermediates: true });
   const fileKey = nacl.randomBytes(nacl.secretbox.keyLength);
   const nativeAccelerated = FairFaresCrypto.available;
+  const metric = startDevelopmentPerformanceOperation("media-encrypt", {
+    kind: metadata.kind,
+    sizeMb: Math.round(source.size / 1024 / 1024 * 10) / 10,
+    nativeAccelerated,
+  });
+  const reportProgress = (progress: number) => {
+    metric.progress(progress);
+    onProgress?.(progress);
+  };
   const noncePrefix = nacl.randomBytes(nativeAccelerated ? 4 : 16);
   const fileKeyBase64 = util.encodeBase64(fileKey);
   const noncePrefixBase64 = util.encodeBase64(noncePrefix);
   const chunkCount = Math.ceil(source.size / CHITTHI_CHUNK_SIZE);
   if (nativeAccelerated) {
     try {
-      onProgress?.(0);
+      reportProgress(0);
       const result = await FairFaresCrypto.encryptFile(
-        source.uri, output.uri, fileKeyBase64, noncePrefixBase64, CHITTHI_CHUNK_SIZE, onProgress, signal
+        source.uri, output.uri, fileKeyBase64, noncePrefixBase64, CHITTHI_CHUNK_SIZE, reportProgress, signal
       );
       const expectedSize = source.size + chunkCount * 16;
       if (result.outputSize !== expectedSize || output.size !== expectedSize) throw new Error("Native encryption produced an invalid attachment size.");
@@ -112,14 +122,17 @@ export async function encryptAttachmentFileForDevices(
         chunkSize: CHITTHI_CHUNK_SIZE, chunkCount, plaintextSize: source.size,
       };
       const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
-      onProgress?.(1);
+      const envelopes = encryptForDevices(JSON.stringify(descriptor), identity, keys, preview);
+      reportProgress(1);
+      metric.complete({ encryptedMb: Math.round(result.outputSize / 1024 / 1024 * 10) / 10 });
       return {
         encryptedUri: output.uri,
         encryptedSize: result.outputSize,
         ciphertextSha256: result.sha256Base64,
-        envelopes: encryptForDevices(JSON.stringify(descriptor), identity, keys, preview),
+        envelopes,
       };
     } catch (error) {
+      metric.fail(error);
       deleteChunkedTemporaryFile(output.uri);
       throw error;
     } finally {
@@ -144,7 +157,7 @@ export async function encryptAttachmentFileForDevices(
       const percent = Math.floor(((index + 1) / chunkCount) * 100);
       if (percent === 100 || percent >= lastReportedPercent + 5) {
         lastReportedPercent = percent;
-        onProgress?.(percent / 100);
+        reportProgress(percent / 100);
       }
       // File reads and NaCl are synchronous HostFunctions. Yield after each
       // bounded chunk so React Native can draw, process touches, and satisfy
@@ -152,6 +165,7 @@ export async function encryptAttachmentFileForDevices(
       if (index + 1 < chunkCount) await yieldToUiThread(throttleMs);
     }
   } catch (error) {
+    metric.fail(error);
     deleteChunkedTemporaryFile(output.uri);
     throw error;
   } finally {
@@ -172,11 +186,20 @@ export async function encryptAttachmentFileForDevices(
     plaintextSize: source.size,
   };
   const preview = metadata.caption.trim() || (metadata.kind === "IMAGE" ? "Sent a photo" : metadata.kind === "VIDEO" ? "Sent a video" : `Sent a file: ${metadata.fileName}`);
+  let envelopes: ReturnType<typeof encryptForDevices>;
+  try {
+    envelopes = encryptForDevices(JSON.stringify(descriptor), identity, keys, preview);
+  } catch (error) {
+    metric.fail(error);
+    deleteChunkedTemporaryFile(output.uri);
+    throw error;
+  }
+  metric.complete({ encryptedMb: Math.round(output.size / 1024 / 1024 * 10) / 10 });
   return {
     encryptedUri: output.uri,
     encryptedSize: output.size,
     ciphertextSha256: util.encodeBase64(digest.digest()),
-    envelopes: encryptForDevices(JSON.stringify(descriptor), identity, keys, preview),
+    envelopes,
   };
 }
 
@@ -190,16 +213,31 @@ export async function decryptChunkedAttachmentFile(
   if (!descriptor) throw new Error("The chunked attachment descriptor is invalid.");
   const encrypted = new File(encryptedUri);
   if (!encrypted.exists || encrypted.size !== expectedChunkedCiphertextSize(descriptor)) throw new Error("The encrypted attachment size is invalid.");
+  const metric = startDevelopmentPerformanceOperation("media-decrypt", {
+    kind: descriptor.kind,
+    sizeMb: Math.round(descriptor.plaintextSize / 1024 / 1024 * 10) / 10,
+    nativeAccelerated: descriptor.format === CHITTHI_NATIVE_CHUNK_FORMAT,
+  });
+  const reportProgress = (progress: number) => {
+    metric.progress(progress);
+    onProgress?.(progress);
+  };
   if (descriptor.format === CHITTHI_NATIVE_CHUNK_FORMAT) {
-    if (!FairFaresCrypto.available) throw new Error("This attachment requires the latest FairFares native build.");
-    onProgress?.(0);
-    const result = await FairFaresCrypto.decryptFile(
-      encryptedUri, destinationUri, descriptor.key, descriptor.noncePrefix,
-      descriptor.chunkSize, descriptor.plaintextSize, descriptor.chunkCount, onProgress
-    );
-    if (result.outputSize !== descriptor.plaintextSize) throw new Error("The decrypted attachment size is invalid.");
-    onProgress?.(1);
-    return destinationUri;
+    try {
+      if (!FairFaresCrypto.available) throw new Error("This attachment requires the latest FairFares native build.");
+      reportProgress(0);
+      const result = await FairFaresCrypto.decryptFile(
+        encryptedUri, destinationUri, descriptor.key, descriptor.noncePrefix,
+        descriptor.chunkSize, descriptor.plaintextSize, descriptor.chunkCount, reportProgress
+      );
+      if (result.outputSize !== descriptor.plaintextSize) throw new Error("The decrypted attachment size is invalid.");
+      reportProgress(1);
+      metric.complete();
+      return destinationUri;
+    } catch (error) {
+      metric.fail(error);
+      throw error;
+    }
   }
   const destination = new File(destinationUri);
   destination.parentDirectory.create({ idempotent: true, intermediates: true });
@@ -217,12 +255,13 @@ export async function decryptChunkedAttachmentFile(
       if (!clearChunk || clearChunk.byteLength !== clearSize) throw new Error(`Attachment authentication failed at chunk ${index + 1}.`);
       writer.writeBytes(clearChunk);
       clearChunk.fill(0);
-      onProgress?.((index + 1) / descriptor.chunkCount);
+      reportProgress((index + 1) / descriptor.chunkCount);
       // Authentication is synchronous in TweetNaCl. Yield between bounded
       // chunks so taps, progress, and animations are never frozen by decrypt.
       if (index + 1 < descriptor.chunkCount) await yieldToUiThread(0);
     }
   } catch (error) {
+    metric.fail(error);
     try { partial.delete(); } catch { /* best effort */ }
     throw error;
   } finally {
@@ -230,8 +269,14 @@ export async function decryptChunkedAttachmentFile(
     reader.close();
     writer.close();
   }
-  if (destination.exists) destination.delete();
-  partial.move(destination);
-  if (!destination.exists || destination.size !== descriptor.plaintextSize) throw new Error("The decrypted attachment was not stored completely.");
-  return destination.uri;
+  try {
+    if (destination.exists) destination.delete();
+    partial.move(destination);
+    if (!destination.exists || destination.size !== descriptor.plaintextSize) throw new Error("The decrypted attachment was not stored completely.");
+    metric.complete();
+    return destination.uri;
+  } catch (error) {
+    metric.fail(error);
+    throw error;
+  }
 }
