@@ -23014,8 +23014,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not community:
                 self.send_json({"ok": False, "message": "Group not found."}, 404)
                 return
-            if chat_group_member_role(con, int(community["id"]), int(user["id"])) not in {"OWNER", "ADMIN"}:
-                self.send_json({"ok": False, "message": "Only group owners and admins can change the group image."}, 403)
+            if not chat_group_member_role(con, int(community["id"]), int(user["id"])):
+                self.send_json({"ok": False, "message": "Join this group before changing its image."}, 403)
                 return
             con.execute("UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (photo, int(community["id"])))
         updated = next((item for item in get_chat_communities_for_user(int(user["id"])) if item.get("id") == public_id), None)
