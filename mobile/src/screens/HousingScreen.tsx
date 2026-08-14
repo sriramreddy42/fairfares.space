@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
-import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, ImageSourcePropType, ImageStyle, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, updateMobileRide } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getAuthenticatedImagePreviewUri, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, updateMobileRide } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -85,6 +85,31 @@ const QUICK_LINK_TYPE_MS = 85;
 const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
+
+function AuthenticatedAvatarImage({
+  photoUrl,
+  style,
+  children
+}: {
+  photoUrl: string;
+  style: StyleProp<ImageStyle>;
+  children: React.ReactNode;
+}) {
+  const [previewUri, setPreviewUri] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewUri("");
+    if (!photoUrl) return () => { cancelled = true; };
+    void getAuthenticatedImagePreviewUri(photoUrl).then((uri) => {
+      if (!cancelled) setPreviewUri(uri);
+    }).catch(() => {
+      const fallback = absoluteAssetUrl(photoUrl);
+      if (!cancelled) setPreviewUri(fallback);
+    });
+    return () => { cancelled = true; };
+  }, [photoUrl]);
+  return previewUri ? <Image source={{ uri: previewUri }} style={style} /> : <>{children}</>;
+}
 
 function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
   const { width: viewportWidth } = useWindowDimensions();
@@ -646,7 +671,6 @@ export function HousingScreen({
 
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const cityExperienceLocation = data?.location.city || "Denver, CO";
-  const cityExperiencePhoto = data?.user?.profilePhotoUrl ? absoluteAssetUrl(data.user.profilePhotoUrl) : "";
   const cityExperienceInitials = (data?.user?.name || "FairFares member")
     .split(/\s+/)
     .filter(Boolean)
@@ -3362,13 +3386,16 @@ export function HousingScreen({
             </View>
           </View>
           {homeTestimonials.map((testimonial) => {
-            const testimonialPhoto = testimonial.photoUrl ? absoluteAssetUrl(testimonial.photoUrl) : "";
             const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
             return (
               <View key={testimonial.id} style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
                 <View style={styles.homeTestimonial}>
                   <View style={styles.homeTestimonialAvatar}>
-                    {testimonialPhoto ? <Image source={{ uri: testimonialPhoto }} style={styles.cityExperienceAvatarImage} /> : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
+                    {testimonial.photoUrl ? (
+                      <AuthenticatedAvatarImage photoUrl={testimonial.photoUrl} style={styles.cityExperienceAvatarImage}>
+                        {testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
+                      </AuthenticatedAvatarImage>
+                    ) : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
                   </View>
                   <View style={styles.homeTestimonialCopy}>
                     <View style={styles.homeTestimonialTopline}>
@@ -3405,7 +3432,11 @@ export function HousingScreen({
             </View>
             <View style={styles.cityExperienceProfileRow}>
               <View style={styles.cityExperienceAvatar}>
-                {cityExperiencePhoto ? <Image source={{ uri: cityExperiencePhoto }} style={styles.cityExperienceAvatarImage} /> : <Text style={styles.cityExperienceAvatarInitials}>{cityExperienceInitials || "FF"}</Text>}
+                {data?.user?.profilePhotoUrl ? (
+                  <AuthenticatedAvatarImage photoUrl={data.user.profilePhotoUrl} style={styles.cityExperienceAvatarImage}>
+                    <Text style={styles.cityExperienceAvatarInitials}>{cityExperienceInitials || "FF"}</Text>
+                  </AuthenticatedAvatarImage>
+                ) : <Text style={styles.cityExperienceAvatarInitials}>{cityExperienceInitials || "FF"}</Text>}
               </View>
               <View style={styles.cityExperienceProfileCopy}>
                 <Text style={styles.cityExperienceName}>{data?.user?.name || "FairFares member"}</Text>
