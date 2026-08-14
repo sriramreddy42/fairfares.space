@@ -34,6 +34,26 @@ final class FairFaresBackgroundUploadCoordinator: NSObject, URLSessionDelegate, 
     session.getAllTasks { _ in }
   }
 
+  func activePartNumbers(uploadId: String) async -> [Int] {
+    guard !uploadId.isEmpty else { return [] }
+    return await withCheckedContinuation { continuation in
+      session.getAllTasks { tasks in
+        let parts = tasks.compactMap { task -> Int? in
+          // getAllTasks normally excludes completed tasks. Treat a cancelling
+          // task as active too because URLSession may still have the file open
+          // until its completion delegate runs.
+          guard task.state != .completed,
+                let description = task.taskDescription,
+                let data = description.data(using: .utf8),
+                let metadata = try? JSONDecoder().decode(FairFaresBackgroundUploadTask.self, from: data),
+                metadata.uploadId == uploadId else { return nil }
+          return metadata.partNumber
+        }
+        continuation.resume(returning: Array(Set(parts)).sorted())
+      }
+    }
+  }
+
   func handleBackgroundEvents(identifier: String, completionHandler: @escaping () -> Void) {
     lock.lock()
     appCompletionHandler = completionHandler

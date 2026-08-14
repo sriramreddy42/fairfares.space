@@ -62,6 +62,10 @@ public final class FairFaresCryptoModule: Module {
       )
     }
 
+    AsyncFunction("activeMultipartPartNumbers") { (uploadId: String) in
+      await FairFaresBackgroundUploadCoordinator.shared.activePartNumbers(uploadId: uploadId)
+    }
+
     AsyncFunction("generateVideoThumbnail") { (fileUri: String, maximumBytes: Int) in
       try self.generateVideoThumbnail(fileUri, maximumBytes)
     }.runOnQueue(cryptoQueue)

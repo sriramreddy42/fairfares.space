@@ -1065,8 +1065,14 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" as const };
-  const nativeMediaAccelerationAvailable = Platform.OS !== "web" && FairFaresCrypto.available;
-  const effectiveAttachmentLimitBytes = nativeMediaAccelerationAvailable
+  // A stale development client may expose native encryption but not the newer
+  // background multipart and resumable assembly methods. Do not advertise the
+  // 100 MB path until the entire iOS long-media stack is linked; otherwise a
+  // video can be selected and encrypted only to fail when upload begins.
+  const nativeLongMediaAvailable = Platform.OS === "ios"
+    ? FairFaresCrypto.available && FairFaresCrypto.multipartStagingAvailable && FairFaresCrypto.nativeFileAssemblyAvailable && FairFaresCrypto.backgroundTaskInspectionAvailable
+    : Platform.OS === "android" && FairFaresCrypto.available;
+  const effectiveAttachmentLimitBytes = nativeLongMediaAvailable
     ? chitthiFeatures.maxVideoSizeBytes
     : Math.min(JAVASCRIPT_MEDIA_SAFE_BYTES, chitthiFeatures.maxVideoSizeBytes);
   const effectiveAttachmentLimitMb = Math.round(effectiveAttachmentLimitBytes / 1_000_000);
@@ -2703,7 +2709,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         Alert.alert("Current upload limit", `${overRemoteLimit.name} exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
         return;
       }
-      const oversizedFallbackAttachment = !nativeMediaAccelerationAvailable && attachments.find((attachment) => attachment.size > JAVASCRIPT_MEDIA_SAFE_BYTES);
+      const oversizedFallbackAttachment = !nativeLongMediaAvailable && attachments.find((attachment) => attachment.size > JAVASCRIPT_MEDIA_SAFE_BYTES);
       if (oversizedFallbackAttachment) {
         Alert.alert(
           "Development build required",

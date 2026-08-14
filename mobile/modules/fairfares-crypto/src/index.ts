@@ -12,6 +12,7 @@ type FairFaresCryptoNativeModule = {
   commitProtectedFile(sourceUri: string, destinationUri: string): Promise<void>;
   deriveRecoveryKey(passphraseBase64: string, saltBase64: string, iterations: number, outputBytes: number): Promise<string>;
   uploadMultipartPart(uploadId: string, partNumber: number, uploadUrl: string, headers: Record<string, string>, fileUri: string, expectedSize: number): Promise<{ status: number; etag: string }>;
+  activeMultipartPartNumbers?(uploadId: string): Promise<number[]>;
   generateVideoThumbnail?(fileUri: string, maximumBytes: number): Promise<string>;
   stageMultipartPart?(sourceUri: string, destinationUri: string, offset: number, size: number): Promise<{ size: number; sha256Base64: string }>;
   appendFile?(sourceUri: string, destinationUri: string, expectedOffset: number, expectedSize: number): Promise<{ outputSize: number }>;
@@ -68,6 +69,7 @@ export const FairFaresCrypto = {
   available: Boolean(nativeModule),
   multipartStagingAvailable: Boolean(nativeModule?.stageMultipartPart),
   nativeFileAssemblyAvailable: Boolean(nativeModule?.appendFile && nativeModule?.sha256File),
+  backgroundTaskInspectionAvailable: Boolean(nativeModule?.activeMultipartPartNumbers),
   videoOptimizationAvailable: Boolean(nativeModule?.optimizeVideo),
   encryptFile: (sourceUri: string, destinationUri: string, keyBase64: string, noncePrefixBase64: string, chunkSize: number, onProgress?: (progress: number) => void, signal?: AbortSignal) => {
     if (!nativeModule) throw new Error("Native attachment cryptography is unavailable.");
@@ -86,6 +88,10 @@ export const FairFaresCrypto = {
   uploadMultipartPart: (uploadId: string, partNumber: number, uploadUrl: string, headers: Record<string, string>, fileUri: string, expectedSize: number) => {
     if (!nativeModule || Platform.OS !== "ios") return Promise.reject(new Error("Native background upload is unavailable."));
     return nativeModule.uploadMultipartPart(uploadId, partNumber, uploadUrl, headers, fileUri, expectedSize);
+  },
+  activeMultipartPartNumbers: (uploadId: string) => {
+    if (!nativeModule?.activeMultipartPartNumbers || Platform.OS !== "ios") return Promise.resolve([]);
+    return nativeModule.activeMultipartPartNumbers(uploadId);
   },
   generateVideoThumbnail: (fileUri: string, maximumBytes = 5_000) => {
     if (!nativeModule?.generateVideoThumbnail || Platform.OS !== "ios") return Promise.reject(new Error("Native video thumbnail generation is unavailable."));

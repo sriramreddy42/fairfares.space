@@ -1119,6 +1119,17 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
   const partSize = Number(authorization.partSize || 0);
   const partCount = Number(authorization.partCount || 0);
   if (!source.exists || source.size <= 0 || partSize <= 0 || partCount <= 0) throw new Error("Encrypted multipart upload data is invalid.");
+  if (Platform.OS === "ios") {
+    if (!FairFaresCrypto.backgroundTaskInspectionAvailable) {
+      throw new Error("This encrypted upload requires the current FairFares development build to resume safely.");
+    }
+    for (let check = 0; check < 10; check += 1) {
+      const activeParts = await FairFaresCrypto.activeMultipartPartNumbers(authorization.uploadId);
+      if (!activeParts.length) break;
+      if (check === 9) throw new Error("This encrypted upload is still continuing in the background.");
+      await wait(1000);
+    }
+  }
   const remote = await getEncryptedMultipartStatus(authorization.uploadId);
   const completed = new Map(remote.parts.map((part) => [part.partNumber, part]));
   const pendingPartNumbers = Array.from({ length: partCount }, (_, index) => index + 1).filter((partNumber) => {
