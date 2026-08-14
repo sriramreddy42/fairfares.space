@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { absoluteAssetUrl, createSupportTicket, getAuthenticatedImagePreviewUri, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
@@ -67,6 +67,7 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
+  const [profilePhotoPreviewUri, setProfilePhotoPreviewUri] = useState("");
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -194,6 +195,18 @@ export function ProfileScreen({
     { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: requestAccountDeletion }
   ];
 
+  useEffect(() => {
+    let cancelled = false;
+    setProfilePhotoPreviewUri("");
+    if (!profilePhoto) return () => { cancelled = true; };
+    void getAuthenticatedImagePreviewUri(profilePhoto).then((uri) => {
+      if (!cancelled) setProfilePhotoPreviewUri(uri);
+    }).catch(() => {
+      if (!cancelled) setProfilePhotoPreviewUri(photoUri);
+    });
+    return () => { cancelled = true; };
+  }, [photoUri, profilePhoto]);
+
   function requestAccountDeletion() {
     if (!user) {
       onLogin();
@@ -318,8 +331,8 @@ export function ProfileScreen({
           </View>
         </View>
         <TouchableOpacity style={styles.avatar} onPress={choosePhoto}>
-          {photoUri ? (
-            <Image source={{ uri: photoUri }} style={styles.avatarImage} />
+          {profilePhotoPreviewUri ? (
+            <Image source={{ uri: profilePhotoPreviewUri }} style={styles.avatarImage} />
           ) : (
             <Text style={styles.avatarText}>{firstInitial(displayName)}</Text>
           )}
