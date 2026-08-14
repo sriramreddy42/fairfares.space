@@ -201,6 +201,8 @@ final class NotificationService: UNNotificationServiceExtension {
         let normalized = value.lowercased()
         return normalized.contains("end-to-end encrypted message")
             || normalized.contains("sent you a secure message")
+            || normalized.contains("new chitthi message")
+            || normalized.contains("chitthi message")
             || normalized == "encrypted message"
     }
 
@@ -296,29 +298,41 @@ final class NotificationService: UNNotificationServiceExtension {
 
     private func notificationData(from userInfo: [AnyHashable: Any]) -> [AnyHashable: Any] {
         // Expo's APNs provider can place the application `data` object at the
-        // root, under `data`, or under `body` depending on the delivery path
-        // and SDK version. Expo Notifications unwraps this for JavaScript, but
-        // a native notification-service extension receives the raw APNs map.
-        if !stringValue(userInfo["type"]).isEmpty {
-            return userInfo
+        // root, under `data`, `body`, or a provider-owned wrapper depending on
+        // the delivery path and SDK version. Expo Notifications unwraps this
+        // for JavaScript, but the native service extension receives raw APNs.
+        return findNotificationData(in: userInfo, depth: 0) ?? userInfo
+    }
+
+    private func findNotificationData(in value: Any, depth: Int) -> [AnyHashable: Any]? {
+        guard depth < 5 else { return nil }
+        if let payload = value as? [AnyHashable: Any] {
+            if !stringValue(payload["type"]).isEmpty {
+                return payload
+            }
+            for key in ["data", "body", "payload", "custom", "notification"] {
+                if let nested = payload[key],
+                   let found = findNotificationData(in: nested, depth: depth + 1) {
+                    return found
+                }
+            }
+            for nested in payload.values {
+                if let found = findNotificationData(in: nested, depth: depth + 1) {
+                    return found
+                }
+            }
+        } else if let payload = value as? [String: Any] {
+            return findNotificationData(
+                in: Dictionary(uniqueKeysWithValues: payload.map { (AnyHashable($0.key), $0.value) }),
+                depth: depth
+            )
+        } else if let encoded = value as? String,
+                  encoded.count <= 8_192,
+                  let data = encoded.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) {
+            return findNotificationData(in: object, depth: depth + 1)
         }
-        for key in ["data", "body"] {
-            if let nested = userInfo[key] as? [AnyHashable: Any],
-               !stringValue(nested["type"]).isEmpty {
-                return nested
-            }
-            if let nested = userInfo[key] as? [String: Any],
-               !stringValue(nested["type"]).isEmpty {
-                return Dictionary(uniqueKeysWithValues: nested.map { (AnyHashable($0.key), $0.value) })
-            }
-            if let encoded = userInfo[key] as? String,
-               let data = encoded.data(using: .utf8),
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               !stringValue(object["type"]).isEmpty {
-                return Dictionary(uniqueKeysWithValues: object.map { (AnyHashable($0.key), $0.value) })
-            }
-        }
-        return userInfo
+        return nil
     }
 
     private func boolValue(_ value: Any?) -> Bool {

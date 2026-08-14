@@ -78,7 +78,7 @@ import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 import { awaitChatIdentityRecovery, chatIdentityRecoveryError, recoveredChatIdentities } from "../utils/chatRecovery";
-import { useNearbyRelay } from "../providers/NearbyRelayProvider";
+import { NEARBY_RELAY_ENABLED_FOR_BUILD, useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 import { cleanupPersistentChitthiMedia, copyPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, persistentChitthiThumbnailUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
 import { decryptChunkedAttachmentFile, deleteChunkedTemporaryFile, encryptAttachmentFileForDevices, parseChunkedAttachmentDescriptor } from "../utils/chitthiChunkedCrypto";
@@ -4875,7 +4875,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
-            {Platform.OS === "android" ? <View style={styles.nearbyOptionRow}><View style={styles.nearbyOptionCopy}><Text style={styles.nearbyOptionTitle}>Nearby offline relay</Text><Text style={styles.nearbyOptionMeta}>{nearbyRelayStatus.state === "error" ? nearbyRelayStatus.detail : nearbyRelayEnabled ? `${nearbyRelayStatus.peers} nearby device${nearbyRelayStatus.peers === 1 ? "" : "s"}` : "Off · encrypted text only"}</Text></View><Switch value={nearbyRelayEnabled} onValueChange={(value) => void toggleNearbyRelay(value)} trackColor={{ false: "#aaa", true: "#5a83f3" }} /></View> : null}
+            {Platform.OS === "android" && NEARBY_RELAY_ENABLED_FOR_BUILD ? <View style={styles.nearbyOptionRow}><View style={styles.nearbyOptionCopy}><Text style={styles.nearbyOptionTitle}>Nearby offline relay</Text><Text style={styles.nearbyOptionMeta}>{nearbyRelayStatus.state === "error" ? nearbyRelayStatus.detail : nearbyRelayEnabled ? `${nearbyRelayStatus.peers} nearby device${nearbyRelayStatus.peers === 1 ? "" : "s"}` : "Off · encrypted text only"}</Text></View><Switch value={nearbyRelayEnabled} onValueChange={(value) => void toggleNearbyRelay(value)} trackColor={{ false: "#aaa", true: "#5a83f3" }} /></View> : null}
           </View>
           </>
         ) : null}

@@ -102,7 +102,7 @@ export const FairFaresCrypto = {
     return nativeModule.cancelMultipartUpload(uploadId);
   },
   generateVideoThumbnail: (fileUri: string, maximumBytes = 5_000) => {
-    if (!nativeModule?.generateVideoThumbnail || Platform.OS !== "ios") return Promise.reject(new Error("Native video thumbnail generation is unavailable."));
+    if (!nativeModule?.generateVideoThumbnail) return Promise.reject(new Error("Native video thumbnail generation is unavailable."));
     return nativeModule.generateVideoThumbnail(fileUri, maximumBytes);
   },
   generatePhotoLibraryVideoThumbnail: (assetIdentifier: string, maximumBytes = 5_000) => {
@@ -110,7 +110,7 @@ export const FairFaresCrypto = {
     return nativeModule.generatePhotoLibraryVideoThumbnail(assetIdentifier, maximumBytes);
   },
   stageMultipartPart: (sourceUri: string, destinationUri: string, offset: number, size: number) => {
-    if (!nativeModule?.stageMultipartPart || Platform.OS !== "ios") return Promise.reject(new Error("Native multipart staging is unavailable."));
+    if (!nativeModule?.stageMultipartPart) return Promise.reject(new Error("Native multipart staging is unavailable."));
     return nativeModule.stageMultipartPart(sourceUri, destinationUri, offset, size);
   },
   appendFile: (sourceUri: string, destinationUri: string, expectedOffset: number, expectedSize: number) => {

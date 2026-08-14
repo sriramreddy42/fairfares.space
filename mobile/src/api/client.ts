@@ -1170,7 +1170,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     parts: partCount,
     resumedParts: completed.size,
     pendingParts: pendingPartNumbers.length,
-    nativeStaging: Platform.OS === "ios" && FairFaresCrypto.multipartStagingAvailable,
+    nativeStaging: FairFaresCrypto.multipartStagingAvailable,
   });
   const reportCompleted = () => {
     const progress = completed.size / partCount;
@@ -1287,30 +1287,42 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
         const partNumber = pendingPartNumbers[nextPendingIndex];
         nextPendingIndex += 1;
       const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
-      // Each worker owns its file handle and closes it before network I/O. Two
-      // workers therefore cap plaintext-in-memory ciphertext buffers at two
-      // parts while allowing R2 transfers to overlap.
-      const reader = source.open();
-      reader.offset = (partNumber - 1) * partSize;
-      let bytes: Uint8Array;
-      try {
-        bytes = reader.readBytes(expectedSize);
-      } finally {
-        reader.close();
-      }
-      if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
-      const partMd5 = naclUtil.encodeBase64(md5(bytes));
       const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
+      let partMd5 = "";
+      let bytes: Uint8Array | null = null;
       let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
       try {
+        if (FairFaresCrypto.multipartStagingAvailable) {
+          const staged = await FairFaresCrypto.stageMultipartPart(
+            encryptedUri,
+            partFile.uri,
+            (partNumber - 1) * partSize,
+            expectedSize
+          );
+          if (staged.size !== expectedSize || !staged.md5Base64) throw new Error(`Encrypted upload part ${partNumber} could not be staged completely.`);
+          partMd5 = staged.md5Base64;
+        } else {
+          // Each worker owns its file handle and closes it before network I/O.
+          // This is a fallback for runtimes without native staging; current
+          // Android/iOS builds stage and checksum parts off the JS thread.
+          const reader = source.open();
+          reader.offset = (partNumber - 1) * partSize;
+          try {
+            bytes = reader.readBytes(expectedSize);
+          } finally {
+            reader.close();
+          }
+          if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
+          partMd5 = naclUtil.encodeBase64(md5(bytes));
+          partFile.create({ overwrite: true, intermediates: true });
+          partFile.write(bytes);
+        }
         partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partMd5);
-        partFile.create({ overwrite: true, intermediates: true });
-        partFile.write(bytes);
       } catch (error) {
         if (partFile.exists) partFile.delete();
         throw error;
       } finally {
-        bytes.fill(0);
+        bytes?.fill(0);
       }
       try {
         let uploaded: FileSystem.FileSystemUploadResult | undefined;

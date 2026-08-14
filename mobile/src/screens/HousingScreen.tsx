@@ -80,6 +80,9 @@ const quickLinks: Array<{
 ];
 
 const HOME_STORY_AUTO_SLIDE_MS = 4500;
+const SEARCH_PHRASE_AUTO_SLIDE_MS = 1800;
+const QUICK_LINK_TYPE_MS = 85;
+const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
 
@@ -572,8 +575,11 @@ export function HousingScreen({
   const detailScrollRef = useRef<ScrollView>(null);
   const detailScrollOffsetRef = useRef(0);
   const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
+  const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
   const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
+  const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
+  const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
   const [exportsInterestSent, setExportsInterestSent] = useState(false);
   const [exportsInterestError, setExportsInterestError] = useState("");
@@ -713,9 +719,10 @@ export function HousingScreen({
       : mode === "cheapCars"
         ? rentalSearchPhrases
         : housingSearchPhrases;
-  const activeSearchPhrase = activeSearchPhrases[0];
+  const activeSearchPhrase = activeSearchPhrases[searchPhraseIndex % activeSearchPhrases.length] || activeSearchPhrases[0];
   const searchBarText = activeSearchPhrase;
-  const currentQuickLinkWord = quickLinkWords[0];
+  const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
+  const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
   const sortedPosts = useMemo(() => {
     const compareOptionalNumber = (a: number | null | undefined, b: number | null | undefined, descending = false) => {
       const aKnown = a !== null && a !== undefined && Number.isFinite(Number(a));
@@ -875,6 +882,18 @@ export function HousingScreen({
   }, [cityExperienceSubmitted, data?.hasSubmittedHousingExperience, data?.user?.id]);
 
   useEffect(() => {
+    if (activeSearchPhrases.length < 2) return;
+    const timer = setTimeout(() => {
+      setSearchPhraseIndex((value) => (value + 1) % activeSearchPhrases.length);
+    }, SEARCH_PHRASE_AUTO_SLIDE_MS);
+    return () => clearTimeout(timer);
+  }, [activeSearchPhrases.length, searchPhraseIndex]);
+
+  useEffect(() => {
+    setSearchPhraseIndex(0);
+  }, [mode]);
+
+  useEffect(() => {
     if (homeStoryIndex < homeStorySlideCount) return;
     setHomeStoryIndex(0);
   }, [homeStoryIndex, homeStorySlideCount]);
@@ -883,6 +902,24 @@ export function HousingScreen({
     if (!homeStorySlideWidth) return;
     homeStoryScrollRef.current?.scrollTo({ x: homeStoryIndex * homeStorySlideWidth, animated: true });
   }, [homeStoryIndex, homeStorySlideWidth]);
+
+  useEffect(() => {
+    if (quickLinkWords.length < 2) return;
+    const isComplete = quickLinkLetterCount >= currentQuickLinkWord.length;
+    const timer = setTimeout(() => {
+      if (isComplete) {
+        setQuickLinkWordIndex((value) => (value + 1) % quickLinkWords.length);
+        setQuickLinkLetterCount(1);
+        return;
+      }
+      setQuickLinkLetterCount((value) => value + 1);
+    }, isComplete ? QUICK_LINK_WORD_PAUSE_MS : QUICK_LINK_TYPE_MS);
+    return () => clearTimeout(timer);
+  }, [currentQuickLinkWord.length, quickLinkLetterCount]);
+
+  useEffect(() => {
+    setQuickLinkLetterCount(1);
+  }, [quickLinkWordIndex]);
 
   useEffect(() => {
     if (homeStorySlideCount < 2 || !homeStorySlideWidth) return;
@@ -3029,7 +3066,8 @@ export function HousingScreen({
           Find rides, rentals, and roommate options <Text style={styles.quickTitleAccent}>anywhere</Text> in the USA.
         </Text>
         <Text style={styles.quickAnimatedWord}>
-          {currentQuickLinkWord}
+          {quickLinkAnimatedWord}
+          <Text style={styles.quickCursor}>|</Text>
         </Text>
         <View style={styles.quickTextList}>
           {quickLinks.map((link) => (

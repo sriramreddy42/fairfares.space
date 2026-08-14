@@ -9,6 +9,14 @@ import { createSignedChatRelayBundle } from "../utils/chatRelay";
 import { broadcastNearbyRelayBundle, flushNearbyCarrierQueue, nearbyRelayPreferenceKey, startNearbyRelay } from "../utils/nearbyRelay";
 import { isRetryableChatNetworkError } from "../utils/chatOutbox";
 
+declare const process: {
+  env: {
+    EXPO_PUBLIC_ENABLE_NEARBY_RELAY?: string;
+  };
+};
+
+export const NEARBY_RELAY_ENABLED_FOR_BUILD = process.env.EXPO_PUBLIC_ENABLE_NEARBY_RELAY === "true";
+
 type RelayStatus = { running: boolean; peers: number; state: string; detail: string };
 type NearbyRelayContextValue = {
   enabled: boolean;
@@ -33,7 +41,7 @@ export function NearbyRelayProvider({ user, children }: { user: BootstrapPayload
 
   useEffect(() => {
     setPreferenceLoaded(false);
-    if (!userId || Platform.OS !== "android") {
+    if (!userId || Platform.OS !== "android" || !NEARBY_RELAY_ENABLED_FOR_BUILD) {
       setEnabled(false);
       setPreferenceLoaded(true);
       return;
@@ -45,7 +53,7 @@ export function NearbyRelayProvider({ user, children }: { user: BootstrapPayload
   }, [userId]);
 
   useEffect(() => {
-    if (!preferenceLoaded || !enabled || !userId || Platform.OS !== "android") return;
+    if (!preferenceLoaded || !enabled || !userId || Platform.OS !== "android" || !NEARBY_RELAY_ENABLED_FOR_BUILD) return;
     let stopped = false;
     let stopNative: (() => void) | undefined;
     const markCustody = async (clientMessageId: string) => {
@@ -96,7 +104,7 @@ export function NearbyRelayProvider({ user, children }: { user: BootstrapPayload
   }, [preferenceLoaded, enabled, userId]);
 
   async function toggle(next: boolean) {
-    if (!userId) return;
+    if (!userId || Platform.OS !== "android" || !NEARBY_RELAY_ENABLED_FOR_BUILD) return;
     setEnabled(next);
     setStatus({ running: false, peers: 0, state: next ? "starting" : "off", detail: "" });
     await AsyncStorage.setItem(nearbyRelayPreferenceKey(userId), next ? "1" : "0");

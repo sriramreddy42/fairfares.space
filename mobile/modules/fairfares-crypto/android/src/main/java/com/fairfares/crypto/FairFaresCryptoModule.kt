@@ -1,9 +1,12 @@
 package com.fairfares.crypto
 
+import android.graphics.Bitmap
 import android.net.Uri
+import android.media.MediaMetadataRetriever
 import android.util.Base64
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -56,6 +59,14 @@ class FairFaresCryptoModule : Module() {
 
     AsyncFunction("sha256File") { fileUri: String, expectedSize: Double ->
       sha256File(fileUri, expectedSize.toLong())
+    }
+
+    AsyncFunction("stageMultipartPart") { sourceUri: String, destinationUri: String, offset: Double, size: Double ->
+      stageMultipartPart(sourceUri, destinationUri, offset.toLong(), size.toLong())
+    }
+
+    AsyncFunction("generateVideoThumbnail") { fileUri: String, maximumBytes: Int ->
+      generateVideoThumbnail(fileUri, maximumBytes)
     }
 
     AsyncFunction("deriveRecoveryKey") { passphraseBase64: String, saltBase64: String, iterations: Int, outputBytes: Int ->
@@ -172,6 +183,89 @@ class FairFaresCryptoModule : Module() {
       }
     }
     return mapOf("size" to source.length().toDouble(), "sha256Base64" to Base64.encodeToString(digest.digest(), Base64.NO_WRAP))
+  }
+
+  private fun stageMultipartPart(sourceUri: String, destinationUri: String, offset: Long, size: Long): Map<String, Any> {
+    require(offset >= 0 && size in 1..(16L * 1024 * 1024) && offset <= 120_000_000 - size) { "Invalid encrypted upload range." }
+    val source = file(sourceUri)
+    val destination = file(destinationUri)
+    val partial = File(destination.path + ".part")
+    require(source.isFile && source.length() >= offset + size) { "Encrypted upload source is incomplete." }
+    require(source.canonicalPath != destination.canonicalPath) { "Encrypted upload source and destination must be different files." }
+    destination.parentFile?.mkdirs()
+    partial.delete()
+    val digest = MessageDigest.getInstance("MD5")
+    try {
+      FileInputStream(source).use { input ->
+        var skipped = 0L
+        while (skipped < offset) {
+          val next = input.skip(offset - skipped)
+          require(next > 0) { "Encrypted upload range could not be reached." }
+          skipped += next
+        }
+        FileOutputStream(partial, false).use { output ->
+          val buffer = ByteArray(1024 * 1024)
+          try {
+            var copied = 0L
+            while (copied < size) {
+              val count = input.read(buffer, 0, minOf(buffer.size.toLong(), size - copied).toInt())
+              require(count > 0) { "Encrypted upload range ended early." }
+              output.write(buffer, 0, count)
+              digest.update(buffer, 0, count)
+              copied += count
+            }
+            output.fd.sync()
+          } finally {
+            buffer.fill(0)
+          }
+        }
+      }
+      if (destination.exists()) destination.delete()
+      require(partial.renameTo(destination)) { "Could not stage encrypted upload part." }
+      return mapOf("size" to destination.length().toDouble(), "md5Base64" to Base64.encodeToString(digest.digest(), Base64.NO_WRAP))
+    } catch (error: Throwable) {
+      partial.delete()
+      throw error
+    }
+  }
+
+  private fun generateVideoThumbnail(fileUri: String, maximumBytes: Int): String {
+    require(maximumBytes in 1_000..32_000) { "Invalid thumbnail size." }
+    val context = appContext.reactContext ?: throw IllegalStateException("Android context is unavailable.")
+    val retriever = MediaMetadataRetriever()
+    var frame: Bitmap? = null
+    var scaled: Bitmap? = null
+    try {
+      retriever.setDataSource(context, Uri.parse(fileUri))
+      frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        ?: retriever.getFrameAtTime(100_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        ?: return ""
+      val sourceFrame = frame ?: return ""
+      var width = minOf(240, sourceFrame.width)
+      var quality = 52
+      repeat(6) {
+        val height = maxOf(1, Math.round(sourceFrame.height.toFloat() * width.toFloat() / sourceFrame.width.toFloat()))
+        if (scaled !== sourceFrame) scaled?.recycle()
+        scaled = Bitmap.createScaledBitmap(sourceFrame, width, height, true)
+        val output = ByteArrayOutputStream()
+        try {
+          scaled!!.compress(Bitmap.CompressFormat.JPEG, quality, output)
+          val bytes = output.toByteArray()
+          if (bytes.isNotEmpty() && bytes.size <= maximumBytes) {
+            return Base64.encodeToString(bytes, Base64.NO_WRAP)
+          }
+        } finally {
+          output.close()
+        }
+        width = maxOf(72, Math.round(width * 0.78f))
+        quality = maxOf(18, quality - 7)
+      }
+      return ""
+    } finally {
+      if (scaled !== frame) scaled?.recycle()
+      frame?.recycle()
+      retriever.release()
+    }
   }
 
   private fun encryptFile(operationId: String, sourceUri: String, destinationUri: String, keyBase64: String, noncePrefixBase64: String, chunkSize: Int): Map<String, Any> {
