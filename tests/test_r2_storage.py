@@ -91,6 +91,56 @@ class FakeR2Client:
 
 
 class R2StorageTest(unittest.TestCase):
+    def test_avatar_storage_uses_private_r2_and_compact_payload_uses_authenticated_proxy(self):
+        client = FakeR2Client()
+        png = b"\x89PNG\r\n\x1a\n" + b"avatar-payload"
+        data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+        with mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "R2_BUCKET_NAME", "fairfares-attachments"), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            reference = app.save_avatar_data_url(folder_name="profiles", data_url=data_url, fallback_name="profile-7")
+            self.assertTrue(reference.startswith("r2://fairfares-attachments/fairfares/profiles/"))
+            object_key = reference.removeprefix("r2://fairfares-attachments/")
+            self.assertEqual(client.objects[("fairfares-attachments", object_key)]["Body"], png)
+            compact = app.chat_compact_avatar_url("https://fairfares.test", reference, user_id=7)
+            self.assertIn("/api/chat/notification-avatar?", compact)
+            self.assertIn("user=7", compact)
+            self.assertNotIn(object_key, compact)
+            first_path = app.avatar_delivery_path(reference, 7)
+            second_path = app.avatar_delivery_path(reference + "-replacement", 7)
+            self.assertIn("&v=", first_path)
+            self.assertNotEqual(first_path, second_path)
+
+    def test_legacy_avatar_migration_is_bounded_and_idempotent(self):
+        self.addCleanup(app.refresh_storage_paths)
+        client = FakeR2Client()
+        png = b"\x89PNG\r\n\x1a\n" + b"legacy-avatar"
+        data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "R2_BUCKET_NAME", "fairfares-attachments"), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            app.refresh_storage_paths(); app.init_db()
+            with app.db() as con:
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified, profile_photo_url) VALUES ('Avatar', 'avatar@example.com', 'x', 1, ?)", (data_url,))
+                user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_communities (public_id, kind, name, photo_url, visibility) VALUES ('avatar-group', 'GROUP', 'Avatar Group', ?, 'PRIVATE')", (data_url,))
+            first = app.migrate_legacy_avatar_storage(limit=10)
+            second = app.migrate_legacy_avatar_storage(limit=10)
+            self.assertEqual(first, {"scanned": 2, "migrated": 2, "failed": 0})
+            self.assertEqual(second, {"scanned": 0, "migrated": 0, "failed": 0})
+            with app.db() as con:
+                user_photo = con.execute("SELECT profile_photo_url FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+                group_photo = con.execute("SELECT photo_url FROM chat_communities WHERE public_id = 'avatar-group'").fetchone()[0]
+            self.assertIn("/profiles/", user_photo)
+            self.assertIn("/group-avatars/", group_photo)
+            self.assertEqual(len(client.objects), 2)
+
     def test_forward_rewraps_descriptor_without_copying_ciphertext_and_cleanup_is_reference_safe(self):
         self.addCleanup(app.refresh_storage_paths)
         client = FakeR2Client()

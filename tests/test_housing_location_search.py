@@ -203,6 +203,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.insert_filter_post("OVER-BUDGET", gender="open", rent_min=1500, rent_max=1800)
         self.insert_filter_post("TENANT-REQUEST", mode="NEED_PLACE", gender="open", rent_min=800)
         self.insert_filter_post("ROOMMATE-REQUEST", mode="NEED_PLACE", gender="open", rent_min=800, roommate_intent=1)
+        self.insert_filter_post("ROOMMATE-OFFER", mode="HAVE_PLACE", category="shared_room", gender="open", rent_min=950, roommate_intent=1)
         self.insert_filter_post("WRONG-CITY", city="Dayton, OH", description="Moving from Denver and looking locally")
         self.insert_filter_post("EXPIRED", expires_at="2020-01-01 00:00:00")
 
@@ -214,7 +215,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             budget="1000",
             limit=30,
         )
-        controlled_ids = {"OPEN-SINGLE", "FEMALE-SHARED", "MALE-SINGLE", "OVER-BUDGET", "TENANT-REQUEST", "ROOMMATE-REQUEST", "WRONG-CITY", "EXPIRED"}
+        controlled_ids = {"OPEN-SINGLE", "FEMALE-SHARED", "MALE-SINGLE", "OVER-BUDGET", "TENANT-REQUEST", "ROOMMATE-REQUEST", "ROOMMATE-OFFER", "WRONG-CITY", "EXPIRED"}
         real_ids = {item["id"] for item in female_single_results} & controlled_ids
         self.assertEqual(real_ids, {"OPEN-SINGLE"})
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in female_single_results))
@@ -241,8 +242,8 @@ class HousingLocationSearchTest(unittest.TestCase):
 
         roommate_requests = app.mobile_housing_posts(city="Denver, CO", need="need_roommates", limit=30)
         roommate_real_ids = {item["id"] for item in roommate_requests} & controlled_ids
-        self.assertEqual(roommate_real_ids, {"ROOMMATE-REQUEST"})
-        self.assertTrue(all(item["mode"] == "NEED_PLACE" and item["roommateIntent"] for item in roommate_requests))
+        self.assertEqual(roommate_real_ids, {"ROOMMATE-REQUEST", "ROOMMATE-OFFER"})
+        self.assertTrue(all(item["roommateIntent"] for item in roommate_requests))
 
     @patch.object(
         app,

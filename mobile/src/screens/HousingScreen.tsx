@@ -732,7 +732,11 @@ export function HousingScreen({
   const localities = useMemo(() => {
     const city = data?.location.city || "Denver, CO";
     const groups = new Map<string, { name: string; total: number; count: number; offered: number; needed: number; preset: boolean }>();
-    localityPresetsForCity(city).forEach((name) => {
+    const suggestedAreas = (data?.location.suggestedAreas || [])
+      .map((value) => cleanLocalityName(value, city) || value.trim())
+      .filter(Boolean);
+    const baseLocalities = suggestedAreas.length ? suggestedAreas : localityPresetsForCity(city);
+    baseLocalities.forEach((name) => {
       groups.set(normalizeLocalityKey(name), { name, total: 0, count: 0, offered: 0, needed: 0, preset: true });
     });
     posts.filter((post) => !post.sample).forEach((post) => {
@@ -759,7 +763,7 @@ export function HousingScreen({
         rent: value.count ? `$${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
         preset: value.preset
       }));
-  }, [data?.location.city, posts]);
+  }, [data?.location.city, data?.location.suggestedAreas, posts]);
   const rentalRows = rentalSearched ? rentalCars : [];
   const rentalLocationOptions = useMemo(() => {
     const locations = new Set<string>();
@@ -2131,7 +2135,7 @@ export function HousingScreen({
   async function searchRentalCars() {
     setRentalBusy(true);
     try {
-      const nextCars = await getCars(rentalSearch.pickupLocation);
+      const nextCars = await getCars(rentalSearch.pickupLocation, "", rentalSearch);
       setRentalCars(nextCars);
       setRentalSearched(true);
       setSelectedRentalCar(null);

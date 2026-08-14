@@ -16,10 +16,10 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "13",
+      "buildNumber": "14",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
-      "supportsTablet": true,
+      "supportsTablet": false,
       "associatedDomains": [
         "applinks:fairfare.space",
         "applinks:www.fairfare.space"

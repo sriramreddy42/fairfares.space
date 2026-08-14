@@ -558,6 +558,57 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertIn("Cannot change ride request", response["error"])
         self.assertEqual(mock_push.call_count, 5)
 
+    @patch.object(app, "google_route_totals", return_value=None)
+    def test_dispatch_notifies_only_drivers_travelling_on_request_date(self, _mock_routes):
+        with app.db() as con:
+            matching_driver = self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO",
+                pickup_date="2099-08-02",
+            )
+            other_driver_id = self.insert_user(con, "Other Date Driver", "other-date@example.com")
+            self.insert_ride(
+                con, other_driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO",
+                pickup_date="2099-08-03",
+            )
+            request = self.insert_ride(
+                con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO",
+                pickup_date="2099-08-02",
+            )
+            dispatch = app.create_ride_dispatch_notifications(con, request, self.rider_id)
+            notified_offer_ids = {
+                int(row["driver_ride_post_id"])
+                for row in con.execute("SELECT driver_ride_post_id FROM ride_dispatch_notifications").fetchall()
+            }
+
+        self.assertEqual(dispatch["driverUserIds"], [self.driver_id])
+        self.assertEqual(notified_offer_ids, {int(matching_driver["id"])})
+
+    @patch.object(app, "send_mobile_push_for_users")
+    def test_concurrent_driver_acceptance_has_exactly_one_winner(self, _mock_push):
+        with app.db() as con:
+            second_driver_id = self.insert_user(con, "Driver Two", "driver-two-race@example.com")
+            self.insert_ride(con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
+            self.insert_ride(con, second_driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
+            request = self.insert_ride(con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO")
+            with patch.object(app, "google_route_totals", return_value=None):
+                app.create_ride_dispatch_notifications(con, request, self.rider_id)
+            public_id = str(request["public_id"])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda driver_id: app.apply_ride_dispatch_action(driver_id, public_id, "ACCEPT"),
+                (self.driver_id, second_driver_id),
+            ))
+
+        self.assertEqual([status for status, _ in results].count(200), 1)
+        self.assertEqual([status for status, _ in results].count(409), 1)
+        with app.db() as con:
+            accepted = con.execute(
+                "SELECT COUNT(*) FROM ride_dispatch_notifications WHERE request_ride_post_id = ? AND status = 'ACCEPTED'",
+                (int(request["id"]),),
+            ).fetchone()[0]
+        self.assertEqual(accepted, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

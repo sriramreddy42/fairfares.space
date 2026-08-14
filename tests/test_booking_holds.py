@@ -1,7 +1,9 @@
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -575,6 +577,93 @@ class BookingHoldTest(unittest.TestCase):
                 return_date=overlap_return.isoformat(),
                 pickup_time="10:00 AM",
                 return_time="10:00 AM",
+            )
+
+    def test_concurrent_overlapping_holds_create_only_one_booking(self):
+        car = app.get_cars()[0]
+        pickup = date.today() + timedelta(days=30)
+        dropoff = pickup + timedelta(days=3)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES ('Concurrent Tester', 'concurrent@example.com', '5557778888', ?, 1)",
+                (app.hash_password("Password123!"),),
+            )
+            second_user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+        barrier = threading.Barrier(2)
+        original_check = app.active_booking_conflict_for_car
+
+        def synchronized_initial_check(*args, **kwargs):
+            result = original_check(*args, **kwargs)
+            barrier.wait(timeout=5)
+            return result
+
+        def reserve(user_id):
+            try:
+                booking = app.create_booking_for_user(
+                    user_id, car["id"], pickup_date=pickup.isoformat(), return_date=dropoff.isoformat(),
+                )
+                return "created", int(booking["id"])
+            except RuntimeError as exc:
+                return "rejected", str(exc)
+
+        with patch.object(app, "active_booking_conflict_for_car", side_effect=synchronized_initial_check), \
+             ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(reserve, (self.user_id, second_user_id)))
+        self.assertEqual([status for status, _ in results].count("created"), 1)
+        self.assertEqual([status for status, _ in results].count("rejected"), 1)
+        with app.db() as con:
+            active_count = con.execute(
+                "SELECT COUNT(*) FROM bookings WHERE car_id = ? AND booking_status = 'PENDING_HOLD'",
+                (car["id"],),
+            ).fetchone()[0]
+        self.assertEqual(active_count, 1)
+
+    def test_mobile_rental_search_filters_requested_window_and_listing_bounds(self):
+        cars = app.get_cars()
+        booked_car = cars[0]
+        bounded_car = cars[1]
+        pickup = date.today() + timedelta(days=30)
+        dropoff = pickup + timedelta(days=3)
+        app.create_booking_for_user(
+            self.user_id,
+            booked_car["id"],
+            pickup_date=pickup.isoformat(),
+            return_date=dropoff.isoformat(),
+        )
+        with app.db() as con:
+            con.execute(
+                "UPDATE cars SET available_from_date = ?, available_to_date = ? WHERE id = ?",
+                ((pickup + timedelta(days=1)).isoformat(), (dropoff + timedelta(days=5)).isoformat(), bounded_car["id"]),
+            )
+
+        results = app.rental_search_cars(
+            pickup_date=pickup.isoformat(),
+            return_date=dropoff.isoformat(),
+        )
+        returned_ids = {int(row["id"]) for row in results}
+
+        self.assertNotIn(int(booked_car["id"]), returned_ids)
+        self.assertNotIn(int(bounded_car["id"]), returned_ids)
+        self.assertGreater(len(returned_ids), 0)
+
+    def test_owner_listing_requires_plate_and_valid_availability_dates(self):
+        valid = {
+            "name": "Owner Sedan",
+            "location": "Denver, CO",
+            "dailyPrice": 45,
+            "licensePlate": "CO TEST1",
+            "availableFrom": (date.today() + timedelta(days=10)).isoformat(),
+            "availableTo": (date.today() + timedelta(days=20)).isoformat(),
+        }
+        row = app.create_owner_car_listing(self.user_id, valid)
+        self.assertEqual(row["review_status"], "PENDING_REVIEW")
+
+        with self.assertRaisesRegex(ValueError, "license plate"):
+            app.create_owner_car_listing(self.user_id, {**valid, "licensePlate": ""})
+        with self.assertRaisesRegex(ValueError, "Available-to"):
+            app.create_owner_car_listing(
+                self.user_id,
+                {**valid, "availableFrom": valid["availableTo"], "availableTo": valid["availableFrom"]},
             )
 
     def test_customer_checkout_labels_are_clean(self):

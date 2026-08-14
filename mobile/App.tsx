@@ -147,10 +147,10 @@ const emptyListingForm: MobileHousingPostInput = {
 
 type ListingIntent = "have_place" | "need_place" | "need_roommates";
 
-const listingIntentChoices: Array<[ListingIntent, string]> = [
-  ["have_place", "I have a place"],
-  ["need_place", "I need a place"],
-  ["need_roommates", "I need roommates"]
+const listingIntentChoices: Array<{ value: ListingIntent; title: string; description: string }> = [
+  { value: "need_place", title: "I need a place", description: "I am searching for a room or property." },
+  { value: "have_place", title: "I have a place", description: "I am offering a room or property." },
+  { value: "need_roommates", title: "I need roommates", description: "I want to form or fill a roommate group." }
 ];
 
 const signupCallingCodes = [
@@ -306,6 +306,7 @@ function FairFaresApp() {
   const [listingOpen, setListingOpen] = useState(false);
   const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
+  const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
@@ -352,7 +353,7 @@ function FairFaresApp() {
   const listingIsHavePlace = listingIntent === "have_place";
   const listingIsNeedPlace = listingIntent === "need_place";
   const listingIsRoommateSearch = listingIntent === "need_roommates";
-  const listingRoommateHasPlace = listingIsRoommateSearch && listingForm.postMode === "HAVE_PLACE";
+  const listingRoommateHasPlace = listingIsRoommateSearch && roommatePlaceChoice === true;
   const listingHasPropertyDetails = listingIsHavePlace || listingRoommateHasPlace;
   const listingLocationInput = listingHasPropertyDetails ? listingForm.streetAddress : listingForm.area;
   async function enableMobileNotifications(requestPermission = true) {
@@ -1083,7 +1084,10 @@ function FairFaresApp() {
   }
 
   async function selectArea(nextArea: string) {
-    const lookup = await lookupAccommodationLocation(nextArea || city);
+    const [lookup, options] = await Promise.all([
+      lookupAccommodationLocation(nextArea || city),
+      getAccommodationLocationOptions(city, nextArea)
+    ]);
     const resolvedArea = nextArea ? lookup?.selectedLocation || nextArea : "";
     const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
     const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
@@ -1103,7 +1107,8 @@ function FairFaresApp() {
                 ...current.location,
                 city: resolvedCity,
                 selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
-                suggested: lookup?.suggestedLocation || current.location.suggested
+                suggested: lookup?.suggestedLocation || current.location.suggested,
+                suggestedAreas: options?.suggested?.filter(Boolean).slice(0, 12) || current.location.suggestedAreas
               },
               housing: posts
             }
@@ -1121,7 +1126,10 @@ function FairFaresApp() {
     const cleanCity = normalizeCityInput(nextCity);
     const cleanArea = nextArea.trim();
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-    const lookup = await lookupAccommodationLocation(cleanArea || cleanCity);
+    const [lookup, options] = await Promise.all([
+      lookupAccommodationLocation(cleanArea || cleanCity),
+      getAccommodationLocationOptions(cleanCity, cleanArea)
+    ]);
     // Keep the place the user typed or selected. A broad geocoder fallback (for
     // example, Dayton) must not replace a specific query such as Wilmington Pike.
     const resolvedArea = cleanArea;
@@ -1148,7 +1156,8 @@ function FairFaresApp() {
                 ...current.location,
                 city: resolvedCity,
                 selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
-                suggested: lookup?.suggestedLocation || current.location.suggested
+                suggested: lookup?.suggestedLocation || current.location.suggested,
+                suggestedAreas: options?.suggested?.filter(Boolean).slice(0, 12) || current.location.suggestedAreas
               },
               housing: posts
             }
@@ -1184,6 +1193,7 @@ function FairFaresApp() {
     setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
+    setRoommatePlaceChoice(null);
     setListingOpen(true);
   }
 
@@ -1231,9 +1241,11 @@ function FairFaresApp() {
     setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
+    setRoommatePlaceChoice(null);
   }
 
   function updateRoommatePlaceStatus(hasPlace: boolean) {
+    setRoommatePlaceChoice(hasPlace);
     setListingForm((current) => ({
       ...current,
       postMode: hasPlace ? "HAVE_PLACE" : "NEED_PLACE",
@@ -1312,6 +1324,9 @@ function FairFaresApp() {
 
   async function submitListing() {
     const requiredFields = [
+      listingIsRoommateSearch && roommatePlaceChoice === null ? "whether you already have a place" : "",
+      !listingForm.city.trim() ? "city" : "",
+      !listingForm.zipCode.trim() ? "ZIP code" : "",
       !listingForm.title.trim() ? "title" : "",
       !listingForm.description.trim() ? "description" : "",
       !listingForm.moveInDate.trim() ? (listingHasPropertyDetails ? "available from date" : "move-in date") : "",
@@ -1482,14 +1497,22 @@ function FairFaresApp() {
 
   function renderListingIntentChoices() {
     return (
-      <View style={styles.choiceRow}>
-        {listingIntentChoices.map(([value, label]) => (
+      <View style={styles.listingIntentList}>
+        {listingIntentChoices.map(({ value, title, description }) => (
           <TouchableOpacity
             key={value}
-            style={[styles.choicePill, listingIntent === value && styles.choicePillActive]}
+            style={[styles.listingIntentCard, listingIntent === value && styles.listingIntentCardActive]}
             onPress={() => updateListingIntent(value)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: listingIntent === value }}
           >
-            <Text style={[styles.choiceText, listingIntent === value && styles.choiceTextActive]}>{label}</Text>
+            <View style={[styles.listingIntentRadio, listingIntent === value && styles.listingIntentRadioActive]}>
+              {listingIntent === value ? <View style={styles.listingIntentRadioDot} /> : null}
+            </View>
+            <View style={styles.listingIntentCopy}>
+              <Text style={[styles.listingIntentTitle, listingIntent === value && styles.listingIntentTitleActive]}>{title}</Text>
+              <Text style={styles.listingIntentDescription}>{description}</Text>
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -2501,34 +2524,44 @@ function FairFaresApp() {
                 : listingIsRoommateSearch
                   ? listingRoommateHasPlace
                     ? "Post your place and the roommate details people need before they message you."
-                    : "Share where you want to live, your budget, and the kind of roommates you are looking for."
+                    : roommatePlaceChoice === false
+                      ? "Share where you want to live, your budget, and the kind of roommates you are looking for."
+                      : "First choose whether you already have a place or want to search together."
                   : "Share your preferred area, budget, move-in timing, and room requirements."}
             </Text>
+            <Text style={styles.requiredLegend}>* Required to publish</Text>
             {renderFormSection(
-              "Post type",
+              "Post type *",
               <>
                 {renderListingIntentChoices()}
                 {listingIsRoommateSearch ? (
-                  <View style={styles.choiceRow}>
-                    <TouchableOpacity
-                      style={[styles.choicePill, listingRoommateHasPlace && styles.choicePillActive]}
-                      onPress={() => updateRoommatePlaceStatus(true)}
-                    >
-                      <Text style={[styles.choiceText, listingRoommateHasPlace && styles.choiceTextActive]}>I already have a place</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.choicePill, !listingRoommateHasPlace && styles.choicePillActive]}
-                      onPress={() => updateRoommatePlaceStatus(false)}
-                    >
-                      <Text style={[styles.choiceText, !listingRoommateHasPlace && styles.choiceTextActive]}>Looking together</Text>
-                    </TouchableOpacity>
+                  <View style={styles.roommatePathBlock}>
+                    <Text style={styles.roommatePathQuestion}>Do you already have the place? *</Text>
+                    <View style={styles.choiceRow}>
+                      <TouchableOpacity
+                        style={[styles.choicePill, styles.roommatePathChoice, roommatePlaceChoice === true && styles.choicePillActive]}
+                        onPress={() => updateRoommatePlaceStatus(true)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: roommatePlaceChoice === true }}
+                      >
+                        <Text style={[styles.choiceText, roommatePlaceChoice === true && styles.choiceTextActive]}>Yes, fill my place</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.choicePill, styles.roommatePathChoice, roommatePlaceChoice === false && styles.choicePillActive]}
+                        onPress={() => updateRoommatePlaceStatus(false)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: roommatePlaceChoice === false }}
+                      >
+                        <Text style={[styles.choiceText, roommatePlaceChoice === false && styles.choiceTextActive]}>No, search together</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ) : null}
                 {!listingIsRoommateSearch ? renderChoiceGroup("category", listingCategories) : null}
               </>
             )}
             {renderFormSection(
-              "Location",
+              "Location *",
               <>
                 <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
@@ -2579,7 +2612,7 @@ function FairFaresApp() {
               </>
             )}
             {renderFormSection(
-              listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements",
+              `${listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements"} *`,
               <>
                 <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Listing title*" : listingIsRoommateSearch ? "Roommate search title*" : "Request title*"} placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Describe the room, property, rules, and who it fits*" : listingIsRoommateSearch ? "Describe your roommate plan, lifestyle, and timing*" : "Describe what kind of place you need*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
@@ -2617,7 +2650,7 @@ function FairFaresApp() {
                 No photos needed here. Add clear details about your preferred area, budget, move-in date, people moving, lease length, and must-have amenities so owners can reply quickly.
               </Text>
             ) : renderFormSection(
-              "Photos",
+              listingHasPropertyDetails ? "Photos *" : "Photos",
               <>
                 <Text style={styles.photoHelp}>
                   {listingHasPropertyDetails
@@ -2676,7 +2709,7 @@ function FairFaresApp() {
               </>
             )}
             {renderFormSection(
-              "Contact and socials",
+              "Contact * and socials",
               <>
                 <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Contact name*" placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Contact email*" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
@@ -2953,6 +2986,7 @@ const styles = StyleSheet.create({
   textAreaSmall: { minHeight: 82, paddingTop: 14, textAlignVertical: "top" },
   formSection: { gap: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.bg },
   formSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "600" },
+  requiredLegend: { color: theme.colors.accent, fontSize: 12, lineHeight: 16, fontWeight: "800" },
   photoHelp: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   photoPreviewWrap: { width: "47%", aspectRatio: 1.25, borderRadius: theme.radius.md, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
@@ -2967,10 +3001,23 @@ const styles = StyleSheet.create({
   miniLabel: { color: theme.colors.muted, fontWeight: "900" },
   twoCol: { width: "100%", maxWidth: "100%", flexDirection: "row", gap: theme.spacing.sm },
   twoColInput: { flex: 1, minWidth: 0 },
+  listingIntentList: { gap: 10 },
+  listingIntentCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: theme.colors.panel2 },
+  listingIntentCardActive: { borderColor: theme.colors.accent, backgroundColor: "rgba(215,174,94,0.10)" },
+  listingIntentRadio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: theme.colors.muted, alignItems: "center", justifyContent: "center" },
+  listingIntentRadioActive: { borderColor: theme.colors.accent },
+  listingIntentRadioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.accent },
+  listingIntentCopy: { flex: 1, gap: 3 },
+  listingIntentTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "900" },
+  listingIntentTitleActive: { color: theme.colors.accent },
+  listingIntentDescription: { color: theme.colors.muted, fontSize: 13, lineHeight: 18 },
+  roommatePathBlock: { gap: 8, marginTop: 2, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  roommatePathQuestion: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  roommatePathChoice: { flex: 1, minWidth: 130 },
   choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  choicePill: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9, alignItems: "center" },
+  choicePill: { minHeight: 42, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9, alignItems: "center", justifyContent: "center" },
   choicePillActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
-  choiceText: { color: theme.colors.soft, fontWeight: "900" },
+  choiceText: { color: theme.colors.soft, fontWeight: "900", textAlign: "center" },
   choiceTextActive: { color: theme.colors.bg },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   disabledButton: { opacity: 0.65 },

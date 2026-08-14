@@ -27,10 +27,11 @@ Record the exact values rather than simulator names.
 | --- | --- | --- | --- | --- |
 | REQUIRED: current small/standard iPhone | REQUIRED | Clean TestFlight install | REQUIRED | REQUIRED |
 | REQUIRED: current large iPhone | REQUIRED | Clean TestFlight install | REQUIRED | REQUIRED |
-| REQUIRED: supported iPad because `supportsTablet` is enabled | REQUIRED | Clean TestFlight install | REQUIRED | REQUIRED |
+| REQUIRED: second current iPhone size if available | REQUIRED | Clean TestFlight install | REQUIRED | REQUIRED |
 
-If iPad support is not intentionally offered and has not been physically
-tested, disable it before producing the submission build.
+iPad support is disabled for this submission. Re-enable it only after the
+iPad layout has been tested on a physical iPad and matching App Store metadata
+is ready.
 
 ## Required recording
 
@@ -141,7 +142,7 @@ media are owned/licensed; reviewer content and accounts are fictional.
 TESTED DEVICES
 REQUIRED: DEVICE MODEL — iOS VERSION
 REQUIRED: DEVICE MODEL — iOS VERSION
-REQUIRED: IPAD MODEL — iPadOS VERSION (because iPad support is enabled)
+REQUIRED: SECOND IPHONE MODEL — iOS VERSION, or state not available
 
 A physical-device recording of the requested flows is attached.
 ```

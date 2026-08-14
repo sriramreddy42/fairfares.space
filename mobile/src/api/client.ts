@@ -333,7 +333,7 @@ function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
   return {
     ok: true,
     user: null,
-    location: { city, selected: city, suggested: "Aurora, CO" },
+    location: { city, selected: city, suggested: "Aurora, CO", suggestedAreas: [] },
     housing: [],
     communities: [],
     chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] },
@@ -653,10 +653,14 @@ export async function getAccommodationLocationOptions(city: string, area = "") {
   }
 }
 
-export async function getCars(location = "", category = "") {
+export async function getCars(location = "", category = "", details?: Partial<RentalSearchInput>) {
   const params = new URLSearchParams();
   if (location) params.set("location", location);
   if (category) params.set("category", category);
+  if (details?.pickupDate) params.set("pickupDate", details.pickupDate);
+  if (details?.returnDate) params.set("returnDate", details.returnDate);
+  if (details?.pickupTime) params.set("pickupTime", details.pickupTime);
+  if (details?.returnTime) params.set("returnTime", details.returnTime);
   const query = params.toString();
   const payload = await request<{ cars: Car[]; cheapest?: Car | null }>(`/api/mobile/rentals${query ? `?${query}` : ""}`);
   return payload.cars || [];

@@ -529,6 +529,7 @@ export type BootstrapPayload = {
     city: string;
     selected: string;
     suggested: string;
+    suggestedAreas?: string[];
   };
   housing: HousingPost[];
   communities: Community[];

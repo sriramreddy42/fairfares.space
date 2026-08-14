@@ -23,6 +23,7 @@ import io
 import gzip
 import zipfile
 import uuid
+from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -167,6 +168,9 @@ _CHAT_TYPING_LOCK = threading.Lock()
 _DIAGNOSTIC_REPORTS: dict[str, list[float]] = {}
 _DIAGNOSTIC_REPORTS_LOCK = threading.Lock()
 DIAGNOSTIC_REPORT_LIMIT = positive_int_env("FAIRFARES_DIAGNOSTIC_REPORTS_PER_HOUR", 30)
+API_RATE_LIMIT_MAX_BUCKETS = positive_int_env("FAIRFARES_API_RATE_LIMIT_MAX_BUCKETS", 20_000)
+_API_RATE_LIMIT_BUCKETS: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()
+_API_RATE_LIMIT_LOCK = threading.Lock()
 _OPERATIONAL_ALERTS: dict[str, float] = {}
 _OPERATIONAL_ALERTS_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
@@ -1647,6 +1651,7 @@ def start_chitthi_housekeeping_scheduler() -> None:
                 cleanup_deleted_chitthi_messages(force=True, limit=250)
                 if r2_storage_configured():
                     cleanup_unfinalized_chitthi_uploads(limit=250)
+                    migrate_legacy_avatar_storage(limit=100)
             except Exception as exc:
                 print(f"Chitthi housekeeping failed: {exc}")
 
@@ -1814,6 +1819,34 @@ def save_data_url_payload_locally(
     )
 
 
+def save_avatar_data_url(*, folder_name: str, data_url: str, fallback_name: str) -> str:
+    avatar = chat_avatar_data_url_parts(data_url)
+    if not avatar:
+        return ""
+    mime_type, payload = avatar
+    extension = mimetypes.guess_extension(mime_type) or ".img"
+    file_data = {
+        "filename": f"{fallback_name}{extension}",
+        "mime_type": mime_type,
+        "payload": payload,
+    }
+    if r2_storage_configured():
+        return save_file_payload_to_r2(
+            folder_name=folder_name,
+            file_data=file_data,
+            fallback_name=fallback_name,
+            allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+            max_bytes=2_000_000,
+        )
+    return save_file_payload_locally(
+        folder_name=folder_name,
+        file_data=file_data,
+        fallback_name=fallback_name,
+        allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+        max_bytes=2_000_000,
+    )
+
+
 def local_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     if not value.startswith("local://uploads/"):
         return None
@@ -1869,9 +1902,13 @@ def delete_stored_upload_reference(value: str) -> bool:
             return False
         client.delete_object(Bucket=bucket, Key=object_key)
         return True
-    if value.startswith("local://uploads/chat/"):
-        upload_root = (DB_PATH.parent / "uploads" / "chat").resolve()
-        relative = value.replace("local://uploads/chat/", "", 1)
+    local_prefix = next((prefix for prefix in (
+        "local://uploads/chat/", "local://uploads/profiles/", "local://uploads/group-avatars/"
+    ) if value.startswith(prefix)), "")
+    if local_prefix:
+        folder = local_prefix.removeprefix("local://uploads/").rstrip("/")
+        upload_root = (DB_PATH.parent / "uploads" / folder).resolve()
+        relative = value.replace(local_prefix, "", 1)
         target = (upload_root / relative).resolve()
         if not target.is_relative_to(upload_root):
             return False
@@ -1879,6 +1916,61 @@ def delete_stored_upload_reference(value: str) -> bool:
             target.unlink()
         return True
     return False
+
+
+def migrate_legacy_avatar_storage(limit: int = 100) -> dict[str, int]:
+    """Move bounded legacy Base64 avatars out of SQLite into private R2 objects.
+
+    Conditional updates make concurrent workers safe: only the worker replacing
+    the exact legacy value keeps its object; another worker deletes its loser.
+    """
+    result = {"scanned": 0, "migrated": 0, "failed": 0}
+    if not r2_storage_configured():
+        return result
+    batch_limit = max(1, min(int(limit or 100), 500))
+    with db() as con:
+        user_rows = con.execute(
+            "SELECT id, profile_photo_url AS photo FROM users WHERE profile_photo_url LIKE 'data:image/%' ORDER BY id LIMIT ?",
+            (batch_limit,),
+        ).fetchall()
+        remaining = max(0, batch_limit - len(user_rows))
+        group_rows = con.execute(
+            "SELECT id, public_id, photo_url AS photo FROM chat_communities WHERE photo_url LIKE 'data:image/%' ORDER BY id LIMIT ?",
+            (remaining,),
+        ).fetchall() if remaining else []
+    jobs = [
+        ("users", int(row["id"]), str(row["photo"]), "profiles", f"profile-{int(row['id'])}")
+        for row in user_rows
+    ] + [
+        ("chat_communities", int(row["id"]), str(row["photo"]), "group-avatars", f"group-{row['public_id']}")
+        for row in group_rows
+    ]
+    for table, row_id, legacy_photo, folder, fallback_name in jobs:
+        result["scanned"] += 1
+        stored_photo = ""
+        try:
+            stored_photo = save_avatar_data_url(folder_name=folder, data_url=legacy_photo, fallback_name=fallback_name)
+            if not stored_photo:
+                result["failed"] += 1
+                continue
+            column = "profile_photo_url" if table == "users" else "photo_url"
+            with db() as con:
+                cursor = con.execute(
+                    f"UPDATE {table} SET {column} = ? WHERE id = ? AND {column} = ?",
+                    (stored_photo, row_id, legacy_photo),
+                )
+            if cursor.rowcount == 1:
+                result["migrated"] += 1
+            else:
+                delete_stored_upload_reference(stored_photo)
+        except Exception:
+            if stored_photo:
+                try:
+                    delete_stored_upload_reference(stored_photo)
+                except Exception:
+                    pass
+            result["failed"] += 1
+    return result
 
 
 def chitthi_attachment_retention_days(media_mime_type: object = "", encrypted_size: object = 0) -> int:
@@ -3039,6 +3131,108 @@ def clear_feedback_submissions(key: str) -> None:
     persistent_rate_limit_clear("feedback", key)
     with _FEEDBACK_SUBMISSIONS_LOCK:
         _FEEDBACK_SUBMISSIONS.pop(key, None)
+
+
+# These limits protect expensive state-changing operations without putting a
+# database write in the hot path. Authentication abuse remains protected by the
+# persistent limiter above. Read, event-polling, attachment-download, and
+# navigation endpoints are intentionally excluded so this guard cannot make the
+# messenger feel slower or interrupt an active transfer.
+API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
+    "/api/chat/typing": ("chat-typing", 180, 60),
+    "/api/chat/e2ee/messages": ("chat-send", 90, 60),
+    "/api/chat/e2ee/relay": ("chat-send", 90, 60),
+    "/api/chat/messages": ("chat-send", 90, 60),
+    "/api/chat/rich-messages": ("chat-send", 90, 60),
+    "/api/chat/attachments": ("chat-send", 90, 60),
+    "/api/chat/e2ee/attachments": ("chat-send", 90, 60),
+    "/api/chat/e2ee/attachments/forward": ("chat-send", 90, 60),
+    "/api/chat/e2ee/attachments/authorize": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/multipart/part": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/multipart/status": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/multipart/complete": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/multipart/abort": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/finalize": ("chat-media", 300, 60),
+    "/api/chat/e2ee/attachments/download-url": ("chat-media", 300, 60),
+    "/api/chat/messages/edit": ("chat-action", 180, 60),
+    "/api/chat/messages/delete": ("chat-action", 180, 60),
+    "/api/chat/messages/report": ("chat-action", 180, 60),
+    "/api/chat/messages/react": ("chat-action", 180, 60),
+    "/api/chat/polls/vote": ("chat-action", 180, 60),
+    "/api/chat/read": ("chat-action", 180, 60),
+    "/api/chat/mute": ("chat-action", 180, 60),
+    "/api/chat/block": ("chat-action", 180, 60),
+    "/api/chat/people/by-contacts": ("chat-contact-lookup", 30, 60),
+    "/api/chat/e2ee/keys": ("chat-key-registration", 120, 60),
+    "/api/chat/e2ee/backup": ("chat-key-backup", 30, 60),
+    "/api/mobile/profile": ("account-write", 20, 60),
+    "/api/mobile/student-verification": ("account-write", 20, 60),
+    "/api/mobile/push-token": ("account-preference", 60, 60),
+    "/api/mobile/notification-preferences": ("account-preference", 60, 60),
+    "/api/mobile/rentals/quote": ("rental-quote", 60, 60),
+}
+
+for _rate_limited_group_path in (
+    "/api/chat/conversations", "/api/chat/communities", "/api/chat/communities/join",
+    "/api/chat/groups/details", "/api/chat/groups/photo", "/api/chat/groups/invites",
+    "/api/chat/groups/invites/revoke", "/api/chat/groups/join-invite",
+    "/api/chat/groups/members/role", "/api/chat/groups/members/add",
+    "/api/chat/groups/ownership/transfer", "/api/chat/groups/members/remove",
+    "/api/chat/groups/leave",
+):
+    API_WRITE_RATE_LIMITS[_rate_limited_group_path] = ("chat-group", 30, 60)
+
+for _rate_limited_marketplace_path in (
+    "/api/mobile/housing", "/api/mobile/rides", "/api/mobile/rides/dispatch",
+    "/api/mobile/rides/rating",
+    "/api/mobile/rides/driver-profile", "/api/mobile/rentals/book",
+    "/api/mobile/rentals/listing", "/api/mobile/rentals/checkout-session",
+    "/api/mobile/rentals/security-deposit-session", "/api/mobile/rentals/cancel-request",
+    "/api/mobile/rentals/modify-request", "/api/mobile/rentals/documents-email",
+    "/api/mobile/rentals/support-ticket",
+):
+    API_WRITE_RATE_LIMITS[_rate_limited_marketplace_path] = ("marketplace-write", 30, 60)
+
+# Active trips can legitimately publish location more often than other
+# marketplace mutations, so they must not share the smaller creation bucket.
+API_WRITE_RATE_LIMITS["/api/mobile/rides/driver-location"] = ("ride-location", 180, 60)
+
+for _rate_limited_commerce_path in (
+    "/payment/stripe-session", "/payment/security-deposit-session", "/identity/stripe-session",
+    "/payment/hold", "/booking/hold/continue", "/booking/hold/remove", "/guest-booking",
+    "/bookings/modify", "/bookings/cancel", "/bookings/request-cancel", "/bookings/save",
+    "/documents/email",
+):
+    API_WRITE_RATE_LIMITS[_rate_limited_commerce_path] = ("commerce-write", 20, 60)
+
+
+def api_rate_limit_retry_after(
+    scope: str,
+    identity: str,
+    capacity: int,
+    window_seconds: int,
+    *,
+    now: float | None = None,
+) -> int:
+    """Consume one token and return seconds to retry, or zero when allowed."""
+    current = time.monotonic() if now is None else now
+    safe_capacity = max(1, int(capacity))
+    safe_window = max(1, int(window_seconds))
+    refill_per_second = safe_capacity / safe_window
+    bucket_key = (scope, identity)
+    with _API_RATE_LIMIT_LOCK:
+        tokens, updated_at = _API_RATE_LIMIT_BUCKETS.get(bucket_key, (float(safe_capacity), current))
+        tokens = min(float(safe_capacity), tokens + max(0.0, current - updated_at) * refill_per_second)
+        if tokens >= 1.0:
+            _API_RATE_LIMIT_BUCKETS[bucket_key] = (tokens - 1.0, current)
+            retry_after = 0
+        else:
+            _API_RATE_LIMIT_BUCKETS[bucket_key] = (tokens, current)
+            retry_after = max(1, math.ceil((1.0 - tokens) / refill_per_second))
+        _API_RATE_LIMIT_BUCKETS.move_to_end(bucket_key)
+        while len(_API_RATE_LIMIT_BUCKETS) > API_RATE_LIMIT_MAX_BUCKETS:
+            _API_RATE_LIMIT_BUCKETS.popitem(last=False)
+        return retry_after
 
 
 def application_secret() -> str:
@@ -7827,6 +8021,16 @@ DEFAULT_PUBLIC_CARS = [
 ]
 
 
+def parse_inventory_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def ensure_default_car_inventory() -> None:
     with db() as con:
         car_count = con.execute("SELECT COUNT(*) AS total FROM cars WHERE UPPER(TRIM(status)) != 'DELETED'").fetchone()["total"]
@@ -7858,8 +8062,8 @@ def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite
     doors = int(float_from_value(payload.get("doors") or 4) or 4)
     year = int(float_from_value(payload.get("year") or 0) or 0)
     license_plate = clean_text_value(payload.get("licensePlate") or payload.get("license_plate"), 24)
-    if not name or not location or daily_price <= 0:
-        raise ValueError("Vehicle name, pickup location, and daily price are required.")
+    if not name or not location or daily_price <= 0 or not license_plate:
+        raise ValueError("Vehicle name, license plate, pickup location, and daily price are required.")
     if year and (year < 1990 or year > datetime.now().year + 2):
         raise ValueError("Use a valid vehicle year.")
     if seats < 1 or seats > 15 or bags < 0 or bags > 12 or doors < 2 or doors > 6:
@@ -7871,6 +8075,14 @@ def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite
     color = clean_text_value(payload.get("color"), 40)
     available_from = clean_text_value(payload.get("availableFrom") or payload.get("available_from"), 20)
     available_to = clean_text_value(payload.get("availableTo") or payload.get("available_to"), 20)
+    available_from_date = parse_inventory_date(available_from)
+    available_to_date = parse_inventory_date(available_to)
+    if available_from and not available_from_date:
+        raise ValueError("Use a valid available-from date.")
+    if available_to and not available_to_date:
+        raise ValueError("Use a valid available-to date.")
+    if available_from_date and available_to_date and available_to_date < available_from_date:
+        raise ValueError("Available-to date must be on or after the available-from date.")
     notes = clean_text_value(payload.get("notes") or payload.get("ownerNotes") or payload.get("owner_notes"), 500)
     with db() as con:
         cursor = con.execute(
@@ -7955,6 +8167,51 @@ def car_is_publicly_rentable(row: sqlite3.Row | dict[str, object] | None) -> boo
     status = str(row_value(row, "status") or "").strip().upper()
     review_status = str(row_value(row, "review_status") or "APPROVED").strip().upper()
     return status not in {"MAINTENANCE", "DELETED"} and review_status == "APPROVED"
+
+
+def rental_search_cars(
+    location: str = "",
+    category: str = "",
+    pickup_date: str = "",
+    return_date: str = "",
+    pickup_time: str = "10:00 AM",
+    return_time: str = "10:00 AM",
+) -> list[sqlite3.Row]:
+    cars = get_cars()
+    clean_location = location.strip().casefold()
+    clean_category = category.strip().casefold()
+    if clean_location:
+        cars = [
+            car for car in cars
+            if clean_location in str(row_value(car, "location") or "").casefold()
+            or clean_location in str(row_value(car, "name") or "").casefold()
+            or clean_location in str(row_value(car, "category") or "").casefold()
+        ]
+    if clean_category:
+        cars = [car for car in cars if clean_category in str(row_value(car, "category") or "").casefold()]
+    if not pickup_date and not return_date:
+        return cars
+    if not pickup_date or not return_date:
+        raise ValueError("Select both pickup and return dates.")
+    _, _, _, _, _, requested_start, requested_end = normalize_booking_window(
+        pickup_date=pickup_date,
+        return_date=return_date,
+        pickup_time=pickup_time,
+        return_time=return_time,
+        strict=True,
+    )
+    available: list[sqlite3.Row] = []
+    for car in cars:
+        available_from = parse_inventory_date(row_value(car, "available_from_date"))
+        available_to = parse_inventory_date(row_value(car, "available_to_date"))
+        if available_from and requested_start.date() < available_from:
+            continue
+        if available_to and requested_end.date() > available_to:
+            continue
+        if active_booking_conflict_for_car(int(row_value(car, "id") or 0), requested_start, requested_end):
+            continue
+        available.append(car)
+    return available
 
 
 def split_inventory_locations(value: object) -> list[str]:
@@ -11292,7 +11549,7 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
         post_id = int(row_value(post, "id") or 0)
         author_name = row_value(post, "author_name") or "FairFares Staff"
         author_initials = "".join(part[:1] for part in author_name.split()[:2]).upper() or "FF"
-        photo = row_value(post, "author_photo")
+        photo = avatar_delivery_path(row_value(post, "author_photo"), int(row_value(post, "author_id") or 0))
         avatar_style = (
             f' style="background-image:url(&quot;{escape(photo)}&quot;);background-size:cover;background-position:center;"'
             if photo
@@ -11401,7 +11658,7 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict
         rows = con.execute(
             """
             SELECT testimonials.id, testimonials.rating, testimonials.message, testimonials.city,
-                   users.name AS user_name, users.profile_photo_url
+                   users.id AS user_id, users.name AS user_name, users.profile_photo_url
             FROM testimonials
             JOIN users ON users.id = testimonials.user_id
             WHERE testimonials.status = 'PUBLISHED'
@@ -11424,7 +11681,7 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict
                 "id": int(row_value(row, "id") or 0),
                 "name": str(row_value(row, "user_name") or "FairFares member"),
                 "city": str(row_value(row, "city") or "FairFares community")[:80],
-                "photoUrl": str(row_value(row, "profile_photo_url") or ""),
+                "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "user_id") or 0)),
                 "rating": int(row_value(row, "rating") or 5),
                 "message": str(row_value(row, "message") or "")[:300],
             }
@@ -13026,25 +13283,37 @@ def active_booking_conflict_for_car(
         return active_booking_for_car(car_id)
     expire_stale_booking_holds()
     with db() as con:
-        rows = con.execute(
-            """
-            SELECT bookings.*
-            FROM bookings
-            WHERE bookings.car_id = ?
-              AND bookings.id != ?
-              AND (
-                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
-                OR (
-                    bookings.booking_status = 'PENDING_HOLD'
-                    AND bookings.payment_status = 'HOLD_PENDING'
-                    AND bookings.hold_expires_at IS NOT NULL
-                    AND datetime(bookings.hold_expires_at) > datetime('now')
-                )
-              )
-            ORDER BY bookings.pickup_date, bookings.pickup_time
-            """,
-            (car_id, exclude_booking_id or 0),
-        ).fetchall()
+        return active_booking_conflict_for_car_in_connection(
+            con, car_id, requested_start, requested_end, exclude_booking_id,
+        )
+
+
+def active_booking_conflict_for_car_in_connection(
+    con: sqlite3.Connection,
+    car_id: int,
+    requested_start: datetime,
+    requested_end: datetime,
+    exclude_booking_id: int = 0,
+) -> sqlite3.Row | None:
+    rows = con.execute(
+        """
+        SELECT bookings.*
+        FROM bookings
+        WHERE bookings.car_id = ?
+          AND bookings.id != ?
+          AND (
+            bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+            OR (
+                bookings.booking_status = 'PENDING_HOLD'
+                AND bookings.payment_status = 'HOLD_PENDING'
+                AND bookings.hold_expires_at IS NOT NULL
+                AND datetime(bookings.hold_expires_at) > datetime('now')
+            )
+          )
+        ORDER BY bookings.pickup_date, bookings.pickup_time
+        """,
+        (car_id, exclude_booking_id or 0),
+    ).fetchall()
     for row in rows:
         active_start = parse_booking_datetime(row_value(row, "pickup_date"), row_value(row, "pickup_time"))
         active_end = parse_booking_datetime(row_value(row, "dropoff_date"), row_value(row, "dropoff_time"))
@@ -13215,6 +13484,14 @@ def create_booking_for_user(
     if not car:
         raise RuntimeError("Selected car is not available for that pickup time.")
     with db() as con:
+        # Serialize the final availability check with the hold insertion. The
+        # earlier check keeps normal failures fast; this locked check prevents
+        # two concurrent customers from creating overlapping valid holds.
+        con.execute("BEGIN IMMEDIATE")
+        if requested_start and requested_end and active_booking_conflict_for_car_in_connection(
+            con, int(car["id"]), requested_start, requested_end,
+        ):
+            raise RuntimeError("Selected car is not available for that pickup time.")
         user = con.execute("SELECT name, email, phone FROM users WHERE id = ?", (user_id,)).fetchone()
         booking_id = make_booking_id()
         while con.execute("SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone():
@@ -15006,7 +15283,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "phoneVerified": bool(row_value(user, "phone_verified_at")),
         "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
         "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_email_opt_in") or 0)),
-        "profilePhotoUrl": row_value(user, "profile_photo_url"),
+        "profilePhotoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0)),
     }
 
 
@@ -15771,10 +16048,12 @@ def mobile_ride_posts(
     """
     page_limit = max(1, min(int(limit or 30), 50))
     page_offset = max(0, int(offset or 0))
-    # Every type/date-compatible route must reach geometric validation. A
-    # newest-first cap here can hide an older valid offer behind unrelated
-    # routes before pickup, direction, and detour checks run.
-    candidate_limit = -1 if route_search else page_limit
+    # Route searches require application-side geometry, but must never load an
+    # unlimited table into one HTTP worker. Two thousand active candidates is
+    # well above the expected 100-profile workload and bounds CPU/memory until
+    # route geometry moves to a spatial database.
+    route_candidate_limit = max(100, min(positive_int_env("FAIRFARES_RIDE_ROUTE_CANDIDATE_LIMIT", 2000), 10_000))
+    candidate_limit = route_candidate_limit if route_search else page_limit
     candidate_offset = 0 if route_search else page_offset
     values.extend([candidate_limit, candidate_offset])
     with db() as con:
@@ -15844,6 +16123,7 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
     request_origin_point = {"lat": request_lat, "lng": request_lng, "label": row_value(request_row, "origin_label")}
     request_destination_point = {"lat": request_dest_lat, "lng": request_dest_lng, "label": row_value(request_row, "destination_label")}
     today_iso = datetime.now(FAIRFARES_TZ).date().isoformat()
+    request_trip_date = ride_effective_trip_date(request_row)
     driver_rows = con.execute(
         """
         SELECT *
@@ -15854,8 +16134,9 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
           AND origin_lat != 0
           AND origin_lng != 0
           AND substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) >= ?
+          AND (? = '' OR substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) = ?)
         """,
-        (requester_user_id, today_iso),
+        (requester_user_id, today_iso, request_trip_date.isoformat() if request_trip_date else "", request_trip_date.isoformat() if request_trip_date else ""),
     ).fetchall()
     buckets: list[dict[str, object]] = []
     notified_count = 0
@@ -15920,6 +16201,8 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
     if action not in allowed_actions:
         return 400, {"ok": False, "error": "Unsupported ride action."}
     with db() as con:
+        # Serialize acceptance so two drivers cannot both claim one request.
+        con.execute("BEGIN IMMEDIATE")
         request_row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1", (ride_public_id,)).fetchone()
         if not request_row:
             return 404, {"ok": False, "error": "Ride request was not found."}
@@ -16638,6 +16921,7 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
     return {
         "selected_location": search_area or "Denver, CO",
         "suggested_location": suggested[0] if suggested else "Denver, CO",
+        "suggested_areas": list(suggested[:18]),
         "suggested_place_chips": render_accommodation_place_chips(suggested, search_area),
         "zip_chips": render_accommodation_place_chips(zips, search_area),
         "metro_list": render_accommodation_metro_list(metro_name),
@@ -17173,7 +17457,7 @@ def get_chat_communities_for_user(user_id: int | None = None, suggestion_city: s
             "name": row_value(row, "name"),
             "description": row_value(row, "description"),
             "area": row_value(row, "area_label"),
-            "photoUrl": row_value(row, "photo_url") or "",
+            "photoUrl": group_avatar_delivery_path(row_value(row, "photo_url"), int(row_value(row, "id") or 0)),
             "memberCount": int(row_value(row, "member_count") or 0),
             "joined": int(row_value(row, "joined") or 0) > 0,
             "createdByUserId": int(row_value(row, "created_by_user_id") or 0),
@@ -17222,19 +17506,29 @@ def create_chat_community(
     if len(name) < 3:
         return None, "Group name is required."
     public_id = chat_group_public_id(kind)
-    with db() as con:
-        con.execute(
-            """
-            INSERT INTO chat_communities (public_id, kind, name, description, area_label, photo_url, created_by_user_id, visibility)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'PRIVATE')
-            """,
-            (public_id, kind, name, description, area_label, photo_url, creator_id),
-        )
-        community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
-        con.execute(
-            "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'OWNER')",
-            (community_id, creator_id),
-        )
+    stored_photo = ""
+    if photo_url:
+        stored_photo = save_avatar_data_url(folder_name="group-avatars", data_url=photo_url, fallback_name=f"group-{public_id}")
+        if not stored_photo:
+            return None, "Use a smaller JPG, PNG, or WebP group image."
+    try:
+        with db() as con:
+            con.execute(
+                """
+                INSERT INTO chat_communities (public_id, kind, name, description, area_label, photo_url, created_by_user_id, visibility)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PRIVATE')
+                """,
+                (public_id, kind, name, description, area_label, stored_photo, creator_id),
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'OWNER')",
+                (community_id, creator_id),
+            )
+    except Exception:
+        if stored_photo:
+            delete_stored_upload_reference(stored_photo)
+        raise
     created = [item for item in get_chat_communities_for_user(creator_id) if item.get("id") == public_id]
     return (created[0] if created else None), ""
 
@@ -17422,7 +17716,7 @@ def get_chat_group_members(public_id: str, user_id: int) -> tuple[list[dict[str,
         ).fetchall()
     return [{
         "id": int(row["id"]), "name": row_value(row, "name") or "FairFares member",
-        "photoUrl": row_value(row, "profile_photo_url") or "", "role": row_value(row, "role") or "MEMBER",
+        "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row["id"])), "role": row_value(row, "role") or "MEMBER",
         "joinedAt": row_value(row, "joined_at") or "", "isCurrentUser": int(row["id"]) == user_id,
     } for row in rows], ""
 
@@ -18514,7 +18808,7 @@ def chat_message_payload(
         "id": message_id,
         "senderId": sender_id,
         "senderName": row_value(row, "sender_name"),
-        "senderPhotoUrl": row_value(row, "sender_photo_url") if include_sender_photo else "",
+        "senderPhotoUrl": avatar_delivery_path(row_value(row, "sender_photo_url"), sender_id) if include_sender_photo else "",
         "mine": mine,
         "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
@@ -18625,12 +18919,29 @@ def chat_notification_group_avatar_url(origin: str, community_id: int, lifetime_
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
 
 
+def avatar_delivery_path(photo: object, user_id: int) -> str:
+    """Return a stable application URL for private object references."""
+    value = str(photo or "").strip()
+    if value.startswith(f"r2://{R2_BUCKET_NAME}/") and user_id > 0:
+        version = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+        return f"/api/chat/notification-avatar?{urllib.parse.urlencode({'user': int(user_id), 'v': version})}"
+    return value
+
+
+def group_avatar_delivery_path(photo: object, community_id: int) -> str:
+    value = str(photo or "").strip()
+    if value.startswith(f"r2://{R2_BUCKET_NAME}/") and community_id > 0:
+        version = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+        return f"/api/chat/notification-avatar?{urllib.parse.urlencode({'community': int(community_id), 'v': version})}"
+    return value
+
+
 def chat_compact_avatar_url(origin: str, photo: object, *, user_id: int = 0, community_id: int = 0) -> str:
     """Keep compact JSON small without proxying already compact URL values."""
     value = str(photo or "").strip()
     if not value:
         return ""
-    if value.startswith("data:image/"):
+    if value.startswith(("data:image/", f"r2://{R2_BUCKET_NAME}/")):
         return (
             chat_notification_group_avatar_url(origin, community_id)
             if community_id > 0
@@ -19614,7 +19925,7 @@ def optimized_static_image_url(url: str) -> str:
 def profile_photo_url(user: sqlite3.Row | dict[str, object] | None) -> str:
     if not user:
         return ""
-    return row_value(user, "profile_photo_url")
+    return avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0))
 
 
 def user_avatar_span(user: sqlite3.Row | dict[str, object] | None) -> str:
@@ -21011,8 +21322,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if self.redirect_legacy_web_origin(parsed):
+            return
         if parsed.path in PUBLIC_REDIRECT_ROUTES:
             self.redirect(PUBLIC_REDIRECT_ROUTES[parsed.path])
+            return
+        if parsed.path in {
+            "/",
+            "/accommodations",
+            "/car-rentals",
+            "/about",
+            "/contact",
+            "/privacy",
+            "/terms",
+            "/community-guidelines",
+            "/account-deletion",
+            "/deals",
+            "/explorer",
+            "/healthz",
+        }:
+            content_type = "text/plain; charset=utf-8" if parsed.path == "/healthz" else "text/html; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self.end_headers()
             return
         if parsed.path == "/robots.txt":
             self.send_text(self.robots_txt_body(), head_only=True)
@@ -21485,6 +21820,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not self.allow_post_from_same_origin(parsed.path):
                 self.send_json({"ok": False, "message": "Request origin not allowed."}, 403)
                 return
+            if not self.allow_api_write_rate_limit(parsed.path):
+                return
             handler()
         else:
             self.not_found()
@@ -21509,6 +21846,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if parsed.hostname and parsed.hostname != expected_host:
                 return False
         return True
+
+    def request_rate_limit_identity(self) -> str:
+        token = ""
+        auth_header = (self.headers.get("Authorization") or "").strip()
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        if not token:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                name, separator, value = part.strip().partition("=")
+                if separator and name == SESSION_COOKIE and value:
+                    token = value.strip('"')
+                    break
+        if token:
+            return "session:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+        return "ip:" + self.client_ip()
+
+    def allow_api_write_rate_limit(self, path: str) -> bool:
+        policy = API_WRITE_RATE_LIMITS.get(path)
+        if not policy:
+            return True
+        scope, capacity, window_seconds = policy
+        identity = self.request_rate_limit_identity()
+        retry_after = api_rate_limit_retry_after(scope, identity, capacity, window_seconds)
+        # A second, wider IP bucket prevents bypass by rotating invalid bearer
+        # values while allowing multiple legitimate users behind one NAT.
+        ip_retry_after = api_rate_limit_retry_after(
+            f"{scope}:ip", "ip:" + self.client_ip(), capacity * 8, window_seconds
+        )
+        retry_after = max(retry_after, ip_retry_after)
+        if not retry_after:
+            return True
+        self.send_json(
+            {"ok": False, "retryable": True, "message": "Too many requests. Please wait a moment and try again."},
+            429,
+            {"Retry-After": str(retry_after)},
+        )
+        return False
 
     def read_form(self) -> dict[str, str]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -22492,9 +22866,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             cursor_activity=cursor_activity, cursor_id=cursor_id,
         )
         for conversation in conversations:
-            if compact_senders:
-                other_user_id = int(conversation.get("otherUserId") or 0)
-                community_id = int(conversation.get("_communityRecordId") or 0)
+            other_user_id = int(conversation.get("otherUserId") or 0)
+            community_id = int(conversation.get("_communityRecordId") or 0)
+            avatar_value = str(conversation.get("otherPhotoUrl") or "")
+            if compact_senders or avatar_value.startswith(f"r2://{R2_BUCKET_NAME}/"):
                 conversation["otherPhotoUrl"] = chat_compact_avatar_url(
                     self.public_origin(), conversation.get("otherPhotoUrl"),
                     user_id=other_user_id, community_id=community_id,
@@ -22586,7 +22961,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 matches.append({
                     "id": int(candidate["id"]),
                     "name": row_value(candidate, "name") or "FairFares member",
-                    "photoUrl": row_value(candidate, "profile_photo_url") or "",
+                    "photoUrl": avatar_delivery_path(row_value(candidate, "profile_photo_url"), int(candidate["id"])),
                     "phoneHash": matching_hash,
                 })
         self.send_json({"ok": True, "people": matches[:250]})
@@ -22709,9 +23084,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (last_message_id, conversation["id"], current_user_id, last_message_id),
                 )
         conversation_payload = chat_row_payload(conversation, current_user_id)
-        if compact_senders:
-            other_user_id = int(conversation_payload.get("otherUserId") or 0)
-            community_id = int(conversation_payload.get("_communityRecordId") or 0)
+        other_user_id = int(conversation_payload.get("otherUserId") or 0)
+        community_id = int(conversation_payload.get("_communityRecordId") or 0)
+        avatar_value = str(conversation_payload.get("otherPhotoUrl") or "")
+        if compact_senders or avatar_value.startswith(f"r2://{R2_BUCKET_NAME}/"):
             conversation_payload["otherPhotoUrl"] = chat_compact_avatar_url(
                 self.public_origin(), conversation_payload.get("otherPhotoUrl"),
                 user_id=other_user_id, community_id=community_id,
@@ -22729,7 +23105,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "photoUrl": chat_compact_avatar_url(
                             self.public_origin(), row_value(message, "sender_photo_url"),
                             user_id=int(row_value(message, "sender_id") or 0),
-                        ) if compact_senders else row_value(message, "sender_photo_url"),
+                        ) if compact_senders else avatar_delivery_path(
+                            row_value(message, "sender_photo_url"), int(row_value(message, "sender_id") or 0)
+                        ),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0
@@ -22881,7 +23259,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "photoUrl": chat_compact_avatar_url(
                             self.public_origin(), row_value(message, "sender_photo_url"),
                             user_id=int(row_value(message, "sender_id") or 0),
-                        ) if compact_senders else row_value(message, "sender_photo_url"),
+                        ) if compact_senders else avatar_delivery_path(
+                            row_value(message, "sender_photo_url"), int(row_value(message, "sender_id") or 0)
+                        ),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0
@@ -23169,7 +23549,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not chat_group_member_role(con, int(community["id"]), int(user["id"])):
                 self.send_json({"ok": False, "message": "Join this group before changing its image."}, 403)
                 return
-            con.execute("UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (photo, int(community["id"])))
+            community_id = int(community["id"])
+            old_photo = str(row_value(community, "photo_url") or "").strip()
+        stored_photo = save_avatar_data_url(folder_name="group-avatars", data_url=photo, fallback_name=f"group-{public_id}")
+        if not stored_photo:
+            self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP group image."}, 400)
+            return
+        try:
+            with db() as con:
+                cursor = con.execute(
+                    "UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND photo_url = ?",
+                    (stored_photo, community_id, old_photo),
+                )
+        except Exception:
+            delete_stored_upload_reference(stored_photo)
+            raise
+        if cursor.rowcount != 1:
+            delete_stored_upload_reference(stored_photo)
+            self.send_json({"ok": False, "message": "The group image changed on another device. Please try again."}, 409)
+            return
+        if old_photo and old_photo != stored_photo:
+            try:
+                delete_stored_upload_reference(old_photo)
+            except Exception:
+                pass
         updated = next((item for item in get_chat_communities_for_user(int(user["id"])) if item.get("id") == public_id), None)
         self.send_json({"ok": True, "community": updated})
 
@@ -24095,26 +24498,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             # Notification images use short-lived signatures. The in-app chat
             # recycler may legitimately reuse that cached URL after expiry, so
-            # accept it with a current Bearer session only when the viewer is a
-            # member of the requested group or shares an active conversation
-            # with the requested person. This keeps avatars stable without
-            # turning user photos into public, permanent URLs.
+            # accept it with a current session. Group images remain restricted
+            # to members; user profile images are visible to signed-in members
+            # across housing, rides, account, and Chitthi. This keeps avatars
+            # stable without turning storage objects into permanent public URLs.
             authenticated_request_allowed = False
             if authenticated_user_id > 0 and community_id > 0:
                 authenticated_request_allowed = con.execute(
-                    "SELECT 1 FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+                    """SELECT 1 FROM chat_communities community
+                       WHERE community.id = ? AND (
+                           community.visibility = 'PUBLIC' OR EXISTS (
+                               SELECT 1 FROM chat_community_members member
+                               WHERE member.community_id = community.id AND member.user_id = ?
+                           )
+                       ) LIMIT 1""",
                     (community_id, authenticated_user_id),
                 ).fetchone() is not None
             elif authenticated_user_id > 0 and user_id > 0:
-                authenticated_request_allowed = user_id == authenticated_user_id or con.execute(
-                    """SELECT 1
-                       FROM chat_participants viewer
-                       JOIN chat_participants subject ON subject.conversation_id = viewer.conversation_id
-                       JOIN chat_conversations conversation ON conversation.id = viewer.conversation_id
-                       WHERE viewer.user_id = ? AND subject.user_id = ? AND conversation.status = 'ACTIVE'
-                       LIMIT 1""",
-                    (authenticated_user_id, user_id),
-                ).fetchone() is not None
+                # Profile photos are visible to signed-in members throughout
+                # housing, rides, account, and Chitthi—not only after a direct
+                # conversation exists. The object key remains private in R2.
+                authenticated_request_allowed = True
             if not signed_request_valid and not authenticated_request_allowed:
                 self.send_error(404)
                 return
@@ -24125,6 +24529,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         photo_column = "photo_url" if community_id > 0 else "profile_photo_url"
         photo = str(row_value(avatar_row, photo_column) or "").strip() if avatar_row else ""
+        if photo.startswith(f"r2://{R2_BUCKET_NAME}/") and r2_storage_configured():
+            object_key = photo.removeprefix(f"r2://{R2_BUCKET_NAME}/")
+            client = r2_storage_client()
+            if object_key and client is not None:
+                location = client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": R2_BUCKET_NAME, "Key": object_key},
+                    ExpiresIn=10 * 60,
+                )
+                self.send_response(302)
+                self.send_header("Location", location)
+                # Versioned application URLs invalidate immediately after an
+                # avatar replacement. Cache each private redirect briefly so a
+                # 100-row list does not repeat DB authorization and R2 signing.
+                self.send_header("Cache-Control", "private, max-age=300")
+                self.end_headers()
+                return
         avatar_data = chat_avatar_data_url_parts(photo)
         if avatar_data:
             mime_type, payload = avatar_data
@@ -26424,9 +26845,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
             self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
             return
-        with db() as con:
-            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (photo, user["id"]))
-        self.send_json({"ok": True, "photo": photo, "message": "Profile photo saved."})
+        stored_photo = save_avatar_data_url(
+            folder_name="profiles",
+            data_url=photo,
+            fallback_name=f"profile-{row_value(user, 'id') or uuid.uuid4().hex}",
+        )
+        if not stored_photo:
+            self.send_json({"ok": False, "message": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
+            return
+        old_photo = str(row_value(user, "profile_photo_url") or "").strip()
+        try:
+            with db() as con:
+                cursor = con.execute(
+                    "UPDATE users SET profile_photo_url = ? WHERE id = ? AND profile_photo_url = ?",
+                    (stored_photo, user["id"], old_photo),
+                )
+        except Exception:
+            delete_stored_upload_reference(stored_photo)
+            raise
+        if cursor.rowcount != 1:
+            delete_stored_upload_reference(stored_photo)
+            self.send_json({"ok": False, "message": "Your profile image changed on another device. Please try again."}, 409)
+            return
+        if old_photo and old_photo != stored_photo:
+            try:
+                delete_stored_upload_reference(old_photo)
+            except Exception:
+                pass
+        self.send_json({"ok": True, "photo": avatar_delivery_path(stored_photo, int(user["id"])), "message": "Profile photo saved."})
 
     def create_workspace_group(self) -> None:
         user = self.require_admin()
@@ -30183,7 +30629,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         result = cleanup_expired_chitthi_attachments(force=True, limit=limit)
         deleted_message_result = cleanup_deleted_chitthi_messages(force=True, limit=limit)
         orphan_result = cleanup_unfinalized_chitthi_uploads(limit=limit) if r2_storage_configured() else {"scanned": 0, "deleted": 0, "failed": 0}
-        self.send_json({"ok": True, **result, "deletedMessages": deleted_message_result, "orphanUploads": orphan_result, "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS), "deletedMessageRetentionDays": max(1, CHITTHI_DELETED_MESSAGE_RETENTION_DAYS)})
+        avatar_result = migrate_legacy_avatar_storage(limit=min(limit, 500)) if r2_storage_configured() else {"scanned": 0, "migrated": 0, "failed": 0}
+        self.send_json({"ok": True, **result, "deletedMessages": deleted_message_result, "orphanUploads": orphan_result, "avatarMigration": avatar_result, "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS), "deletedMessageRetentionDays": max(1, CHITTHI_DELETED_MESSAGE_RETENTION_DAYS)})
 
     def unsubscribe_marketing(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -32072,6 +32519,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
             return
         photo = None
+        uploaded_photo = ""
+        old_photo = str(row_value(user, "profile_photo_url") or "").strip()
         if "profilePhoto" in payload or "profilePhotoUrl" in payload:
             photo = str(payload.get("profilePhoto") or payload.get("profilePhotoUrl") or "").strip()
             if photo.startswith("data:image/svg xml"):
@@ -32085,43 +32534,69 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     if mime_type not in ALLOWED_HOUSING_IMAGE_MIME_TYPES:
                         self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, or GIF profile image."}, 400)
                         return
-                    photo = save_data_url_payload_locally(
+                    photo = save_avatar_data_url(
                         folder_name="profiles",
                         data_url=photo,
                         fallback_name=f"profile-{row_value(user, 'id') or uuid.uuid4().hex}",
-                        allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
-                        max_bytes=MAX_HOUSING_IMAGE_BYTES,
                     )
                     if not photo:
                         self.send_json({"ok": False, "error": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
                         return
+                    uploaded_photo = photo
                 elif not (
-                    photo.startswith("local://uploads/")
+                    photo.startswith(f"r2://{R2_BUCKET_NAME}/")
+                    or photo.startswith("local://uploads/")
                     or photo.startswith("/uploads/")
                     or photo.startswith("https://")
                     or photo.startswith("http://")
                 ):
                     self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, or GIF profile image."}, 400)
                     return
-        with db() as con:
-            existing = find_user_by_email(con, email)
-            if existing and int(row_value(existing, "id") or 0) != int(row_value(user, "id") or 0):
-                self.send_json({"ok": False, "error": "That email is already used by another account."}, 409)
-                return
-            verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
-            if photo is None:
-                con.execute(
-                    "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ? WHERE id = ?",
-                    (name, email, phone, date_of_birth or None, verified_value, user["id"]),
-                )
-            else:
-                con.execute(
-                    "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ? WHERE id = ?",
-                    (name, email, phone, date_of_birth or None, verified_value, photo, user["id"]),
-                )
-            if email_changed:
-                con.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
-            updated = con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        photo_conflict = False
+        updated = None
+        try:
+            with db() as con:
+                existing = find_user_by_email(con, email)
+                if existing and int(row_value(existing, "id") or 0) != int(row_value(user, "id") or 0):
+                    if uploaded_photo:
+                        delete_stored_upload_reference(uploaded_photo)
+                        uploaded_photo = ""
+                    self.send_json({"ok": False, "error": "That email is already used by another account."}, 409)
+                    return
+                verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
+                if photo is None:
+                    con.execute(
+                        "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ? WHERE id = ?",
+                        (name, email, phone, date_of_birth or None, verified_value, user["id"]),
+                    )
+                else:
+                    cursor = con.execute(
+                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?
+                           WHERE id = ? AND profile_photo_url = ?""",
+                        (name, email, phone, date_of_birth or None, verified_value, photo, user["id"], old_photo),
+                    )
+                    photo_conflict = cursor.rowcount != 1
+                if email_changed and not photo_conflict:
+                    con.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+                if not photo_conflict:
+                    updated = con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        except Exception:
+            if uploaded_photo:
+                try:
+                    delete_stored_upload_reference(uploaded_photo)
+                except Exception:
+                    pass
+            raise
+        if photo_conflict:
+            if uploaded_photo:
+                delete_stored_upload_reference(uploaded_photo)
+            self.send_json({"ok": False, "error": "Your profile image changed on another device. Please try again."}, 409)
+            return
+        if photo is not None and old_photo and old_photo != photo:
+            try:
+                delete_stored_upload_reference(old_photo)
+            except Exception:
+                pass
         activation_link = ""
         if email_changed:
             token = create_verification(int(row_value(user, "id") or 0), email)
@@ -32156,6 +32631,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         metro_context = accommodation_metro_context(city if "Metro" in city else "", area or city)
         user_id = int(row_value(user, "id") or 0) if user else 0
         chats = get_chat_conversations_for_user(user_id) if user_id else []
+        for chat in chats:
+            community_record_id = int(chat.pop("_communityRecordId", 0) or 0)
+            if community_record_id > 0:
+                chat["otherPhotoUrl"] = group_avatar_delivery_path(chat.get("otherPhotoUrl"), community_record_id)
+            else:
+                chat["otherPhotoUrl"] = avatar_delivery_path(chat.get("otherPhotoUrl"), int(chat.get("otherUserId") or 0))
         messaged_listing_ids = messaged_listing_ids_for_user(user_id)
         housing_posts = mobile_housing_posts(city=city, area=area, limit=12)
         self.send_json(
@@ -32166,6 +32647,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "city": city or "Denver, CO",
                     "selected": metro_context.get("selected_location") or city or "Denver, CO",
                     "suggested": metro_context.get("suggested_location") or "",
+                    "suggestedAreas": metro_context.get("suggested_areas") or [],
                 },
                 "housing": housing_posts,
                 "communities": get_chat_communities_for_user(user_id if user_id else None, city),
@@ -32889,16 +33371,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         location = (params.get("location", [""])[0] or "").strip()
         category = (params.get("category", [""])[0] or "").strip()
-        cars = get_cars()
-        if location:
-            cars = [
-                car for car in cars
-                if location.lower() in row_value(car, "location").lower()
-                or location.lower() in row_value(car, "name").lower()
-                or location.lower() in row_value(car, "category").lower()
-            ]
-        if category:
-            cars = [car for car in cars if category.lower() in row_value(car, "category").lower()]
+        try:
+            cars = rental_search_cars(
+                location,
+                category,
+                (params.get("pickupDate", [""])[0] or "").strip(),
+                (params.get("returnDate", [""])[0] or "").strip(),
+                (params.get("pickupTime", ["10:00 AM"])[0] or "10:00 AM").strip(),
+                (params.get("returnTime", ["10:00 AM"])[0] or "10:00 AM").strip(),
+            )
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
         self.send_json(
             {
                 "ok": True,
@@ -33145,24 +33629,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         new_return_location = str(payload.get("returnLocation") or payload.get("return_location") or row_value(booking, "dropoff_location")).strip()
         requested_car_id = int(float_from_value(payload.get("vehicleId") or payload.get("vehicle_id") or row_value(booking, "car_id") or "0"))
         note = str(payload.get("note") or "").strip()[:400]
-        requested_start = parse_booking_datetime(new_pickup_date, new_pickup_time)
-        requested_end = parse_booking_datetime(new_return_date, new_return_time)
-        if requested_start and requested_end and requested_end <= requested_start:
-            self.send_json({"ok": False, "error": "Return date and time must be after pickup date and time."}, 400)
+        try:
+            new_pickup_date, new_return_date, new_pickup_time, new_return_time, next_days, requested_start, requested_end = normalize_booking_window(
+                pickup_date=new_pickup_date,
+                return_date=new_return_date,
+                pickup_time=new_pickup_time,
+                return_time=new_return_time,
+                strict=True,
+            )
+        except ValueError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 400)
             return
         selected_car = None
-        if requested_car_id and requested_car_id != int(row_value(booking, "car_id") or 0):
+        if requested_car_id:
             with db() as con:
                 selected_car = con.execute("SELECT * FROM cars WHERE id = ?", (requested_car_id,)).fetchone()
-            if not selected_car:
+            if not car_is_publicly_rentable(selected_car):
                 self.send_json({"ok": False, "error": "Selected upgrade vehicle was not found."}, 404)
                 return
             if active_booking_conflict_for_car(requested_car_id, requested_start, requested_end, int(row_value(booking, "id") or 0)):
-                self.send_json({"ok": False, "error": "Selected upgrade vehicle is no longer available for those dates."}, 409)
+                self.send_json({"ok": False, "error": "Selected vehicle is no longer available for those dates."}, 409)
                 return
         else:
             requested_car_id = int(row_value(booking, "car_id") or 0)
-        next_days = rental_day_count(requested_start, requested_end, row_value(booking, "days") or 1)
         daily_price = float(row_value(selected_car, "daily_price") or row_value(booking, "daily_price") or 0)
         discount_amount = calculate_booking_discount_amount(
             daily_price,
@@ -33175,7 +33664,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
         breakdown = rental_price_breakdown(daily_price, next_days, discount_amount, additional_driver_fee)
         changes = []
-        if selected_car:
+        if requested_car_id != int(row_value(booking, "car_id") or 0):
             changes.append(f"Vehicle changed to {row_value(selected_car, 'name')}")
         if new_pickup_location != row_value(booking, "pickup_location"):
             changes.append(f"Pickup location changed to {new_pickup_location}")
@@ -33191,6 +33680,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             changes.append(f"Customer note: {note}")
         change_note = "; ".join(changes) or "Trip modification review requested"
         with db() as con:
+            # The final availability decision and booking update must be one
+            # serialized transaction; the earlier check is only a fast path.
+            con.execute("BEGIN IMMEDIATE")
+            authoritative_car = con.execute("SELECT * FROM cars WHERE id = ?", (requested_car_id,)).fetchone()
+            if not car_is_publicly_rentable(authoritative_car):
+                self.send_json({"ok": False, "error": "Selected vehicle is no longer available."}, 409)
+                return
+            if active_booking_conflict_for_car_in_connection(
+                con,
+                requested_car_id,
+                requested_start,
+                requested_end,
+                int(row_value(booking, "id") or 0),
+            ):
+                self.send_json({"ok": False, "error": "Selected vehicle is no longer available for those dates."}, 409)
+                return
             con.execute(
                 """
                 UPDATE bookings
@@ -33246,7 +33751,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     row_value(booking, "id"),
                 ),
             )
-            if selected_car:
+            if requested_car_id != int(row_value(booking, "car_id") or 0):
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
                 con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
         updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
@@ -33740,6 +34245,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         utilities_included = 1 if bool(payload.get("utilitiesIncluded") or payload.get("utilities_included")) else 0
         payload_images = payload.get("images")
         mobile_images = payload_images if isinstance(payload_images, list) else []
+        valid_mobile_images = [
+            str(image_value)
+            for index, image_value in enumerate(mobile_images[:4], start=1)
+            if data_url_upload_parts(
+                str(image_value or ""),
+                f"housing-preview-{index}",
+                allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                max_bytes=MAX_HOUSING_IMAGE_BYTES,
+            )
+        ]
         if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
             self.send_json(
                 {
@@ -33754,6 +34269,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if mode == "HAVE_PLACE" and not (street_address or primary_neighborhood or apartment_name or area):
             self.send_json({"ok": False, "error": "Street address, neighborhood, apartment, or area is required when listing a place."}, 400)
+            return
+        if mode == "HAVE_PLACE" and not valid_mobile_images:
+            self.send_json({"ok": False, "error": "Add at least one valid room or property image."}, 400)
             return
         if mode == "NEED_PLACE" and not (area or work_school_location or primary_neighborhood):
             self.send_json({"ok": False, "error": "Preferred area, building, campus, or neighborhood is required when requesting a place."}, 400)
@@ -33846,7 +34364,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
             )
             post_id = int(cursor.lastrowid)
-            for index, image_value in enumerate(mobile_images[:4], start=1):
+            for index, image_value in enumerate(valid_mobile_images, start=1):
                 image_url = save_data_url_payload_locally(
                     folder_name="accommodations",
                     data_url=str(image_value or ""),

@@ -33,6 +33,7 @@ class SecurityHardeningTest(unittest.TestCase):
         for name in ("FAIRFARES_ADMIN_EMAIL", "FAIRFARES_ADMIN_PASSWORD", "STRIPE_WEBHOOK_SECRET"):
             os.environ.pop(name, None)
         app._LOGIN_ATTEMPTS.clear()
+        app._API_RATE_LIMIT_BUCKETS.clear()
         app.refresh_storage_paths()
         app.init_db()
 
@@ -43,6 +44,7 @@ class SecurityHardeningTest(unittest.TestCase):
             else:
                 os.environ[name] = value
         app._LOGIN_ATTEMPTS.clear()
+        app._API_RATE_LIMIT_BUCKETS.clear()
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
 
@@ -155,6 +157,73 @@ class SecurityHardeningTest(unittest.TestCase):
         app.clear_feedback_submissions(key)
         self.assertEqual(app.feedback_retry_after(key, now=2006), 0)
         self.assertNotEqual(key, app.feedback_rate_limit_key("127.0.0.1", 43))
+
+    def test_api_token_bucket_recovers_and_isolates_scopes_and_sessions(self):
+        for _index in range(2):
+            self.assertEqual(app.api_rate_limit_retry_after("chat-send", "session:a", 2, 10, now=100), 0)
+        self.assertEqual(app.api_rate_limit_retry_after("chat-send", "session:a", 2, 10, now=100), 5)
+        self.assertEqual(app.api_rate_limit_retry_after("chat-send", "session:b", 2, 10, now=100), 0)
+        self.assertEqual(app.api_rate_limit_retry_after("chat-media", "session:a", 2, 10, now=100), 0)
+        self.assertEqual(app.api_rate_limit_retry_after("chat-send", "session:a", 2, 10, now=105), 0)
+
+    def test_api_token_bucket_memory_is_bounded(self):
+        with patch.object(app, "API_RATE_LIMIT_MAX_BUCKETS", 3):
+            for index in range(8):
+                app.api_rate_limit_retry_after("scope", f"session:{index}", 1, 60, now=100 + index)
+        self.assertLessEqual(len(app._API_RATE_LIMIT_BUCKETS), 3)
+        self.assertEqual(list(app._API_RATE_LIMIT_BUCKETS), [
+            ("scope", "session:5"), ("scope", "session:6"), ("scope", "session:7")
+        ])
+
+    def test_api_token_bucket_is_atomic_under_concurrent_burst(self):
+        barrier = threading.Barrier(41)
+        results: list[int] = []
+
+        def consume() -> None:
+            barrier.wait()
+            results.append(app.api_rate_limit_retry_after("chat-send", "session:shared", 20, 60, now=100))
+
+        workers = [threading.Thread(target=consume) for _index in range(40)]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=3)
+        self.assertEqual(results.count(0), 20)
+        self.assertEqual(len([value for value in results if value > 0]), 20)
+
+    def test_proxy_client_ip_is_used_only_when_explicitly_trusted(self):
+        handler = object.__new__(QuietHandler)
+        handler.client_address = ("10.0.0.5", 1234)
+        handler.headers = {"X-Forwarded-For": "203.0.113.9, 10.0.0.2"}
+        with patch.dict(os.environ, {"FAIRFARES_TRUST_PROXY": "0"}):
+            self.assertEqual(handler.client_ip(), "10.0.0.5")
+        with patch.dict(os.environ, {"FAIRFARES_TRUST_PROXY": "1"}):
+            self.assertEqual(handler.client_ip(), "203.0.113.9")
+
+    def test_api_write_rate_limit_returns_retry_after_before_handler(self):
+        original_policy = app.API_WRITE_RATE_LIMITS["/api/chat/typing"]
+        app.API_WRITE_RATE_LIMITS["/api/chat/typing"] = ("test-chat-typing", 1, 60)
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/typing",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer test-session"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as first_error:
+                urllib.request.urlopen(request, timeout=3)
+            self.assertEqual(first_error.exception.code, 401)
+            with self.assertRaises(urllib.error.HTTPError) as second_error:
+                urllib.request.urlopen(request, timeout=3)
+            self.assertEqual(second_error.exception.code, 429)
+            self.assertEqual(second_error.exception.headers["Retry-After"], "60")
+        finally:
+            app.API_WRITE_RATE_LIMITS["/api/chat/typing"] = original_policy
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     def test_ooxml_validation_rejects_fake_and_macro_documents(self):
         mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
