@@ -154,17 +154,32 @@ public final class FairFaresCryptoModule: Module {
           FileManager.default.fileExists(atPath: source.path) else {
       throw NSError(domain: "FairFaresCrypto", code: 15, userInfo: [NSLocalizedDescriptionKey: "The selected video is unavailable for thumbnail generation."])
     }
-    let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source))
+    let asset = AVURLAsset(url: source)
+    let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = true
     generator.maximumSize = CGSize(width: 240, height: 240)
     generator.requestedTimeToleranceBefore = .positiveInfinity
     generator.requestedTimeToleranceAfter = .positiveInfinity
-    let requestedTime = CMTime(seconds: 0.1, preferredTimescale: 600)
-    let image: CGImage
-    do {
-      image = try generator.copyCGImage(at: requestedTime, actualTime: nil)
-    } catch {
-      image = try generator.copyCGImage(at: .zero, actualTime: nil)
+    // Long GOP videos often have no independently decodable frame at the
+    // beginning. Probe a small bounded set of timestamps natively instead of
+    // constructing an expo-video player in the JavaScript send path.
+    let durationSeconds = CMTimeGetSeconds(asset.duration)
+    var candidateSeconds: [Double] = [0.1, 0, 1, 2]
+    if durationSeconds.isFinite && durationSeconds > 1 {
+      candidateSeconds.append(min(5, max(0.1, durationSeconds * 0.1)))
+    }
+    var extractedImage: CGImage?
+    var extractionError: Error?
+    for seconds in Array(Set(candidateSeconds)).sorted() {
+      do {
+        extractedImage = try generator.copyCGImage(at: CMTime(seconds: seconds, preferredTimescale: 600), actualTime: nil)
+        if extractedImage != nil { break }
+      } catch {
+        extractionError = error
+      }
+    }
+    guard let image = extractedImage else {
+      throw extractionError ?? NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The video has no decodable thumbnail frame."])
     }
     var uiImage = UIImage(cgImage: image)
     var quality: CGFloat = 0.52
