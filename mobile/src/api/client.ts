@@ -1884,6 +1884,7 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
     typing: Array<{ userId: number; name: string }>;
     reactionUpdates: Array<{ messageId: number; reactions: Array<{ emoji: string; count: number; mine: boolean }> }>;
+    deletedMessageIds?: number[];
     cursor: number;
   }>(`/api/chat/events?${query}`, {}, {
     // Long polls are background transport. The messenger loop reconnects after

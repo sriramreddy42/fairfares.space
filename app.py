@@ -23168,6 +23168,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         receipts: list[dict[str, object]] = []
         typing: list[dict[str, object]] = []
         reaction_updates: list[dict[str, object]] = []
+        deleted_message_ids: list[int] = []
         while True:
             with db() as con:
                 messages = con.execute(
@@ -23245,6 +23246,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     for reaction in reaction_rows:
                         grouped[int(reaction["message_id"])].append({"emoji": reaction["emoji"], "count": int(reaction["total"] or 0), "mine": bool(int(reaction["mine"] or 0))})
                     reaction_updates = [{"messageId": message_id, "reactions": grouped[message_id]} for message_id in recent_message_ids]
+                deleted_message_ids = [
+                    int(row_value(row, "id") or 0)
+                    for row in con.execute(
+                        """
+                        SELECT id
+                        FROM chat_messages
+                        WHERE conversation_id = ? AND deleted_at IS NOT NULL
+                        ORDER BY datetime(deleted_at) DESC, id DESC
+                        LIMIT 250
+                        """,
+                        (conversation_id,),
+                    ).fetchall()
+                ]
             now_monotonic = time.monotonic()
             with _CHAT_TYPING_LOCK:
                 expired = [key for key, expires_at in _CHAT_TYPING.items() if expires_at <= now_monotonic]
@@ -23281,6 +23295,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "receipts": receipts,
                 "typing": typing,
                 "reactionUpdates": reaction_updates,
+                "deletedMessageIds": deleted_message_ids,
                 "cursor": max([after_message_id, *[int(row_value(message, "id") or 0) for message in messages]]),
             }
         )

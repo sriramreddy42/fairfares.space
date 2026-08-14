@@ -2474,8 +2474,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const incomingMessages = await decryptMessages(activeConversationId, payload.messages || []);
           const receiptById = new Map((payload.receipts || []).map((receipt) => [Number(receipt.id), receipt]));
           const reactionsById = new Map((payload.reactionUpdates || []).map((update) => [Number(update.messageId), update.reactions || []]));
+          const deletedIds = new Set((payload.deletedMessageIds || []).map((messageId) => Number(messageId)).filter(Boolean));
           setMessages((current) => {
-            const updated = current.map((message) => {
+            const activeMessages = deletedIds.size
+              ? current.filter((message) => !deletedIds.has(Number(message.id)))
+              : current;
+            const updated = activeMessages.map((message) => {
               const receipt = receiptById.get(Number(message.id));
               const reactions = reactionsById.get(Number(message.id));
               return { ...message, ...(receipt || {}), ...(reactions ? { reactions } : {}) };
