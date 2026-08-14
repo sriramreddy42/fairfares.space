@@ -18991,7 +18991,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "data": notification_data,
                 "channelId": channel_id,
                 **({"badge": badge_count} if badge_count else {}),
-                **({"mutableContent": True, "categoryId": "CHITTHI_MESSAGE"} if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE"} else {}),
+                **({"mutableContent": True, "categoryId": "CHITTHI_MESSAGE"} if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"} else {}),
                 **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
             }
             for token in token_batch

@@ -28,7 +28,7 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
         let notificationType = stringValue(payload["type"])
-        guard notificationType == "CHITTHI_MESSAGE" || notificationType == "FCHAT_MESSAGE" else {
+        guard notificationType == "CHITTHI_MESSAGE" || notificationType == "FCHAT_MESSAGE" || notificationType == "CHITTHI_REACTION" else {
             deliver(content)
             return
         }
@@ -209,6 +209,7 @@ final class NotificationService: UNNotificationServiceExtension {
     private func notificationBody(_ value: String, senderName: String, isGroup: Bool) -> String {
         guard isGroup, !senderName.isEmpty else { return value }
         if value.hasPrefix("\(senderName):") { return value }
+        if value.hasPrefix("\(senderName) ") { return value }
         return "\(senderName): \(value)"
     }
 
