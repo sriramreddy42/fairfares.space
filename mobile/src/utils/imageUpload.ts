@@ -49,7 +49,12 @@ export async function createLightweightVideoThumbnail(uri: string) {
   if (Platform.OS === "web" || IS_EXPO_GO) return "";
   if (Platform.OS === "ios") {
     const nativeThumbnail = await FairFaresCrypto.generateVideoThumbnail(uri, CHAT_THUMBNAIL_MAX_BYTES).catch(() => "");
-    if (nativeThumbnail) return nativeThumbnail;
+    // Thumbnail extraction is optional. Never fall through to an expo-video
+    // player on iOS: creating a SharedRef player while the picker-owned asset
+    // is being handed across JSI can abort the process (rather than throw),
+    // especially for larger files or codecs without an early decodable frame.
+    // The composer and message bubble already provide a safe placeholder.
+    return nativeThumbnail;
   }
   const player = createVideoPlayer(uri);
   let frames: Awaited<ReturnType<typeof player.generateThumbnailsAsync>> = [];
