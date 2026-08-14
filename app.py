@@ -23376,11 +23376,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
             conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
             community_id = int(row_value(conversation, "community_id") or 0)
-            notification_avatar_url = (
-                chat_notification_group_avatar_url(self.public_origin(), community_id)
-                if is_group and community_id
-                else chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
-            )
+            notification_sender_avatar_url = chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
+            notification_group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
             sender_display_name = row_value(sender, "name") or "FairFares member"
             push_title = conversation_name if is_group and conversation_name else sender_display_name or "New Chitthi message"
             push_body = f"{sender_display_name}: {notification_preview}" if is_group and sender_display_name else notification_preview
@@ -23390,8 +23387,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "messageId": int(row_value(message, "id") or 0),
                 "senderId": sender_id,
                 "senderName": sender_display_name,
-                "senderAvatarUrl": notification_avatar_url,
-                "groupAvatarUrl": notification_avatar_url if is_group else "",
+                "senderAvatarUrl": notification_sender_avatar_url,
+                "groupAvatarUrl": notification_group_avatar_url,
                 "conversationName": conversation_name,
                 "isGroup": is_group,
                 "subtitle": sender_display_name if is_group else conversation_name,
@@ -23934,11 +23931,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     reactor_name = str(row_value(user, "name") or "FairFares member")
                     conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
                     community_id = int(row_value(conversation, "community_id") or 0)
-                    avatar_url = (
-                        chat_notification_group_avatar_url(self.public_origin(), community_id)
-                        if is_group and community_id
-                        else chat_notification_avatar_url(self.public_origin(), current_user_id)
-                    )
+                    sender_avatar_url = chat_notification_avatar_url(self.public_origin(), current_user_id)
+                    group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
                     # Match normal Chitthi notification conventions: direct
                     # chats lead with the member; groups lead with the group and
                     # identify the acting member in the body. Never include E2EE
@@ -23956,8 +23950,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "messageId": message_id,
                         "senderId": current_user_id,
                         "senderName": reactor_name,
-                        "senderAvatarUrl": avatar_url,
-                        "groupAvatarUrl": avatar_url if is_group else "",
+                        "senderAvatarUrl": sender_avatar_url,
+                        "groupAvatarUrl": group_avatar_url,
                         "conversationName": conversation_name,
                         "isGroup": is_group,
                         "subtitle": reactor_name if is_group else conversation_name,

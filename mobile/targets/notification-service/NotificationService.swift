@@ -44,28 +44,28 @@ final class NotificationService: UNNotificationServiceExtension {
         let conversationId = stringValue(payload["conversationId"])
         let conversationName = stringValue(payload["conversationName"])
         let isGroup = boolValue(payload["isGroup"])
-        let displayName = isGroup && !conversationName.isEmpty ? conversationName : senderName
-        let displayId = isGroup && !conversationId.isEmpty ? conversationId : senderId
-        let groupAvatarUrl = stringValue(payload["groupAvatarUrl"])
-        let avatarUrl = URL(string: groupAvatarUrl.isEmpty ? stringValue(payload["senderAvatarUrl"]) : groupAvatarUrl)
+        let avatarUrl = URL(string: stringValue(payload["senderAvatarUrl"]))
+            ?? URL(string: stringValue(payload["groupAvatarUrl"]))
 
         if isGroup && !conversationName.isEmpty {
             content.title = conversationName
             content.subtitle = senderName
         }
 
+        var resolvedBody = content.body
         if let preview = decryptPreview(payload), !preview.isEmpty {
-            content.body = preview
+            resolvedBody = preview
         } else if isEncryptedPlaceholder(content.body) {
-            content.body = "New Chitthi message"
+            resolvedBody = "New Chitthi message"
         }
+        content.body = notificationBody(resolvedBody, senderName: senderName, isGroup: isGroup)
 
         loadAvatar(from: avatarUrl) { [weak self] avatarData in
             guard let self else { return }
             self.deliverCommunicationNotification(
                 content: content,
-                senderName: displayName,
-                senderId: displayId,
+                senderName: senderName,
+                senderId: senderId,
                 conversationId: conversationId,
                 conversationName: conversationName,
                 isGroup: isGroup,
@@ -204,6 +204,12 @@ final class NotificationService: UNNotificationServiceExtension {
             || normalized.contains("new chitthi message")
             || normalized.contains("chitthi message")
             || normalized == "encrypted message"
+    }
+
+    private func notificationBody(_ value: String, senderName: String, isGroup: Bool) -> String {
+        guard isGroup, !senderName.isEmpty else { return value }
+        if value.hasPrefix("\(senderName):") { return value }
+        return "\(senderName): \(value)"
     }
 
     private func decryptPreview(_ payload: [AnyHashable: Any]) -> String? {
