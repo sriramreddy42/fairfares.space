@@ -209,14 +209,15 @@ class R2StorageTest(unittest.TestCase):
             multipart_id = upload["multipart_upload_id"]
             completed_parts = []
             for number, payload in enumerate((encrypted[:8], encrypted[8:]), 1):
-                part_checksum = base64.b64encode(hashlib.sha256(payload).digest()).decode()
+                part_checksum = base64.b64encode(hashlib.md5(payload).digest()).decode()
                 part_authorization, part_error = app.authorize_chitthi_multipart_part(
                     upload_id=authorization["uploadId"], user_id=sender_id, part_number=number,
-                    part_size=len(payload), part_sha256=part_checksum,
+                    part_size=len(payload), part_md5=part_checksum,
                 )
                 self.assertFalse(part_error)
                 self.assertEqual(client.presigned["operation"], "upload_part")
-                self.assertEqual(part_authorization["headers"]["x-amz-checksum-sha256"], part_checksum)
+                self.assertEqual(client.presigned["params"]["ContentMD5"], part_checksum)
+                self.assertEqual(part_authorization["headers"]["Content-MD5"], part_checksum)
                 completed_parts.append({"partNumber": number, "etag": client.upload_test_part(multipart_id, number, payload)})
 
             resumed, status_error = app.list_chitthi_multipart_parts(upload_id=authorization["uploadId"], user_id=sender_id)

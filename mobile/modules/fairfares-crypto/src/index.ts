@@ -14,7 +14,7 @@ type FairFaresCryptoNativeModule = {
   uploadMultipartPart(uploadId: string, partNumber: number, uploadUrl: string, headers: Record<string, string>, fileUri: string, expectedSize: number): Promise<{ status: number; etag: string }>;
   activeMultipartPartNumbers?(uploadId: string): Promise<number[]>;
   generateVideoThumbnail?(fileUri: string, maximumBytes: number): Promise<string>;
-  stageMultipartPart?(sourceUri: string, destinationUri: string, offset: number, size: number): Promise<{ size: number; sha256Base64: string }>;
+  stageMultipartPart?(sourceUri: string, destinationUri: string, offset: number, size: number): Promise<{ size: number; md5Base64: string }>;
   appendFile?(sourceUri: string, destinationUri: string, expectedOffset: number, expectedSize: number): Promise<{ outputSize: number }>;
   sha256File?(fileUri: string, expectedSize: number): Promise<{ size: number; sha256Base64: string }>;
   optimizeVideo?(operationId: string, sourceUri: string, destinationUri: string): Promise<{ outputSize: number; mimeType: string }>;

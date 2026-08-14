@@ -1146,6 +1146,15 @@ def valid_sha256_base64(value: object) -> str:
     return checksum if len(decoded) == hashlib.sha256().digest_size else ""
 
 
+def valid_md5_base64(value: object) -> str:
+    checksum = str(value or "").strip()
+    try:
+        decoded = base64.b64decode(checksum, validate=True)
+    except (TypeError, ValueError):
+        return ""
+    return checksum if len(decoded) == hashlib.md5().digest_size else ""
+
+
 def chitthi_r2_object_key() -> str:
     date_path = datetime.now(UTC).strftime("%Y/%m/%d")
     prefix = "/".join(part for part in (R2_OBJECT_PREFIX, "chitthi", date_path) if part)
@@ -1261,7 +1270,7 @@ def chitthi_pending_multipart_upload(*, upload_id: str, user_id: int) -> sqlite3
 
 
 def authorize_chitthi_multipart_part(
-    *, upload_id: str, user_id: int, part_number: int, part_size: int, part_sha256: str,
+    *, upload_id: str, user_id: int, part_number: int, part_size: int, part_md5: str,
 ) -> tuple[dict[str, object] | None, str]:
     upload = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
     if not upload:
@@ -1272,13 +1281,13 @@ def authorize_chitthi_multipart_part(
     if part_number < 1 or part_number > part_count:
         return None, "Multipart part number is outside the authorized range."
     expected_part_size = configured_part_size if part_number < part_count else expected_size - configured_part_size * (part_count - 1)
-    checksum = valid_sha256_base64(part_sha256)
+    checksum = valid_md5_base64(part_md5)
     if part_size != expected_part_size or not checksum:
         return None, "Multipart part size or checksum is invalid."
     params = {
         "Bucket": R2_BUCKET_NAME, "Key": str(upload["object_key"]),
         "UploadId": str(upload["multipart_upload_id"]), "PartNumber": part_number,
-        "ContentLength": part_size, "ChecksumSHA256": checksum,
+        "ContentLength": part_size, "ContentMD5": checksum,
     }
     upload_url = r2_storage_client().generate_presigned_url(
         "upload_part", Params=params, ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
@@ -1286,7 +1295,7 @@ def authorize_chitthi_multipart_part(
     return {
         "uploadId": str(upload["public_id"]), "partNumber": part_number,
         "uploadUrl": upload_url, "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
-        "headers": {"x-amz-checksum-sha256": checksum},
+        "headers": {"Content-MD5": checksum},
     }, ""
 
 
@@ -1353,8 +1362,8 @@ def complete_chitthi_multipart_upload(
                 MultipartUpload={"Parts": normalized},
             )
         # Every part URL is signed for its exact number, byte length and
-        # SHA-256 header; R2 rejects a payload that does not match that signed
-        # checksum. list_parts above then binds completion to R2's ETags and
+        # Content-MD5 header, the checksum UploadPart supports on R2. R2 rejects
+        # a payload that does not match it. list_parts above then binds completion to R2's ETags and
         # exact expected sizes. Re-downloading up to 100 MB here only to hash it
         # again pinned the request and starved unrelated mobile GETs. A HEAD is
         # sufficient to verify that R2 assembled the authorized object and
@@ -23533,7 +23542,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]),
             part_number=int(float_from_value(payload.get("partNumber")) or 0),
             part_size=int(float_from_value(payload.get("partSize")) or 0),
-            part_sha256=str(payload.get("partSha256") or ""),
+            part_md5=str(payload.get("partMd5") or ""),
         )
         if not authorization:
             self.send_json({"ok": False, "message": error}, 409)

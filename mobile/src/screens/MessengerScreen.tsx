@@ -2730,7 +2730,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       if (selectedVideo?.videoQuality === "data-saver") {
         if (!FairFaresCrypto.videoOptimizationAvailable || !FileSystem.cacheDirectory) {
-          Alert.alert("Development build required", "Data saver needs the latest FairFares iOS build. Choose Original quality or install the newest build.");
+          Alert.alert("Development build required", "Data saver needs the latest FairFares iOS build. Choose HD quality or install the newest build.");
           return;
         }
         setAttachmentSending(true);
@@ -2741,7 +2741,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         try {
           const freeBytes = await FileSystem.getFreeDiskStorageAsync();
           if (Number.isFinite(freeBytes) && freeBytes < selectedVideo.size + 32 * 1024 * 1024) {
-            throw new Error("Not enough free storage to optimize this video safely. Choose Original quality or free some space.");
+            throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
           }
           const preparationStartedAt = Date.now();
           const optimized = await FairFaresCrypto.optimizeVideo(
@@ -2885,7 +2885,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           let response;
           let encryptedUploadFinalized = false;
           try {
-            setAttachmentStatus(`Uploading ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"} securely…`);
+            // Video upload progress is already visible inside the optimistic
+            // message bubble. Avoid a second floating status label below the
+            // preview; retain it for photos and files that lack that treatment.
+            setAttachmentStatus(attachment.kind === "VIDEO" ? "" : `Uploading ${attachment.kind === "IMAGE" ? "photo" : "file"} securely…`);
             const uploadStartedAt = Date.now();
             response = await sendDirectEncryptedChatAttachment(operationUserId, activeConversationId, encryptedPayload, attachment.mimeType, index + 1 < attachments.length);
             if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-upload-complete", {
@@ -5054,7 +5057,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
             {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{pendingAttachment.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${pendingAttachment.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
-            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : pendingAttachment.kind === "VIDEO" ? `${(pendingAttachment.size / 1_000_000).toFixed(1)} MB · ${pendingAttachment.videoQuality === "data-saver" ? "Data saver" : "Original"}` : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text>{pendingAttachment.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.videoQualityChoices}><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality !== "data-saver" }} style={[styles.videoQualityChoice, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "original" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>Original</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality === "data-saver" }} style={[styles.videoQualityChoice, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "data-saver" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity></View> : null}</View>
+            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : pendingAttachment.kind === "VIDEO" ? `${(pendingAttachment.size / 1_000_000).toFixed(1)} MB · ${pendingAttachment.videoQuality === "data-saver" ? "Data saver" : "HD"}` : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text>{pendingAttachment.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.videoQualityChoices}><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality !== "data-saver" }} accessibilityLabel="HD video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "original" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality === "data-saver" }} accessibilityLabel="Data saver video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "data-saver" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity></View> : null}</View>
             <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingAttachment ? [pendingAttachment] : []); setPendingAttachment(null); }} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </View>
         ) : null}

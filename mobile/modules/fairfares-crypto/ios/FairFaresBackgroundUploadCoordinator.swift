@@ -75,6 +75,11 @@ final class FairFaresBackgroundUploadCoordinator: NSObject, URLSessionDelegate, 
     request.httpMethod = "PUT"
     request.cachePolicy = .reloadIgnoringLocalCacheData
     headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+    // R2/S3 multipart PUTs require a fixed-length request. If this header is
+    // omitted, a background URLSession may use chunked transfer encoding,
+    // which S3-compatible storage rejects with HTTP 501. The same exact byte
+    // count was validated above and is bound into the presigned part URL.
+    request.setValue(String(expectedSize), forHTTPHeaderField: "Content-Length")
     let metadata = FairFaresBackgroundUploadTask(uploadId: uploadId, partNumber: partNumber, filePath: file.path, expectedSize: expectedSize)
     let taskDescription = String(data: try JSONEncoder().encode(metadata), encoding: .utf8)
 

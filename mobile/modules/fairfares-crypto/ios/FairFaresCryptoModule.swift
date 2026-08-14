@@ -265,7 +265,7 @@ public final class FairFaresCryptoModule: Module {
     }
     try input.seek(toOffset: UInt64(offset))
     var remaining = size
-    var hasher = SHA256()
+    var hasher = Insecure.MD5()
     while remaining > 0 {
       let requested = Int(min(1_048_576, remaining))
       guard let chunk = try input.read(upToCount: requested), chunk.count == requested else {
@@ -282,7 +282,7 @@ public final class FairFaresCryptoModule: Module {
     } else {
       try FileManager.default.moveItem(at: partial, to: destination)
     }
-    return ["size": Double(size), "sha256Base64": Data(hasher.finalize()).base64EncodedString()]
+    return ["size": Double(size), "md5Base64": Data(hasher.finalize()).base64EncodedString()]
   }
 
   private func appendFile(_ sourceValue: String, _ destinationValue: String, _ expectedOffset: Int64, _ expectedSize: Int64) throws -> [String: Any] {

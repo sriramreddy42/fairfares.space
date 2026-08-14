@@ -7,6 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Directory, File, Paths } from "expo-file-system";
 import { sha256 } from "@noble/hashes/sha256";
+import { md5 } from "@noble/hashes/legacy";
 import * as naclUtil from "tweetnacl-util";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { logDevelopmentPerformance, startDevelopmentPerformanceOperation } from "../utils/performanceDiagnostics";
@@ -1069,10 +1070,10 @@ export async function authorizeEncryptedChatAttachment(conversationId: string, e
 
 type CompletedMultipartPart = { partNumber: number; etag: string; size?: number };
 
-async function authorizeEncryptedMultipartPart(uploadId: string, partNumber: number, partSize: number, partSha256: string) {
+async function authorizeEncryptedMultipartPart(uploadId: string, partNumber: number, partSize: number, partMd5: string) {
   return request<{ ok: boolean; uploadUrl: string; headers: Record<string, string> }>("/api/chat/e2ee/attachments/multipart/part", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uploadId, partNumber, partSize, partSha256 })
+    body: JSON.stringify({ uploadId, partNumber, partSize, partMd5 })
   }, { attempts: 3 });
 }
 
@@ -1178,16 +1179,16 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
         const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
         let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
         try {
-          let partSha256 = "";
+          let partMd5 = "";
           const staged = await FairFaresCrypto.stageMultipartPart(
             encryptedUri,
             partFile.uri,
             (partNumber - 1) * partSize,
             expectedSize
           );
-          if (staged.size !== expectedSize || !staged.sha256Base64) throw new Error(`Encrypted upload part ${partNumber} could not be staged completely.`);
-          partSha256 = staged.sha256Base64;
-          partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
+          if (staged.size !== expectedSize || !staged.md5Base64) throw new Error(`Encrypted upload part ${partNumber} could not be staged completely.`);
+          partMd5 = staged.md5Base64;
+          partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partMd5);
         } catch (error) {
           if (partFile.exists) partFile.delete();
           throw error;
@@ -1262,11 +1263,11 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
         reader.close();
       }
       if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
-      const partSha256 = naclUtil.encodeBase64(sha256(bytes));
+      const partMd5 = naclUtil.encodeBase64(md5(bytes));
       const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
       let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
       try {
-        partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
+        partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partMd5);
         partFile.create({ overwrite: true, intermediates: true });
         partFile.write(bytes);
       } catch (error) {
