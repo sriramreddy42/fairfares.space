@@ -78,6 +78,8 @@ const quickLinks: Array<{
     accent: "#9b5cff"
   }
 ];
+
+const HOME_STORY_AUTO_SLIDE_MS = 4500;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
 
@@ -646,6 +648,7 @@ export function HousingScreen({
     .map((part) => part[0]?.toUpperCase())
     .join("");
   const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
+  const homeStorySlideCount = 1 + homeTestimonials.length;
   const homeStorySlideWidth = homeStoryViewportWidth || Math.max(1, viewportWidth - 28 - theme.spacing.md * 2);
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
@@ -872,9 +875,22 @@ export function HousingScreen({
   }, [cityExperienceSubmitted, data?.hasSubmittedHousingExperience, data?.user?.id]);
 
   useEffect(() => {
+    if (homeStoryIndex < homeStorySlideCount) return;
+    setHomeStoryIndex(0);
+  }, [homeStoryIndex, homeStorySlideCount]);
+
+  useEffect(() => {
     if (!homeStorySlideWidth) return;
     homeStoryScrollRef.current?.scrollTo({ x: homeStoryIndex * homeStorySlideWidth, animated: true });
   }, [homeStoryIndex, homeStorySlideWidth]);
+
+  useEffect(() => {
+    if (homeStorySlideCount < 2 || !homeStorySlideWidth) return;
+    const timer = setInterval(() => {
+      setHomeStoryIndex((current) => (current + 1) % homeStorySlideCount);
+    }, HOME_STORY_AUTO_SLIDE_MS);
+    return () => clearInterval(timer);
+  }, [homeStorySlideCount, homeStorySlideWidth]);
 
   useEffect(() => {
     setRentalCars(cars);
@@ -3292,7 +3308,7 @@ export function HousingScreen({
           decelerationRate="fast"
           onMomentumScrollEnd={(event) => {
             const nextIndex = Math.round(event.nativeEvent.contentOffset.x / homeStorySlideWidth);
-            setHomeStoryIndex(Math.max(0, Math.min(nextIndex, homeTestimonials.length)));
+            setHomeStoryIndex(Math.max(0, Math.min(nextIndex, homeStorySlideCount - 1)));
           }}
         >
           <View style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
@@ -3331,7 +3347,7 @@ export function HousingScreen({
         </ScrollView>
         {homeTestimonials.length > 0 ? (
           <View style={styles.homeStoryPager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            {Array.from({ length: 1 + homeTestimonials.length }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
+            {Array.from({ length: homeStorySlideCount }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
           </View>
         ) : null}
       </View>
