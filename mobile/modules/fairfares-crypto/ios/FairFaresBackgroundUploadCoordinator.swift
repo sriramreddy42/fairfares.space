@@ -54,6 +54,22 @@ final class FairFaresBackgroundUploadCoordinator: NSObject, URLSessionDelegate, 
     }
   }
 
+  func cancelUpload(uploadId: String) async {
+    guard !uploadId.isEmpty else { return }
+    await withCheckedContinuation { continuation in
+      session.getAllTasks { tasks in
+        tasks.forEach { task in
+          guard let description = task.taskDescription,
+                let data = description.data(using: .utf8),
+                let metadata = try? JSONDecoder().decode(FairFaresBackgroundUploadTask.self, from: data),
+                metadata.uploadId == uploadId else { return }
+          task.cancel()
+        }
+        continuation.resume()
+      }
+    }
+  }
+
   func handleBackgroundEvents(identifier: String, completionHandler: @escaping () -> Void) {
     lock.lock()
     appCompletionHandler = completionHandler
@@ -98,7 +114,7 @@ final class FairFaresBackgroundUploadCoordinator: NSObject, URLSessionDelegate, 
     let status = response?.statusCode ?? 0
     let etag = response?.allHeaderFields.first(where: { String(describing: $0.key).lowercased() == "etag" }).map { String(describing: $0.value) } ?? ""
     let succeeded = error == nil && (200..<300).contains(status) && !etag.isEmpty
-    if succeeded, let description = task.taskDescription,
+    if let description = task.taskDescription,
        let data = description.data(using: .utf8),
        let metadata = try? JSONDecoder().decode(FairFaresBackgroundUploadTask.self, from: data) {
       try? FileManager.default.removeItem(atPath: metadata.filePath)

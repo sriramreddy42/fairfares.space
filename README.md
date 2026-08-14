@@ -1,5 +1,10 @@
 # FairFares
 
+Before submitting the iOS app, complete the release-specific
+[App Review package](docs/APP_STORE_REVIEW_0.1.5.md). It is a blocking checklist
+for reviewer credentials, physical-device evidence, production availability,
+permissions, and App Store Connect notes.
+
 A dependency-free Python + SQLite dynamic website with authentication, session cookies, editable homepage content, and a poster-led landing page.
 
 ## Run
@@ -197,7 +202,7 @@ FAIRFARES_R2_ALLOWED_ORIGINS=https://www.fairfare.space,http://localhost:8010 \
 python3 scripts/configure_r2_cors.py
 ```
 
-The default URL lifetime is one hour and is capped at one hour so iOS background scheduling has enough headroom for 100 MB transfers. Unfinalized uploads expire after 24 hours; the existing Chitthi maintenance endpoint deletes those orphans and finalized media older than seven days. These can be tuned with `FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS`, `FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS`, and `FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS`.
+The default URL lifetime is one hour and is capped at one hour so iOS background scheduling has enough headroom for 100 MB transfers. Unfinalized uploads expire after 24 hours. Finalized encrypted media normally remains in cloud storage for seven days, while encrypted videos above the 12 MB multipart threshold remain for at most two days. A durable copy already downloaded by a device remains available from that device's protected local media cache; the message row remains after cloud expiry. These values can be tuned with `FAIRFARES_CHITTHI_PRESIGNED_URL_SECONDS`, `FAIRFARES_CHITTHI_UNFINALIZED_UPLOAD_HOURS`, `FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS`, and `FAIRFARES_CHITTHI_LARGE_VIDEO_RETENTION_DAYS`.
 
 The legacy server-relay attachment endpoint remains temporarily available for older app builds. Current web, iOS, and Android clients use direct encrypted R2 transfer. Without R2 variables, legacy local development continues using `data/uploads/chat`, while the direct-transfer authorization endpoint reports that storage is unavailable.
 

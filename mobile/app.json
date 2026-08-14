@@ -108,7 +108,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in Chitthi."
+          "locationWhenInUsePermission": "Allow FairFares to share your live location only when you explicitly start location sharing in Chitthi.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isIosBackgroundLocationEnabled": false
         }
       ],
       [
@@ -119,7 +122,12 @@
           "defaultChannel": "chitthi-messages-v2"
         }
       ],
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
       "expo-apple-authentication",
       [
         "expo-image-picker",

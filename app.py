@@ -123,6 +123,7 @@ ALLOWED_CHITTHI_MEDIA_MIME_TYPES = {
     "video/mp4", "video/quicktime", "video/webm",
 } | ALLOWED_CHAT_FILE_MIME_TYPES
 CHITTHI_ATTACHMENT_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_RETENTION_DAYS", 7)
+CHITTHI_LARGE_VIDEO_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_LARGE_VIDEO_RETENTION_DAYS", 2)
 CHITTHI_ATTACHMENT_CLEANUP_BATCH = positive_int_env("FAIRFARES_CHITTHI_ATTACHMENT_CLEANUP_BATCH", 250)
 CHITTHI_DELETED_MESSAGE_RETENTION_DAYS = positive_int_env("FAIRFARES_CHITTHI_DELETED_MESSAGE_RETENTION_DAYS", 5)
 # Background URLSession work can be deferred by iOS for several minutes. 100 MB
@@ -1455,13 +1456,14 @@ def finalize_chitthi_upload(
         if not message:
             return None, error
         attachment_reference = f"r2://{R2_BUCKET_NAME}/{upload['object_key']}"
+        retention_days = chitthi_attachment_retention_days(upload["media_mime_type"], actual_size)
         message_metadata = {
             "encrypted": True,
             "size": actual_size,
             "mediaMimeType": str(upload["media_mime_type"]),
             "ciphertextSha256": str(upload["expected_checksum"]),
-            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at")),
-            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at"), retention_days),
+            "retentionDays": retention_days,
         }
         con.execute(
             "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ?, metadata_json = ? WHERE id = ?",
@@ -1499,9 +1501,27 @@ def forward_chitthi_attachment(
                WHERE messages.id = ? AND participants.user_id = ?
                  AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
                  AND messages.deleted_at IS NULL AND messages.attachment_url != ''
-                 AND datetime(messages.created_at, ?) > datetime('now')
+                 AND datetime(
+                       messages.created_at,
+                       printf(
+                         '+%d days',
+                         CASE
+                           WHEN json_valid(messages.metadata_json)
+                            AND lower(COALESCE(json_extract(messages.metadata_json, '$.mediaMimeType'), '')) LIKE 'video/%'
+                            AND CAST(json_extract(messages.metadata_json, '$.size') AS INTEGER) > ?
+                           THEN ?
+                           WHEN json_valid(messages.metadata_json)
+                            AND CAST(json_extract(messages.metadata_json, '$.retentionDays') AS INTEGER) >= 1
+                           THEN CAST(json_extract(messages.metadata_json, '$.retentionDays') AS INTEGER)
+                           ELSE ?
+                         END
+                       )
+                     ) > datetime('now')
                LIMIT 1""",
-            (source_message_id, current_user_id, f"+{max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)} days"),
+            (
+                source_message_id, current_user_id, CHITTHI_MULTIPART_THRESHOLD_BYTES,
+                max(1, CHITTHI_LARGE_VIDEO_RETENTION_DAYS), max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+            ),
         ).fetchone()
         if not source:
             return None, None, "Source attachment was not found."
@@ -1525,13 +1545,16 @@ def forward_chitthi_attachment(
         )
         if not message:
             return None, None, error
+        retention_days = chitthi_attachment_retention_days(
+            source_metadata.get("mediaMimeType"), source_metadata.get("size"),
+        )
         forwarded_metadata = {
             "encrypted": True,
             "size": int(source_metadata.get("size") or 0),
             "mediaMimeType": clean_text_value(source_metadata.get("mediaMimeType"), 120),
             "ciphertextSha256": clean_text_value(source_metadata.get("ciphertextSha256"), 120),
-            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at")),
-            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+            "expiresAt": chitthi_attachment_expiry_timestamp(row_value(message, "created_at"), retention_days),
+            "retentionDays": retention_days,
             "reusedCiphertext": True,
         }
         con.execute(
@@ -1603,7 +1626,7 @@ def create_chitthi_download_authorization(
         return None, "A valid message and device are required."
     with db() as con:
         message = con.execute(
-            """SELECT messages.id, messages.attachment_url, messages.metadata_json
+            """SELECT messages.id, messages.attachment_url, messages.metadata_json, messages.created_at
                FROM chat_messages messages
                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
                JOIN chat_message_envelopes envelopes ON envelopes.message_id = messages.id
@@ -1619,16 +1642,20 @@ def create_chitthi_download_authorization(
     reference = str(message["attachment_url"] or "")
     if not reference.startswith(f"r2://{R2_BUCKET_NAME}/") or not r2_storage_configured():
         return None, "Direct download is not available for this attachment."
+    try:
+        metadata = json.loads(str(message["metadata_json"] or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    created_at = parse_sql_datetime(row_value(message, "created_at"))
+    retention_days = chitthi_metadata_retention_days(metadata)
+    if created_at and created_at + timedelta(days=retention_days) <= datetime.utcnow():
+        return None, "This attachment has expired."
     object_key = reference.replace(f"r2://{R2_BUCKET_NAME}/", "", 1)
     download_url = r2_storage_client().generate_presigned_url(
         "get_object",
         Params={"Bucket": R2_BUCKET_NAME, "Key": object_key, "ResponseContentType": "application/octet-stream"},
         ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
     )
-    try:
-        metadata = json.loads(str(message["metadata_json"] or "{}"))
-    except (TypeError, json.JSONDecodeError):
-        metadata = {}
     checksum = valid_sha256_base64(metadata.get("ciphertextSha256"))
     encrypted_size = int(metadata.get("size") or 0)
     # Compatibility migration for attachments created before whole-object
@@ -1819,11 +1846,36 @@ def delete_stored_upload_reference(value: str) -> bool:
     return False
 
 
-def chitthi_attachment_expiry_timestamp(created_at: object | None = None) -> str:
+def chitthi_attachment_retention_days(media_mime_type: object = "", encrypted_size: object = 0) -> int:
+    """Return cloud retention without inspecting encrypted message contents.
+
+    R2 authorization already records the coarse media MIME type and encrypted
+    byte length. That is sufficient to apply the short large-video policy while
+    leaving photos, documents, and small videos on the normal retention policy.
+    """
+    mime_type = str(media_mime_type or "").strip().lower()
+    size = int(float_from_value(encrypted_size) or 0)
+    if mime_type.startswith("video/") and size > CHITTHI_MULTIPART_THRESHOLD_BYTES:
+        return max(1, CHITTHI_LARGE_VIDEO_RETENTION_DAYS)
+    return max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)
+
+
+def chitthi_metadata_retention_days(metadata: object) -> int:
+    if not isinstance(metadata, dict):
+        return max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)
+    stored_days = max(1, int(float_from_value(metadata.get("retentionDays")) or CHITTHI_ATTACHMENT_RETENTION_DAYS))
+    classified_days = chitthi_attachment_retention_days(metadata.get("mediaMimeType"), metadata.get("size"))
+    # A newly shortened safety policy must also constrain objects finalized by
+    # older server versions. Never lengthen a message's originally advertised
+    # retention window.
+    return min(stored_days, classified_days)
+
+
+def chitthi_attachment_expiry_timestamp(created_at: object | None = None, retention_days: int | None = None) -> str:
     created = parse_sql_datetime(created_at) if created_at else None
     if created is None:
         created = datetime.utcnow()
-    expires_at = created + timedelta(days=max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS))
+    expires_at = created + timedelta(days=max(1, retention_days or CHITTHI_ATTACHMENT_RETENTION_DAYS))
     return expires_at.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -1850,11 +1902,29 @@ def cleanup_expired_chitthi_attachments(*, force: bool = True, limit: int | None
             FROM chat_messages
             WHERE message_type = 'ENCRYPTED_ATTACHMENT'
               AND attachment_url != ''
-              AND datetime(created_at, ?) <= datetime('now')
+              AND datetime(
+                    created_at,
+                    printf(
+                      '+%d days',
+                      CASE
+                        WHEN json_valid(metadata_json)
+                         AND lower(COALESCE(json_extract(metadata_json, '$.mediaMimeType'), '')) LIKE 'video/%'
+                         AND CAST(json_extract(metadata_json, '$.size') AS INTEGER) > ?
+                        THEN ?
+                        WHEN json_valid(metadata_json)
+                         AND CAST(json_extract(metadata_json, '$.retentionDays') AS INTEGER) >= 1
+                        THEN CAST(json_extract(metadata_json, '$.retentionDays') AS INTEGER)
+                        ELSE ?
+                      END
+                    )
+                  ) <= datetime('now')
             ORDER BY id ASC
             LIMIT ?
             """,
-            (f"+{max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS)} days", batch_limit),
+            (
+                CHITTHI_MULTIPART_THRESHOLD_BYTES, max(1, CHITTHI_LARGE_VIDEO_RETENTION_DAYS),
+                max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS), batch_limit,
+            ),
         ).fetchall()
         for row in rows:
             scanned += 1
@@ -1880,11 +1950,12 @@ def cleanup_expired_chitthi_attachments(*, force: bool = True, limit: int | None
                 if not other_reference and not delete_stored_upload_reference(attachment_url):
                     failed += 1
                     continue
+                retention_days = chitthi_metadata_retention_days(metadata)
                 metadata.update({
                     "mediaExpired": True,
                     "expiredAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     "deletedFromStorage": True,
-                    "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
+                    "retentionDays": retention_days,
                 })
                 con.execute(
                     "UPDATE chat_messages SET attachment_url = '', metadata_json = ? WHERE id = ?",
@@ -17133,6 +17204,29 @@ def create_chat_community(
     return (created[0] if created else None), ""
 
 
+def update_chat_group_details(public_id: str, user_id: int, name: str, description: str, area_label: str) -> tuple[dict[str, object] | None, str]:
+    """Update member-visible group metadata with owner/admin authorization."""
+    clean_name = " ".join((name or "").split())[:80]
+    clean_description = " ".join((description or "").split())[:220]
+    clean_area = " ".join((area_label or "").split())[:80]
+    if len(clean_name) < 3:
+        return None, "Group name must contain at least 3 characters."
+    with db() as con:
+        community = con.execute("SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1", (public_id,)).fetchone()
+        if not community:
+            return None, "Group not found."
+        if not chat_group_member_role(con, int(community["id"]), user_id):
+            return None, "Join this group before editing its details."
+        con.execute(
+            """UPDATE chat_communities
+               SET name = ?, description = ?, area_label = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (clean_name, clean_description, clean_area, int(community["id"])),
+        )
+    updated = next((item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id), None)
+    return updated, "" if updated else "Group could not be refreshed."
+
+
 def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "", suggestion_purpose: str = "") -> tuple[dict[str, object] | None, str]:
     with db() as con:
         community = con.execute(
@@ -17177,8 +17271,8 @@ def create_chat_group_invite(public_id: str, user_id: int, expires_days: int = 7
         if not community:
             return "", "Group not found."
         role = chat_group_member_role(con, int(community["id"]), user_id)
-        if role not in {"OWNER", "ADMIN"}:
-            return "", "Only a group owner or admin can create invitation links."
+        if not role:
+            return "", "Join this group before creating invitation links."
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.utcnow() + timedelta(days=expires_days)).strftime("%Y-%m-%d %H:%M:%S")
         con.execute(
@@ -21207,6 +21301,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/conversations": self.api_create_chat_conversation,
             "/api/chat/feedback-conversation": self.api_open_feedback_conversation,
             "/api/chat/communities": self.api_create_chat_community,
+            "/api/chat/groups/details": self.api_update_chat_group_details,
             "/api/chat/groups/photo": self.api_update_chat_group_photo,
             "/api/chat/communities/join": self.api_join_chat_community,
             "/api/chat/groups/invites": self.api_create_chat_group_invite,
@@ -23030,6 +23125,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         updated = next((item for item in get_chat_communities_for_user(int(user["id"])) if item.get("id") == public_id), None)
         self.send_json({"ok": True, "community": updated})
 
+    def api_update_chat_group_details(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to update this group."}, 401)
+            return
+        form = self.read_form()
+        community, error = update_chat_group_details(
+            (form.get("community_id") or "").strip(),
+            int(user["id"]),
+            form.get("name", ""),
+            form.get("description", ""),
+            form.get("area", ""),
+        )
+        if not community:
+            status = 403 if error.startswith("Join") else 404 if error == "Group not found." else 400
+            self.send_json({"ok": False, "message": error or "Could not update this group."}, status)
+            return
+        self.send_json({"ok": True, "community": community})
+
     def api_join_chat_community(self) -> None:
         user = self.current_user()
         if not user:
@@ -23921,16 +24035,41 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if community_id > 0 and expires_at > 0
             else chat_notification_avatar_signature(user_id, expires_at) if user_id > 0 and expires_at > 0 else ""
         )
-        if (
-            not expected
-            or not signature
-            or expires_at < now
-            or expires_at > now + 60 * 60
-            or not hmac.compare_digest(signature, expected)
-        ):
-            self.send_error(404)
-            return
+        signed_request_valid = bool(
+            expected
+            and signature
+            and expires_at >= now
+            and expires_at <= now + 60 * 60
+            and hmac.compare_digest(signature, expected)
+        )
+        authenticated_user = self.current_user()
+        authenticated_user_id = int(row_value(authenticated_user, "id") or 0) if authenticated_user else 0
         with db() as con:
+            # Notification images use short-lived signatures. The in-app chat
+            # recycler may legitimately reuse that cached URL after expiry, so
+            # accept it with a current Bearer session only when the viewer is a
+            # member of the requested group or shares an active conversation
+            # with the requested person. This keeps avatars stable without
+            # turning user photos into public, permanent URLs.
+            authenticated_request_allowed = False
+            if authenticated_user_id > 0 and community_id > 0:
+                authenticated_request_allowed = con.execute(
+                    "SELECT 1 FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+                    (community_id, authenticated_user_id),
+                ).fetchone() is not None
+            elif authenticated_user_id > 0 and user_id > 0:
+                authenticated_request_allowed = user_id == authenticated_user_id or con.execute(
+                    """SELECT 1
+                       FROM chat_participants viewer
+                       JOIN chat_participants subject ON subject.conversation_id = viewer.conversation_id
+                       JOIN chat_conversations conversation ON conversation.id = viewer.conversation_id
+                       WHERE viewer.user_id = ? AND subject.user_id = ? AND conversation.status = 'ACTIVE'
+                       LIMIT 1""",
+                    (authenticated_user_id, user_id),
+                ).fetchone() is not None
+            if not signed_request_valid and not authenticated_request_allowed:
+                self.send_error(404)
+                return
             avatar_row = (
                 con.execute("SELECT photo_url FROM chat_communities WHERE id = ? LIMIT 1", (community_id,)).fetchone()
                 if community_id > 0

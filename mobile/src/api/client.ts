@@ -1115,7 +1115,21 @@ function multipartStateOwnerPrefix(ownerUserId: number) {
   return `${multipartStatePrefix}${ownerUserId}.`;
 }
 
-async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthorization, encryptedUri: string) {
+function attachmentUploadCancelledError() {
+  const error = new Error("Video sending was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAttachmentUploadCancelled(signal?: AbortSignal) {
+  if (signal?.aborted) throw attachmentUploadCancelledError();
+}
+
+async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthorization, encryptedUri: string, signal?: AbortSignal, onProgress?: (progress: number) => void) {
+  throwIfAttachmentUploadCancelled(signal);
+  const cancelNativeUpload = () => { void FairFaresCrypto.cancelMultipartUpload(authorization.uploadId); };
+  signal?.addEventListener("abort", cancelNativeUpload, { once: true });
+  try {
   const source = new File(encryptedUri);
   const partSize = Number(authorization.partSize || 0);
   const partCount = Number(authorization.partCount || 0);
@@ -1145,7 +1159,11 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     pendingParts: pendingPartNumbers.length,
     nativeStaging: Platform.OS === "ios" && FairFaresCrypto.multipartStagingAvailable,
   });
-  const reportCompleted = () => metric.progress(completed.size / partCount, { completedParts: completed.size });
+  const reportCompleted = () => {
+    const progress = completed.size / partCount;
+    metric.progress(progress, { completedParts: completed.size });
+    onProgress?.(progress);
+  };
   reportCompleted();
 
   if (Platform.OS === "ios" && pendingPartNumbers.length) {
@@ -1175,6 +1193,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     const scheduled: Array<Promise<void>> = [];
     try {
       for (const partNumber of pendingPartNumbers) {
+        throwIfAttachmentUploadCancelled(signal);
         const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
         const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
         let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
@@ -1197,6 +1216,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
           try {
             let uploaded: { status: number; headers: Record<string, string> } | undefined;
             for (let attempt = 0; attempt < 3; attempt += 1) {
+              throwIfAttachmentUploadCancelled(signal);
               try {
                 const nativeResult = await FairFaresCrypto.uploadMultipartPart(
                   authorization.uploadId,
@@ -1209,6 +1229,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
                 uploaded = { status: nativeResult.status, headers: { etag: nativeResult.etag } };
                 if (uploaded.status >= 200 && uploaded.status < 300) break;
               } catch (error) {
+                throwIfAttachmentUploadCancelled(signal);
                 if (attempt === 2) throw error;
               }
               if (attempt < 2) await wait([500, 1250][attempt]);
@@ -1229,6 +1250,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
       throw error;
     }
     await Promise.all(scheduled);
+    throwIfAttachmentUploadCancelled(signal);
     const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
     try {
       await completeEncryptedMultipartUpload(authorization.uploadId, parts);
@@ -1248,6 +1270,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
 
     async function uploadNextPart() {
       while (nextPendingIndex < pendingPartNumbers.length) {
+        throwIfAttachmentUploadCancelled(signal);
         const partNumber = pendingPartNumbers[nextPendingIndex];
         nextPendingIndex += 1;
       const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
@@ -1279,6 +1302,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
       try {
         let uploaded: FileSystem.FileSystemUploadResult | undefined;
         for (let attempt = 0; attempt < 3; attempt += 1) {
+          throwIfAttachmentUploadCancelled(signal);
           uploaded = await FileSystem.uploadAsync(partAuthorization.uploadUrl, partFile.uri, {
             httpMethod: "PUT", headers: partAuthorization.headers,
             uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
@@ -1299,12 +1323,16 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
       }
     }
     await Promise.all(Array.from({ length: Math.min(2, pendingPartNumbers.length) }, () => uploadNextPart()));
+    throwIfAttachmentUploadCancelled(signal);
     const parts = [...completed.values()].sort((left, right) => left.partNumber - right.partNumber);
     await completeEncryptedMultipartUpload(authorization.uploadId, parts);
     metric.complete({ completedParts: parts.length });
   } catch (error) {
     metric.fail(error, { completedParts: completed.size });
     throw error;
+  }
+  } finally {
+    signal?.removeEventListener("abort", cancelNativeUpload);
   }
 }
 
@@ -1336,18 +1364,34 @@ export async function uploadEncryptedBinary(uploadUrl: string, headers: Record<s
   }
 }
 
-export async function uploadEncryptedFile(uploadUrl: string, headers: Record<string, string>, encryptedUri: string) {
+export async function uploadEncryptedFile(
+  uploadUrl: string,
+  headers: Record<string, string>,
+  encryptedUri: string,
+  signal?: AbortSignal,
+  onProgress?: (progress: number) => void
+) {
   if (Platform.OS === "web") throw new Error("Native encrypted-file upload is unavailable on web.");
   let result: FileSystem.FileSystemUploadResult | undefined;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    throwIfAttachmentUploadCancelled(signal);
+    const task = FileSystem.createUploadTask(uploadUrl, encryptedUri, {
+      httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      sessionType: FileSystem.FileSystemSessionType.BACKGROUND
+    }, ({ totalBytesSent, totalBytesExpectedToSend }) => {
+      if (totalBytesExpectedToSend > 0) onProgress?.(Math.max(0, Math.min(1, totalBytesSent / totalBytesExpectedToSend)));
+    });
+    const cancel = () => { void task.cancelAsync(); };
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
-      result = await FileSystem.uploadAsync(uploadUrl, encryptedUri, {
-        httpMethod: "PUT", headers, uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        sessionType: FileSystem.FileSystemSessionType.BACKGROUND
-      });
-      if (result.status >= 200 && result.status < 300) return;
+      result = await task.uploadAsync() || undefined;
+      throwIfAttachmentUploadCancelled(signal);
+      if (result && result.status >= 200 && result.status < 300) return;
     } catch {
       result = undefined;
+      throwIfAttachmentUploadCancelled(signal);
+    } finally {
+      signal?.removeEventListener("abort", cancel);
     }
     if (attempt < 2) await wait([500, 1250][attempt]);
   }
@@ -1359,6 +1403,12 @@ export async function finalizeEncryptedChatAttachment(uploadId: string, envelope
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId, envelopes, clientMessageId, silent })
   }, { attempts: 3 });
+}
+
+async function abortEncryptedChatAttachmentMultipart(uploadId: string) {
+  return request<{ ok: boolean; aborted: boolean }>("/api/chat/e2ee/attachments/multipart/abort", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId })
+  }, { attempts: 1 });
 }
 
 export async function forwardEncryptedChatAttachment(
@@ -1385,8 +1435,11 @@ export async function sendDirectEncryptedChatAttachment(
   conversationId: string,
   encrypted: { ciphertextBase64?: string; encryptedUri?: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
   mediaMimeType: string,
-  silent = false
+  silent = false,
+  signal?: AbortSignal,
+  onProgress?: (progress: number) => void
 ) {
+  throwIfAttachmentUploadCancelled(signal);
   if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new Error("A signed-in account is required to upload an encrypted attachment.");
   const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
   const metric = startDevelopmentPerformanceOperation("attachment-send", {
@@ -1407,23 +1460,34 @@ export async function sendDirectEncryptedChatAttachment(
     let multipartError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await uploadEncryptedMultipartFile(authorization, encrypted.encryptedUri);
+        await uploadEncryptedMultipartFile(authorization, encrypted.encryptedUri, signal, onProgress);
         multipartError = undefined;
         break;
       } catch (error) {
         multipartError = error;
+        if (signal?.aborted) break;
         if (attempt < 2) await wait([750, 1750][attempt]);
       }
     }
     if (multipartError) {
       metric.fail(multipartError, { phase: "upload" });
+      if (signal?.aborted) {
+        await FairFaresCrypto.cancelMultipartUpload(authorization.uploadId);
+        await abortEncryptedChatAttachmentMultipart(authorization.uploadId).catch(() => undefined);
+        await AsyncStorage.removeItem(stateKey);
+        const encryptedFile = new File(encrypted.encryptedUri);
+        if (encryptedFile.exists) encryptedFile.delete();
+        throw attachmentUploadCancelledError();
+      }
       throw multipartError;
     }
     pending.uploaded = true;
     await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
   } else {
     try {
-      if (encrypted.encryptedUri && authorization.uploadUrl && authorization.headers) await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri);
+      if (encrypted.encryptedUri && authorization.uploadUrl && authorization.headers) {
+        await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri, signal, onProgress);
+      }
       else if (encrypted.ciphertextBase64 && authorization.uploadUrl && authorization.headers) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
       else throw new Error("Encrypted attachment data is missing.");
     } catch (error) {
@@ -1438,6 +1502,7 @@ export async function sendDirectEncryptedChatAttachment(
     }
   }
   try {
+    throwIfAttachmentUploadCancelled(signal);
     const finalized = await finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent, clientMessageId);
     if (authorization.transferMode === "MULTIPART") await AsyncStorage.removeItem(stateKey);
     metric.complete({ phase: "finalized" });
@@ -1942,6 +2007,14 @@ export async function updateChatGroupPhoto(communityId: string, photo: string) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId, photo })
+  });
+}
+
+export async function updateChatGroupDetails(communityId: string, name: string, description: string, area: string) {
+  return request<{ ok: boolean; community: Community }>("/api/chat/groups/details", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ community_id: communityId, name, description, area })
   });
 }
 

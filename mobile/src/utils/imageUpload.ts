@@ -242,14 +242,17 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
       throw new Error(`This video is larger than the ${Math.round(videoLimit / 1_000_000)} MB encrypted-transfer limit currently enabled for your account.`);
     }
     const mimeType = selectedVideo.mimeType || "video/mp4";
-    const thumbnailBase64 = await createLightweightVideoThumbnail(selectedVideo.uri).catch(() => "");
     return [{
       uri: selectedVideo.uri,
       blob,
       name: selectedVideo.fileName || `chitthi-video-${Date.now()}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
       mimeType,
       size,
-      thumbnailBase64,
+      // Do not decode video on the picker-critical path. The composer can be
+      // shown immediately; iOS generates this preview asynchronously, and the
+      // final thumbnail is regenerated from the prepared SDR rendition.
+      thumbnailBase64: "",
+      pickerAssetId: selectedVideo.assetId || undefined,
       ownedCacheFile: Platform.OS !== "web",
       kind: "VIDEO" as const
     }];

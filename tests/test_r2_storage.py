@@ -502,6 +502,56 @@ class R2StorageTest(unittest.TestCase):
             self.assertIn("mediaExpired", encrypted_row["metadata_json"])
             self.assertEqual(normal_row["attachment_url"], normal_reference)
 
+    def test_large_video_uses_two_day_cloud_retention_without_shortening_other_media(self):
+        with mock.patch.object(app, "CHITTHI_ATTACHMENT_RETENTION_DAYS", 7), \
+             mock.patch.object(app, "CHITTHI_LARGE_VIDEO_RETENTION_DAYS", 2), \
+             mock.patch.object(app, "CHITTHI_MULTIPART_THRESHOLD_BYTES", 12_000_000):
+            self.assertEqual(app.chitthi_attachment_retention_days("video/mp4", 12_000_001), 2)
+            self.assertEqual(app.chitthi_attachment_retention_days("video/quicktime", 80_000_000), 2)
+            self.assertEqual(app.chitthi_attachment_retention_days("video/mp4", 12_000_000), 7)
+            self.assertEqual(app.chitthi_attachment_retention_days("image/jpeg", 80_000_000), 7)
+            self.assertEqual(app.chitthi_attachment_retention_days("application/pdf", 80_000_000), 7)
+            self.assertEqual(app.chitthi_metadata_retention_days({"mediaMimeType": "video/mp4", "size": 80_000_000, "retentionDays": 7}), 2)
+            self.assertEqual(app.chitthi_metadata_retention_days({"mediaMimeType": "image/jpeg", "size": 80_000_000, "retentionDays": 5}), 5)
+
+    def test_cleanup_honors_per_message_large_video_retention(self):
+        self.addCleanup(app.refresh_storage_paths)
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", ""), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", ""), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", ""), \
+             mock.patch.object(app, "CHITTHI_ATTACHMENT_RETENTION_DAYS", 7):
+            app.refresh_storage_paths()
+            app.init_db()
+            references = [
+                app.save_chat_file_payload(
+                    file_data={"filename": f"encrypted-{index}.ffenc", "mime_type": "application/octet-stream", "payload": payload},
+                    fallback_name=f"encrypted-{index}.ffenc", allowed_mime_types={"application/octet-stream"}, max_bytes=1024,
+                )
+                for index, payload in enumerate((b"large-video", b"small-video", b"large-image"))
+            ]
+            metadata_rows = (
+                {"mediaMimeType": "video/mp4", "size": 20_000_000, "retentionDays": 2},
+                {"mediaMimeType": "video/mp4", "size": 4_000_000, "retentionDays": 7},
+                {"mediaMimeType": "image/jpeg", "size": 20_000_000, "retentionDays": 7},
+            )
+            with app.db() as con:
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('A', 'a@example.com', 'x', 1)")
+                user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_conversations (public_id) VALUES ('conv')")
+                conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                for reference, metadata in zip(references, metadata_rows):
+                    con.execute(
+                        "INSERT INTO chat_messages (conversation_id, sender_id, message_type, attachment_url, metadata_json, created_at) VALUES (?, ?, 'ENCRYPTED_ATTACHMENT', ?, ?, datetime('now', '-3 days'))",
+                        (conversation_id, user_id, reference, json.dumps(metadata)),
+                    )
+            result = app.cleanup_expired_chitthi_attachments(force=True)
+            self.assertEqual(result["deleted"], 1)
+            self.assertIsNone(app.stored_upload_parts(references[0]))
+            self.assertIsNotNone(app.stored_upload_parts(references[1]))
+            self.assertIsNotNone(app.stored_upload_parts(references[2]))
+
     def test_expired_chitthi_cleanup_deletes_r2_object(self):
         self.addCleanup(app.refresh_storage_paths)
         client = FakeR2Client()

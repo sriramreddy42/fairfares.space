@@ -4,6 +4,7 @@ import Dispatch
 import ExpoModulesCore
 import Foundation
 import AVFoundation
+import Photos
 import UIKit
 
 public final class FairFaresCryptoModule: Module {
@@ -66,8 +67,16 @@ public final class FairFaresCryptoModule: Module {
       await FairFaresBackgroundUploadCoordinator.shared.activePartNumbers(uploadId: uploadId)
     }
 
+    AsyncFunction("cancelMultipartUpload") { (uploadId: String) in
+      await FairFaresBackgroundUploadCoordinator.shared.cancelUpload(uploadId: uploadId)
+    }
+
     AsyncFunction("generateVideoThumbnail") { (fileUri: String, maximumBytes: Int) in
       try self.generateVideoThumbnail(fileUri, maximumBytes)
+    }.runOnQueue(cryptoQueue)
+
+    AsyncFunction("generatePhotoLibraryVideoThumbnail") { (assetIdentifier: String, maximumBytes: Int) in
+      try self.generatePhotoLibraryVideoThumbnail(assetIdentifier, maximumBytes)
     }.runOnQueue(cryptoQueue)
 
     AsyncFunction("stageMultipartPart") { (sourceUri: String, destinationUri: String, offset: Double, size: Double) in
@@ -83,7 +92,13 @@ public final class FairFaresCryptoModule: Module {
     }.runOnQueue(cryptoQueue)
 
     AsyncFunction("optimizeVideo") { (operationId: String, sourceUri: String, destinationUri: String) in
-      try await self.optimizeVideo(operationId, sourceUri, destinationUri)
+      try await self.optimizeVideo(operationId, sourceUri, destinationUri, "data-saver")
+    }
+
+    // Kept separate from optimizeVideo so an updated JavaScript bundle can
+    // safely detect this capability when it runs against an older native app.
+    AsyncFunction("prepareVideo") { (operationId: String, sourceUri: String, destinationUri: String, profile: String) in
+      try await self.optimizeVideo(operationId, sourceUri, destinationUri, profile)
     }
 
     AsyncFunction("deriveRecoveryKey") { (passphraseBase64: String, saltBase64: String, iterations: Int, outputBytes: Int) in
@@ -181,7 +196,40 @@ public final class FairFaresCryptoModule: Module {
     guard let image = extractedImage else {
       throw extractionError ?? NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The video has no decodable thumbnail frame."])
     }
-    var uiImage = UIImage(cgImage: image)
+    return try encodeThumbnail(UIImage(cgImage: image), maximumBytes)
+  }
+
+  private func generatePhotoLibraryVideoThumbnail(_ assetIdentifier: String, _ maximumBytes: Int) throws -> String {
+    guard maximumBytes >= 1_000 && maximumBytes <= 12_000, !assetIdentifier.isEmpty else {
+      throw NSError(domain: "FairFaresCrypto", code: 15, userInfo: [NSLocalizedDescriptionKey: "The selected video is unavailable for thumbnail generation."])
+    }
+    guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject,
+          asset.mediaType == .video else {
+      throw NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The photo-library video could not be found."])
+    }
+    let options = PHImageRequestOptions()
+    options.deliveryMode = .fastFormat
+    options.resizeMode = .fast
+    options.isSynchronous = true
+    // Never make the composer wait for an iCloud download. The file-backed
+    // extractor remains the asynchronous fallback once the picker has copied
+    // the selected asset locally.
+    options.isNetworkAccessAllowed = false
+    var poster: UIImage?
+    PHImageManager.default().requestImage(
+      for: asset,
+      targetSize: CGSize(width: 240, height: 240),
+      contentMode: .aspectFit,
+      options: options
+    ) { image, _ in poster = image }
+    guard let poster else {
+      throw NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The photo-library video has no cached preview."])
+    }
+    return try encodeThumbnail(poster, maximumBytes)
+  }
+
+  private func encodeThumbnail(_ sourceImage: UIImage, _ maximumBytes: Int) throws -> String {
+    var uiImage = sourceImage
     var quality: CGFloat = 0.52
     var width: CGFloat = min(240, uiImage.size.width)
     for _ in 0..<7 {
@@ -199,7 +247,7 @@ public final class FairFaresCryptoModule: Module {
     throw NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The video thumbnail could not be reduced safely."])
   }
 
-  private func optimizeVideo(_ operationId: String, _ sourceValue: String, _ destinationValue: String) async throws -> [String: Any] {
+  private func optimizeVideo(_ operationId: String, _ sourceValue: String, _ destinationValue: String, _ profile: String) async throws -> [String: Any] {
     defer { finish(operationId) }
     let source = try url(sourceValue), destination = try url(destinationValue)
     guard FileManager.default.fileExists(atPath: source.path) else {
@@ -212,8 +260,15 @@ public final class FairFaresCryptoModule: Module {
     }
     try FileManager.default.createDirectory(at: preparedRoot, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
     try? FileManager.default.removeItem(at: destination)
+    guard profile == "hd" || profile == "data-saver" else {
+      throw NSError(domain: "FairFaresCrypto", code: 26, userInfo: [NSLocalizedDescriptionKey: "Invalid video preparation profile."])
+    }
     let asset = AVURLAsset(url: source)
-    guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else {
+    // Apple's H.264 dimensional presets tone-map HDR/Dolby Vision sources to
+    // SDR. This gives chat recipients consistent color on SDR and HDR screens,
+    // unlike passthrough/HEVC presets which preserve the source HDR metadata.
+    let preset = profile == "hd" ? AVAssetExportPreset1920x1080 : AVAssetExportPreset1280x720
+    guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
       throw NSError(domain: "FairFaresCrypto", code: 21, userInfo: [NSLocalizedDescriptionKey: "This video format cannot be optimized."])
     }
     session.outputURL = destination
@@ -223,7 +278,10 @@ public final class FairFaresCryptoModule: Module {
     session.outputFileType = .mp4
     session.shouldOptimizeForNetworkUse = true
     session.directoryForTemporaryFiles = preparedRoot
-    session.fileLengthLimit = 100_000_000
+    // Never use AVAssetExportSession.fileLengthLimit for chat media: Apple may
+    // satisfy it by ending the export early, yielding a valid but truncated
+    // movie. Export the complete asset, then let JavaScript's authenticated
+    // size gate reject and delete an output above the account limit.
     let monitor = Task {
       while !Task.isCancelled {
         if self.isCancelled(operationId) { session.cancelExport() }

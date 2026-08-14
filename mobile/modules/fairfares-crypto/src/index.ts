@@ -13,11 +13,14 @@ type FairFaresCryptoNativeModule = {
   deriveRecoveryKey(passphraseBase64: string, saltBase64: string, iterations: number, outputBytes: number): Promise<string>;
   uploadMultipartPart(uploadId: string, partNumber: number, uploadUrl: string, headers: Record<string, string>, fileUri: string, expectedSize: number): Promise<{ status: number; etag: string }>;
   activeMultipartPartNumbers?(uploadId: string): Promise<number[]>;
+  cancelMultipartUpload?(uploadId: string): Promise<void>;
   generateVideoThumbnail?(fileUri: string, maximumBytes: number): Promise<string>;
+  generatePhotoLibraryVideoThumbnail?(assetIdentifier: string, maximumBytes: number): Promise<string>;
   stageMultipartPart?(sourceUri: string, destinationUri: string, offset: number, size: number): Promise<{ size: number; md5Base64: string }>;
   appendFile?(sourceUri: string, destinationUri: string, expectedOffset: number, expectedSize: number): Promise<{ outputSize: number }>;
   sha256File?(fileUri: string, expectedSize: number): Promise<{ size: number; sha256Base64: string }>;
   optimizeVideo?(operationId: string, sourceUri: string, destinationUri: string): Promise<{ outputSize: number; mimeType: string }>;
+  prepareVideo?(operationId: string, sourceUri: string, destinationUri: string, profile: "hd" | "data-saver"): Promise<{ outputSize: number; mimeType: string }>;
   cancel(operationId: string): Promise<void>;
 };
 
@@ -71,6 +74,7 @@ export const FairFaresCrypto = {
   nativeFileAssemblyAvailable: Boolean(nativeModule?.appendFile && nativeModule?.sha256File),
   backgroundTaskInspectionAvailable: Boolean(nativeModule?.activeMultipartPartNumbers),
   videoOptimizationAvailable: Boolean(nativeModule?.optimizeVideo),
+  videoPreparationAvailable: Boolean(nativeModule?.prepareVideo),
   encryptFile: (sourceUri: string, destinationUri: string, keyBase64: string, noncePrefixBase64: string, chunkSize: number, onProgress?: (progress: number) => void, signal?: AbortSignal) => {
     if (!nativeModule) throw new Error("Native attachment cryptography is unavailable.");
     return runWithProgress((id) => nativeModule.encryptFile(id, sourceUri, destinationUri, keyBase64, noncePrefixBase64, chunkSize), onProgress, signal);
@@ -93,9 +97,17 @@ export const FairFaresCrypto = {
     if (!nativeModule?.activeMultipartPartNumbers || Platform.OS !== "ios") return Promise.resolve([]);
     return nativeModule.activeMultipartPartNumbers(uploadId);
   },
+  cancelMultipartUpload: (uploadId: string) => {
+    if (!nativeModule?.cancelMultipartUpload || Platform.OS !== "ios") return Promise.resolve();
+    return nativeModule.cancelMultipartUpload(uploadId);
+  },
   generateVideoThumbnail: (fileUri: string, maximumBytes = 5_000) => {
     if (!nativeModule?.generateVideoThumbnail || Platform.OS !== "ios") return Promise.reject(new Error("Native video thumbnail generation is unavailable."));
     return nativeModule.generateVideoThumbnail(fileUri, maximumBytes);
+  },
+  generatePhotoLibraryVideoThumbnail: (assetIdentifier: string, maximumBytes = 5_000) => {
+    if (!nativeModule?.generatePhotoLibraryVideoThumbnail || Platform.OS !== "ios") return Promise.reject(new Error("Native photo-library video thumbnail generation is unavailable."));
+    return nativeModule.generatePhotoLibraryVideoThumbnail(assetIdentifier, maximumBytes);
   },
   stageMultipartPart: (sourceUri: string, destinationUri: string, offset: number, size: number) => {
     if (!nativeModule?.stageMultipartPart || Platform.OS !== "ios") return Promise.reject(new Error("Native multipart staging is unavailable."));
@@ -112,6 +124,10 @@ export const FairFaresCrypto = {
   optimizeVideo: (sourceUri: string, destinationUri: string, onProgress?: (progress: number) => void, signal?: AbortSignal) => {
     if (!nativeModule?.optimizeVideo || Platform.OS !== "ios") return Promise.reject(new Error("Native video optimization is unavailable."));
     return runWithProgress((id) => nativeModule.optimizeVideo!(id, sourceUri, destinationUri), onProgress, signal);
+  },
+  prepareVideo: (sourceUri: string, destinationUri: string, profile: "hd" | "data-saver", onProgress?: (progress: number) => void, signal?: AbortSignal) => {
+    if (!nativeModule?.prepareVideo || Platform.OS !== "ios") return Promise.reject(new Error("Native compatible video preparation is unavailable."));
+    return runWithProgress((id) => nativeModule.prepareVideo!(id, sourceUri, destinationUri, profile), onProgress, signal);
   },
   cancel: (id: string) => nativeModule?.cancel(id) || Promise.resolve()
 };

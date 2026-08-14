@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import {
   absoluteAssetUrl,
+  authenticatedAssetSource,
   addChatGroupMember,
   blockChatUser,
   createChatCommunity,
@@ -61,6 +62,7 @@ import {
   sendDirectEncryptedChatAttachment,
   sendChatRichMessage,
   transferChatGroupOwnership,
+  updateChatGroupDetails,
   updateChatGroupPhoto,
   updateChatGroupMemberRole,
   updateChatTyping,
@@ -96,6 +98,7 @@ type Props = {
   onClearPendingGroupInvite?: () => void;
   onClearNotificationConversation?: () => void;
   onThreadModeChange?: (active: boolean) => void;
+  onMediaTransferActiveChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
   onCardMessageSent?: (context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) => void;
 };
@@ -103,7 +106,7 @@ type Props = {
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
-type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver" };
+type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; pickerAssetId?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver" };
 // JavaScript chunk crypto is only a compatibility path. Keeping this ceiling
 // conservative prevents iOS from terminating Expo Go or a stale dev client
 // under combined picker, thumbnail, crypto and React Native memory pressure.
@@ -302,7 +305,9 @@ async function readCachedChatMessages(userId: number, conversationId: string) {
     const startedAt = Date.now();
     const parsed = JSON.parse(stored);
     const messages = Array.isArray(parsed?.messages) ? parsed.messages : Array.isArray(parsed) ? parsed : [];
-    const safeMessages = recentChatMessages(messages as ChatMessage[]).map(safeCachedChatMessage);
+    const safeMessages = recentChatMessages(messages as ChatMessage[])
+      .filter((message) => !(message.id < 0 && message.metadata?.uploading))
+      .map(safeCachedChatMessage);
     const durationMs = Date.now() - startedAt;
     if (durationMs >= 100) logDevelopmentPerformance("chat-cache-read", {
       durationMs,
@@ -317,7 +322,12 @@ async function readCachedChatMessages(userId: number, conversationId: string) {
 
 async function writeCachedChatMessages(userId: number, conversationId: string, messages: ChatMessage[]) {
   if (!userId || !conversationId || !messages.length) return;
-  const recent = recentChatMessages(messages).map(safeCachedChatMessage);
+  // Upload rows are process-local UI state. Persisting their negative IDs can
+  // resurrect a stale duplicate after the server message has already landed,
+  // especially when an earlier AsyncStorage write finishes out of order.
+  const recent = recentChatMessages(messages)
+    .filter((message) => !(message.id < 0 && message.metadata?.uploading))
+    .map(safeCachedChatMessage);
   if (!recent.length) return;
   try {
     const serialized = JSON.stringify({
@@ -478,7 +488,7 @@ function InitialsAvatar({ photoUrl, label, imageStyle, textStyle }: {
   const [failedPhotoUrl, setFailedPhotoUrl] = useState("");
   useEffect(() => setFailedPhotoUrl(""), [resolvedPhotoUrl]);
   if (resolvedPhotoUrl && failedPhotoUrl !== resolvedPhotoUrl) {
-    return <Image source={{ uri: resolvedPhotoUrl }} style={imageStyle} onError={() => setFailedPhotoUrl(resolvedPhotoUrl)} />;
+    return <Image source={authenticatedAssetSource(resolvedPhotoUrl)} style={imageStyle} onError={() => setFailedPhotoUrl(resolvedPhotoUrl)} />;
   }
   return <Text style={textStyle}>{initials(label)}</Text>;
 }
@@ -1021,13 +1031,76 @@ function CircularDownloadProgress({ progress }: { progress: number }) {
 const mediaProgressValues = new Map<number, number>();
 const mediaProgressListeners = new Map<number, Set<(progress: number) => void>>();
 
+type VideoSendWaiter = {
+  signal: AbortSignal;
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  abort: () => void;
+};
+
+let videoSendPipelineBusy = false;
+const videoSendPipelineWaiters: VideoSendWaiter[] = [];
+
+function videoSendCancelledError() {
+  const error = new Error("Video sending was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function releaseVideoSendPipeline() {
+  while (videoSendPipelineWaiters.length) {
+    const waiter = videoSendPipelineWaiters.shift()!;
+    waiter.signal.removeEventListener("abort", waiter.abort);
+    if (waiter.signal.aborted) {
+      waiter.reject(videoSendCancelledError());
+      continue;
+    }
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      releaseVideoSendPipeline();
+    });
+    return;
+  }
+  videoSendPipelineBusy = false;
+}
+
+function acquireVideoSendPipeline(signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject(videoSendCancelledError());
+  return new Promise<() => void>((resolve, reject) => {
+    if (!videoSendPipelineBusy) {
+      videoSendPipelineBusy = true;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        releaseVideoSendPipeline();
+      });
+      return;
+    }
+    const waiter: VideoSendWaiter = {
+      signal,
+      resolve,
+      reject,
+      abort: () => {
+        const index = videoSendPipelineWaiters.indexOf(waiter);
+        if (index >= 0) videoSendPipelineWaiters.splice(index, 1);
+        reject(videoSendCancelledError());
+      }
+    };
+    videoSendPipelineWaiters.push(waiter);
+    signal.addEventListener("abort", waiter.abort, { once: true });
+  });
+}
+
 function publishMediaProgress(messageId: number, progress: number | null) {
   if (progress === null) mediaProgressValues.delete(messageId);
   else mediaProgressValues.set(messageId, progress);
   mediaProgressListeners.get(messageId)?.forEach((listener) => listener(progress ?? 0));
 }
 
-function MediaDownloadProgress({ messageId }: { messageId: number }) {
+function useMediaProgress(messageId: number) {
   const [progress, setProgress] = useState(() => mediaProgressValues.get(messageId) || 0);
   useEffect(() => {
     const listeners = mediaProgressListeners.get(messageId) || new Set<(progress: number) => void>();
@@ -1039,7 +1112,28 @@ function MediaDownloadProgress({ messageId }: { messageId: number }) {
       if (!listeners.size) mediaProgressListeners.delete(messageId);
     };
   }, [messageId]);
-  return <CircularDownloadProgress progress={progress} />;
+  return progress;
+}
+
+function MediaDownloadProgress({ messageId }: { messageId: number }) {
+  return <CircularDownloadProgress progress={useMediaProgress(messageId)} />;
+}
+
+function MediaUploadCancelProgress({ messageId }: { messageId: number }) {
+  const progress = useMediaProgress(messageId);
+  const segments = 24;
+  const activeSegments = Math.round(Math.max(0, Math.min(1, progress)) * segments);
+  return (
+    <View style={styles.downloadProgressCircle}>
+      {Array.from({ length: segments }, (_, index) => (
+        <View key={index} style={[styles.downloadProgressSegment, index < activeSegments && styles.uploadProgressSegmentActive, { transform: [{ rotate: `${index * (360 / segments)}deg` }, { translateY: -25 }] }]} />
+      ))}
+      <View style={styles.videoUploadCancelCircle}>
+        <Text style={styles.videoUploadCancelText}>×</Text>
+        <Text style={styles.videoUploadPercentText}>{Math.round(progress * 100)}%</Text>
+      </View>
+    </View>
+  );
 }
 
 function NativeKeyboardTrackingBody({ bottomSafeArea, children }: { bottomSafeArea: number; children: React.ReactNode }) {
@@ -1062,7 +1156,7 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
   return <View style={styles.threadKeyboardBody}>{children}</View>;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onUnreadCountChange, onCardMessageSent }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" as const };
   // A stale development client may expose native encryption but not the newer
@@ -1107,6 +1201,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const outboxFlushRunning = useRef(false);
   const multipartResumeStateRef = useRef({ userId: 0, running: false, lastAttemptAt: 0 });
   const attachmentCryptoAbortRef = useRef<AbortController | null>(null);
+  const activeAttachmentSendsRef = useRef(new Map<number, { controller: AbortController; conversationId: string }>());
+  const pendingMediaMessagesRef = useRef(new Map<string, ChatMessage[]>());
+  const activeMediaTransferCountRef = useRef(0);
+  const activeAttachmentSendKeysRef = useRef(new Set<string>());
+  const activeTextSendKeysRef = useRef(new Set<string>());
+  const nextOptimisticAttachmentIdRef = useRef(-Date.now());
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
@@ -1173,6 +1273,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+
+  // Upload bubbles are local, ephemeral UI records (negative IDs). They must
+  // never survive an account/chat transition or Fast Refresh after their
+  // owning async operation has disappeared.
+  useEffect(() => {
+    setMessages((current) => current.filter((message) => {
+      if (!(message.id < 0 && message.metadata?.uploading)) return true;
+      const operation = activeAttachmentSendsRef.current.get(message.id);
+      return operation?.conversationId === activeConversationId;
+    }));
+  }, [currentUserId, activeConversationId]);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
@@ -1184,6 +1295,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
   const [groupMemberSearch, setGroupMemberSearch] = useState("");
+  const [groupDetailsEditing, setGroupDetailsEditing] = useState(false);
+  const [groupDetailsSaving, setGroupDetailsSaving] = useState(false);
+  const [groupDetailsDraft, setGroupDetailsDraft] = useState({ name: "", description: "", area: "" });
   const [failedGroupPhotoUrl, setFailedGroupPhotoUrl] = useState("");
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
   const [identityRecoveryWarning, setIdentityRecoveryWarning] = useState("");
@@ -1267,6 +1381,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     setFailedGroupPhotoUrl("");
   }, [activeGroupPhotoUrl]);
+  useEffect(() => {
+    setGroupDetailsEditing(false);
+  }, [activeConversation?.communityId]);
   const filteredGroupMembers = useMemo(() => {
     const query = groupMemberSearch.trim().toLowerCase();
     const roleRank: Record<ChatGroupMember["role"], number> = { OWNER: 0, ADMIN: 1, MEMBER: 2 };
@@ -1393,7 +1510,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function replaceThreadMessages(conversationId: string, nextMessages: ChatMessage[]) {
     if (activeConversationIdRef.current && activeConversationIdRef.current !== conversationId) return;
     messagesConversationIdRef.current = conversationId;
-    setMessages(nextMessages);
+    const pending = pendingMediaMessagesRef.current.get(conversationId) || [];
+    setMessages(mergeChatMessages(nextMessages, pending));
   }
 
   function mergeThreadMessages(conversationId: string, incomingMessages: ChatMessage[]) {
@@ -1402,10 +1520,51 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     messagesConversationIdRef.current = conversationId;
     setMessages((current) => {
       const baseMessages = sameConversation ? current : [];
-      const merged = mergeChatMessages(baseMessages, incomingMessages);
+      const pending = pendingMediaMessagesRef.current.get(conversationId) || [];
+      const merged = mergeChatMessages(mergeChatMessages(baseMessages, incomingMessages), pending);
       messageCache.current.set(conversationId, merged);
       return merged;
     });
+  }
+
+  function upsertPendingMediaMessage(conversationId: string, pendingMessage: ChatMessage) {
+    const existing = pendingMediaMessagesRef.current.get(conversationId) || [];
+    pendingMediaMessagesRef.current.set(conversationId, [
+      ...existing.filter((message) => message.id !== pendingMessage.id),
+      pendingMessage,
+    ]);
+  }
+
+  function updatePendingMediaMessage(conversationId: string, messageId: number, update: (message: ChatMessage) => ChatMessage) {
+    const existing = pendingMediaMessagesRef.current.get(conversationId) || [];
+    pendingMediaMessagesRef.current.set(conversationId, existing.map((message) => message.id === messageId ? update(message) : message));
+  }
+
+  function removePendingMediaMessage(conversationId: string, messageId: number) {
+    const remaining = (pendingMediaMessagesRef.current.get(conversationId) || []).filter((message) => message.id !== messageId);
+    if (remaining.length) pendingMediaMessagesRef.current.set(conversationId, remaining);
+    else pendingMediaMessagesRef.current.delete(conversationId);
+  }
+
+  function cancelPendingMediaUpload(messageId: number) {
+    const operation = activeAttachmentSendsRef.current.get(messageId);
+    if (!operation) {
+      logDevelopmentPerformance("media-cancel-missing-operation", { messageId }, true);
+      return;
+    }
+    // Cancellation is optimistic just like sending: acknowledge the tap
+    // immediately, then let the same AbortSignal unwind preparation, crypto,
+    // native URLSession tasks and the server multipart authorization.
+    removePendingMediaMessage(operation.conversationId, messageId);
+    if (activeConversationIdRef.current === operation.conversationId) {
+      setMessages((current) => current.filter((message) => message.id !== messageId));
+    }
+    publishMediaProgress(messageId, null);
+    logDevelopmentPerformance("media-cancel-requested", {
+      conversationId: operation.conversationId,
+      messageId,
+    });
+    operation.controller.abort();
   }
 
   function clearThreadMessages() {
@@ -1602,6 +1761,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setLoadingMoreConversations(false);
       attachmentCryptoAbortRef.current?.abort();
       attachmentCryptoAbortRef.current = null;
+      activeAttachmentSendsRef.current.forEach(({ controller }) => controller.abort());
+      activeAttachmentSendsRef.current.clear();
+      pendingMediaMessagesRef.current.clear();
+      activeAttachmentSendKeysRef.current.clear();
       messageCache.current.clear();
       attachmentMaterializationJobs.current.clear();
       downloadingMediaMessageIdsRef.current.clear();
@@ -2586,7 +2749,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const cachedMessages = await loadCachedThreadMessages(conversation.id);
     if (messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== conversation.id) return;
     showCachedThreadMessages(conversation.id, cachedMessages);
-    if (!cachedMessages.length) clearThreadMessages();
+    if (!cachedMessages.length) replaceThreadMessages(conversation.id, []);
     setHasMoreMessages(false);
     setNextBeforeMessageId(0);
     setThreadLoading(!cachedMessages.length);
@@ -2698,8 +2861,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const operationUserId = currentUserId;
     const operationConversationId = activeConversationId;
     const ensureSendContext = () => {
-      if (!operationUserId || messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== operationConversationId) {
-        throw new Error("Attachment sending was cancelled because the account or conversation changed.");
+      if (!operationUserId || messengerUserIdRef.current !== operationUserId) {
+        throw new Error("Attachment sending was cancelled because the account changed.");
       }
     };
     let attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
@@ -2728,68 +2891,49 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         sizeMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
         quality: selectedVideo.videoQuality || "original",
       });
-      if (selectedVideo?.videoQuality === "data-saver") {
-        if (!FairFaresCrypto.videoOptimizationAvailable || !FileSystem.cacheDirectory) {
-          Alert.alert("Development build required", "Data saver needs the latest FairFares iOS build. Choose HD quality or install the newest build.");
-          return;
-        }
-        setAttachmentSending(true);
-        setAttachmentStatus("Preparing video… 0%");
-        const preparationAbort = new AbortController();
-        attachmentCryptoAbortRef.current = preparationAbort;
-        const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
-        try {
-          const freeBytes = await FileSystem.getFreeDiskStorageAsync();
-          if (Number.isFinite(freeBytes) && freeBytes < selectedVideo.size + 32 * 1024 * 1024) {
-            throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
-          }
-          const preparationStartedAt = Date.now();
-          const optimized = await FairFaresCrypto.optimizeVideo(
-            selectedVideo.uri,
-            optimizedUri,
-            attachmentProgressReporter("Preparing video…"),
-            preparationAbort.signal
-          );
-          ensureSendContext();
-          logDevelopmentPerformance("media-prepare-complete", {
-            durationMs: Date.now() - preparationStartedAt,
-            inputMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
-            outputMb: Number((optimized.outputSize / 1_000_000).toFixed(1)),
-          });
-          if (optimized.outputSize > 0 && optimized.outputSize < selectedVideo.size) {
-            const thumbnailBase64 = await createLightweightVideoThumbnail(optimizedUri).catch(() => selectedVideo.thumbnailBase64 || "");
-            const preparedVideo: PendingChatAttachment = {
-              ...selectedVideo,
-              uri: optimizedUri,
-              name: selectedVideo.name.replace(/\.[^.]+$/, "") + ".mp4",
-              mimeType: optimized.mimeType || "video/mp4",
-              size: optimized.outputSize,
-              thumbnailBase64,
-              ownedCacheFile: true,
-              videoQuality: "data-saver"
-            };
-            releasePendingAttachments([selectedVideo]);
-            attachments = [preparedVideo];
-            setPendingAttachment(preparedVideo);
-          } else {
-            await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
-            const originalVideo = { ...selectedVideo, videoQuality: "original" as const };
-            attachments = [originalVideo];
-            setPendingAttachment(originalVideo);
-          }
-        } catch (error) {
-          await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
-          setAttachmentStatus("");
-          Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
-          return;
-        } finally {
-          attachmentCryptoAbortRef.current = null;
-          setAttachmentSending(false);
-        }
+      const shouldPrepareVideo = Boolean(selectedVideo && Platform.OS === "ios" && FairFaresCrypto.videoPreparationAvailable);
+      if (selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo) &&
+          ((!FairFaresCrypto.videoPreparationAvailable && !FairFaresCrypto.videoOptimizationAvailable) || !FileSystem.cacheDirectory)) {
+        Alert.alert("Development build required", "Video preparation needs the latest FairFares iOS build. Install the newest build or choose HD in the current build.");
+        return;
       }
+      const attachmentSendKey = attachments.map((attachment) => `${attachment.kind}:${attachment.uri}`).join("|");
+      if (activeAttachmentSendKeysRef.current.has(attachmentSendKey)) return;
+      activeAttachmentSendKeysRef.current.add(attachmentSendKey);
+      activeMediaTransferCountRef.current += 1;
+      if (activeMediaTransferCountRef.current === 1) {
+        logDevelopmentPerformance("media-navigation-retention-start", {
+          conversationId: operationConversationId,
+          kind: attachments[0]?.kind || "unknown",
+        });
+        onMediaTransferActiveChange?.(true);
+      }
+      let mediaTransferFinished = false;
+      const finishMediaTransfer = () => {
+        if (mediaTransferFinished) return;
+        mediaTransferFinished = true;
+        activeMediaTransferCountRef.current = Math.max(0, activeMediaTransferCountRef.current - 1);
+        if (activeMediaTransferCountRef.current === 0) {
+          logDevelopmentPerformance("media-navigation-retention-end", {
+            conversationId: operationConversationId,
+          });
+          onMediaTransferActiveChange?.(false);
+        }
+      };
+      // Transfer visual ownership immediately from the composer to the send
+      // operation. Keeping this card mounted throughout a long native HD
+      // preparation made the selected video appear duplicated once the
+      // optimistic bubble committed.
+      setPendingAttachment(null);
+      setPendingImages([]);
       setAttachmentSending(true);
+      const mediaSendAbort = new AbortController();
+      attachmentCryptoAbortRef.current = mediaSendAbort;
       const optimisticAttachment = attachments.length === 1 ? attachments[0] : null;
-      const optimisticAttachmentId = optimisticAttachment ? -Date.now() : 0;
+      const optimisticAttachmentId = optimisticAttachment ? nextOptimisticAttachmentIdRef.current-- : 0;
+      if (optimisticAttachmentId) activeAttachmentSendsRef.current.set(optimisticAttachmentId, { controller: mediaSendAbort, conversationId: operationConversationId });
+      let optimisticThumbnailPromise: Promise<string> | null = null;
+      let releaseVideoPipeline: (() => void) | null = null;
       if (optimisticAttachment) {
         const optimisticMessage: ChatMessage = {
           id: optimisticAttachmentId,
@@ -2800,30 +2944,138 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           text: cleanMessage,
           attachmentUrl: optimisticAttachment.uri,
           metadata: {
-            encrypted: true,
-            uploading: true,
-            kind: optimisticAttachment.kind,
-            fileName: optimisticAttachment.name,
-            mimeType: optimisticAttachment.mimeType,
+            encrypted: true, uploading: true, kind: optimisticAttachment.kind,
+            fileName: optimisticAttachment.name, mimeType: optimisticAttachment.mimeType,
             size: optimisticAttachment.size,
             decryptedDataUrl: optimisticAttachment.kind === "IMAGE" ? optimisticAttachment.uri : undefined,
             thumbnailDataUrl: optimisticAttachment.thumbnailBase64 ? `data:image/jpeg;base64,${optimisticAttachment.thumbnailBase64}` : undefined,
           },
-          createdAt: new Date().toISOString(),
-          deliveredAt: "",
-          readAt: "",
-          editedAt: "",
-          deletedAt: "",
-          canEdit: false,
-          status: "pending",
+          createdAt: new Date().toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
+          canEdit: false, status: "pending",
         };
-        setMessages((current) => [...current, optimisticMessage]);
-        setPendingAttachment(null);
-        setPendingImages([]);
+        upsertPendingMediaMessage(operationConversationId, optimisticMessage);
+        publishMediaProgress(optimisticAttachmentId, 0);
+        messagesConversationIdRef.current = operationConversationId;
+        setMessages((current) => [...current.filter((message) => message.id !== optimisticAttachmentId), optimisticMessage]);
+        if (optimisticAttachment.kind === "VIDEO" && !optimisticAttachment.thumbnailBase64) {
+          optimisticThumbnailPromise = optimisticAttachment.pickerAssetId
+            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(optimisticAttachment.pickerAssetId).catch(() => createLightweightVideoThumbnail(optimisticAttachment.uri))
+            : createLightweightVideoThumbnail(optimisticAttachment.uri);
+          void optimisticThumbnailPromise.then((thumbnailBase64) => {
+            if (!thumbnailBase64) return;
+            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+              ...message,
+              metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` },
+            }));
+            setMessages((current) => current.map((message) => message.id === optimisticAttachmentId
+              ? { ...message, metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` } }
+              : message));
+          }).catch(() => undefined);
+        }
         setMessageText("");
         scrollThreadToLatest(false);
       }
-      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "Sending video…" : "Sending file…");
+      if (selectedVideo) {
+        try {
+          // Keep the UI fully concurrent while bounding expensive native video
+          // preparation/encryption/upload to one pipeline. Every selection has
+          // its own bubble and AbortController; cancelling one never touches a
+          // different queued or active video.
+          releaseVideoPipeline = await acquireVideoSendPipeline(mediaSendAbort.signal);
+        } catch {
+          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          if (activeConversationIdRef.current === operationConversationId) {
+            setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
+          }
+          publishMediaProgress(optimisticAttachmentId, null);
+          releasePendingAttachments([selectedVideo]);
+          setAttachmentSending(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          finishMediaTransfer();
+          return;
+        }
+      }
+      if (selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo)) {
+        setAttachmentStatus("");
+        const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+        try {
+          const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+          if (Number.isFinite(freeBytes) && freeBytes < selectedVideo.size + 32 * 1024 * 1024) {
+            throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
+          }
+          const preparationStartedAt = Date.now();
+          const profile = selectedVideo.videoQuality === "data-saver" ? "data-saver" : "hd";
+          const optimized = FairFaresCrypto.videoPreparationAvailable
+            ? await FairFaresCrypto.prepareVideo(selectedVideo.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal)
+            : await FairFaresCrypto.optimizeVideo(selectedVideo.uri, optimizedUri, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal);
+          ensureSendContext();
+          logDevelopmentPerformance("media-prepare-complete", {
+            durationMs: Date.now() - preparationStartedAt,
+            inputMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
+            outputMb: Number((optimized.outputSize / 1_000_000).toFixed(1)),
+          });
+          if (optimized.outputSize > 0) {
+            if (optimized.outputSize > effectiveAttachmentLimitBytes) {
+              throw new Error(`The prepared video exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
+            }
+            const preparedThumbnail = await createLightweightVideoThumbnail(optimizedUri).catch(() => "");
+            const thumbnailBase64 = preparedThumbnail || selectedVideo.thumbnailBase64 || await optimisticThumbnailPromise?.catch(() => "") || "";
+            const preparedVideo: PendingChatAttachment = {
+              ...selectedVideo,
+              uri: optimizedUri,
+              name: selectedVideo.name.replace(/\.[^.]+$/, "") + ".mp4",
+              mimeType: optimized.mimeType || "video/mp4",
+              size: optimized.outputSize,
+              thumbnailBase64,
+              ownedCacheFile: true,
+              // Keep the existing persisted/UI value for backward-compatible
+              // cached drafts; "original" is presented to users as HD.
+              videoQuality: profile === "hd" ? "original" : "data-saver"
+            };
+            releasePendingAttachments([selectedVideo]);
+            attachments = [preparedVideo];
+            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+              ...message,
+              attachmentUrl: preparedVideo.uri,
+              metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
+            }));
+            setMessages((current) => current.map((message) => message.id === optimisticAttachmentId ? {
+              ...message,
+              attachmentUrl: preparedVideo.uri,
+              metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
+            } : message));
+          } else {
+            await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+            const originalVideo = { ...selectedVideo, videoQuality: "original" as const };
+            attachments = [originalVideo];
+          }
+        } catch (error) {
+          await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          setAttachmentStatus("");
+          const preparationWasCancelled = mediaSendAbort.signal.aborted || (error instanceof Error && error.name === "AbortError");
+          const preparationConversationStillActive = activeConversationIdRef.current === operationConversationId;
+          if (preparationConversationStillActive) setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
+          publishMediaProgress(optimisticAttachmentId, null);
+          if (!preparationWasCancelled && preparationConversationStillActive) {
+            setPendingAttachment(selectedVideo);
+            Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
+          } else {
+            releasePendingAttachments([selectedVideo]);
+          }
+          setAttachmentSending(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          releaseVideoPipeline?.();
+          releaseVideoPipeline = null;
+          finishMediaTransfer();
+          return;
+        }
+      }
+      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "" : "Sending file…");
       try {
         await allowBusyUiToPaint();
         ensureSendContext();
@@ -2848,8 +3100,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const caption = index === 0 ? cleanMessage : "";
           let fileBase64 = "";
           let encryptedTemporaryUri = "";
-          const cryptoAbort = new AbortController();
-          attachmentCryptoAbortRef.current = cryptoAbort;
           const encryptionStartedAt = Date.now();
           const encrypted = Platform.OS === "web"
             ? (() => undefined)()
@@ -2858,15 +3108,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata },
                 identity,
                 keyPayload.keys,
-                attachmentProgressReporter(`Encrypting ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"}…`),
+                attachmentProgressReporter(`Encrypting ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"}…`, optimisticAttachmentId, selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo) ? 0.35 : 0, 0.62),
                 cryptoThrottleForSize(attachment.size),
-                cryptoAbort.signal
+                mediaSendAbort.signal
               );
           if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-encryption-complete", {
             durationMs: Date.now() - encryptionStartedAt,
             sizeMb: Number((attachment.size / 1_000_000).toFixed(1)),
           });
-          attachmentCryptoAbortRef.current = null;
           if (Platform.OS === "web") {
             fileBase64 = await new Promise<string>(async (resolve, reject) => {
                 try {
@@ -2890,7 +3139,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // preview; retain it for photos and files that lack that treatment.
             setAttachmentStatus(attachment.kind === "VIDEO" ? "" : `Uploading ${attachment.kind === "IMAGE" ? "photo" : "file"} securely…`);
             const uploadStartedAt = Date.now();
-            response = await sendDirectEncryptedChatAttachment(operationUserId, activeConversationId, encryptedPayload, attachment.mimeType, index + 1 < attachments.length);
+            response = await sendDirectEncryptedChatAttachment(
+              operationUserId,
+              activeConversationId,
+              encryptedPayload,
+              attachment.mimeType,
+              index + 1 < attachments.length,
+              mediaSendAbort.signal,
+              (progress) => publishMediaProgress(optimisticAttachmentId, 0.62 + progress * 0.36)
+            );
             if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-upload-complete", {
               durationMs: Date.now() - uploadStartedAt,
               totalDurationMs: Date.now() - attachmentOperationStartedAt,
@@ -2901,6 +3158,34 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             if (encryptedTemporaryUri && encryptedUploadFinalized) deleteChunkedTemporaryFile(encryptedTemporaryUri);
           }
           ensureSendContext();
+          const acceptedMessage: ChatMessage = {
+            ...response.message,
+            type: attachment.kind,
+            text: caption,
+            metadata: {
+              ...response.message.metadata,
+              encrypted: true,
+              kind: attachment.kind,
+              fileName: attachment.name,
+              mimeType: attachment.mimeType,
+              decryptedDataUrl: Platform.OS === "web"
+                ? `data:${attachment.mimeType};base64,${fileBase64}`
+                : attachment.kind === "IMAGE" ? attachment.uri : undefined,
+              thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              ...mediaMetadata
+            }
+          };
+          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          // Server acceptance is the reconciliation boundary. Do not keep the
+          // optimistic row visible while a potentially 100 MB local cache copy
+          // runs; realtime refresh may already have rendered the server row.
+          if (activeConversationIdRef.current === operationConversationId) {
+            setMessages((current) => mergeThreadHistoryMessages(
+              current.filter((item) => item.id !== optimisticAttachmentId),
+              [acceptedMessage]
+            ));
+          }
+          publishMediaProgress(optimisticAttachmentId, null);
           let senderLocalUri = "";
           if (Platform.OS !== "web") {
             const localUri = encryptedAttachmentLocalUri(currentUserId, response.message.id, attachment.name, attachment.mimeType);
@@ -2916,44 +3201,66 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 .catch(() => undefined);
             }
           }
-          sentMessages.push({ ...response.message, type: attachment.kind, text: caption, metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType, decryptedDataUrl: Platform.OS === "web" ? `data:${attachment.mimeType};base64,${fileBase64}` : attachment.kind === "IMAGE" ? senderLocalUri : undefined, thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined, ...mediaMetadata } });
-          setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "Sending video…" : "Sending file…");
+          sentMessages.push({
+            ...acceptedMessage,
+            metadata: {
+              ...acceptedMessage.metadata,
+              decryptedDataUrl: Platform.OS === "web"
+                ? `data:${attachment.mimeType};base64,${fileBase64}`
+                : attachment.kind === "IMAGE" ? senderLocalUri || attachment.uri : undefined
+            }
+          });
+          setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "" : "Sending file…");
         }
-        setMessages((current) => mergeThreadHistoryMessages(
-          current.filter((item) => item.id !== optimisticAttachmentId),
-          sentMessages
-        ));
+        if (activeConversationIdRef.current === operationConversationId) {
+          setMessages((current) => mergeThreadHistoryMessages(current.filter((item) => item.id !== optimisticAttachmentId), sentMessages));
+        }
+        publishMediaProgress(optimisticAttachmentId, null);
         scrollThreadToLatest(false);
         const sentKind = attachments[0].kind;
         releasePendingAttachments(attachments);
-        setPendingAttachment(null);
-        setPendingImages([]);
         setPendingPhotoPreviewOpen(false);
-        setMessageText("");
-        setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
-        setTimeout(() => setAttachmentStatus(""), 1600);
+        if (activeConversationIdRef.current === operationConversationId) {
+          setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
+          setTimeout(() => setAttachmentStatus(""), 1600);
+        }
         if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
         onClearPendingPost?.();
         onClearPendingRide?.();
         void refreshMessenger({ showLoader: false, showError: false });
       } catch (error) {
+        const sendWasCancelled = mediaSendAbort.signal.aborted || (error instanceof Error && error.name === "AbortError");
         if (attachments[0]?.kind === "VIDEO") logDevelopmentPerformance("media-send-failed", {
           durationMs: Date.now() - attachmentOperationStartedAt,
           errorType: error instanceof Error ? error.name : "UnknownError",
         }, true);
         const sendContextStillActive = messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId;
+        removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
         if (optimisticAttachment && sendContextStillActive) {
           setMessages((current) => current.filter((item) => item.id !== optimisticAttachmentId));
-          setPendingAttachment(optimisticAttachment);
-          setMessageText(cleanMessage);
+          if (!sendWasCancelled) {
+            // Preparation may already have replaced and deleted the picker
+            // source. Restore the current durable attachment, not that stale
+            // original URI, so Retry can actually read the file.
+            setPendingAttachment(attachments[0] || optimisticAttachment);
+            setMessageText(cleanMessage);
+          }
         }
-        if (sendContextStillActive) {
+        publishMediaProgress(optimisticAttachmentId, null);
+        if (sendWasCancelled) {
+          releasePendingAttachments(attachments);
+        } else if (sendContextStillActive) {
           setAttachmentStatus("");
           Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : attachments[0].kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
         }
       } finally {
-        attachmentCryptoAbortRef.current = null;
+        if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+        if (mediaSendAbort.signal.aborted) setAttachmentStatus("");
         if (messengerUserIdRef.current === operationUserId) setAttachmentSending(false);
+        activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
+        activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+        releaseVideoPipeline?.();
+        finishMediaTransfer();
       }
       return;
     }
@@ -2965,6 +3272,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Securing Chitthi", "Wait a moment while FairFares prepares the encrypted conversation.");
       return;
     }
+    // React state does not disable the button until the next render. A second
+    // press in that interval used to create a new clientMessageId and therefore
+    // a genuinely separate server message. Group key lookup can make that
+    // interval more noticeable, especially while media jobs are active.
+    const textSendKey = `${operationUserId}:${operationConversationId}:${editingMessageId || 0}:${replyingTo?.id || 0}:${cleanMessage}`;
+    if (activeTextSendKeysRef.current.has(textSendKey)) return;
+    activeTextSendKeysRef.current.add(textSendKey);
     setThreadLoading(true);
     try {
       if (activeConversationId && editingMessageId) {
@@ -3021,9 +3335,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           pendingEnvelopes = envelopes;
           const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "");
           ensureSendContext();
-          setMessages((current) => current.map((item) => item.localClientMessageId === clientMessageId
-            ? { ...response.message, text: cleanMessage, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } }
-            : item));
+          const sentMessage: ChatMessage = {
+            ...response.message,
+            text: cleanMessage,
+            canEdit: response.message.canEdit,
+            metadata: { ...response.message.metadata, encrypted: true }
+          };
+          setMessages((current) => {
+            // A realtime group event can insert the accepted server message
+            // before this request resolves. Remove that copy first, then
+            // replace the optimistic row identified by clientMessageId.
+            const withoutServerDuplicate = current.filter((item) =>
+              item.id !== response.message.id || item.localClientMessageId === clientMessageId
+            );
+            const hasOptimistic = withoutServerDuplicate.some((item) => item.localClientMessageId === clientMessageId);
+            return hasOptimistic
+              ? withoutServerDuplicate.map((item) => item.localClientMessageId === clientMessageId ? sentMessage : item)
+              : mergeThreadHistoryMessages(withoutServerDuplicate, [sentMessage]);
+          });
           scrollThreadToLatest(false);
         } catch (error) {
           ensureSendContext();
@@ -3077,6 +3406,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         Alert.alert("Message failed", error instanceof Error ? error.message : "Could not send this message.");
       }
     } finally {
+      activeTextSendKeysRef.current.delete(textSendKey);
       if (messengerUserIdRef.current === operationUserId) setThreadLoading(false);
     }
   }
@@ -3135,6 +3465,45 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Group image updated", "Everyone in the group will now see this image.");
     } catch (error) {
       Alert.alert("Group image not updated", error instanceof Error ? error.message : "Try again.");
+    }
+  }
+
+  function beginEditingActiveGroupDetails() {
+    if (!activeConversation?.communityId) return;
+    setGroupDetailsDraft({
+      name: activeGroup?.name || activeConversation.otherName || "",
+      description: activeGroup?.description || "",
+      area: activeGroup?.area || ""
+    });
+    setGroupDetailsEditing(true);
+  }
+
+  async function saveActiveGroupDetails() {
+    const communityId = activeConversation?.communityId || "";
+    const name = groupDetailsDraft.name.trim();
+    if (!communityId || groupDetailsSaving) return;
+    if (name.length < 3) {
+      Alert.alert("Group name required", "Use at least 3 characters for the group name.");
+      return;
+    }
+    setGroupDetailsSaving(true);
+    try {
+      const response = await updateChatGroupDetails(
+        communityId,
+        name,
+        groupDetailsDraft.description.trim(),
+        groupDetailsDraft.area.trim()
+      );
+      setCommunities((current) => current.map((item) => item.id === communityId ? response.community : item));
+      setActiveConversation((current) => current ? { ...current, otherName: response.community.name } : current);
+      setConversations((current) => current.map((item) => item.communityId === communityId
+        ? { ...item, otherName: response.community.name }
+        : item));
+      setGroupDetailsEditing(false);
+    } catch (error) {
+      Alert.alert("Group details not updated", error instanceof Error ? error.message : "Try again.");
+    } finally {
+      setGroupDetailsSaving(false);
     }
   }
 
@@ -3428,7 +3797,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ]
       );
     } catch (error) {
-      Alert.alert("Invite unavailable", error instanceof Error ? error.message : "Only group owners and admins can invite members.");
+      Alert.alert("Invite unavailable", error instanceof Error ? error.message : "The invitation link could not be created.");
     }
   }
 
@@ -3564,8 +3933,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       if (!media.length) return;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       if (media[0].kind === "VIDEO") {
+        const selectedVideo = media[0];
         setPendingImages([]);
-        setPendingAttachment(media[0]);
+        setPendingAttachment(selectedVideo);
+        // Thumbnail extraction is optional and must never hold the picker open
+        // for a large video. Publish it only if this exact selection is still
+        // in the composer when native decoding completes.
+        const previewThumbnail = selectedVideo.pickerAssetId
+          ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+          : createLightweightVideoThumbnail(selectedVideo.uri);
+        void previewThumbnail.then((thumbnailBase64) => {
+          if (!thumbnailBase64) return;
+          setPendingAttachment((current) => current?.kind === "VIDEO" && current.uri === selectedVideo.uri
+            ? { ...current, thumbnailBase64 }
+            : current);
+        }).catch(() => undefined);
       } else {
         setPendingAttachment(null);
         setPendingImages(media);
@@ -3782,14 +4164,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
 
-  function attachmentProgressReporter(label: string) {
+  function attachmentProgressReporter(label: string, messageId = 0, phaseStart = 0, phaseEnd = 1) {
     let lastMilestone = -10;
     return (progress: number) => {
       const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
       const milestone = percent === 100 ? 100 : Math.floor(percent / 10) * 10;
       if (milestone <= lastMilestone) return;
       lastMilestone = milestone;
-      setAttachmentStatus(`${label} ${milestone}%`);
+      if (!messageId) setAttachmentStatus(`${label} ${milestone}%`);
+      if (messageId) publishMediaProgress(messageId, phaseStart + Math.max(0, Math.min(1, progress)) * (phaseEnd - phaseStart));
     };
   }
 
@@ -4416,18 +4799,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
           <View style={styles.wallpaperShade} />
         </View>
-        <AdaptiveGlassView
-          intensity={48}
-          tintColor="#08291D"
-          fallbackColor="rgba(4,25,19,0.96)"
-          style={styles.threadHeader}
-        >
+        <View style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
           <TouchableOpacity style={styles.threadAvatar} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
             {chatPhotoUrl(activeConversation?.otherPhotoUrl) && failedGroupPhotoUrl !== chatPhotoUrl(activeConversation?.otherPhotoUrl) ? (
-              <Image source={{ uri: chatPhotoUrl(activeConversation?.otherPhotoUrl) }} style={styles.threadAvatarImage} onError={() => setFailedGroupPhotoUrl(chatPhotoUrl(activeConversation?.otherPhotoUrl))} />
+              <Image source={authenticatedAssetSource(chatPhotoUrl(activeConversation?.otherPhotoUrl))} style={styles.threadAvatarImage} onError={() => setFailedGroupPhotoUrl(chatPhotoUrl(activeConversation?.otherPhotoUrl))} />
             ) : (
               <Text style={styles.threadAvatarText}>
                 {initials(activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat")}
@@ -4444,7 +4822,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
-        </AdaptiveGlassView>
+        </View>
 
         <View style={styles.threadKeyboardViewport}>
         <ThreadKeyboardBody bottomSafeArea={safeAreaInsets.bottom}>
@@ -4475,7 +4853,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Group info</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
-            {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group && (group.visibility === "PUBLIC" || group.canManageMembers)); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
+            {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void inviteToActiveGroup()}><Text style={styles.chatOptionIcon}>↗</Text><Text style={styles.chatOptionText}>Invite with group link</Text></TouchableOpacity> : null}
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
             {Platform.OS === "android" ? <View style={styles.nearbyOptionRow}><View style={styles.nearbyOptionCopy}><Text style={styles.nearbyOptionTitle}>Nearby offline relay</Text><Text style={styles.nearbyOptionMeta}>{nearbyRelayStatus.state === "error" ? nearbyRelayStatus.detail : nearbyRelayEnabled ? `${nearbyRelayStatus.peers} nearby device${nearbyRelayStatus.peers === 1 ? "" : "s"}` : "Off · encrypted text only"}</Text></View><Switch value={nearbyRelayEnabled} onValueChange={(value) => void toggleNearbyRelay(value)} trackColor={{ false: "#aaa", true: "#5a83f3" }} /></View> : null}
           </View>
@@ -4502,12 +4880,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <View style={styles.groupInfoActions}>
                 <TouchableOpacity style={styles.groupInfoAction} onPress={() => void toggleMute()}><Text style={styles.groupInfoActionIcon}>♩</Text><Text style={styles.groupInfoActionLabel}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text></TouchableOpacity>
                 {activeGroup?.canManageMembers ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => { setGroupMembersOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation?.communityId || ""); }}><Text style={styles.groupInfoActionIcon}>＋</Text><Text style={styles.groupInfoActionLabel}>Add</Text></TouchableOpacity> : null}
-                {activeGroup && (activeGroup.visibility === "PUBLIC" || activeGroup.canManageMembers) ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => void inviteToActiveGroup()}><Text style={styles.groupInfoActionIcon}>↗</Text><Text style={styles.groupInfoActionLabel}>Invite</Text></TouchableOpacity> : null}
+                {activeConversation?.communityId ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => void inviteToActiveGroup()}><Text style={styles.groupInfoActionIcon}>↗</Text><Text style={styles.groupInfoActionLabel}>Invite</Text></TouchableOpacity> : null}
               </View>
 
               <View style={styles.groupInfoCard}>
-                <Text style={styles.groupInfoDescription}>{activeGroup?.description || "A Chitthi group for members to connect, share updates, and help each other."}</Text>
-                {activeGroup?.area ? <Text style={styles.groupInfoDescriptionMeta}>⌖ {activeGroup.area}</Text> : null}
+                <View style={styles.groupDetailsHeader}>
+                  <Text style={styles.groupDetailsLabel}>Group details</Text>
+                  {activeConversation?.communityId && !groupDetailsEditing ? <TouchableOpacity style={styles.groupDetailsEditButton} onPress={beginEditingActiveGroupDetails} accessibilityRole="button" accessibilityLabel="Edit group details"><Text style={styles.groupDetailsEditText}>✎ Edit</Text></TouchableOpacity> : null}
+                </View>
+                {groupDetailsEditing ? (
+                  <View style={styles.groupDetailsForm}>
+                    <Text style={styles.groupDetailsFieldLabel}>Name</Text>
+                    <TextInput value={groupDetailsDraft.name} onChangeText={(name) => setGroupDetailsDraft((current) => ({ ...current, name }))} maxLength={80} style={styles.groupDetailsInput} placeholder="Group name" placeholderTextColor="#7E9086" />
+                    <Text style={styles.groupDetailsFieldLabel}>Description</Text>
+                    <TextInput value={groupDetailsDraft.description} onChangeText={(description) => setGroupDetailsDraft((current) => ({ ...current, description }))} maxLength={220} multiline style={[styles.groupDetailsInput, styles.groupDetailsDescriptionInput]} placeholder="What is this group for?" placeholderTextColor="#7E9086" />
+                    <Text style={styles.groupDetailsFieldLabel}>Location</Text>
+                    <TextInput value={groupDetailsDraft.area} onChangeText={(area) => setGroupDetailsDraft((current) => ({ ...current, area }))} maxLength={80} style={styles.groupDetailsInput} placeholder="City, state or area" placeholderTextColor="#7E9086" />
+                    <View style={styles.groupDetailsFormActions}>
+                      <TouchableOpacity style={styles.groupDetailsCancelButton} disabled={groupDetailsSaving} onPress={() => setGroupDetailsEditing(false)}><Text style={styles.groupDetailsCancelText}>Cancel</Text></TouchableOpacity>
+                      <TouchableOpacity style={styles.groupDetailsSaveButton} disabled={groupDetailsSaving} onPress={() => void saveActiveGroupDetails()}><Text style={styles.groupDetailsSaveText}>{groupDetailsSaving ? "Saving…" : "Save"}</Text></TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.groupInfoDescription}>{activeGroup?.description || "A Chitthi group for members to connect, share updates, and help each other."}</Text>
+                    {activeGroup?.area ? <Text style={styles.groupInfoDescriptionMeta}>⌖ {activeGroup.area}</Text> : null}
+                  </>
+                )}
               </View>
 
               <View style={styles.groupInfoCard}>
@@ -4525,7 +4924,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   const canManage = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
                   const roleLabel = member.role === "OWNER" ? "Owner" : member.role === "ADMIN" ? "Admin" : "Member";
                   return <TouchableOpacity key={member.id} style={styles.groupMemberRow} disabled={member.isCurrentUser} activeOpacity={0.65} onPress={() => void messageGroupMember(member)} onLongPress={canManage ? () => showGroupMemberActions(member) : undefined} accessibilityLabel={member.isCurrentUser ? `${member.name}, you, ${roleLabel}` : `Message ${member.name} privately. ${roleLabel}`}>
-                    <View style={styles.groupMemberAvatar}>{chatPhotoUrl(member.photoUrl) ? <Image source={{ uri: chatPhotoUrl(member.photoUrl) }} style={styles.groupMemberAvatarImage} /> : <Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text>}</View>
+                    <View style={styles.groupMemberAvatar}>{chatPhotoUrl(member.photoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(member.photoUrl))} style={styles.groupMemberAvatarImage} /> : <Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text>}</View>
                     <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? `You are a group ${roleLabel.toLowerCase()}` : "Tap to message privately"}</Text></View>
                     <Text style={[styles.groupMemberRole, member.role === "OWNER" ? styles.groupMemberRoleOwner : member.role === "ADMIN" ? styles.groupMemberRoleAdmin : styles.groupMemberRoleMember]}>{roleLabel}</Text>
                     {canManage ? <TouchableOpacity style={styles.groupMemberManageButton} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`Manage ${member.name}`}><Text style={styles.groupMemberManageIcon}>•••</Text></TouchableOpacity> : !member.isCurrentUser ? <Text style={styles.groupMemberChevron}>›</Text> : null}
@@ -4665,13 +5064,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }
             const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isMediaMessage, messageRunEnds, replyTarget } = item;
             if (skipForMediaGroup) return null;
-            const mediaDownloading = downloadingMediaMessageIds.includes(message.id) || Boolean(message.metadata?.uploading);
+            const mediaUploading = Boolean(message.metadata?.uploading);
+            const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             return (
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
-                  {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(message.senderPhotoUrl) }} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
+                  {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(message.senderPhotoUrl))} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
                 </View>
               ) : !message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.smallAvatarSpacer} /> : null}
               <TouchableOpacity
@@ -4679,7 +5079,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 delayLongPress={350}
                 onLongPress={() => handleMessageLongPress(message)}
                 onPress={() => {
-                  if (selectedMessageIds.length) {
+                  if (mediaUploading) {
+                    cancelPendingMediaUpload(message.id);
+                  } else if (selectedMessageIds.length) {
                     toggleMessageSelection(message);
                   } else if (message.replyToMessageId) {
                     jumpToRepliedMessage(Number(message.replyToMessageId));
@@ -4730,6 +5132,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                           </View>
                         ) : null}
                       </Pressable>
+                      {mediaUploading ? (
+                        <View style={styles.videoUploadCancelOverlay} pointerEvents="none">
+                          {Platform.OS === "web" ? <View pointerEvents="none" style={styles.videoDownloadBlurFallback} /> : <BlurView pointerEvents="none" intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
+                          <View style={styles.videoUploadCancelButton}>
+                            <MediaUploadCancelProgress messageId={message.id} />
+                          </View>
+                        </View>
+                      ) : null}
                       <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View>
                     </View>
                   ) : (
@@ -4861,7 +5271,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View style={styles.mediaViewerHeader}>
               <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Back to conversation"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
               <View style={styles.mediaViewerPerson}>
-                <View style={styles.mediaViewerAvatar}>{chatPhotoUrl(activeConversation?.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(activeConversation?.otherPhotoUrl) }} style={styles.mediaViewerAvatarImage} /> : <Text style={styles.mediaViewerAvatarText}>{initials(activeConversation?.otherName || "F")}</Text>}</View>
+                <View style={styles.mediaViewerAvatar}>{chatPhotoUrl(activeConversation?.otherPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(activeConversation?.otherPhotoUrl))} style={styles.mediaViewerAvatarImage} /> : <Text style={styles.mediaViewerAvatarText}>{initials(activeConversation?.otherName || "F")}</Text>}</View>
                 <Text style={styles.mediaViewerName} numberOfLines={1}>{activeConversation?.otherName || "Chitthi"}</Text>
                 <Text style={styles.mediaViewerDate}>{attachmentPreview ? chatDayLabel(attachmentPreview.createdAt) : ""}</Text>
               </View>
@@ -4935,7 +5345,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {personConversations.filter((conversation) => conversation.id !== activeConversationId).map((conversation) => {
                   const selected = selectedForwardConversationIds.includes(conversation.id);
                   return <TouchableOpacity key={conversation.id} disabled={forwardingMessages} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
-                    <View style={styles.forwardPickerAvatar}>{chatPhotoUrl(conversation.otherPhotoUrl) ? <Image source={{ uri: chatPhotoUrl(conversation.otherPhotoUrl) }} style={styles.forwardPickerAvatarImage} /> : <Text style={styles.forwardPickerAvatarText}>{initials(conversation.otherName || conversation.subject)}</Text>}</View>
+                    <View style={styles.forwardPickerAvatar}>{chatPhotoUrl(conversation.otherPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(conversation.otherPhotoUrl))} style={styles.forwardPickerAvatarImage} /> : <Text style={styles.forwardPickerAvatarText}>{initials(conversation.otherName || conversation.subject)}</Text>}</View>
                     <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "Chitthi conversation"}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
                   </TouchableOpacity>;
@@ -5119,7 +5529,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }}
             multiline
           />
-          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, (threadLoading || attachmentSending) && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading || attachmentSending}>
+          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
           </View>
@@ -5197,7 +5607,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {contactMatches.map((person) => (
                 <TouchableOpacity key={`contact-picker-${person.id}`} style={[styles.contactPickerRow, contactPickerMode !== "chat" && selectedGroupPeople.includes(person.id) && styles.contactPickerRowSelected]} onPress={() => contactPickerMode === "chat" ? void openContactChat(person) : toggleGroupPerson(person.id)}>
                   <View style={styles.avatar}>
-                    {chatPhotoUrl(person.photoUrl) ? <Image source={{ uri: chatPhotoUrl(person.photoUrl) }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(person.localName)}</Text>}
+                    {chatPhotoUrl(person.photoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(person.photoUrl))} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(person.localName)}</Text>}
                   </View>
                   <View style={styles.chatCopy}>
                     <Text style={styles.chatName}>{person.localName}</Text>
@@ -5516,7 +5926,7 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   disabledButton: { opacity: 0.45 },
   primaryButtonText: { color: theme.colors.text, ...theme.typography.button },
-  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(214,169,95,0.38)", backgroundColor: "rgba(5,31,25,0.96)", overflow: "hidden" },
+  threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(214,169,95,0.38)", backgroundColor: "#052017", overflow: "hidden" },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
   backLine: { position: "absolute", width: 18, height: 4, borderRadius: 3, backgroundColor: "#D6A95F", left: 2 },
@@ -5946,6 +6356,12 @@ const styles = StyleSheet.create({
   videoMessageThumbnail: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
   videoDownloadOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 8, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  videoUploadCancelOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 9, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  videoUploadCancelButton: { width: 82, height: 82, alignItems: "center", justifyContent: "center" },
+  videoUploadCancelCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(4,30,20,0.96)", borderWidth: 1, borderColor: "rgba(50,215,135,0.32)", alignItems: "center", justifyContent: "center" },
+  videoUploadCancelText: { color: "#E8FFF3", fontSize: 25, lineHeight: 25, fontWeight: "500", marginTop: -2 },
+  videoUploadPercentText: { color: "rgba(232,255,243,0.78)", fontSize: 8, lineHeight: 9, fontWeight: "800" },
+  uploadProgressSegmentActive: { backgroundColor: "#0B6B43" },
   videoDownloadBlurFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(8,18,15,0.48)" },
   downloadProgressCircle: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(3,18,12,0.74)", borderWidth: 1, borderColor: "rgba(50,215,135,0.25)" },
   downloadProgressSegment: { position: "absolute", left: 33, top: 31, width: 5, height: 10, borderRadius: 3, backgroundColor: "rgba(219,255,236,0.16)" },
@@ -6046,6 +6462,19 @@ const styles = StyleSheet.create({
   groupInfoActionIcon: { color: "#E7B968", fontSize: 24, fontWeight: "600", marginBottom: 4 },
   groupInfoActionLabel: { color: "#F8EFD9", fontSize: 13, fontWeight: "700" },
   groupInfoCard: { borderRadius: 18, backgroundColor: "rgba(10,39,29,0.96)", borderWidth: 1, borderColor: "rgba(219,180,107,0.25)", paddingHorizontal: 16, marginBottom: 14, overflow: "hidden" },
+  groupDetailsHeader: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(219,180,107,0.18)" },
+  groupDetailsLabel: { color: "#D7B36D", fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1.1 },
+  groupDetailsEditButton: { minHeight: 36, paddingLeft: 16, justifyContent: "center" },
+  groupDetailsEditText: { color: "#E7B968", fontSize: 13, fontWeight: "800" },
+  groupDetailsForm: { paddingTop: 12, paddingBottom: 14 },
+  groupDetailsFieldLabel: { color: "#B9C6BF", fontSize: 11, fontWeight: "700", marginBottom: 5, marginTop: 8 },
+  groupDetailsInput: { minHeight: 42, borderRadius: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.32)", backgroundColor: "#061F18", color: "#F2F5F3", paddingHorizontal: 12, paddingVertical: 9, fontSize: 14 },
+  groupDetailsDescriptionInput: { minHeight: 82, textAlignVertical: "top" },
+  groupDetailsFormActions: { flexDirection: "row", justifyContent: "flex-end", gap: 9, marginTop: 14 },
+  groupDetailsCancelButton: { minHeight: 38, borderRadius: 19, borderWidth: 1, borderColor: "rgba(219,180,107,0.28)", paddingHorizontal: 17, alignItems: "center", justifyContent: "center" },
+  groupDetailsCancelText: { color: "#C7D0CB", fontSize: 13, fontWeight: "700" },
+  groupDetailsSaveButton: { minHeight: 38, borderRadius: 19, backgroundColor: "#D6A95F", paddingHorizontal: 20, alignItems: "center", justifyContent: "center" },
+  groupDetailsSaveText: { color: "#08251B", fontSize: 13, fontWeight: "900" },
   groupInfoDescription: { color: "#E7ECE8", fontSize: 15, lineHeight: 22, paddingTop: 15, paddingBottom: 10 },
   groupInfoDescriptionMeta: { color: "#E7B968", fontSize: 13, fontWeight: "700", paddingBottom: 15 },
   groupInfoSettingRow: { minHeight: 64, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "rgba(219,180,107,0.16)" },

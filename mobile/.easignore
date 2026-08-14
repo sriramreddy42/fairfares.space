@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 node_modules/
+/ios/
 dist/
 dist-visual/
 *.log

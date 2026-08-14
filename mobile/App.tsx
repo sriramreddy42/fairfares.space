@@ -311,6 +311,7 @@ function FairFaresApp() {
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
   const [listingValidatedLabel, setListingValidatedLabel] = useState("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
+  const [messengerMediaTransferActive, setMessengerMediaTransferActive] = useState(false);
 
   useEffect(() => startJavaScriptResponsivenessMonitor(), []);
 
@@ -1789,30 +1790,37 @@ function FairFaresApp() {
     setActiveTab(tab);
   }
 
+  const messengerScreen = (
+    <MessengerScreen
+      key={`messenger-${Number(data?.user?.id || 0)}`}
+      data={data}
+      preferredSuggestionCity={chitthiSuggestionCity}
+      pendingPost={pendingPost}
+      pendingRide={pendingRide}
+      pendingGroupInvite={pendingGroupInvite}
+      notificationConversationId={notificationConversationId}
+      onRequireLogin={() => setLoginOpen(true)}
+      onClearPendingPost={() => setPendingPost(null)}
+      onClearPendingRide={() => setPendingRide(null)}
+      onClearPendingGroupInvite={() => setPendingGroupInvite("")}
+      onClearNotificationConversation={() => setNotificationConversationId("")}
+      onThreadModeChange={(active) => {
+        if (activeTab === "messenger") setBottomTabsHidden(active);
+      }}
+      onMediaTransferActiveChange={setMessengerMediaTransferActive}
+      onUnreadCountChange={(unreadCount) => setData((current) => current ? {
+        ...current,
+        chat: { ...current.chat, unreadCount },
+        dashboard: { ...current.dashboard, messages: unreadCount }
+      } : current)}
+      onCardMessageSent={markCardMessageSent}
+    />
+  );
+
   const selectedScreen = staffPickupOpen ? (
       <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
     ) : activeTab === "messenger" ? (
-      <MessengerScreen
-        key={`messenger-${Number(data?.user?.id || 0)}`}
-        data={data}
-        preferredSuggestionCity={chitthiSuggestionCity}
-        pendingPost={pendingPost}
-        pendingRide={pendingRide}
-        pendingGroupInvite={pendingGroupInvite}
-        notificationConversationId={notificationConversationId}
-        onRequireLogin={() => setLoginOpen(true)}
-        onClearPendingPost={() => setPendingPost(null)}
-        onClearPendingRide={() => setPendingRide(null)}
-        onClearPendingGroupInvite={() => setPendingGroupInvite("")}
-        onClearNotificationConversation={() => setNotificationConversationId("")}
-        onThreadModeChange={setBottomTabsHidden}
-        onUnreadCountChange={(unreadCount) => setData((current) => current ? {
-          ...current,
-          chat: { ...current.chat, unreadCount },
-          dashboard: { ...current.dashboard, messages: unreadCount }
-        } : current)}
-        onCardMessageSent={markCardMessageSent}
-      />
+      null
     ) : activeTab === "activity" ? (
       <DashboardScreen
         data={data}
@@ -2007,7 +2015,12 @@ function FairFaresApp() {
           }, actualDuration >= 250);
         }}
       >
-        {selectedScreen}
+        {activeTab === "messenger" ? null : selectedScreen}
+        {(activeTab === "messenger" || messengerMediaTransferActive) ? (
+          <View key="retained-messenger" style={activeTab === "messenger" ? styles.retainedMessengerVisible : styles.retainedMessengerHidden}>
+            {messengerScreen}
+          </View>
+        ) : null}
       </React.Profiler>
     </React.Suspense>
   );
@@ -2807,6 +2820,8 @@ function FairFaresApp() {
 }
 
 const styles = StyleSheet.create({
+  retainedMessengerVisible: { flex: 1 },
+  retainedMessengerHidden: { display: "none" },
   lazyScreenFallback: {
     flex: 1,
     alignItems: "center",

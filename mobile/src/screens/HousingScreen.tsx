@@ -570,12 +570,8 @@ export function HousingScreen({
   const detailScrollRef = useRef<ScrollView>(null);
   const detailScrollOffsetRef = useRef(0);
   const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
-  const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [homeStoryIndex, setHomeStoryIndex] = useState(0);
   const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
-  const [homeStoryDragging, setHomeStoryDragging] = useState(false);
-  const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
-  const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
   const [exportsInterestSent, setExportsInterestSent] = useState(false);
   const [exportsInterestError, setExportsInterestError] = useState("");
@@ -714,10 +710,9 @@ export function HousingScreen({
       : mode === "cheapCars"
         ? rentalSearchPhrases
         : housingSearchPhrases;
-  const activeSearchPhrase = activeSearchPhrases[searchPhraseIndex % activeSearchPhrases.length] || activeSearchPhrases[0];
+  const activeSearchPhrase = activeSearchPhrases[0];
   const searchBarText = activeSearchPhrase;
-  const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
-  const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
+  const currentQuickLinkWord = quickLinkWords[0];
   const sortedPosts = useMemo(() => {
     const compareOptionalNumber = (a: number | null | undefined, b: number | null | undefined, descending = false) => {
       const aKnown = a !== null && a !== undefined && Number.isFinite(Number(a));
@@ -865,13 +860,6 @@ export function HousingScreen({
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchPhraseIndex((value) => (value + 1) % activeSearchPhrases.length);
-    }, 1800);
-    return () => clearTimeout(timer);
-  }, [activeSearchPhrases.length, searchPhraseIndex]);
-
-  useEffect(() => {
     if (!data?.user || data.hasSubmittedHousingExperience || cityExperienceSubmitted) return;
     const timer = setTimeout(() => {
       setCityExperienceModalOpen(true);
@@ -880,39 +868,9 @@ export function HousingScreen({
   }, [cityExperienceSubmitted, data?.hasSubmittedHousingExperience, data?.user?.id]);
 
   useEffect(() => {
-    const storyCount = 1 + homeTestimonials.length;
-    if (storyCount <= 1) {
-      setHomeStoryIndex(0);
-      return;
-    }
-    if (homeStoryDragging) return;
-    const timer = setTimeout(() => {
-      setHomeStoryIndex((value) => (value + 1) % storyCount);
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [homeStoryDragging, homeStoryIndex, homeTestimonials.length]);
-
-  useEffect(() => {
     if (!homeStorySlideWidth) return;
     homeStoryScrollRef.current?.scrollTo({ x: homeStoryIndex * homeStorySlideWidth, animated: true });
   }, [homeStoryIndex, homeStorySlideWidth]);
-
-  useEffect(() => {
-    setSearchPhraseIndex(0);
-  }, [mode]);
-
-  useEffect(() => {
-    const isComplete = quickLinkLetterCount >= currentQuickLinkWord.length;
-    const timer = setTimeout(() => {
-      if (isComplete) {
-        setQuickLinkWordIndex((value) => (value + 1) % quickLinkWords.length);
-        setQuickLinkLetterCount(1);
-        return;
-      }
-      setQuickLinkLetterCount((value) => value + 1);
-    }, isComplete ? 1200 : 85);
-    return () => clearTimeout(timer);
-  }, [currentQuickLinkWord.length, quickLinkLetterCount]);
 
   useEffect(() => {
     setRentalCars(cars);
@@ -3051,8 +3009,7 @@ export function HousingScreen({
           Find rides, rentals, and roommate options <Text style={styles.quickTitleAccent}>anywhere</Text> in the USA.
         </Text>
         <Text style={styles.quickAnimatedWord}>
-          {quickLinkAnimatedWord}
-          <Text style={styles.quickCursor}>|</Text>
+          {currentQuickLinkWord}
         </Text>
         <View style={styles.quickTextList}>
           {quickLinks.map((link) => (
@@ -3173,7 +3130,7 @@ export function HousingScreen({
         <View style={[styles.brandHeader, mode !== "housing" && styles.brandHeaderHidden]}>
           {mode === "housing" ? (
           <>
-          <View style={styles.freeServicesHero}>
+          <View style={[styles.freeServicesHero, festivalCampaign && styles.festivalServicesHero]}>
             <View style={styles.freeServicesCopy}>
               <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
               <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
@@ -3194,7 +3151,7 @@ export function HousingScreen({
             </View>
             {festivalCampaign ? (
               <View pointerEvents="none" style={styles.festivalHeroOverlay} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
-                <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="cover" />
+                <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="contain" />
               </View>
             ) : null}
           </View>
@@ -3329,11 +3286,9 @@ export function HousingScreen({
           showsHorizontalScrollIndicator={false}
           style={styles.homeStoryScroll}
           decelerationRate="fast"
-          onScrollBeginDrag={() => setHomeStoryDragging(true)}
           onMomentumScrollEnd={(event) => {
             const nextIndex = Math.round(event.nativeEvent.contentOffset.x / homeStorySlideWidth);
             setHomeStoryIndex(Math.max(0, Math.min(nextIndex, homeTestimonials.length)));
-            setHomeStoryDragging(false);
           }}
         >
           <View style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
@@ -3745,6 +3700,7 @@ const styles = StyleSheet.create({
   brandHeaderHidden: { height: 0, borderWidth: 0, backgroundColor: "transparent" },
   festivalHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00472d" },
   festivalPoster: { width: "100%", height: "100%" },
+  festivalServicesHero: { minHeight: 0, aspectRatio: 1080 / 440, padding: 0 },
   freeServicesHero: {
     width: "100%",
     minHeight: 142,

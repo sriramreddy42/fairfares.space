@@ -70,6 +70,38 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNone(joined)
         self.assertIn("private", error.lower())
 
+    def test_joined_members_can_edit_group_details_and_outsiders_cannot(self):
+        group = self.create_group()
+        with app.db() as con:
+            community_id = int(con.execute(
+                "SELECT id FROM chat_communities WHERE public_id = ?", (group["id"],)
+            ).fetchone()["id"])
+            con.execute(
+                "INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
+                (community_id, self.member),
+            )
+
+        updated, error = app.update_chat_group_details(
+            group["id"], self.member, "  Member Updated Group  ", "  Shared   details  ", " Aurora, CO "
+        )
+        self.assertFalse(error)
+        self.assertEqual(updated["name"], "Member Updated Group")
+        self.assertEqual(updated["description"], "Shared details")
+        self.assertEqual(updated["area"], "Aurora, CO")
+
+        token, error = app.create_chat_group_invite(group["id"], self.member)
+        self.assertFalse(error)
+        self.assertTrue(token)
+
+        rejected, error = app.update_chat_group_details(
+            group["id"], self.outsider, "Outsider edit", "No", "Nowhere"
+        )
+        self.assertIsNone(rejected)
+        self.assertIn("join this group", error.lower())
+        outsider_token, error = app.create_chat_group_invite(group["id"], self.outsider)
+        self.assertFalse(outsider_token)
+        self.assertIn("join this group", error.lower())
+
     def test_public_group_suggestions_follow_supported_city(self):
         menlo_groups = app.get_chat_communities_for_user(self.outsider, "Menlo Park, CA")
         menlo_names = {row["name"] for row in menlo_groups}
