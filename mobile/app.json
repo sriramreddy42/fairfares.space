@@ -141,6 +141,7 @@
       ],
       "@bacons/apple-targets",
       "expo-web-browser",
+      "./plugins/withAndroidMinSdk",
       "expo-video"
     ],
     "extra": {
