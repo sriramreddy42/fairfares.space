@@ -4,6 +4,7 @@
     "modules": ["com.fairfares.crypto.FairFaresCryptoModule"]
   },
   "ios": {
-    "modules": ["FairFaresCryptoModule"]
+    "modules": ["FairFaresCryptoModule"],
+    "appDelegateSubscribers": ["FairFaresBackgroundUploadAppDelegateSubscriber"]
   }
 }

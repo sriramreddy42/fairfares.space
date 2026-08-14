@@ -117,6 +117,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     borderRadius: 35,
     overflow: "hidden",
+    // Native blur/liquid-glass can produce its first sampled frame only after
+    // the underlying scroll view invalidates. Paint the stable material color
+    // immediately so launch never exposes page content through an empty glass
+    // surface; the native effect then enhances this base when ready.
+    backgroundColor: "rgba(20,21,21,0.94)",
   },
   glassTint: {
     ...StyleSheet.absoluteFillObject,

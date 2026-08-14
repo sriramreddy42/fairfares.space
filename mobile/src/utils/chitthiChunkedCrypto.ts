@@ -5,7 +5,11 @@ import { sha256 } from "@noble/hashes/sha256";
 import { ConversationDeviceKey, DeviceIdentity, encryptForDevices } from "./chatCrypto";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 
-export const CHITTHI_CHUNK_SIZE = 256 * 1024;
+// One MiB keeps native file encryption streaming and memory-bounded while
+// avoiding hundreds of bridge events and crypto operations for large media.
+// The size is embedded in every descriptor, so older 256 KiB attachments
+// remain fully decryptable.
+export const CHITTHI_CHUNK_SIZE = 1024 * 1024;
 export const CHITTHI_CHUNK_FORMAT = "CHUNKED_SECRETBOX_V2";
 export const CHITTHI_NATIVE_CHUNK_FORMAT = "CHUNKED_AES_GCM_V3";
 

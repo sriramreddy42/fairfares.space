@@ -2,6 +2,7 @@
   "expo": {
     "name": "FairFares",
     "slug": "fairfares-mobile",
+    "newArchEnabled": true,
     "scheme": "fairfares",
     "version": "0.1.5",
     "icon": "./assets/app-icon.png",
@@ -15,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "12",
+      "buildNumber": "13",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,

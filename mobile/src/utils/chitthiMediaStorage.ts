@@ -40,6 +40,12 @@ export function persistentChitthiMediaUri(userId: number, messageId: number, ext
   return `${root}${safeSegment(userId)}-${safeSegment(messageId)}.${safeSegment(extension).toLowerCase()}`;
 }
 
+export function persistentChitthiThumbnailUri(userId: number, messageId: number) {
+  const root = mediaRootUri();
+  if (!root || userId <= 0 || messageId <= 0) return "";
+  return `${root}${safeSegment(userId)}-${safeSegment(messageId)}.thumbnail.jpg`;
+}
+
 export async function persistentChitthiMediaExists(uri: string) {
   if (!uri) return false;
   const info = await FileSystem.getInfoAsync(uri);

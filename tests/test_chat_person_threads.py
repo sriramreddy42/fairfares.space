@@ -95,6 +95,7 @@ class ChatPersonThreadsTest(unittest.TestCase):
                 for index in range(8)
             ]
 
+        app.run_chat_conversation_consolidation_migration()
         inbox = app.get_chat_conversations_for_user(current_user_id)
 
         self.assertEqual(len(inbox), 1)
@@ -135,6 +136,32 @@ class ChatPersonThreadsTest(unittest.TestCase):
             ).fetchone()["role"]
         self.assertEqual(role, "OWNER")
 
+    def test_synchronized_group_membership_does_not_open_a_write_transaction(self):
+        with app.db() as con:
+            first_id = self.insert_user(con, "Group One", "group-one@example.com")
+            second_id = self.insert_user(con, "Group Two", "group-two@example.com")
+            con.execute(
+                "INSERT INTO chat_communities (public_id, name, created_by_user_id) VALUES ('GROUP-READ-ONLY', 'Read only group', ?)",
+                (first_id,),
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+                ((community_id, first_id), (community_id, second_id)),
+            )
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject) VALUES ('GROUP-THREAD-READ-ONLY', 'GROUP', ?, 'Read only group')",
+                (community_id,),
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                ((conversation_id, first_id), (conversation_id, second_id)),
+            )
+            changes_before = con.total_changes
+            app.sync_chat_conversation_members_from_community(con, conversation_id, community_id)
+            self.assertEqual(con.total_changes, changes_before)
+
     def test_stress_many_people_posts_and_messages_stay_one_thread_per_person(self):
         people_count = 80
         duplicates_per_person = 5
@@ -152,6 +179,7 @@ class ChatPersonThreadsTest(unittest.TestCase):
                         messages_per_thread,
                     )
 
+        app.run_chat_conversation_consolidation_migration()
         started = time.monotonic()
         inbox = []
         offset = 0
@@ -183,6 +211,36 @@ class ChatPersonThreadsTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as executor:
             concurrent_results = list(executor.map(lambda _: app.get_chat_conversations_for_user(current_user_id, limit=30), range(24)))
         self.assertTrue(all(len(concurrent_inbox) == 30 for concurrent_inbox in concurrent_results))
+
+    def test_conversation_cursor_is_stable_when_a_new_chat_arrives_between_pages(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Cursor User", "cursor@example.com")
+            for person_index in range(45):
+                other_user_id = self.insert_user(con, f"Cursor Person {person_index}", f"cursor-{person_index}@example.com")
+                self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 1)
+
+        first_page = app.get_chat_conversations_for_user(current_user_id, limit=30)
+        self.assertEqual(len(first_page), 30)
+        cursor = app.decode_chat_conversation_cursor(app.encode_chat_conversation_cursor(
+            first_page[-1]["lastMessageAt"], first_page[-1]["conversationId"],
+        ))
+        self.assertIsNotNone(cursor)
+
+        # A newly active conversation belongs ahead of page one. Cursor paging
+        # must not shift the boundary and repeat one of page one's rows.
+        with app.db() as con:
+            new_user_id = self.insert_user(con, "Newest Person", "newest-cursor@example.com")
+            self.insert_direct_conversation(con, current_user_id, new_user_id, 0, 1)
+
+        cursor_activity, cursor_id = cursor
+        second_page = app.get_chat_conversations_for_user(
+            current_user_id, limit=30, cursor_activity=cursor_activity, cursor_id=cursor_id,
+        )
+        first_ids = {row["id"] for row in first_page}
+        second_ids = {row["id"] for row in second_page}
+        self.assertFalse(first_ids & second_ids)
+        self.assertEqual(len(second_page), 15)
+        self.assertIsNone(app.decode_chat_conversation_cursor("not-a-valid-cursor"))
 
     def test_listing_context_is_stored_on_the_individual_message(self):
         with app.db() as con:

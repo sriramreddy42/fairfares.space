@@ -10,6 +10,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
 import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
@@ -22,6 +23,7 @@ import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { encryptForDevices, getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -225,11 +227,14 @@ const amenityToggles: Array<[keyof MobileHousingPostInput, string]> = [
 ];
 
 export default function App() {
+  const content = (
+    <SafeAreaProvider>
+      <FairFaresApp />
+    </SafeAreaProvider>
+  );
   return (
     <AppErrorBoundary>
-      <SafeAreaProvider>
-        <FairFaresApp />
-      </SafeAreaProvider>
+      {IS_EXPO_GO ? content : <KeyboardProvider preload>{content}</KeyboardProvider>}
     </AppErrorBoundary>
   );
 }
@@ -306,6 +311,12 @@ function FairFaresApp() {
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
   const [listingValidatedLabel, setListingValidatedLabel] = useState("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
+
+  useEffect(() => startJavaScriptResponsivenessMonitor(), []);
+
+  useEffect(() => {
+    setPerformanceContext(`${activeTab}${bottomTabsHidden ? ":thread" : ""}${loading ? ":loading" : ""}`);
+  }, [activeTab, bottomTabsHidden, loading]);
   const [staffPickupOpen, setStaffPickupOpen] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
@@ -1652,7 +1663,10 @@ function FairFaresApp() {
       const authenticatedPassword = password;
       // Start recovery before mounting authenticated Chitthi. Messenger waits
       // on this promise and cannot create a competing temporary device key.
-      const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
+      // Registration is a background readiness task, not part of the login
+      // transition. The delay is especially important in Expo Go, where the
+      // native PBKDF worker is intentionally unavailable.
+      const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword, 1_500);
       bootstrapGenerationRef.current += 1;
       setLoading(false);
       setData((current) => current ? { ...current, user: payload.user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
@@ -1715,7 +1729,7 @@ function FairFaresApp() {
       setPassword("");
       setSignupConsentAccepted(false);
       if (!payload.activationRequired && payload.token) {
-        const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword);
+        const chatRecovery = beginChatIdentityRecovery(Number(payload.user?.id || 0), authenticatedPassword, 1_500);
         if (payload.user) {
           bootstrapGenerationRef.current += 1;
           setLoading(false);
@@ -1982,7 +1996,19 @@ function FairFaresApp() {
         <ActivityIndicator size="large" color={theme.colors.brand} />
       </View>
     )}>
-      {selectedScreen}
+      <React.Profiler
+        id={`screen-${activeTab}`}
+        onRender={(id, phase, actualDuration, baseDuration) => {
+          if (actualDuration >= 50) logDevelopmentPerformance("slow-react-commit", {
+            screen: id,
+            phase,
+            actualMs: Math.round(actualDuration),
+            baseMs: Math.round(baseDuration),
+          }, actualDuration >= 250);
+        }}
+      >
+        {selectedScreen}
+      </React.Profiler>
     </React.Suspense>
   );
 

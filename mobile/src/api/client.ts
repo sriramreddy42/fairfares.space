@@ -4,9 +4,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { NativeModules, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
-import { File, Paths } from "expo-file-system";
+import * as ImageManipulator from "expo-image-manipulator";
+import { Directory, File, Paths } from "expo-file-system";
 import { sha256 } from "@noble/hashes/sha256";
 import * as naclUtil from "tweetnacl-util";
+import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
+import { logDevelopmentPerformance } from "../utils/performanceDiagnostics";
 
 declare const process: {
   env: {
@@ -207,6 +210,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     // TypeError, so remote idempotent GETs need a slightly longer retry window.
     const attempts = options.attempts || (method === "GET" ? (EXPLICIT_API_URL ? 4 : 2) : 1);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const attemptStartedAt = Date.now();
       const controller = new AbortController();
       // Multipart completion can legitimately spend time reconciling parts and
       // streaming the completed ciphertext through the backend checksum pass.
@@ -215,6 +219,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
       try {
         const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
         const text = await response.text();
+        const parseStartedAt = Date.now();
         let payload: T & { error?: string; message?: string };
         try {
           payload = JSON.parse(text) as T & { error?: string; message?: string };
@@ -228,6 +233,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
           responseError.fairFaresHttpStatus = response.status;
           throw responseError;
         }
+        const parseMs = Date.now() - parseStartedAt;
         if (!response.ok) {
           const httpError = new Error(payload.error || payload.message || `FairFares request failed: ${response.status}`);
           const requestId = response.headers.get("X-Request-ID") || "";
@@ -241,12 +247,62 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
             continue;
           }
           if (response.status >= 500 && !options.silentServerFailure) {
-            const referenceId = reportApiDiagnostic("api_5xx", `${method} ${path}: ${httpError.message}`, requestId);
+            const diagnosticReferenceId = reportApiDiagnostic("api_5xx", `${method} ${path}: ${httpError.message}`, requestId);
+            const referenceId = requestId || diagnosticReferenceId;
+            if (__DEV__) console.warn("[FairFares API failure]", {
+              method,
+              path: path.split("?", 1)[0],
+              status: response.status,
+              requestId: requestId || "missing",
+              diagnosticReferenceId,
+              message: httpError.message,
+            });
             enrichedError.message = `FairFares is temporarily unavailable. Please try again. Reference: ${referenceId}`;
           }
           throw enrichedError;
         }
         activeApiBase = baseUrl;
+        const durationMs = Date.now() - attemptStartedAt;
+        if (__DEV__ && path.startsWith("/api/chat/messages?") && text.length >= 500_000) {
+          const chatPayload = payload as unknown as {
+            messages?: Array<{ id?: number; type?: string; text?: string; metadata?: unknown }>;
+            envelopes?: Array<{ messageId?: number; ciphertext?: string }>;
+          };
+          const messageSizes = (chatPayload.messages || []).map((message) => ({
+            id: Number(message.id || 0),
+            type: String(message.type || ""),
+            textBytes: String(message.text || "").length,
+            metadataBytes: message.metadata ? JSON.stringify(message.metadata).length : 0,
+          }));
+          const envelopeSizes = (chatPayload.envelopes || []).map((envelope) => ({
+            messageId: Number(envelope.messageId || 0),
+            ciphertextBytes: String(envelope.ciphertext || "").length,
+          }));
+          logDevelopmentPerformance("oversized-chat-response", {
+            responseKb: Math.round(text.length / 1024),
+            messages: messageSizes.length,
+            envelopes: envelopeSizes.length,
+            messageMetadataKb: Math.round(messageSizes.reduce((total, item) => total + item.metadataBytes + item.textBytes, 0) / 1024),
+            envelopeCiphertextKb: Math.round(envelopeSizes.reduce((total, item) => total + item.ciphertextBytes, 0) / 1024),
+            largestMessageId: [...messageSizes].sort((left, right) => (right.metadataBytes + right.textBytes) - (left.metadataBytes + left.textBytes))[0]?.id || 0,
+            largestEnvelopeMessageId: [...envelopeSizes].sort((left, right) => right.ciphertextBytes - left.ciphertextBytes)[0]?.messageId || 0,
+          }, true);
+        }
+        const expectedLongPoll = path.startsWith("/api/chat/events?");
+        const shouldLogRequestTiming = expectedLongPoll
+          ? durationMs >= 8000 || parseMs >= 100
+          : durationMs >= 1000 || parseMs >= 100;
+        if (__DEV__ && shouldLogRequestTiming) {
+          logDevelopmentPerformance("api-request-complete", {
+            method,
+            path: path.split("?", 1)[0],
+            status: response.status,
+            durationMs,
+            parseMs,
+            responseKb: Math.round(text.length / 1024),
+            attempt: attempt + 1,
+          }, durationMs >= (expectedLongPoll ? 8000 : 5000) || parseMs >= 250);
+        }
         return payload;
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
@@ -318,6 +374,8 @@ export async function getAuthenticatedAssetDataUrl(value: string) {
   });
 }
 
+let authenticatedImagePreviewQueue = Promise.resolve();
+
 export async function getAuthenticatedImagePreviewUri(value: string) {
   if (Platform.OS === "web") return getAuthenticatedAssetDataUrl(value);
   const directUrl = absoluteAssetUrl(value);
@@ -326,17 +384,38 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
   const cacheRoot = FileSystem.cacheDirectory;
   if (!cacheRoot) throw new Error("Photo preview storage is unavailable.");
   const safeKey = value.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(-80) || String(Date.now());
-  const destination = `${cacheRoot}chitthi-preview-${safeKey}.img`;
+  // Never hand an original-resolution legacy upload directly to the chat
+  // recycler. Several visible photos can otherwise decode concurrently and
+  // cause an iOS jetsam termination with no JavaScript exception. Version the
+  // cache name so old full-resolution `.img` previews are not reused.
+  const destination = `${cacheRoot}chitthi-preview-v2-${safeKey}.jpg`;
   const existing = await FileSystem.getInfoAsync(destination);
   if (existing.exists && Number(existing.size || 0) > 0) return destination;
-  const headers: Record<string, string> = {};
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  const result = await FileSystem.downloadAsync(directUrl, destination, { headers });
-  if (result.status < 200 || result.status >= 300) {
-    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
-    throw new Error(`Could not load photo preview (${result.status}).`);
-  }
-  return result.uri;
+  const loadPreview = async () => {
+    const alreadyCreated = await FileSystem.getInfoAsync(destination);
+    if (alreadyCreated.exists && Number(alreadyCreated.size || 0) > 0) return destination;
+    const temporary = `${cacheRoot}chitthi-preview-source-${Date.now()}-${Math.random().toString(36).slice(2)}.img`;
+    try {
+      const headers: Record<string, string> = {};
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      const result = await FileSystem.downloadAsync(directUrl, temporary, { headers });
+      if (result.status < 200 || result.status >= 300) throw new Error(`Could not load photo preview (${result.status}).`);
+      const resized = await ImageManipulator.manipulateAsync(
+        temporary,
+        [{ resize: { width: 720 } }],
+        { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      await FileSystem.copyAsync({ from: resized.uri, to: destination });
+      if (resized.uri !== temporary) await FileSystem.deleteAsync(resized.uri, { idempotent: true }).catch(() => undefined);
+      return destination;
+    } finally {
+      await FileSystem.deleteAsync(temporary, { idempotent: true }).catch(() => undefined);
+    }
+  };
+  // ImageManipulator must not decode several camera-sized sources in parallel.
+  const queued = authenticatedImagePreviewQueue.then(loadPreview, loadPreview);
+  authenticatedImagePreviewQueue = queued.then(() => undefined, () => undefined);
+  return queued;
 }
 
 export async function downloadAuthenticatedAssetToFile(value: string, destination: string, onProgress?: (progress: number) => void, includeAuthorization = true) {
@@ -820,9 +899,19 @@ function formBody(values: Record<string, string>) {
 }
 
 export async function getChatConversations(offset = 0) {
-  const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, offset)) });
-  const payload = await request<{ ok: boolean; conversations: ChatConversation[] }>(`/api/chat/conversations?${params.toString()}`);
-  return payload.conversations || [];
+  return (await getChatConversationsPage("", offset)).conversations;
+}
+
+export async function getChatConversationsPage(cursor = "", offset = 0) {
+  const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, offset)), compact_senders: "1" });
+  if (cursor) params.set("cursor", cursor);
+  const payload = await request<{ ok: boolean; conversations: ChatConversation[]; pagination?: { hasMore?: boolean; nextCursor?: string } }>(`/api/chat/conversations?${params.toString()}`);
+  const conversations = payload.conversations || [];
+  return {
+    conversations,
+    hasMore: payload.pagination?.hasMore ?? conversations.length >= 30,
+    nextCursor: String(payload.pagination?.nextCursor || ""),
+  };
 }
 
 export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "") {
@@ -863,13 +952,26 @@ export async function getChatCommunities(city = "") {
 export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30, deviceId = "") {
   const params = new URLSearchParams({
     conversation_id: conversationId,
-    limit: String(Math.max(1, Math.min(50, Math.floor(limit || 30))))
+    limit: String(Math.max(1, Math.min(50, Math.floor(limit || 30)))),
+    compact_senders: "1",
   });
   if (beforeMessageId > 0) params.set("before", String(Math.floor(beforeMessageId)));
   if (deviceId) params.set("device_id", deviceId);
-  return request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }>; hasMore: boolean; nextBefore: number }>(
+  const payload = await request<{ ok: boolean; conversation: ChatConversation; messages: ChatMessage[]; senders?: Record<string, { name?: string; photoUrl?: string }>; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }>; hasMore: boolean; nextBefore: number }>(
     `/api/chat/messages?${params.toString()}`
   );
+  const senders = payload.senders || {};
+  return {
+    ...payload,
+    messages: (payload.messages || []).map((message) => {
+      const sender = senders[String(message.senderId)] || {};
+      return {
+        ...message,
+        senderName: message.senderName || sender.name || "",
+        senderPhotoUrl: message.senderPhotoUrl || sender.photoUrl || "",
+      };
+    }),
+  };
 }
 
 export type ChatLinkPreview = {
@@ -986,8 +1088,11 @@ async function completeEncryptedMultipartUpload(uploadId: string, parts: Complet
 }
 
 const multipartStatePrefix = "fairfares.chitthi.multipart.v1.";
+const multipartRecoveryMaxAgeMs = 25 * 60 * 60 * 1000;
 
 type PendingMultipartUpload = {
+  ownerUserId: number;
+  createdAt: number;
   authorization: EncryptedUploadAuthorization;
   conversationId: string;
   encryptedUri: string;
@@ -1000,8 +1105,12 @@ type PendingMultipartUpload = {
   uploaded?: boolean;
 };
 
-function multipartStateKey(ciphertextSha256: string) {
-  return `${multipartStatePrefix}${ciphertextSha256.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+function multipartStateKey(ownerUserId: number, ciphertextSha256: string) {
+  return `${multipartStatePrefix}${ownerUserId}.${ciphertextSha256.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+function multipartStateOwnerPrefix(ownerUserId: number) {
+  return `${multipartStatePrefix}${ownerUserId}.`;
 }
 
 async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthorization, encryptedUri: string) {
@@ -1018,6 +1127,14 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
   });
 
   if (Platform.OS === "ios" && pendingPartNumbers.length) {
+    // Reading and hashing an 8 MiB part through expo-file-system runs on the
+    // JavaScript thread in Expo Go/older clients and can freeze the entire app
+    // for 20+ seconds. Durable iOS multipart recovery is therefore native-only.
+    // Keep its state/ciphertext intact until a current development or release
+    // build provides the staging worker.
+    if (!FairFaresCrypto.multipartStagingAvailable) {
+      throw new Error("This encrypted upload requires the current FairFares development build to resume safely.");
+    }
     // Stage and submit every remaining file-backed task before awaiting any of
     // them. iOS then owns all tasks in its background URLSession and can keep
     // transferring them after JavaScript is suspended. Staging is sequential,
@@ -1036,38 +1153,41 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     try {
       for (const partNumber of pendingPartNumbers) {
         const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);
-        const reader = source.open();
-        reader.offset = (partNumber - 1) * partSize;
-        let bytes: Uint8Array;
-        try {
-          bytes = reader.readBytes(expectedSize);
-        } finally {
-          reader.close();
-        }
-        if (bytes.byteLength !== expectedSize) throw new Error(`Encrypted upload part ${partNumber} could not be read completely.`);
-        const partSha256 = naclUtil.encodeBase64(sha256(bytes));
         const partFile = new File(Paths.cache, `chitthi-upload-${authorization.uploadId}-${partNumber}.part`);
         let partAuthorization: Awaited<ReturnType<typeof authorizeEncryptedMultipartPart>>;
         try {
-          partFile.create({ overwrite: true, intermediates: true });
-          partFile.write(bytes);
+          let partSha256 = "";
+          const staged = await FairFaresCrypto.stageMultipartPart(
+            encryptedUri,
+            partFile.uri,
+            (partNumber - 1) * partSize,
+            expectedSize
+          );
+          if (staged.size !== expectedSize || !staged.sha256Base64) throw new Error(`Encrypted upload part ${partNumber} could not be staged completely.`);
+          partSha256 = staged.sha256Base64;
           partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partSha256);
         } catch (error) {
           if (partFile.exists) partFile.delete();
           throw error;
-        } finally {
-          bytes.fill(0);
         }
         scheduled.push((async () => {
           try {
-            let uploaded: FileSystem.FileSystemUploadResult | undefined;
+            let uploaded: { status: number; headers: Record<string, string> } | undefined;
             for (let attempt = 0; attempt < 3; attempt += 1) {
-              uploaded = await FileSystem.uploadAsync(partAuthorization.uploadUrl, partFile.uri, {
-                httpMethod: "PUT", headers: partAuthorization.headers,
-                uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-                sessionType: FileSystem.FileSystemSessionType.BACKGROUND
-              });
-              if (uploaded.status >= 200 && uploaded.status < 300) break;
+              try {
+                const nativeResult = await FairFaresCrypto.uploadMultipartPart(
+                  authorization.uploadId,
+                  partNumber,
+                  partAuthorization.uploadUrl,
+                  partAuthorization.headers,
+                  partFile.uri,
+                  expectedSize
+                );
+                uploaded = { status: nativeResult.status, headers: { etag: nativeResult.etag } };
+                if (uploaded.status >= 200 && uploaded.status < 300) break;
+              } catch (error) {
+                if (attempt === 2) throw error;
+              }
               if (attempt < 2) await wait([500, 1250][attempt]);
             }
             if (!uploaded || uploaded.status < 200 || uploaded.status >= 300) throw new Error(`Encrypted upload part ${partNumber} failed (${uploaded?.status || 0}).`);
@@ -1220,18 +1340,20 @@ export async function forwardEncryptedChatAttachment(
 }
 
 export async function sendDirectEncryptedChatAttachment(
+  ownerUserId: number,
   conversationId: string,
   encrypted: { ciphertextBase64?: string; encryptedUri?: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
   mediaMimeType: string,
   silent = false
 ) {
+  if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new Error("A signed-in account is required to upload an encrypted attachment.");
   const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
-  const stateKey = multipartStateKey(encrypted.ciphertextSha256);
+  const stateKey = multipartStateKey(ownerUserId, encrypted.ciphertextSha256);
   const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   if (authorization.transferMode === "MULTIPART") {
     if (!encrypted.encryptedUri || Platform.OS === "web") throw new Error("Multipart encrypted uploads require the native app.");
     const pending: PendingMultipartUpload = {
-      authorization, conversationId, encryptedUri: encrypted.encryptedUri,
+      ownerUserId, createdAt: Date.now(), authorization, conversationId, encryptedUri: encrypted.encryptedUri,
       encryptedSize: encrypted.encryptedSize, ciphertextSha256: encrypted.ciphertextSha256,
       envelopes: encrypted.envelopes, mediaMimeType, silent, clientMessageId,
     };
@@ -1278,16 +1400,23 @@ export async function sendDirectEncryptedChatAttachment(
   }
 }
 
-export async function resumePendingEncryptedChatUploads() {
-  if (Platform.OS === "web") return [] as ChatMessage[];
-  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStatePrefix));
+export async function resumePendingEncryptedChatUploads(ownerUserId: number) {
+  if (Platform.OS === "web" || !Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) return [] as ChatMessage[];
+  const ownerPrefix = multipartStateOwnerPrefix(ownerUserId);
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(ownerPrefix));
   const finalized: ChatMessage[] = [];
   for (const key of keys.slice(0, 5)) {
     try {
       const raw = await AsyncStorage.getItem(key);
       if (!raw) continue;
       const pending = JSON.parse(raw) as PendingMultipartUpload;
+      if (pending.ownerUserId !== ownerUserId) continue;
       const encryptedFile = new File(pending.encryptedUri);
+      if (!Number.isFinite(pending.createdAt) || Date.now() - pending.createdAt > multipartRecoveryMaxAgeMs) {
+        await AsyncStorage.removeItem(key);
+        if (encryptedFile.exists) encryptedFile.delete();
+        continue;
+      }
       if (!pending.authorization?.uploadId || !encryptedFile.exists || encryptedFile.size !== pending.encryptedSize) {
         await AsyncStorage.removeItem(key);
         continue;
@@ -1309,6 +1438,41 @@ export async function resumePendingEncryptedChatUploads() {
   return finalized;
 }
 
+export async function pendingEncryptedChatUploadSummary(ownerUserId: number) {
+  if (Platform.OS === "web" || !Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) return { count: 0, validCount: 0, encryptedBytes: 0, uploadedCount: 0 };
+  const ownerPrefix = multipartStateOwnerPrefix(ownerUserId);
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(ownerPrefix));
+  let count = 0;
+  let validCount = 0;
+  let encryptedBytes = 0;
+  let uploadedCount = 0;
+  for (const [key, raw] of await AsyncStorage.multiGet(keys.slice(0, 20))) {
+    if (!raw) continue;
+    try {
+      const pending = JSON.parse(raw) as PendingMultipartUpload;
+      if (pending.ownerUserId !== ownerUserId) continue;
+      const file = new File(pending.encryptedUri);
+      if (!Number.isFinite(pending.createdAt) || Date.now() - pending.createdAt > multipartRecoveryMaxAgeMs) {
+        if (key) await AsyncStorage.removeItem(key);
+        if (file.exists) file.delete();
+        continue;
+      }
+      if (!pending.authorization?.uploadId || !file.exists || file.size !== pending.encryptedSize) {
+        if (key) await AsyncStorage.removeItem(key);
+        if (file.exists) file.delete();
+        continue;
+      }
+      count += 1;
+      validCount += 1;
+      encryptedBytes += Number(file.size || 0);
+      if (pending.uploaded) uploadedCount += 1;
+    } catch {
+      // Summary is diagnostic only; recovery performs authoritative cleanup.
+    }
+  }
+  return { count, validCount, encryptedBytes, uploadedCount };
+}
+
 async function cleanupOrphanedEncryptedChatFiles() {
   if (Platform.OS === "web") return;
   const stateKeys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStatePrefix));
@@ -1324,14 +1488,19 @@ async function cleanupOrphanedEncryptedChatFiles() {
   }
   const now = Date.now();
   const boundedPreviews: Array<{ file: File; modifiedAt: number; size: number }> = [];
-  for (const entry of Paths.cache.list()) {
+  const cleanupEntries = [...Paths.cache.list()];
+  const preparedVideoDirectory = new Directory(Paths.cache, "chitthi-prepared");
+  if (preparedVideoDirectory.exists) cleanupEntries.push(...preparedVideoDirectory.list());
+  for (const entry of cleanupEntries) {
     if (!(entry instanceof File) || retainedUris.has(entry.uri)) continue;
     const isPartial = /\/chitthi-[^/]+\.ffenc2\.part$/.test(entry.uri);
     const isEncrypted = /\/chitthi-[^/]+\.ffenc2$/.test(entry.uri);
     const isUploadPart = /\/chitthi-upload-[^/]+\.part$/.test(entry.uri);
+    const isUploadPartial = /\/chitthi-upload-[^/]+\.part\.partial$/.test(entry.uri);
+    const isPreparedVideo = /\/chitthi-prepared\/video-[^/]+\.mp4$/.test(entry.uri);
     const isInterruptedDownload = /\/chitthi-download-[^/]+(?:\.ffenc|\.ffenc\.range-\d+|\.ffenc\.resume\.json)$/.test(entry.uri);
     const isPreview = /\/chitthi-(?:preview|decrypted)-[^/]+\.(?:img|jpg|jpeg|png|webp)$/.test(entry.uri);
-    if (!isPartial && !isEncrypted && !isUploadPart && !isInterruptedDownload && !isPreview) continue;
+    if (!isPartial && !isEncrypted && !isUploadPart && !isUploadPartial && !isPreparedVideo && !isInterruptedDownload && !isPreview) continue;
     const modifiedAt = Number(entry.modificationTime || now);
     const age = now - modifiedAt;
     // A background URLSession may still own an upload part while the app is
@@ -1366,7 +1535,12 @@ export async function downloadEncryptedAssetResumably(
   onProgress?: (progress: number) => void,
   allowCleanRestart = true
 ) {
-  if (Platform.OS === "web" || encryptedSize <= 0) throw new Error("Resumable encrypted download is unavailable.");
+  // 100 MB plaintext plus authenticated chunk tags stays well below 120 MB.
+  // Reject malformed authorization sizes before creating files or allocating
+  // range work; never trust remote metadata as a storage bound.
+  if (Platform.OS === "web" || !Number.isSafeInteger(encryptedSize) || encryptedSize <= 0 || encryptedSize > 120_000_000) {
+    throw new Error("Resumable encrypted download authorization is invalid.");
+  }
   const legacyMissingChecksum = !ciphertextSha256;
   if (!legacyMissingChecksum) {
     let expectedChecksumBytes: Uint8Array;
@@ -1390,19 +1564,25 @@ export async function downloadEncryptedAssetResumably(
   if (!legacyMissingChecksum) await FileSystem.writeAsStringAsync(resumeMetadataUri, expectedResumeMetadata);
   if (!target.exists) target.create({ overwrite: false, intermediates: true });
   if (target.size > encryptedSize) target.create({ overwrite: true, intermediates: true });
-  const digest = sha256.create();
-  if (target.size > 0) {
+  const nativeAssembly = FairFaresCrypto.nativeFileAssemblyAvailable;
+  const digest = nativeAssembly ? null : sha256.create();
+  if (!nativeAssembly && target.size > 0) {
     const existingReader = target.open();
     try {
       while (existingReader.offset !== null && existingReader.offset < target.size) {
-        digest.update(existingReader.readBytes(Math.min(1024 * 1024, target.size - existingReader.offset)));
+        // Expo File handles and Noble hashing are synchronous. Keep each turn
+        // bounded and yield to the native event loop so navigation/back/media
+        // controls remain responsive while validating a resumed video.
+        digest!.update(existingReader.readBytes(Math.min(256 * 1024, target.size - existingReader.offset)));
+        if (existingReader.offset !== null && existingReader.offset < target.size) await wait(0);
       }
     } finally {
       existingReader.close();
     }
   }
-  const writer = target.open();
-  writer.offset = target.size;
+  const writer = nativeAssembly ? null : target.open();
+  if (writer) writer.offset = target.size;
+  let assembledSize = target.size;
   const rangeBytes = 8 * 1024 * 1024;
   type DownloadedRange = { start: number; end: number; uri: string };
 
@@ -1439,8 +1619,8 @@ export async function downloadEncryptedAssetResumably(
   }
 
   try {
-    while (writer.offset !== null && writer.offset < encryptedSize) {
-      const batchStart = writer.offset;
+    while (assembledSize < encryptedSize) {
+      const batchStart = assembledSize;
       const ranges = Array.from({ length: 2 }, (_, index) => {
         const start = batchStart + index * rangeBytes;
         return start < encryptedSize ? { start, end: Math.min(encryptedSize - 1, start + rangeBytes - 1) } : null;
@@ -1455,26 +1635,36 @@ export async function downloadEncryptedAssetResumably(
         downloaded.sort((left, right) => left.start - right.start);
         for (const range of downloaded) {
           const part = new File(range.uri);
-          const reader = part.open();
-          try {
-            while (reader.offset !== null && reader.offset < part.size) {
-              const bytes = reader.readBytes(Math.min(1024 * 1024, part.size - reader.offset));
-              writer.writeBytes(bytes);
-              digest.update(bytes);
+          if (nativeAssembly) {
+            const result = await FairFaresCrypto.appendFile(range.uri, destination, assembledSize, part.size);
+            assembledSize = Number(result.outputSize || 0);
+          } else {
+            const reader = part.open();
+            try {
+              while (reader.offset !== null && reader.offset < part.size) {
+                const bytes = reader.readBytes(Math.min(256 * 1024, part.size - reader.offset));
+                writer!.writeBytes(bytes);
+                digest!.update(bytes);
+                bytes.fill(0);
+                if (reader.offset !== null && reader.offset < part.size) await wait(0);
+              }
+              assembledSize = writer!.offset || assembledSize;
+            } finally {
+              reader.close();
             }
-          } finally {
-            reader.close();
           }
-          onProgress?.(Math.max(0, Math.min(1, (writer.offset || 0) / encryptedSize)));
+          onProgress?.(Math.max(0, Math.min(1, assembledSize / encryptedSize)));
         }
       } finally {
         await Promise.all(ranges.map(({ start }) => FileSystem.deleteAsync(`${destination}.range-${start}`, { idempotent: true }).catch(() => undefined)));
       }
     }
   } finally {
-    writer.close();
+    writer?.close();
   }
-  const actualChecksum = naclUtil.encodeBase64(digest.digest());
+  const actualChecksum = nativeAssembly
+    ? (await FairFaresCrypto.sha256File(destination, encryptedSize)).sha256Base64
+    : naclUtil.encodeBase64(digest!.digest());
   if (target.size !== encryptedSize || (!legacyMissingChecksum && actualChecksum !== ciphertextSha256)) {
     target.delete();
     await FileSystem.deleteAsync(resumeMetadataUri, { idempotent: true }).catch(() => undefined);
@@ -1510,13 +1700,15 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
   const query = new URLSearchParams({
     conversation_id: conversationId,
     after: String(Math.max(0, Math.floor(afterMessageId || 0))),
+    compact_senders: "1",
     // Keep the hold comfortably below common mobile/proxy idle thresholds.
     // A completed empty response immediately starts the next poll.
     wait: "5"
   });
-  return request<{
+  const payload = await request<{
     ok: boolean;
     messages: ChatMessage[];
+    senders?: Record<string, { name?: string; photoUrl?: string }>;
     receipts: Array<{ id: number; deliveredAt: string; readAt: string; status: ChatMessage["status"] }>;
     typing: Array<{ userId: number; name: string }>;
     reactionUpdates: Array<{ messageId: number; reactions: Array<{ emoji: string; count: number; mine: boolean }> }>;
@@ -1529,6 +1721,18 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     silentServerFailure: true,
     attempts: 2
   });
+  const senders = payload.senders || {};
+  return {
+    ...payload,
+    messages: (payload.messages || []).map((message) => {
+      const sender = senders[String(message.senderId)] || {};
+      return {
+        ...message,
+        senderName: message.senderName || sender.name || "",
+        senderPhotoUrl: message.senderPhotoUrl || sender.photoUrl || "",
+      };
+    }),
+  };
 }
 
 export async function updateChatTyping(conversationId: string, active: boolean) {

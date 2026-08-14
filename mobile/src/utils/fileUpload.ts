@@ -9,7 +9,7 @@ function normalizedMimeType(name: string, provided: string) {
   return ({ pdf: "application/pdf", txt: "text/plain", csv: "text/csv", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } as Record<string, string>)[extension] || provided || "application/octet-stream";
 }
 
-export async function pickChatFile(): Promise<PickedChatFile | null> {
+export async function pickChatFile(maxBytes = 100_000_000): Promise<PickedChatFile | null> {
   const result = await DocumentPicker.getDocumentAsync({
     type: ["application/pdf", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
     copyToCacheDirectory: true,
@@ -18,9 +18,10 @@ export async function pickChatFile(): Promise<PickedChatFile | null> {
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
   const size = Number(asset.size || 0);
-  if (!size || size > 8_000_000) {
+  const fileLimit = Math.max(1_000_000, Math.min(100_000_000, maxBytes));
+  if (!size || size > fileLimit) {
     if (asset.uri) await FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined);
-    throw new Error(!size ? "Could not determine the selected file size." : "Choose a file no larger than 8 MB.");
+    throw new Error(!size ? "Could not determine the selected file size." : `Choose a file no larger than ${Math.round(fileLimit / 1_000_000)} MB.`);
   }
   const mimeType = normalizedMimeType(asset.name || "attachment", asset.mimeType || "");
   if (!asset.uri) throw new Error("Could not read the selected file.");

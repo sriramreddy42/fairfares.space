@@ -6013,6 +6013,12 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_conversation_consolidations (
+                user_id INTEGER PRIMARY KEY,
+                completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER NOT NULL,
@@ -7629,6 +7635,9 @@ def init_db() -> None:
         )
         con.execute("UPDATE bookings SET subtotal_price = total_price WHERE subtotal_price = 0")
     delete_local_accommodation_images(stale_accommodation_images)
+    # Data migrations finish before the server begins accepting requests. This
+    # keeps inbox GETs read-only and avoids first-user latency/lock spikes.
+    run_chat_conversation_consolidation_migration()
 
 
 def get_content() -> dict[str, str]:
@@ -17702,6 +17711,26 @@ def chat_message_is_editable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]
 
 
 def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conversation_id: int, community_id: int) -> None:
+    member_user_ids = {
+        int(row_value(row, "user_id") or 0)
+        for row in con.execute(
+            "SELECT user_id FROM chat_community_members WHERE community_id = ?",
+            (community_id,),
+        ).fetchall()
+        if int(row_value(row, "user_id") or 0) > 0
+    }
+    participant_user_ids = {
+        int(row_value(row, "user_id") or 0)
+        for row in con.execute(
+            "SELECT user_id FROM chat_participants WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        if int(row_value(row, "user_id") or 0) > 0
+    }
+    # Group history is a high-frequency GET. Avoid opening a SQLite write
+    # transaction when membership is already synchronized.
+    if member_user_ids == participant_user_ids:
+        return
     con.execute(
         """DELETE FROM chat_participants
            WHERE conversation_id = ?
@@ -17710,14 +17739,10 @@ def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conve
              )""",
         (conversation_id, community_id),
     )
-    members = con.execute(
-        "SELECT user_id FROM chat_community_members WHERE community_id = ?",
-        (community_id,),
-    ).fetchall()
-    for member in members:
+    for member_user_id in member_user_ids:
         con.execute(
             "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
-            (conversation_id, int(row_value(member, "user_id") or 0)),
+            (conversation_id, member_user_id),
         )
 
 
@@ -17963,6 +17988,14 @@ def get_or_create_person_conversation(
 
 def consolidate_person_conversations(con: sqlite3.Connection, user_id: int) -> None:
     """Merge legacy duplicate direct threads so the inbox has one card per person."""
+    # This repairs historical data; it is not part of normal inbox retrieval.
+    # Recording completion keeps subsequent GETs read-only and prevents an
+    # O(total direct threads) migration scan on every refresh/page request.
+    if con.execute(
+        "SELECT 1 FROM chat_conversation_consolidations WHERE user_id = ? LIMIT 1",
+        (user_id,),
+    ).fetchone():
+        return
     rows = con.execute(
         """
         SELECT conversations.id,
@@ -18022,6 +18055,35 @@ def consolidate_person_conversations(con: sqlite3.Connection, user_id: int) -> N
             """,
             (canonical_id, canonical_id),
         )
+    con.execute(
+        "INSERT OR IGNORE INTO chat_conversation_consolidations (user_id) VALUES (?)",
+        (user_id,),
+    )
+
+
+def run_chat_conversation_consolidation_migration() -> None:
+    """Complete the legacy direct-thread repair before HTTP traffic begins."""
+    started_at = time.perf_counter()
+    with db() as con:
+        user_ids = [
+            int(row["user_id"])
+            for row in con.execute(
+                """SELECT DISTINCT participants.user_id
+                   FROM chat_participants participants
+                   LEFT JOIN chat_conversation_consolidations completed
+                     ON completed.user_id = participants.user_id
+                   WHERE completed.user_id IS NULL
+                   ORDER BY participants.user_id"""
+            ).fetchall()
+        ]
+        for user_id in user_ids:
+            consolidate_person_conversations(con, user_id)
+    if user_ids:
+        print(json.dumps({
+            "event": "chat_conversation_migration",
+            "users": len(user_ids),
+            "duration_ms": round((time.perf_counter() - started_at) * 1000, 1),
+        }, separators=(",", ":")), flush=True)
 
 
 def get_or_create_accommodation_conversation(
@@ -18935,11 +18997,36 @@ def send_rental_booking_push(
     )
 
 
-def get_chat_conversations_for_user(user_id: int, limit: int = 30, offset: int = 0) -> list[dict[str, object]]:
+def encode_chat_conversation_cursor(activity_at: object, conversation_id: object) -> str:
+    activity = str(activity_at or "").strip()[:40]
+    numeric_id = int(conversation_id or 0)
+    if not activity or numeric_id <= 0:
+        return ""
+    return base64.urlsafe_b64encode(json.dumps([activity, numeric_id], separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_chat_conversation_cursor(value: str) -> tuple[str, int] | None:
+    value = str(value or "").strip()
+    if not value or len(value) > 160:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        payload = json.loads(decoded.decode("utf-8"))
+        activity = str(payload[0] or "").strip()
+        conversation_id = int(payload[1] or 0)
+    except (ValueError, TypeError, IndexError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not activity or len(activity) > 40 or conversation_id <= 0:
+        return None
+    return activity, conversation_id
+
+
+def get_chat_conversations_for_user(
+    user_id: int, limit: int = 30, offset: int = 0, *, cursor_activity: str = "", cursor_id: int = 0,
+) -> list[dict[str, object]]:
     limit = max(1, min(int(limit or 30), 50))
     offset = max(0, int(offset or 0))
     with db() as con:
-        consolidate_person_conversations(con, user_id)
         rows = con.execute(
             """
             SELECT conversations.*,
@@ -18989,6 +19076,14 @@ def get_chat_conversations_for_user(user_id: int, limit: int = 30, offset: int =
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             WHERE conversations.status = 'ACTIVE'
               AND (
+                  ? = ''
+                  OR datetime(COALESCE(conversations.last_message_at, conversations.updated_at)) < datetime(?)
+                  OR (
+                      datetime(COALESCE(conversations.last_message_at, conversations.updated_at)) = datetime(?)
+                      AND conversations.id < ?
+                  )
+              )
+              AND (
                   conversations.community_id IS NULL
                   OR EXISTS (
                       SELECT 1 FROM chat_community_members current_membership
@@ -18997,10 +19092,10 @@ def get_chat_conversations_for_user(user_id: int, limit: int = 30, offset: int =
                   )
               )
             GROUP BY conversations.id
-            ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC
+            ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC, conversations.id DESC
             LIMIT ? OFFSET ?
             """,
-            (user_id, user_id, user_id, user_id, limit, offset),
+            (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, limit, offset),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
 
@@ -20630,12 +20725,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 self.close_connection = True
         except Exception as exc:
+            traceback_entry = exc.__traceback__
+            while traceback_entry and traceback_entry.tb_next:
+                traceback_entry = traceback_entry.tb_next
+            error_location = (
+                f"{traceback_entry.tb_frame.f_code.co_name}:{traceback_entry.tb_lineno}"
+                if traceback_entry else "unknown"
+            )
             print(json.dumps({
                 "event": "server_exception",
                 "request_id": self.request_id,
                 "method": str(getattr(self, "command", "")),
                 "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
                 "error_type": type(exc).__name__,
+                # Function and line are sufficient to diagnose production
+                # failures without logging request bodies, message text, keys,
+                # tokens, SQL parameters, or other customer data.
+                "error_location": error_location,
             }, separators=(",", ":")), flush=True)
             if not getattr(self, "suppress_operational_alerts", False):
                 send_operational_alert(
@@ -20647,6 +20753,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         f"Method: {str(getattr(self, 'command', ''))}",
                         f"Path: {urllib.parse.urlparse(str(getattr(self, 'path', ''))).path[:300]}",
                         f"Error type: {type(exc).__name__}",
+                        f"Location: {error_location}",
                     ],
                 )
             raise
@@ -22210,12 +22317,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         params = urllib.parse.parse_qs(parsed.query)
         compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
+        raw_cursor = (params.get("cursor", [""])[0] or "").strip()
+        decoded_cursor = decode_chat_conversation_cursor(raw_cursor) if raw_cursor else None
+        if raw_cursor and not decoded_cursor:
+            self.send_json({"ok": False, "message": "Conversation cursor is invalid."}, 400)
+            return
         try:
             limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
-        conversations = get_chat_conversations_for_user(int(user["id"]), limit=limit, offset=offset)
+        cursor_activity, cursor_id = decoded_cursor or ("", 0)
+        conversations = get_chat_conversations_for_user(
+            int(user["id"]), limit=limit, offset=0 if decoded_cursor else offset,
+            cursor_activity=cursor_activity, cursor_id=cursor_id,
+        )
         if compact_senders:
             for conversation in conversations:
                 other_user_id = int(conversation.get("otherUserId") or 0)
@@ -22225,6 +22341,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     if community_id > 0
                     else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
                 )
+        last_conversation = conversations[-1] if conversations else {}
+        next_cursor = encode_chat_conversation_cursor(last_conversation.get("lastMessageAt"), last_conversation.get("conversationId")) if len(conversations) == limit else ""
         self.send_json({
             "ok": True,
             "conversations": conversations,
@@ -22234,6 +22352,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "returned": len(conversations),
                 "hasMore": len(conversations) == limit,
                 "nextOffset": offset + len(conversations),
+                "nextCursor": next_cursor,
             },
         })
 
@@ -22359,16 +22478,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             has_more = len(fetched_messages) > limit
             messages = list(reversed(fetched_messages[:limit]))
             if messages:
-                con.execute(
-                    """
-                    UPDATE chat_messages
-                    SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
-                        read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
-                    WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
-                      AND (delivered_at IS NULL OR read_at IS NULL)
-                    """,
+                unread_receipt = con.execute(
+                    """SELECT 1 FROM chat_messages
+                       WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                         AND (delivered_at IS NULL OR read_at IS NULL)
+                       LIMIT 1""",
                     (conversation["id"], current_user_id),
-                )
+                ).fetchone()
+                if unread_receipt:
+                    con.execute(
+                        """
+                        UPDATE chat_messages
+                        SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
+                            read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+                        WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                          AND (delivered_at IS NULL OR read_at IS NULL)
+                        """,
+                        (conversation["id"], current_user_id),
+                    )
                 messages = con.execute(
                     """
                     SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
@@ -22412,7 +22539,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchone()
             seen_message_id = int(row_value(seen_row, "seen_message_id") or 0)
             last_message_id = int(row_value(messages[-1], "id") or 0) if messages else 0
-            if last_message_id:
+            current_last_read_message_id = int(row_value(conversation, "last_read_message_id") or 0)
+            if last_message_id > current_last_read_message_id:
                 con.execute(
                     """
                     UPDATE chat_participants

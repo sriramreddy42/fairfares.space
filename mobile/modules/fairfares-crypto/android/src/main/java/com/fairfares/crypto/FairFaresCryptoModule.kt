@@ -50,6 +50,14 @@ class FairFaresCryptoModule : Module() {
       Unit
     }
 
+    AsyncFunction("appendFile") { sourceUri: String, destinationUri: String, expectedOffset: Double, expectedSize: Double ->
+      appendFile(sourceUri, destinationUri, expectedOffset.toLong(), expectedSize.toLong())
+    }
+
+    AsyncFunction("sha256File") { fileUri: String, expectedSize: Double ->
+      sha256File(fileUri, expectedSize.toLong())
+    }
+
     AsyncFunction("deriveRecoveryKey") { passphraseBase64: String, saltBase64: String, iterations: Int, outputBytes: Int ->
       val passphraseBytes = Base64.decode(passphraseBase64, Base64.DEFAULT)
       val salt = Base64.decode(saltBase64, Base64.DEFAULT)
@@ -111,6 +119,59 @@ class FairFaresCryptoModule : Module() {
       offset += count
     }
     return if (offset == requested) buffer else buffer.copyOf(offset).also { buffer.fill(0) }
+  }
+
+  private fun appendFile(sourceUri: String, destinationUri: String, expectedOffset: Long, expectedSize: Long): Map<String, Any> {
+    require(expectedOffset >= 0 && expectedSize in 1..(16L * 1024 * 1024) && expectedOffset <= 120_000_000 - expectedSize) { "Invalid downloaded media range." }
+    val source = file(sourceUri)
+    val destination = file(destinationUri)
+    require(source.canonicalPath != destination.canonicalPath) { "Downloaded media source and destination must be different files." }
+    require(source.isFile && source.length() == expectedSize) { "Downloaded media range is incomplete." }
+    val destinationSize = if (destination.exists()) destination.length() else 0L
+    require(destinationSize == expectedOffset) { "Downloaded media ranges are out of sequence." }
+    destination.parentFile?.mkdirs()
+    try {
+      FileInputStream(source).use { input ->
+        FileOutputStream(destination, true).use { output ->
+          val buffer = ByteArray(1024 * 1024)
+          try {
+            var copied = 0L
+            while (copied < expectedSize) {
+              val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedSize - copied).toInt())
+              require(count > 0) { "Downloaded media range ended early." }
+              output.write(buffer, 0, count)
+              copied += count
+            }
+            output.fd.sync()
+          } finally {
+            buffer.fill(0)
+          }
+        }
+      }
+    } catch (error: Throwable) {
+      java.io.RandomAccessFile(destination, "rw").use { it.setLength(expectedOffset) }
+      throw error
+    }
+    return mapOf("outputSize" to destination.length().toDouble())
+  }
+
+  private fun sha256File(fileUri: String, expectedSize: Long): Map<String, Any> {
+    val source = file(fileUri)
+    require(expectedSize in 1..120_000_000 && source.isFile && source.length() == expectedSize) { "Encrypted download size verification failed." }
+    val digest = MessageDigest.getInstance("SHA-256")
+    FileInputStream(source).use { input ->
+      val buffer = ByteArray(1024 * 1024)
+      try {
+        while (true) {
+          val count = input.read(buffer)
+          if (count < 0) break
+          if (count > 0) digest.update(buffer, 0, count)
+        }
+      } finally {
+        buffer.fill(0)
+      }
+    }
+    return mapOf("size" to source.length().toDouble(), "sha256Base64" to Base64.encodeToString(digest.digest(), Base64.NO_WRAP))
   }
 
   private fun encryptFile(operationId: String, sourceUri: String, destinationUri: String, keyBase64: String, noncePrefixBase64: String, chunkSize: Int): Map<String, Any> {

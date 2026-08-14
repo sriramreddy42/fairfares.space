@@ -288,11 +288,23 @@ export function encryptForDevices(text: string, identity: DeviceIdentity, keys: 
 }
 
 export function decryptEnvelope(envelope: { senderPublicKey: string; nonce: string; ciphertext: string }, identity: DeviceIdentity) {
-  const opened = nacl.box.open(
-    util.decodeBase64(envelope.ciphertext), util.decodeBase64(envelope.nonce),
-    util.decodeBase64(envelope.senderPublicKey), util.decodeBase64(identity.secretKey)
-  );
-  return opened ? util.encodeUTF8(opened) : "";
+  const ciphertext = util.decodeBase64(envelope.ciphertext);
+  const nonce = util.decodeBase64(envelope.nonce);
+  const senderPublicKey = util.decodeBase64(envelope.senderPublicKey);
+  const secretKey = util.decodeBase64(identity.secretKey);
+  let opened: Uint8Array | null = null;
+  try {
+    opened = nacl.box.open(ciphertext, nonce, senderPublicKey, secretKey);
+    return opened ? util.encodeUTF8(opened) : "";
+  } finally {
+    // Pagination can authenticate many historical envelopes in one session.
+    // Do not wait for Hermes GC to reclaim duplicate ciphertext/key buffers.
+    ciphertext.fill(0);
+    nonce.fill(0);
+    senderPublicKey.fill(0);
+    secretKey.fill(0);
+    opened?.fill(0);
+  }
 }
 
 export function encryptAttachmentForDevices(
