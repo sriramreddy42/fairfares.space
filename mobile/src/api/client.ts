@@ -357,7 +357,16 @@ export function absoluteAssetUrl(value: string) {
 
 export function authenticatedAssetSource(value: string) {
   const uri = absoluteAssetUrl(value);
-  return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
+  if (!authToken || !uri || uri.startsWith("data:") || uri.startsWith("file:")) return { uri };
+  try {
+    // Never send the FairFares bearer token to Google profile photos, CDNs, or
+    // any other third-party host. Only same-origin application assets can
+    // require the API session header.
+    if (new URL(uri).origin !== new URL(currentApiBase()).origin) return { uri };
+  } catch {
+    return { uri };
+  }
+  return { uri, headers: { Authorization: `Bearer ${authToken}` } };
 }
 
 export async function getAuthenticatedAssetDataUrl(value: string) {

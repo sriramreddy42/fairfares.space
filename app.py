@@ -18625,6 +18625,23 @@ def chat_notification_group_avatar_url(origin: str, community_id: int, lifetime_
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
 
 
+def chat_compact_avatar_url(origin: str, photo: object, *, user_id: int = 0, community_id: int = 0) -> str:
+    """Keep compact JSON small without proxying already compact URL values."""
+    value = str(photo or "").strip()
+    if not value:
+        return ""
+    if value.startswith("data:image/"):
+        return (
+            chat_notification_group_avatar_url(origin, community_id)
+            if community_id > 0
+            else chat_notification_avatar_url(origin, user_id) if user_id > 0 else ""
+        )
+    # HTTPS and local upload paths are already small strings. Returning them
+    # directly avoids a signed endpoint redirect and keeps third-party image
+    # requests completely free of FairFares authorization headers.
+    return value if value.startswith(("https://", "/", "local://uploads/")) else ""
+
+
 def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, object] | None = None) -> dict[str, dict[str, str]]:
     valid_tokens = [token for token in dict.fromkeys(tokens) if token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")]
     if not valid_tokens:
@@ -22478,10 +22495,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if compact_senders:
                 other_user_id = int(conversation.get("otherUserId") or 0)
                 community_id = int(conversation.get("_communityRecordId") or 0)
-                conversation["otherPhotoUrl"] = (
-                    chat_notification_group_avatar_url(self.public_origin(), community_id)
-                    if community_id > 0
-                    else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
+                conversation["otherPhotoUrl"] = chat_compact_avatar_url(
+                    self.public_origin(), conversation.get("otherPhotoUrl"),
+                    user_id=other_user_id, community_id=community_id,
                 )
             conversation.pop("_communityRecordId", None)
         last_conversation = conversations[-1] if conversations else {}
@@ -22696,10 +22712,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if compact_senders:
             other_user_id = int(conversation_payload.get("otherUserId") or 0)
             community_id = int(conversation_payload.get("_communityRecordId") or 0)
-            conversation_payload["otherPhotoUrl"] = (
-                chat_notification_group_avatar_url(self.public_origin(), community_id)
-                if community_id > 0
-                else chat_notification_avatar_url(self.public_origin(), other_user_id) if other_user_id > 0 else ""
+            conversation_payload["otherPhotoUrl"] = chat_compact_avatar_url(
+                self.public_origin(), conversation_payload.get("otherPhotoUrl"),
+                user_id=other_user_id, community_id=community_id,
             )
         conversation_payload.pop("_communityRecordId", None)
         self.send_json(
@@ -22711,11 +22726,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "senders": {
                     str(int(row_value(message, "sender_id") or 0)): {
                         "name": row_value(message, "sender_name"),
-                        "photoUrl": (
-                            chat_notification_avatar_url(self.public_origin(), int(row_value(message, "sender_id") or 0))
-                            if compact_senders
-                            else row_value(message, "sender_photo_url")
-                        ),
+                        "photoUrl": chat_compact_avatar_url(
+                            self.public_origin(), row_value(message, "sender_photo_url"),
+                            user_id=int(row_value(message, "sender_id") or 0),
+                        ) if compact_senders else row_value(message, "sender_photo_url"),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0
@@ -22864,11 +22878,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "senders": {
                     str(int(row_value(message, "sender_id") or 0)): {
                         "name": row_value(message, "sender_name"),
-                        "photoUrl": (
-                            chat_notification_avatar_url(self.public_origin(), int(row_value(message, "sender_id") or 0))
-                            if compact_senders
-                            else row_value(message, "sender_photo_url")
-                        ),
+                        "photoUrl": chat_compact_avatar_url(
+                            self.public_origin(), row_value(message, "sender_photo_url"),
+                            user_id=int(row_value(message, "sender_id") or 0),
+                        ) if compact_senders else row_value(message, "sender_photo_url"),
                     }
                     for message in messages
                     if int(row_value(message, "sender_id") or 0) > 0

@@ -320,6 +320,10 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertTrue(str(group["id"]).startswith("FFG-"))
         with app.db() as con:
             owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            con.execute(
+                "UPDATE chat_communities SET photo_url = ? WHERE public_id = ?",
+                ("data:image/png;base64,iVBORw0KGgo=", group["id"]),
+            )
             conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
             self.assertFalse(error)
             conversation_public_id = str(conversation["public_id"])
