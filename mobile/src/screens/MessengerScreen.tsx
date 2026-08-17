@@ -296,10 +296,12 @@ async function readCachedChatMessages(userId: number, conversationId: string) {
         cacheKb: Math.round(stored.length / 1024),
         reason: "oversized-legacy-cache",
       }, true);
-      await Promise.allSettled([
-        AsyncStorage.removeItem(chatMessageCacheName(userId, conversationId)),
-        AsyncStorage.removeItem(legacyChatMessageCacheName(userId, conversationId)),
-      ]);
+      InteractionManager.runAfterInteractions(() => {
+        void Promise.allSettled([
+          AsyncStorage.removeItem(chatMessageCacheName(userId, conversationId)),
+          AsyncStorage.removeItem(legacyChatMessageCacheName(userId, conversationId)),
+        ]);
+      });
       return [];
     }
     const startedAt = Date.now();
@@ -636,6 +638,33 @@ function safeConversationPreview(conversation: ChatConversation) {
     ? "📨 New Letter"
     : encryptedOverviewPreview(conversation.lastMessage) || conversation.rideRoute || conversation.subject || "No messages yet.";
 }
+
+const ConversationListRow = React.memo(function ConversationListRow({ chat, onOpen }: {
+  chat: ChatConversation;
+  onOpen: (conversation: ChatConversation) => void;
+}) {
+  const preview = safeConversationPreview(chat);
+  const unread = chat.unread > 0;
+  return (
+    <TouchableOpacity style={[styles.chatRow, unread && styles.chatRowUnread]} onPress={() => onOpen(chat)}>
+      <View style={styles.avatarWrap}>
+        <View style={[styles.avatar, unread && styles.avatarUnread]}>
+          <InitialsAvatar photoUrl={chat.otherPhotoUrl} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
+        </View>
+        {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
+      </View>
+      <View style={styles.chatCopy}>
+        <Text style={styles.chatKind}>{chat.communityId || chat.kind === "GROUP" ? "GROUP LETTER" : "DIRECT LETTER"}</Text>
+        <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
+        <Text style={[styles.chatLast, preview.endsWith("New Letter") && styles.chatLastLetter, unread && styles.chatLastUnread]} numberOfLines={1}>{preview}</Text>
+      </View>
+      <View style={styles.chatMeta}>
+        <Text style={[styles.chatTime, unread && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
+        {unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 function discoveredMessageParts(value: string) {
   return value.split(/((?:(?:https?|fairfares):\/\/|www\.)[^\s<>]+)/gi).filter(Boolean).map((part) => {
@@ -1231,6 +1260,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
   const messengerLoaderVersion = useRef(0);
+  const messengerRefreshPromiseRef = useRef<Promise<void> | null>(null);
+  const messengerRefreshQueuedOptionsRef = useRef<{ showLoader?: boolean; showError?: boolean } | null>(null);
+  const openConversationRef = useRef<(conversation: ChatConversation) => void>(() => undefined);
+  const handleOpenConversation = React.useCallback((conversation: ChatConversation) => openConversationRef.current(conversation), []);
   const loadingMoreConversationsRef = useRef(false);
   const loadingMoreConversationsRequestRef = useRef(0);
   const messengerUserIdRef = useRef(currentUserId);
@@ -2666,7 +2699,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     });
   }, [communities, groupSuggestionsDismissed, search, suggestionCity, tab]);
 
-  async function refreshMessenger(options: { showLoader?: boolean; showError?: boolean } = {}) {
+  async function performMessengerRefresh(options: { showLoader?: boolean; showError?: boolean } = {}) {
     if (!signedIn) return;
     const requestedUserId = currentUserId;
     const { showLoader = true, showError = true } = options;
@@ -2708,6 +2741,28 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     } finally {
       if (showLoader && messengerUserIdRef.current === requestedUserId && messengerLoaderVersion.current === loaderVersion) setLoading(false);
     }
+  }
+
+  function refreshMessenger(options: { showLoader?: boolean; showError?: boolean } = {}): Promise<void> {
+    const existing = messengerRefreshPromiseRef.current;
+    if (existing) {
+      const queued = messengerRefreshQueuedOptionsRef.current;
+      messengerRefreshQueuedOptionsRef.current = {
+        showLoader: Boolean(queued?.showLoader || options.showLoader !== false),
+        showError: Boolean(queued?.showError || options.showError !== false),
+      };
+      return existing.then(async () => {
+        const nextOptions = messengerRefreshQueuedOptionsRef.current;
+        messengerRefreshQueuedOptionsRef.current = null;
+        if (nextOptions) await refreshMessenger(nextOptions);
+      });
+    }
+    const pending = performMessengerRefresh(options);
+    const tracked = pending.finally(() => {
+      if (messengerRefreshPromiseRef.current === tracked) messengerRefreshPromiseRef.current = null;
+    });
+    messengerRefreshPromiseRef.current = tracked;
+    return tracked;
   }
 
   async function loadMoreConversations() {
@@ -2863,6 +2918,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       if (messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === conversation.id) setThreadLoading(false);
     }
   }
+
+  openConversationRef.current = openConversation;
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
@@ -5742,25 +5799,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ) : null}
         </>}
-        renderItem={({ item: chat }) => (
-          <TouchableOpacity key={chat.id} style={[styles.chatRow, chat.unread > 0 && styles.chatRowUnread]} onPress={() => openConversation(chat)}>
-            <View style={styles.avatarWrap}>
-            <View style={[styles.avatar, chat.unread > 0 && styles.avatarUnread]}>
-              <InitialsAvatar photoUrl={chat.otherPhotoUrl} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
-            </View>
-            {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
-            </View>
-            <View style={styles.chatCopy}>
-              <Text style={styles.chatKind}>{chat.communityId || chat.kind === "GROUP" ? "GROUP LETTER" : "DIRECT LETTER"}</Text>
-              <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={[styles.chatLast, safeConversationPreview(chat).endsWith("New Letter") && styles.chatLastLetter, chat.unread > 0 && styles.chatLastUnread]} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
-            </View>
-            <View style={styles.chatMeta}>
-              <Text style={[styles.chatTime, chat.unread > 0 && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
-              {chat.unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
-            </View>
-          </TouchableOpacity>
-        )}
+        renderItem={({ item: chat }) => <ConversationListRow chat={chat} onOpen={handleOpenConversation} />}
         ListFooterComponent={<>
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (

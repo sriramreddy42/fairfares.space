@@ -610,21 +610,34 @@ function FairFaresApp() {
     const userId = data?.user?.id;
     if (!userId) return;
     let cancelled = false;
+    let refreshRunning = false;
     const refreshUnread = async () => {
+      if (refreshRunning) return;
+      refreshRunning = true;
       try {
         const conversations = await getChatConversations();
         if (cancelled) return;
         const unreadCount = conversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0);
-        setData((current) => current?.user?.id === userId ? {
-          ...current,
-          chat: { ...current.chat, unreadCount, conversations: conversations.slice(0, 10) },
-          dashboard: { ...current.dashboard, messages: unreadCount }
-        } : current);
+        const nextConversations = conversations.slice(0, 10);
+        setData((current) => {
+          if (current?.user?.id !== userId) return current;
+          const currentConversations = current.chat.conversations || [];
+          const conversationsUnchanged = currentConversations.length === nextConversations.length
+            && JSON.stringify(currentConversations) === JSON.stringify(nextConversations);
+          if (conversationsUnchanged && current.chat.unreadCount === unreadCount && current.dashboard.messages === unreadCount) return current;
+          return {
+            ...current,
+            chat: { ...current.chat, unreadCount, conversations: nextConversations },
+            dashboard: { ...current.dashboard, messages: unreadCount }
+          };
+        });
         if (Platform.OS !== "web") {
           await Notifications.setBadgeCountAsync(unreadCount).catch(() => false);
         }
       } catch {
         // Keep the last confirmed count during short network interruptions.
+      } finally {
+        refreshRunning = false;
       }
     };
     void refreshUnread();

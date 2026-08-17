@@ -87,6 +87,7 @@ function browserStorage() {
 }
 
 let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+let authTokenGeneration = authToken ? 1 : 0;
 let activeApiBase = API_URL;
 
 function diagnosticReference() {
@@ -124,6 +125,7 @@ function currentApiBase() {
 }
 
 export async function setAuthToken(token: string) {
+  if (authToken !== token) authTokenGeneration += 1;
   authToken = token;
   const storage = browserStorage();
   if (storage) {
@@ -145,6 +147,7 @@ export async function setAuthToken(token: string) {
 export async function hydrateAuthToken() {
   if (authToken || Platform.OS === "web") return authToken;
   const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_STORAGE_KEY).catch(() => null);
+  if (authToken !== (storedToken || "")) authTokenGeneration += 1;
   authToken = storedToken || "";
   return authToken;
 }
@@ -917,16 +920,35 @@ export async function getChatConversations(offset = 0) {
   return (await getChatConversationsPage("", offset)).conversations;
 }
 
+type ChatConversationPage = {
+  conversations: ChatConversation[];
+  hasMore: boolean;
+  nextCursor: string;
+};
+
+const chatConversationPageRequests = new Map<string, Promise<ChatConversationPage>>();
+
 export async function getChatConversationsPage(cursor = "", offset = 0) {
   const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, offset)), compact_senders: "1" });
   if (cursor) params.set("cursor", cursor);
-  const payload = await request<{ ok: boolean; conversations: ChatConversation[]; pagination?: { hasMore?: boolean; nextCursor?: string } }>(`/api/chat/conversations?${params.toString()}`);
-  const conversations = payload.conversations || [];
-  return {
-    conversations,
-    hasMore: payload.pagination?.hasMore ?? conversations.length >= 30,
-    nextCursor: String(payload.pagination?.nextCursor || ""),
-  };
+  const requestKey = `${authTokenGeneration}:${params.toString()}`;
+  const existing = chatConversationPageRequests.get(requestKey);
+  if (existing) return existing;
+  const pending = (async (): Promise<ChatConversationPage> => {
+    const payload = await request<{ ok: boolean; conversations: ChatConversation[]; pagination?: { hasMore?: boolean; nextCursor?: string } }>(`/api/chat/conversations?${params.toString()}`);
+    const conversations = payload.conversations || [];
+    return {
+      conversations,
+      hasMore: payload.pagination?.hasMore ?? conversations.length >= 30,
+      nextCursor: String(payload.pagination?.nextCursor || ""),
+    };
+  })();
+  chatConversationPageRequests.set(requestKey, pending);
+  try {
+    return await pending;
+  } finally {
+    if (chatConversationPageRequests.get(requestKey) === pending) chatConversationPageRequests.delete(requestKey);
+  }
 }
 
 export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "") {
