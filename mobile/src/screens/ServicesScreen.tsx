@@ -27,6 +27,7 @@ import {
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
+import { useResponsiveLayout } from "../utils/layout";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "explorer" | "housing" | "local";
@@ -94,6 +95,7 @@ export function ServicesScreen({
   editBookingId = "",
   onEditBookingOpened
 }: Props) {
+  const layout = useResponsiveLayout();
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [view, setView] = useState<ServicesView>("grid");
   const [selectedBookingId, setSelectedBookingId] = useState("");
@@ -401,7 +403,15 @@ export function ServicesScreen({
 
   return (
     <>
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: layout.navClearance },
+          layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {view === "grid" ? (
           <>
             <View style={styles.header}>

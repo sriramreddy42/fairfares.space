@@ -3,6 +3,7 @@ import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } 
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { AdaptiveGlassView } from "./AdaptiveGlassView";
+import { BOTTOM_NAV_HORIZONTAL_MARGIN, useResponsiveLayout } from "../utils/layout";
 
 export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
 
@@ -36,12 +37,22 @@ function visibleActiveTab(active: TabKey): VisibleTabKey {
 }
 
 export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Props) {
+  const layout = useResponsiveLayout();
   if (hidden) return null;
 
   const selected = visibleActiveTab(active);
 
   return (
-    <View style={styles.card} accessibilityRole="tablist">
+    <View
+      style={[
+        styles.card,
+        { bottom: layout.navBottomInset },
+        layout.isTablet
+          ? { width: layout.navWidth, alignSelf: "center" }
+          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
+      ]}
+      accessibilityRole="tablist"
+    >
       <View pointerEvents="none" style={styles.glassClip}>
         <AdaptiveGlassView
           style={StyleSheet.absoluteFill}
@@ -99,9 +110,6 @@ export function BottomTabs({ active, unreadCount, onChange, hidden = false }: Pr
 const styles = StyleSheet.create({
   card: {
     position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 9,
     height: 70,
     borderRadius: 35,
     borderWidth: 1,

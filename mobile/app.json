@@ -19,7 +19,7 @@
       "buildNumber": "14",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
-      "supportsTablet": false,
+      "supportsTablet": true,
       "associatedDomains": [
         "applinks:fairfare.space",
         "applinks:www.fairfare.space"

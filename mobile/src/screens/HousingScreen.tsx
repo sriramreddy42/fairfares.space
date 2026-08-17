@@ -10,6 +10,7 @@ import { DateTimeField } from "../components/DateTimeField";
 import { EmbeddedRideMap, RideMapPoint } from "../components/RideMap";
 import { SectionHeader } from "../components/SectionHeader";
 import { theme } from "../theme";
+import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { activeFestivalCampaign } from "../utils/festivals";
@@ -655,6 +656,7 @@ export function HousingScreen({
   const [rideDriverBusy, setRideDriverBusy] = useState(false);
   const [rideOwnerPrompt, setRideOwnerPrompt] = useState("");
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const layout = useResponsiveLayout();
   const compactHousingHome = viewportWidth < 560;
   const housingCardWidth = compactHousingHome
     ? Math.max(230, Math.min(275, (viewportWidth - 30) / 1.42))
@@ -3212,7 +3214,11 @@ export function HousingScreen({
     <ScrollView
       ref={scrollRef}
       style={styles.screen}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: layout.navClearance },
+        layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
+      ]}
       stickyHeaderIndices={[1]}
       showsVerticalScrollIndicator={false}
       scrollEventThrottle={16}

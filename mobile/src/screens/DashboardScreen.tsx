@@ -4,6 +4,7 @@ import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, T
 import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
+import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 
 type Props = {
@@ -221,6 +222,7 @@ function ActivityIcon({ kind, color }: { kind: "route" | "items" | "riders" | "l
 
 export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
   const { width: windowWidth } = useWindowDimensions();
+  const layout = useResponsiveLayout();
   const [rides, setRides] = useState<RidePost[]>([]);
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
   const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
@@ -460,11 +462,21 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     }
   }
 
-  const upcomingCardWidth = Math.min(430, Math.max(286, windowWidth - 52));
+  const upcomingCardWidth = layout.isTablet
+    ? Math.min(560, Math.max(430, windowWidth - 52))
+    : Math.min(430, Math.max(286, windowWidth - 52));
 
   return (
     <View style={styles.screen}>
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: layout.navClearance },
+        layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
+      ]}
+      showsVerticalScrollIndicator={false}
+    >
       <Text style={styles.title}>Activity</Text>
 
       {!data?.user ? (

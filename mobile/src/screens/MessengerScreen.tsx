@@ -15,6 +15,7 @@ import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
+import { useResponsiveLayout } from "../utils/layout";
 import {
   absoluteAssetUrl,
   authenticatedAssetSource,
@@ -1207,6 +1208,7 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
 
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" as const };
   // A stale development client may expose native encryption but not the newer
   // background multipart and resumable assembly methods. Do not advertise the
@@ -5623,7 +5625,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   return (
-    <View style={[styles.screen, Platform.OS === "android" && styles.screenAndroid]}>
+    <View style={[
+      styles.screen,
+      Platform.OS === "android" && styles.screenAndroid,
+      layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
+    ]}>
       <View pointerEvents="none" style={styles.chittiBackdrop}>
         <View style={styles.chittiGlowTop} />
         <View style={styles.chittiGlowBottom} />
@@ -5758,7 +5764,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         style={styles.list}
         data={(tab === "All" || tab === "Unread" || tab === "Groups") ? filteredConversations : []}
         keyExtractor={(chat) => chat.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: layout.navClearance }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
         initialNumToRender={12}

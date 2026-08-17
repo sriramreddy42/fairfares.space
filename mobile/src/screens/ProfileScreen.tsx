@@ -6,6 +6,7 @@ import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
+import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { syncChatIdentityRecovery } from "../utils/chatRecovery";
@@ -46,6 +47,7 @@ export function ProfileScreen({
   onOpenStaffPickup
 }: Props) {
   const user = data?.user;
+  const layout = useResponsiveLayout();
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
@@ -321,7 +323,14 @@ export function ProfileScreen({
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: layout.navClearance }
+      ]}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.hero}>
         <View style={styles.heroCopy}>
           <SectionHeader eyebrow="Account" title={displayName} />

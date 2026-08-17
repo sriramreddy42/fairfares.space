@@ -1,0 +1,28 @@
+appId: com.fairfares.mobile
+---
+# iPad layout verification via nav point-taps (nav pill centered on tablet)
+# Tab centers (pt→%): Home 23%, Services 36%, Activity 50%, Chitthi 64%, Account 77%
+- launchApp
+- tapOn:
+    point: "23%,96%"
+- waitForAnimationToEnd
+- takeScreenshot: tab-home
+- tapOn:
+    point: "36%,96%"
+- waitForAnimationToEnd
+- takeScreenshot: tab-services
+- tapOn:
+    point: "50%,96%"
+- waitForAnimationToEnd
+- takeScreenshot: tab-activity
+- tapOn:
+    point: "64%,96%"
+- waitForAnimationToEnd
+- takeScreenshot: tab-chitthi
+- tapOn:
+    point: "77%,96%"
+- waitForAnimationToEnd
+- takeScreenshot: tab-account
+
+
+
