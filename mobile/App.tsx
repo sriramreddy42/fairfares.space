@@ -2756,7 +2756,7 @@ function FairFaresApp() {
                 <TextInput
                   value={searchCity}
                   onChangeText={(value) => { selectedCitySuggestionRef.current = ""; setSearchCity(value); setSearchCitySuggestions([]); }}
-                  placeholder="City, e.g. Denver, CO"
+                  placeholder="City or metro"
                   placeholderTextColor={theme.colors.muted}
                   style={[styles.input, styles.searchInputWithClear]}
                 />
@@ -2789,7 +2789,7 @@ function FairFaresApp() {
                 <TextInput
                   value={searchArea}
                   onChangeText={setSearchArea}
-                  placeholder="Area, building, campus, landmark"
+                  placeholder="Area or landmark"
                   placeholderTextColor={theme.colors.muted}
                   style={[styles.input, styles.searchInputWithClear]}
                 />
@@ -2836,7 +2836,7 @@ function FairFaresApp() {
                 </View>
               </View>
               <View style={styles.searchModalActions}>
-                <TouchableOpacity style={styles.primaryButton} onPress={() => runSearch()}>
+                <TouchableOpacity style={[styles.primaryButton, styles.searchPrimaryButton]} onPress={() => runSearch()}>
                   <Text style={styles.primaryButtonText}>Search listings</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.secondaryButton} onPress={() => setSearchOpen(false)}>
@@ -2965,8 +2965,8 @@ const styles = StyleSheet.create({
   countryPickerLabel: { flex: 1, color: theme.colors.text, fontSize: 14 },
   countryPickerCode: { color: theme.colors.soft, fontSize: 14, fontWeight: "700" },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
-  searchInputWrap: { position: "relative", justifyContent: "center" },
-  searchInputWithClear: { paddingRight: 52 },
+  searchInputWrap: { position: "relative", justifyContent: "center", borderRadius: theme.radius.md, shadowColor: theme.colors.blue, shadowOpacity: 0.07, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  searchInputWithClear: { paddingRight: 52, minHeight: 56, borderWidth: 1.25, borderColor: "rgba(79,124,255,0.42)", fontSize: 16, fontWeight: "700" },
   searchInputClear: { position: "absolute", right: 8, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },
   searchInputClearText: { color: theme.colors.text, fontSize: 25, lineHeight: 27, fontWeight: "500", marginTop: -2 },
   validatedInput: { borderWidth: 1, borderColor: "#22c55e" },
@@ -3020,6 +3020,7 @@ const styles = StyleSheet.create({
   choiceText: { color: theme.colors.soft, fontWeight: "900", textAlign: "center" },
   choiceTextActive: { color: theme.colors.bg },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
+  searchPrimaryButton: { backgroundColor: "rgba(79,124,255,0.68)", borderWidth: 1, borderColor: "rgba(143,174,255,0.34)" },
   disabledButton: { opacity: 0.65 },
   primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },

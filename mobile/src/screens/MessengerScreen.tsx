@@ -5593,7 +5593,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       <View style={styles.searchRow}>
         <TextInput
-          placeholder="Search people & groups"
+          placeholder="Search people or groups"
           placeholderTextColor={theme.colors.muted}
           style={[styles.search, styles.searchInput]}
           value={search}
@@ -5753,7 +5753,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View style={styles.chatCopy}>
               <Text style={styles.chatKind}>{chat.communityId || chat.kind === "GROUP" ? "GROUP LETTER" : "DIRECT LETTER"}</Text>
               <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-              <Text style={[styles.chatLast, chat.unread > 0 && styles.chatLastUnread]} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
+              <Text style={[styles.chatLast, safeConversationPreview(chat).endsWith("New Letter") && styles.chatLastLetter, chat.unread > 0 && styles.chatLastUnread]} numberOfLines={1}>{safeConversationPreview(chat)}</Text>
             </View>
             <View style={styles.chatMeta}>
               <Text style={[styles.chatTime, chat.unread > 0 && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
@@ -5898,8 +5898,8 @@ const styles = StyleSheet.create({
   headerIconText: { color: "#efbd68", fontSize: 16, fontWeight: "700", letterSpacing: 1 },
   iconButton: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,189,104,0.65)", backgroundColor: "rgba(14,32,29,0.92)", alignItems: "center", justifyContent: "center" },
   iconButtonText: { color: "#efbd68", fontSize: 20, fontWeight: "600", marginTop: -2 },
-  search: { backgroundColor: "rgba(15,29,28,0.94)", color: theme.colors.text, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(226,181,101,0.18)", paddingHorizontal: 13, minHeight: 41, fontSize: 13 },
-  searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  search: { backgroundColor: "rgba(15,29,28,0.98)", color: theme.colors.text, borderRadius: theme.radius.pill, borderWidth: 1.25, borderColor: "rgba(239,189,104,0.4)", paddingHorizontal: 17, minHeight: 54, fontSize: 15, fontWeight: "700" },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8, shadowColor: "#efbd68", shadowOpacity: 0.07, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   searchInput: { flex: 1, minWidth: 0 },
   contactsButton: { minHeight: 48, paddingHorizontal: 10, borderRadius: 22, borderWidth: 1, borderColor: "rgba(57,143,77,0.20)", backgroundColor: "rgba(18,71,40,0.70)", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5 },
   contactsButtonIcon: { color: "#e9d7ad", fontSize: 17 },
@@ -6457,6 +6457,7 @@ const styles = StyleSheet.create({
   chatName: { color: "#f5f3eb", fontSize: 16, fontWeight: "600" },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "500" },
   chatLast: { color: "#aaaead", marginTop: 4, fontSize: 13 },
+  chatLastLetter: { fontFamily: Platform.select({ ios: "Snell Roundhand", android: "cursive", default: undefined }), fontStyle: "italic", fontSize: 16, lineHeight: 20, letterSpacing: 0.2 },
   chatLastUnread: { color: "#efbd68", fontWeight: "500" },
   chatMeta: { alignItems: "flex-end", minWidth: 34, gap: 6 },
   chatTime: { color: "#a9ada9", fontWeight: "500", fontSize: 12 },

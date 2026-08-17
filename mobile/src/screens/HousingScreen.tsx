@@ -150,9 +150,9 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
   { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
 ];
 
-const housingSearchPhrases = ["Search housing anywhere in the USA", "Search a city, area, or building", "Find roommates near your preferred area"];
-const rideSearchPhrases = ["Search your ride here", "Where do you want to go?", "Find carpool options near you"];
-const rentalSearchPhrases = ["Search rental cars anywhere in the USA", "Find airport pickup cars", "Compare daily and weekly rates"];
+const housingSearchPhrases = ["Search housing", "City or area"];
+const rideSearchPhrases = ["Search rides", "Where are you going?"];
+const rentalSearchPhrases = ["Search rental cars", "Airport pickup"];
 const cityLocalityPresets: Record<string, string[]> = {
   denver: ["Downtown Denver", "Capitol Hill", "Cherry Creek", "Five Points", "LoDo", "RiNo", "Highlands", "DU Area", "Aurora", "Lakewood", "Boulder"],
   "los angeles": ["Downtown LA", "Hollywood", "Koreatown", "Santa Monica", "Westwood", "Culver City", "Pasadena", "Glendale", "Long Beach", "Irvine"],
@@ -593,6 +593,7 @@ export function HousingScreen({
   const [detailImageIndex, setDetailImageIndex] = useState(0);
   const [detailPreviewImage, setDetailPreviewImage] = useState("");
   const [detailPreviewImageIndex, setDetailPreviewImageIndex] = useState(0);
+  const [detailPhotoScales, setDetailPhotoScales] = useState<Record<number, number>>({});
   const [detailCarouselWidth, setDetailCarouselWidth] = useState(0);
   const [detailImageErrors, setDetailImageErrors] = useState<Record<string, boolean>>({});
   const detailCarouselRef = useRef<ScrollView>(null);
@@ -656,8 +657,8 @@ export function HousingScreen({
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const compactHousingHome = viewportWidth < 560;
   const housingCardWidth = compactHousingHome
-    ? Math.max(190, Math.min(230, (viewportWidth - 30) / 1.72))
-    : 286;
+    ? Math.max(230, Math.min(275, (viewportWidth - 30) / 1.42))
+    : 328;
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -814,6 +815,7 @@ export function HousingScreen({
   const detailImages = detailPost
     ? (detailPost.images?.length ? detailPost.images : detailPost.imageUrl ? [detailPost.imageUrl] : []).slice(0, 4)
     : [];
+  const detailPhotoScale = detailPhotoScales[detailPreviewImageIndex] || 1;
   const detailImageWidth = Math.max(260, detailCarouselWidth || viewportWidth - theme.spacing.md * 4);
   const detailPhotoHeight = Math.max(360, viewportHeight - (Platform.OS === "ios" ? 112 : 58));
 
@@ -2987,9 +2989,24 @@ export function HousingScreen({
     );
     return (
       <>
+        <View style={styles.rideDriverCta}>
+          <View style={styles.rideDriverCtaCopy}>
+            <Text style={styles.rideDriverCtaTitle}>Find or offer a ride</Text>
+            <Text style={styles.rideDriverCtaText}>Choose how you want to carpool</Text>
+          </View>
+          <View style={styles.ridePrimaryActions}>
+            <TouchableOpacity style={styles.rideFindButton} activeOpacity={0.84} onPress={openRidePlanner}>
+              <Text style={styles.rideFindButtonText}>🔎 Find a ride</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rideOfferButton} activeOpacity={0.84} onPress={startRideOfferListing}>
+              <Text style={styles.rideOfferButtonText}>🚘 Offer ride &amp; earn</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <View style={styles.ridePopularSection}>
           <View style={styles.ridePopularHeader}>
-            <Text style={styles.ridePopularTitle}>Where are you going?</Text>
+            <Text style={styles.ridePopularTitle}>Popular destinations</Text>
             <TouchableOpacity onPress={openRidePlanner} activeOpacity={0.75}>
               <Text style={styles.ridePopularViewAll}>View all ›</Text>
             </TouchableOpacity>
@@ -3003,6 +3020,24 @@ export function HousingScreen({
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </View>
+
+        <View style={styles.rideServiceDetail}>
+          <View style={styles.rideSimpleHeader}>
+            <View>
+              <Text style={styles.rideServiceDetailLabel}>CARPOOL</Text>
+              <Text style={styles.rideServiceDetailTitle}>How it works</Text>
+            </View>
+            <Text style={styles.rideSimpleTrust}>✓ Safe · simple · shared</Text>
+          </View>
+          <View style={styles.rideSimpleSteps}>
+            {["Search or list", "Match the route", "Confirm in Chitthi"].map((step, index) => (
+              <View key={step} style={styles.rideSimpleStep}>
+                <View style={styles.rideServiceStepDot}><Text style={styles.rideServiceStepDotText}>{index + 1}</Text></View>
+                <Text style={styles.rideSimpleStepText}>{step}</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
         <View style={styles.rideMediaCard}>
@@ -3027,33 +3062,7 @@ export function HousingScreen({
               </TouchableOpacity>
             )}
             <View pointerEvents="none" style={styles.rideVideoCaptionShade} />
-            <Text pointerEvents="none" style={styles.rideVideoCaption}>What is carpooling & ridesharing?</Text>
-          </View>
-        </View>
-
-        <View style={styles.rideServiceDetail}>
-          <View style={styles.rideSimpleHeader}>
-            <View>
-              <Text style={styles.rideServiceDetailLabel}>CARPOOL</Text>
-              <Text style={styles.rideServiceDetailTitle}>How it works</Text>
-            </View>
-            <Text style={styles.rideSimpleTrust}>✓ Safe · simple · shared</Text>
-          </View>
-          <View style={styles.rideSimpleSteps}>
-            {["Search or list", "Match the route", "Confirm in Chitthi"].map((step, index) => (
-              <View key={step} style={styles.rideSimpleStep}>
-                <View style={styles.rideServiceStepDot}><Text style={styles.rideServiceStepDotText}>{index + 1}</Text></View>
-                <Text style={styles.rideSimpleStepText}>{step}</Text>
-              </View>
-            ))}
-          </View>
-          <View style={styles.ridePrimaryActions}>
-            <TouchableOpacity style={styles.rideFindButton} activeOpacity={0.84} onPress={openRidePlanner}>
-              <Text style={styles.rideFindButtonText}>🔎 Find a ride</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.rideOfferButton} activeOpacity={0.84} onPress={startRideOfferListing}>
-              <Text style={styles.rideOfferButtonText}>＋ List a ride</Text>
-            </TouchableOpacity>
+            <Text pointerEvents="none" style={styles.rideVideoCaption}>What is carpooling &amp; ridesharing?</Text>
           </View>
         </View>
 
@@ -3130,7 +3139,7 @@ export function HousingScreen({
   }
 
   function renderTopNavIcon(item: string, active: boolean) {
-    const color = active ? theme.colors.text : "rgba(255,255,255,0.64)";
+    const color = active ? theme.colors.text : "rgba(255,255,255,0.8)";
     if (item === "Home") {
       return renderSegmentIcon("housing", active);
     }
@@ -3360,6 +3369,15 @@ export function HousingScreen({
           setHomeStoryViewportWidth(Math.max(1, event.nativeEvent.layout.width - theme.spacing.md * 2));
         }}
       >
+        <BlurView
+          pointerEvents="none"
+          tint="dark"
+          intensity={42}
+          experimentalBlurMethod="dimezisBlurView"
+          style={StyleSheet.absoluteFill}
+        />
+        <View pointerEvents="none" style={styles.welcomeGlassHighlight} />
+        <View pointerEvents="none" style={styles.welcomeGlassGlow} />
         <ScrollView
           ref={homeStoryScrollRef}
           horizontal
@@ -3381,7 +3399,7 @@ export function HousingScreen({
             <View style={styles.statRow}>
               <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
               <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
-                <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={1}>List your ride & earn</Text>
+                <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={2}>List your ride &amp; earn</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -3723,7 +3741,7 @@ export function HousingScreen({
           </View>
           {detailPreviewImage ? (
         <View style={styles.detailPhotoBackdrop}>
-          <TouchableOpacity style={styles.detailPhotoClose} onPress={() => setDetailPreviewImage("")} accessibilityLabel="Close housing photo">
+          <TouchableOpacity style={styles.detailPhotoClose} onPress={() => { setDetailPhotoScales({}); setDetailPreviewImage(""); }} accessibilityLabel="Close housing photo">
             <Text style={styles.detailPhotoCloseText}>×</Text>
           </TouchableOpacity>
           {detailPreviewImage ? (
@@ -3732,6 +3750,7 @@ export function HousingScreen({
                 ref={detailPreviewCarouselRef}
                 horizontal
                 pagingEnabled
+                scrollEnabled={detailPhotoScale === 1}
                 style={styles.detailPhotoPager}
                 showsHorizontalScrollIndicator={false}
                 onMomentumScrollEnd={(event) => {
@@ -3747,12 +3766,33 @@ export function HousingScreen({
                   >
                       <Image
                         source={{ uri: absoluteAssetUrl(image) }}
-                        style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight }]}
+                        style={[styles.detailPhotoFull, { width: viewportWidth, height: detailPhotoHeight, transform: [{ scale: detailPhotoScales[index] || 1 }] }]}
                         resizeMode="contain"
                       />
                   </View>
                 ))}
               </ScrollView>
+              <View style={styles.detailPhotoZoomControls}>
+                <TouchableOpacity
+                  style={[styles.detailPhotoZoomButton, detailPhotoScale <= 1 && styles.detailPhotoZoomButtonDisabled]}
+                  disabled={detailPhotoScale <= 1}
+                  onPress={() => setDetailPhotoScales((values) => ({ ...values, [detailPreviewImageIndex]: Math.max(1, (values[detailPreviewImageIndex] || 1) - 0.5) }))}
+                  accessibilityLabel="Zoom housing photo out"
+                >
+                  <Text style={styles.detailPhotoZoomButtonText}>−</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.detailPhotoZoomValue} onPress={() => setDetailPhotoScales((values) => ({ ...values, [detailPreviewImageIndex]: 1 }))} accessibilityLabel="Reset housing photo zoom">
+                  <Text style={styles.detailPhotoZoomValueText}>{Math.round(detailPhotoScale * 100)}%</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.detailPhotoZoomButton, detailPhotoScale >= 3 && styles.detailPhotoZoomButtonDisabled]}
+                  disabled={detailPhotoScale >= 3}
+                  onPress={() => setDetailPhotoScales((values) => ({ ...values, [detailPreviewImageIndex]: Math.min(3, (values[detailPreviewImageIndex] || 1) + 0.5) }))}
+                  accessibilityLabel="Zoom housing photo in"
+                >
+                  <Text style={styles.detailPhotoZoomButtonText}>+</Text>
+                </TouchableOpacity>
+              </View>
               {detailImages.length > 1 ? (
                 <>
                   <TouchableOpacity style={[styles.detailPhotoNav, styles.detailPhotoNavLeft]} onPress={() => showDetailPreviewImage(detailPreviewImageIndex - 1)} accessibilityLabel="Previous housing photo"><Text style={styles.detailPhotoNavText}>‹</Text></TouchableOpacity>
@@ -3784,7 +3824,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(46,255,188,0.24)",
-    backgroundColor: "#09bf78"
+    backgroundColor: "#0aad6f"
   },
   brandHeaderHidden: { height: 0, borderWidth: 0, backgroundColor: "transparent" },
   festivalHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00472d" },
@@ -3849,11 +3889,11 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   freeServicesIconEmoji: { fontSize: 24, lineHeight: 30, textAlign: "center" },
-  freeServicesLogo: { width: 88, height: 29, marginBottom: 4, marginLeft: -2 },
+  freeServicesLogo: { width: 104, height: 34, marginBottom: 4, marginLeft: -2 },
   topTabs: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
   topTab: { flex: 1, paddingVertical: 11, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.text },
-  topTabText: { color: "rgba(255,255,255,0.64)", fontSize: 14, fontWeight: "700" },
+  topTabText: { color: "rgba(255,255,255,0.8)", fontSize: 14, fontWeight: "700" },
   topTabTextActive: { color: theme.colors.text, fontWeight: "800" },
   topCompassIcon: {
     width: 17,
@@ -3888,10 +3928,10 @@ const styles = StyleSheet.create({
   stickySearchRaised: { borderBottomColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 9 },
   stickySearchBlur: { ...StyleSheet.absoluteFillObject },
   stickySearchUnderBlur: { position: "absolute", left: 0, right: 0, bottom: -16, height: 18, opacity: 0.72 },
-  searchBar: { backgroundColor: "#272729", borderWidth: 1.5, borderColor: "#4a4a4f", borderRadius: theme.radius.pill, minHeight: 60, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, overflow: "hidden", shadowColor: "#000", shadowOpacity: 0.26, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
-  searchIcon: { width: 25, height: 25 },
-  searchText: { color: theme.colors.soft, flex: 1, fontSize: 16, fontWeight: "800" },
-  later: { color: theme.colors.text, backgroundColor: "#151517", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, fontWeight: "900", fontSize: 13, overflow: "hidden" },
+  searchBar: { backgroundColor: "#222522", borderWidth: 1.25, borderColor: "rgba(239,189,104,0.4)", borderRadius: theme.radius.pill, minHeight: 64, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", gap: 11, overflow: "hidden", shadowColor: "#efbd68", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  searchIcon: { width: 27, height: 27 },
+  searchText: { color: "#ffffff", flex: 1, fontSize: 16, fontWeight: "900" },
+  later: { color: "#f4dfb7", backgroundColor: "rgba(239,189,104,0.18)", borderWidth: 1, borderColor: "rgba(239,189,104,0.3)", borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, fontWeight: "900", fontSize: 13, overflow: "hidden" },
   segment: {
     backgroundColor: "transparent",
     borderRadius: 0,
@@ -4060,16 +4100,16 @@ const styles = StyleSheet.create({
   homeSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
   homeSectionTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
   homeSectionAction: { color: theme.colors.brand, fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  postActionGrid: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingHorizontal: 2, paddingVertical: 5 },
+  postActionGrid: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingHorizontal: 4, paddingVertical: 5 },
   postActionCard: {
     flex: 1,
     minWidth: 0,
-    minHeight: 184,
+    minHeight: 170,
     borderRadius: 16,
     paddingHorizontal: 10,
-    paddingVertical: 11,
+    paddingVertical: 10,
     alignItems: "flex-start",
-    gap: 8,
+    gap: 7,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.72)"
@@ -4078,9 +4118,9 @@ const styles = StyleSheet.create({
   postActionTiltCenter: { transform: [{ rotate: "0.7deg" }] },
   postActionTiltRight: { transform: [{ rotate: "1.2deg" }], marginTop: 4 },
   postActionIconTile: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
+    width: 39,
+    height: 39,
+    borderRadius: 12,
     backgroundColor: "rgba(255,255,255,0.72)",
     alignItems: "center",
     justifyContent: "center",
@@ -4089,7 +4129,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 }
   },
-  postActionIcon: { width: 27, height: 27 },
+  postActionIcon: { width: 25, height: 25 },
   postActionCopy: { flex: 1, minWidth: 0, zIndex: 2 },
   postNeedTitle: { color: "#111827", fontSize: 14, lineHeight: 17, fontWeight: "700" },
   postNeedMeta: { color: "#263143", marginTop: 3, fontSize: 11, lineHeight: 15, fontWeight: "500" },
@@ -4112,9 +4152,9 @@ const styles = StyleSheet.create({
   },
   postActionSceneIcon: { width: 78, height: 78 },
   postActionArrow: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignSelf: "flex-end",
     alignItems: "center",
     justifyContent: "center",
@@ -4146,13 +4186,15 @@ const styles = StyleSheet.create({
   cityExperienceModalTitle: { color: "#10231c", fontSize: 22, lineHeight: 27, fontWeight: "800", marginTop: 2 },
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
-  welcome: { minHeight: 132, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "#10231c", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden" },
+  welcome: { minHeight: 132, borderWidth: 1, borderColor: "rgba(55,213,154,0.84)", borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "rgba(12,42,32,0.76)", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden", shadowColor: "#37d59a", shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+  welcomeGlassHighlight: { position: "absolute", top: 1, left: 18, right: 18, height: 1, backgroundColor: "rgba(255,255,255,0.34)", borderRadius: 1 },
+  welcomeGlassGlow: { position: "absolute", width: 180, height: 180, borderRadius: 90, top: -118, right: -42, backgroundColor: "rgba(93,238,181,0.11)" },
   welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
   welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
   welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
-  statRow: { width: 132, gap: 7 },
-  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 11, textAlign: "center" },
-  carpoolCarouselStat: { color: "#8ff0c2", minHeight: 34, textAlignVertical: "center" },
+  statRow: { width: 142, gap: 7 },
+  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 7, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 10.5, lineHeight: 14, textAlign: "center" },
+  carpoolCarouselStat: { color: "#8ff0c2", minHeight: 38, textAlignVertical: "center" },
   homeStoryScroll: { flex: 1, alignSelf: "stretch" },
   homeStorySlide: { minHeight: 92, flexDirection: "row", alignItems: "center", paddingRight: 1 },
   homeTestimonial: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
@@ -4280,7 +4322,7 @@ const styles = StyleSheet.create({
   },
   carSearchTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   carFieldLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  carSearchInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 45, paddingHorizontal: 12, fontSize: 14, fontWeight: "800" },
+  carSearchInput: { backgroundColor: "rgba(255,255,255,0.1)", color: theme.colors.text, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(239,189,104,0.34)", minHeight: 50, paddingHorizontal: 13, fontSize: 14, fontWeight: "800" },
   carSelectInput: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.md, minHeight: 52, paddingHorizontal: 12, paddingVertical: 8, justifyContent: "center" },
   carSelectValue: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   carSelectMeta: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", marginTop: 2 },
@@ -4292,7 +4334,7 @@ const styles = StyleSheet.create({
   carRateNote: { borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(40,82,255,0.10)", borderRadius: theme.radius.md, padding: 12, gap: 3 },
   carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
   carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  carSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  carSearchButton: { backgroundColor: "rgba(79,124,255,0.68)", borderWidth: 1, borderColor: "rgba(143,174,255,0.34)", borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
   carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
   carList: { gap: theme.spacing.md },
   carMiniCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
@@ -4409,6 +4451,12 @@ const styles = StyleSheet.create({
   detailPhotoPager: { flex: 1, marginHorizontal: -10 },
   detailPhotoPage: { alignItems: "center", justifyContent: "center" },
   detailPhotoFull: { maxWidth: "100%" },
+  detailPhotoZoomControls: { position: "absolute", top: Platform.OS === "ios" ? 58 : 28, alignSelf: "center", zIndex: 4, flexDirection: "row", alignItems: "center", gap: 6, padding: 5, borderRadius: theme.radius.pill, backgroundColor: "rgba(20,24,23,0.76)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  detailPhotoZoomButton: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.14)" },
+  detailPhotoZoomButtonDisabled: { opacity: 0.34 },
+  detailPhotoZoomButtonText: { color: "#fff", fontSize: 24, lineHeight: 27, fontWeight: "700" },
+  detailPhotoZoomValue: { minWidth: 54, height: 38, alignItems: "center", justifyContent: "center", paddingHorizontal: 7 },
+  detailPhotoZoomValueText: { color: "#fff", fontSize: 12, lineHeight: 16, fontWeight: "900" },
   detailPhotoNav: { position: "absolute", top: "50%", width: 48, height: 48, marginTop: -24, borderRadius: 24, backgroundColor: "rgba(22,22,24,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", zIndex: 2 },
   detailPhotoNavLeft: { left: 14 },
   detailPhotoNavRight: { right: 14 },
@@ -4416,6 +4464,14 @@ const styles = StyleSheet.create({
   detailPhotoDots: { position: "absolute", bottom: Platform.OS === "ios" ? 44 : 26, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
   detailPhotoDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.48)" },
   detailPhotoDotActive: { width: 18, backgroundColor: "#fff" },
+  rideDriverCta: { minHeight: 112, borderRadius: theme.radius.lg, paddingHorizontal: 14, paddingVertical: 13, gap: 11, backgroundColor: "rgba(18,24,22,0.92)", borderWidth: 1, borderColor: "rgba(239,189,104,0.24)", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+  rideDriverCtaIcon: { width: 46, height: 46, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.1)" },
+  rideDriverCtaEmoji: { fontSize: 25, lineHeight: 30 },
+  rideDriverCtaCopy: { flex: 1, minWidth: 0, gap: 2 },
+  rideDriverCtaTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "800" },
+  rideDriverCtaText: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  rideDriverCtaButton: { borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "rgba(55,213,154,0.16)", borderWidth: 1, borderColor: "rgba(94,224,166,0.38)" },
+  rideDriverCtaButtonText: { color: "#8ff0c2", fontSize: 12, lineHeight: 15, fontWeight: "900" },
   ridePopularSection: { gap: 12 },
   ridePopularHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
   ridePopularTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
@@ -4560,10 +4616,10 @@ const styles = StyleSheet.create({
   rideSimpleStep: { flex: 1, minHeight: 82, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 9, paddingVertical: 12, alignItems: "center", justifyContent: "center", gap: 8 },
   rideSimpleStepText: { color: theme.colors.soft, fontSize: 12, lineHeight: 16, fontWeight: "600", textAlign: "center" },
   ridePrimaryActions: { flexDirection: "row", gap: 12, marginTop: 2 },
-  rideFindButton: { flex: 1, minHeight: 50, borderRadius: theme.radius.pill, backgroundColor: "rgba(10,132,255,0.16)", borderWidth: 1, borderColor: "rgba(10,132,255,0.58)", alignItems: "center", justifyContent: "center" },
-  rideFindButtonText: { color: "#64b5ff", fontSize: 14, fontWeight: "700" },
-  rideOfferButton: { flex: 1, minHeight: 50, borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
-  rideOfferButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  rideFindButton: { flex: 1, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: "rgba(55,213,154,0.12)", borderWidth: 1, borderColor: "rgba(55,213,154,0.3)", alignItems: "center", justifyContent: "center" },
+  rideFindButtonText: { color: "#8ff0c2", fontSize: 13, fontWeight: "800" },
+  rideOfferButton: { flex: 1, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: "rgba(239,189,104,0.1)", borderWidth: 1, borderColor: "rgba(239,189,104,0.28)", alignItems: "center", justifyContent: "center" },
+  rideOfferButtonText: { color: "#efd099", fontSize: 13, fontWeight: "800" },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
     borderRadius: 14,

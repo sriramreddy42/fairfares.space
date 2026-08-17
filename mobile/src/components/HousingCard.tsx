@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { BlurView } from "expo-blur";
 import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
@@ -77,6 +78,15 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, com
       </View>
       {!post.sample ? (
         <View style={styles.inlineMessageCard}>
+          <BlurView
+            pointerEvents="none"
+            tint="dark"
+            intensity={38}
+            experimentalBlurMethod="dimezisBlurView"
+            style={StyleSheet.absoluteFill}
+          />
+          <View pointerEvents="none" style={styles.inlineMessageGlassHighlight} />
+          <View pointerEvents="none" style={styles.inlineMessageGlassGlow} />
           {ownListing ? (
             <View style={styles.ownListingRow}>
               <View style={styles.ownListingCheck}><Text style={styles.ownListingCheckText}>✓</Text></View>
@@ -257,14 +267,16 @@ const styles = StyleSheet.create({
   respondTextSent: { color: theme.colors.green },
   respondDisabled: { borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
   respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" },
-  inlineMessageCard: { borderTopWidth: 1, borderTopColor: theme.colors.line, paddingHorizontal: 10, paddingTop: 9, paddingBottom: 10, gap: 7, backgroundColor: "#1D1D1E" },
+  inlineMessageCard: { borderTopWidth: 1, borderTopColor: "rgba(117,217,173,0.38)", paddingHorizontal: 10, paddingTop: 9, paddingBottom: 10, gap: 7, backgroundColor: "rgba(18,42,33,0.7)", overflow: "hidden" },
+  inlineMessageGlassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1, backgroundColor: "rgba(255,255,255,0.3)" },
+  inlineMessageGlassGlow: { position: "absolute", width: 110, height: 110, borderRadius: 55, top: -72, right: -24, backgroundColor: "rgba(55,213,154,0.12)" },
   inlineMessageHeading: { flexDirection: "row", alignItems: "center", gap: 7 },
   inlineMessageMascotWrap: { width: 29, height: 29, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#10281C", borderWidth: 1, borderColor: "rgba(210,167,89,0.42)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   inlineMessageMascot: { width: 24, height: 24 },
   inlineMessageHeadingCopy: { flex: 1, minWidth: 0 },
   inlineMessageTitle: { color: theme.colors.text, fontSize: 12, lineHeight: 15, fontWeight: "900" },
   inlineMessageHint: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, fontWeight: "700" },
-  inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#3A3A3C", backgroundColor: theme.colors.panel2 },
+  inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.08)" },
   inlineMessageRowBusy: { opacity: 0.8 },
   inlineMessageInput: { flex: 1, minWidth: 0, height: 34, color: theme.colors.text, paddingHorizontal: 0, paddingVertical: 6, fontSize: 12, lineHeight: 16, fontWeight: "600" },
   inlineSend: { height: 34, minWidth: 59, borderRadius: 17, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
