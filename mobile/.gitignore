@@ -4,3 +4,9 @@
 .env.*.local
 node_modules/
 /ios/
+
+# Android release signing credentials (never commit)
+/credentials.json
+/credentials/
+/*__fairfares-mobile.jks
+/android/keystore.properties

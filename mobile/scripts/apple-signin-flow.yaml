@@ -1,0 +1,29 @@
+appId: com.fairfares.mobile
+---
+# FairFares Apple Sign-In regression test
+# Verifies the Sign in with Apple native authorization sheet appears (Guideline 2.1(a) fix).
+# Precondition: run on an iOS 26 simulator/device with the app freshly installed.
+- launchApp
+- extendedWaitUntil:
+    visible: "Chitthi"
+    timeout: 30000
+# Tap the "Chitthi" bottom-nav tab (login entry point when signed out).
+- tapOn:
+    point: "68%,92%"
+- extendedWaitUntil:
+    visible: "Login / Sign up"
+    timeout: 45000
+- tapOn:
+    text: "Login / Sign up"
+- extendedWaitUntil:
+    visible: "Sign in with Apple"
+    timeout: 15000
+- tapOn:
+    text: "Sign in with Apple"
+# The fix: the native Apple authorization sheet must present (before it did nothing).
+- assertVisible:
+    text: "Sign in to your Apple.*"
+    timeout: 20000
+- takeScreenshot: apple-auth-sheet
+
+

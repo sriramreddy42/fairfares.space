@@ -1640,6 +1640,16 @@ function FairFaresApp() {
     await promptGoogleSignIn();
   }
 
+  function withAuthTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); }
+      );
+    });
+  }
+
   async function startAppleSignIn() {
     if (authBusy) return;
     if (authMode === "signup" && !signupConsentAccepted) {
@@ -1648,12 +1658,16 @@ function FairFaresApp() {
     }
     setAuthMessage("");
     try {
-      const credential = await AppleAuthentication.signInAsync({
-        requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL
-        ]
-      });
+      const credential = await withAuthTimeout(
+        AppleAuthentication.signInAsync({
+          requestedScopes: [
+            AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+            AppleAuthentication.AppleAuthenticationScope.EMAIL
+          ]
+        }),
+        60000,
+        "Sign in with Apple did not respond. Please close the sheet and try again."
+      );
       if (!credential.identityToken) throw new Error("Apple did not return a secure identity token.");
       const name = [credential.fullName?.givenName, credential.fullName?.familyName].filter(Boolean).join(" ");
       await finishSocialProvider("apple", credential.identityToken, name);
