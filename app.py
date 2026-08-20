@@ -19138,10 +19138,30 @@ def chat_notification_conversation_context(
         or community_kind in {"GROUP", "COMMUNITY"}
         or participant_count > 2
     )
+    matched_community = None
+    # Some early community conversations were persisted as DIRECT without
+    # their community_id.  The mobile UI can still open those threads from the
+    # registered community, but push delivery previously had no durable group
+    # marker and rendered them as personal letters.  Recover only an exact
+    # match to a registered GROUP/COMMUNITY name; arbitrary direct-chat
+    # subjects must remain direct.
+    if not is_group:
+        legacy_subject = clean_text_value(row_value(source, "subject"), 120)
+        matched_community = con.execute(
+            """SELECT id, name FROM chat_communities
+               WHERE UPPER(kind) IN ('GROUP', 'COMMUNITY')
+                 AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+               ORDER BY id LIMIT 1""",
+            (legacy_subject,),
+        ).fetchone() if legacy_subject else None
+        if matched_community is not None:
+            is_group = True
+            community_id = int(row_value(matched_community, "id") or 0)
     conversation_name = ""
     if is_group:
         conversation_name = str(
             row_value(source, "community_name")
+            or (row_value(matched_community, "name") if matched_community is not None else "")
             or row_value(source, "subject")
             or row_value(conversation, "community_name")
             or row_value(conversation, "subject")

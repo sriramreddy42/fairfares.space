@@ -186,6 +186,41 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(is_group)
         self.assertEqual(name, "Legacy housing group")
 
+    def test_legacy_group_with_missing_link_recovers_from_registered_group_name(self):
+        with app.db() as con:
+            community_id = int(con.execute(
+                "SELECT id FROM chat_communities WHERE name = 'DU Housing Board' ORDER BY id LIMIT 1"
+            ).fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, subject)
+                   VALUES ('FFC-LEGACY-DU', 'DIRECT', 'DU Housing Board')"""
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+            is_group, name, resolved_community_id = app.chat_notification_conversation_context(
+                con, {"id": conversation_id, "conversation_type": "DIRECT"},
+            )
+
+        self.assertTrue(is_group)
+        self.assertEqual(name, "DU Housing Board")
+        self.assertEqual(resolved_community_id, community_id)
+
+    def test_direct_subject_without_registered_group_remains_direct(self):
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, subject)
+                   VALUES ('FFC-SUBJECT-DIRECT', 'DIRECT', 'Private housing question')"""
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+            is_group, name, resolved_community_id = app.chat_notification_conversation_context(
+                con, {"id": conversation_id, "conversation_type": "DIRECT"},
+            )
+
+        self.assertFalse(is_group)
+        self.assertEqual(name, "")
+        self.assertEqual(resolved_community_id, 0)
+
     def test_queued_direct_push_clears_stale_group_metadata(self):
         with app.db() as con:
             con.execute(
