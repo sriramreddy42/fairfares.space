@@ -365,9 +365,12 @@ final class NotificationService: UNNotificationServiceExtension {
     private func findNotificationData(in value: Any, depth: Int) -> [AnyHashable: Any]? {
         guard depth < 5 else { return nil }
         if let payload = value as? [AnyHashable: Any] {
-            if !stringValue(payload["type"]).isEmpty {
-                return payload
-            }
+            // Expo/APNs can copy a small routing subset (type and
+            // conversationId) onto an outer dictionary while keeping the
+            // complete application payload under `data` or another wrapper.
+            // Inspect nested wrappers first; returning the outer dictionary
+            // here loses isGroup, conversationName, and avatar fields even
+            // though navigation still reaches the correct conversation.
             for key in ["data", "body", "payload", "custom", "notification"] {
                 if let nested = payload[key],
                    let found = findNotificationData(in: nested, depth: depth + 1) {
@@ -378,6 +381,9 @@ final class NotificationService: UNNotificationServiceExtension {
                 if let found = findNotificationData(in: nested, depth: depth + 1) {
                     return found
                 }
+            }
+            if !stringValue(payload["type"]).isEmpty {
+                return payload
             }
         } else if let payload = value as? [String: Any] {
             return findNotificationData(
