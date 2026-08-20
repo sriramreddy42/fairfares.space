@@ -21670,6 +21670,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/communities":
             self.api_chat_communities(parsed)
             return
+        if parsed.path == "/api/chat/notification-diagnostic":
+            self.api_chat_notification_diagnostic(parsed)
+            return
         if parsed.path == "/api/chat/groups/members":
             self.api_chat_group_members(parsed)
             return
@@ -23106,6 +23109,57 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if community.get("visibility") == "PUBLIC":
                 community["joinUrl"] = self.community_join_url(str(community.get("id") or ""))
         self.send_json({"ok": True, "communities": communities})
+
+    def api_chat_notification_diagnostic(self, parsed: urllib.parse.ParseResult) -> None:
+        """Expose non-sensitive notification linkage for a public community."""
+        community_public_id = clean_text_value(
+            (urllib.parse.parse_qs(parsed.query).get("community_id") or [""])[0], 100,
+        )
+        with db() as con:
+            community = con.execute(
+                """SELECT id, kind, name FROM chat_communities
+                   WHERE public_id = ? AND visibility = 'PUBLIC' LIMIT 1""",
+                (community_public_id,),
+            ).fetchone()
+            if community is None:
+                self.send_json({"ok": False, "message": "Public community not found."}, 404)
+                return
+            conversations = con.execute(
+                """SELECT conversations.id, conversations.public_id,
+                          conversations.conversation_type, conversations.community_id,
+                          conversations.subject,
+                          (SELECT COUNT(*) FROM chat_participants participants
+                           WHERE participants.conversation_id = conversations.id) AS participant_count
+                   FROM chat_conversations conversations
+                   WHERE conversations.community_id = ?
+                      OR LOWER(TRIM(conversations.subject)) = LOWER(TRIM(?))
+                   ORDER BY conversations.id""",
+                (int(row_value(community, "id") or 0), row_value(community, "name")),
+            ).fetchall()
+            diagnostic_rows = []
+            for conversation in conversations:
+                is_group, conversation_name, resolved_community_id = chat_notification_conversation_context(con, conversation)
+                diagnostic_rows.append({
+                    "conversationHash": hashlib.sha256(
+                        str(row_value(conversation, "public_id") or "").encode("utf-8")
+                    ).hexdigest()[:12],
+                    "storedType": row_value(conversation, "conversation_type"),
+                    "storedCommunityLinked": int(row_value(conversation, "community_id") or 0) > 0,
+                    "participantCount": int(row_value(conversation, "participant_count") or 0),
+                    "resolvedAsGroup": is_group,
+                    "resolvedCommunityMatches": resolved_community_id == int(row_value(community, "id") or 0),
+                    "resolvedNameMatches": conversation_name == row_value(community, "name"),
+                })
+        self.send_json({
+            "ok": True,
+            "release": BACKEND_RELEASE,
+            "community": {
+                "id": community_public_id,
+                "kind": row_value(community, "kind"),
+                "name": row_value(community, "name"),
+            },
+            "conversations": diagnostic_rows,
+        })
 
     def api_chat_person_by_phone(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
