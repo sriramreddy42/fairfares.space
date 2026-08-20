@@ -1423,6 +1423,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [customWallpaper, setCustomWallpaper] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [contactMatches, setContactMatches] = useState<Array<{ id: number; name: string; localName: string; photoUrl: string }>>([]);
+  const [inviteContacts, setInviteContacts] = useState<Array<{ id: string; name: string; phone: string }>>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [shareContactPickerOpen, setShareContactPickerOpen] = useState(false);
@@ -3813,13 +3814,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
       const response = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers] });
       const localNames = new Map<string, string>();
-      for (const contact of response.data) {
+      const deviceContacts: Array<{ id: string; name: string; phone: string; hashes: string[] }> = [];
+      response.data.forEach((contact, contactIndex) => {
         const label = contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Your contact";
+        const contactHashes = new Set<string>();
+        let primaryPhone = "";
         for (const entry of contact.phoneNumbers || []) {
-          contactDiscoveryVariants(String(entry.number || ""))
-            .forEach((value) => localNames.set(contactDiscoveryHash(value), label));
+          const phone = String(entry.number || "").trim();
+          if (!primaryPhone && phone) primaryPhone = phone;
+          contactDiscoveryVariants(phone).forEach((value) => {
+            const hash = contactDiscoveryHash(value);
+            contactHashes.add(hash);
+            localNames.set(hash, label);
+          });
         }
-      }
+        if (primaryPhone && contactHashes.size) {
+          deviceContacts.push({ id: String(contact.id || contactIndex), name: label, phone: primaryPhone, hashes: Array.from(contactHashes) });
+        }
+      });
       const hashes = Array.from(localNames.keys());
       if (!hashes.length) {
         setContactMatches([]);
@@ -3832,8 +3844,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         found.people.forEach((person) => peopleById.set(person.id, person));
       }
       const people = Array.from(peopleById.values());
+      const matchedHashes = new Set(people.map((person) => person.phoneHash));
       setContactMatches(people.map((person) => ({ ...person, localName: localNames.get(person.phoneHash) || person.name })));
-      if (people.length) {
+      const invitations = deviceContacts
+        .filter((contact) => !contact.hashes.some((hash) => matchedHashes.has(hash)))
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(({ id, name, phone }) => ({ id, name, phone }));
+      setInviteContacts(invitations);
+      if (people.length || (mode === "chat" && invitations.length)) {
         setContactPickerMode(mode);
         setAddPeopleCommunityId(communityId);
         setContactPickerOpen(true);
@@ -3847,6 +3865,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     } finally {
       setContactsLoading(false);
     }
+  }
+
+  async function invitePhoneContact(contact: { name: string; phone: string }) {
+    const message = `Join me on FairFares and send private letters with Chitthi: https://www.fairfare.space`;
+    const separator = Platform.OS === "ios" ? "&" : "?";
+    const smsUrl = `sms:${contact.phone.replace(/[^+\d]/g, "")}${separator}body=${encodeURIComponent(message)}`;
+    try {
+      if (await Linking.canOpenURL(smsUrl)) {
+        await Linking.openURL(smsUrl);
+        return;
+      }
+    } catch {
+      // The system share sheet remains a reliable fallback.
+    }
+    await Share.share({ title: "Invite to FairFares", message });
   }
 
   function toggleGroupPerson(personId: number) {
@@ -5768,14 +5801,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <View style={styles.contactPickerCard}>
             <View style={styles.contactPickerHeader}>
               <View style={styles.contactPickerHeadingCopy}>
-                <Text style={styles.contactPickerTitle}>Contacts on FairFares</Text>
-                <Text style={styles.contactPickerSubtitle}>{contactPickerMode === "chat" ? "Select a member to open Chitthi" : "Select FairFares members to add"}</Text>
+                <Text style={styles.contactPickerTitle}>{contactPickerMode === "chat" ? "Your contacts" : "Contacts on FairFares"}</Text>
+                <Text style={styles.contactPickerSubtitle}>{contactPickerMode === "chat" ? "Message registered contacts or invite others" : "Select FairFares members to add"}</Text>
               </View>
               <TouchableOpacity style={styles.contactPickerClose} onPress={() => setContactPickerOpen(false)} accessibilityLabel="Close contacts">
                 <Text style={styles.contactPickerCloseText}>×</Text>
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.contactPickerList} contentContainerStyle={styles.contactPickerListContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.contactSectionHeader}>
+                <Text style={styles.contactSectionTitle}>ON FAIRFARES</Text>
+                <Text style={styles.contactSectionCount}>{contactMatches.length}</Text>
+              </View>
               {contactMatches.map((person) => (
                 <TouchableOpacity key={`contact-picker-${person.id}`} style={[styles.contactPickerRow, contactPickerMode !== "chat" && selectedGroupPeople.includes(person.id) && styles.contactPickerRowSelected]} onPress={() => contactPickerMode === "chat" ? void openContactChat(person) : toggleGroupPerson(person.id)}>
                   <View style={styles.avatar}>
@@ -5788,6 +5825,26 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   <View style={styles.contactPickerMessageButton}><Text style={styles.contactPickerMessageText}>{contactPickerMode === "chat" ? "Message" : selectedGroupPeople.includes(person.id) ? "Selected" : "Add"}</Text></View>
                 </TouchableOpacity>
               ))}
+              {!contactMatches.length ? <Text style={styles.contactSectionEmpty}>No registered contacts matched yet.</Text> : null}
+              {contactPickerMode === "chat" ? (
+                <>
+                  <View style={styles.contactSectionHeader}>
+                    <Text style={styles.contactSectionTitle}>INVITE TO FAIRFARES</Text>
+                    <Text style={styles.contactSectionCount}>{inviteContacts.length}</Text>
+                  </View>
+                  {inviteContacts.map((contact) => (
+                    <TouchableOpacity key={`invite-contact-${contact.id}`} style={styles.contactPickerRow} onPress={() => void invitePhoneContact(contact)}>
+                      <View style={styles.inviteContactAvatar}><Text style={styles.inviteContactAvatarText}>{initials(contact.name)}</Text></View>
+                      <View style={styles.chatCopy}>
+                        <Text style={styles.chatName}>{contact.name}</Text>
+                        <Text style={styles.chatLast}>Not on FairFares yet</Text>
+                      </View>
+                      <View style={styles.inviteContactButton}><Text style={styles.inviteContactButtonText}>Invite</Text></View>
+                    </TouchableOpacity>
+                  ))}
+                  {!inviteContacts.length ? <Text style={styles.contactSectionEmpty}>All available phone contacts are already on FairFares.</Text> : null}
+                </>
+              ) : null}
             </ScrollView>
             {contactPickerMode !== "chat" ? (
               <TouchableOpacity
@@ -6046,10 +6103,18 @@ const styles = StyleSheet.create({
   contactPickerCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 27 },
   contactPickerList: { flexGrow: 0 },
   contactPickerListContent: { paddingVertical: 4 },
+  contactSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 7, backgroundColor: theme.colors.panel2 },
+  contactSectionTitle: { color: theme.colors.accent, fontSize: 11, fontWeight: "800", letterSpacing: 1.1 },
+  contactSectionCount: { color: theme.colors.muted, fontSize: 11, fontWeight: "700" },
+  contactSectionEmpty: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, paddingHorizontal: 16, paddingVertical: 18 },
   contactPickerRow: { minHeight: 72, flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
   contactPickerRowSelected: { backgroundColor: "rgba(79,124,255,0.16)" },
   contactPickerMessageButton: { backgroundColor: theme.colors.blue, borderRadius: 17, paddingHorizontal: 12, paddingVertical: 8, marginLeft: 8 },
   contactPickerMessageText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  inviteContactAvatar: { width: 48, height: 48, borderRadius: 24, marginRight: 12, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  inviteContactAvatarText: { color: theme.colors.soft, fontSize: 15, fontWeight: "800" },
+  inviteContactButton: { borderRadius: 17, paddingHorizontal: 14, paddingVertical: 8, marginLeft: 8, borderWidth: 1, borderColor: theme.colors.accent },
+  inviteContactButtonText: { color: theme.colors.accent, fontSize: 12, fontWeight: "700" },
   contactPickerPrivacy: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingVertical: 12 },
   tabs: { flexDirection: "row", gap: 4, marginVertical: 8, width: "100%" },
   tab: { flex: 1, minWidth: 0, minHeight: 31, borderWidth: 1, borderColor: "rgba(226,181,101,0.22)", borderRadius: theme.radius.pill, paddingHorizontal: 2, paddingVertical: 6, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,18,17,0.50)" },
