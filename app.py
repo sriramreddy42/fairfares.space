@@ -206,7 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-group-fallback-v3"
+BACKEND_RELEASE = "chitthi-group-plain-fallback-v4"
 CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED = str(
     os.environ.get("FAIRFARES_CHITTHI_GROUP_NATIVE_ENRICHMENT", "0")
 ).strip().lower() in {"1", "true", "yes", "on"}
