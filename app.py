@@ -206,7 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-group-reaction-avatar-v9"
+BACKEND_RELEASE = "chitthi-group-reaction-intent-v10"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -24249,6 +24249,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         conversation_name,
                         is_group,
                     )
+                    communication_recipients = [
+                        {
+                            "id": int(row_value(participant, "id") or 0),
+                            "name": clean_text_value(row_value(participant, "name"), 120) or "FairFares member",
+                        }
+                        for participant in con.execute(
+                            """SELECT users.id, users.name
+                               FROM chat_participants participants
+                               JOIN users ON users.id = participants.user_id
+                               WHERE participants.conversation_id = ?
+                                 AND users.id NOT IN (?, ?)
+                               ORDER BY users.id LIMIT 8""",
+                            (int(conversation["id"]), current_user_id, notification_target_id),
+                        ).fetchall()
+                    ] if is_group else []
                     notification_data = {
                         "type": "CHITTHI_REACTION",
                         # Each actual add/change is a distinct notification.
@@ -24266,6 +24281,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "isGroup": is_group,
                         "subtitle": notification_subtitle,
                         "reaction": emoji,
+                        **({"communicationRecipients": communication_recipients} if is_group else {}),
                     }
         if notification_data:
             send_mobile_push_for_users(
