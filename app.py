@@ -19478,7 +19478,14 @@ def send_mobile_push_for_users(
     for row in rows:
         token_data = dict(data or {})
         if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
-            token_data["nativeGroupEnrichment"] = int(row_value(row, "notification_schema") or 0) >= 3
+            # Reaction alerts already contain their complete, server-generated
+            # display text. Passing them through the iOS communication-message
+            # enrichment can replace that text as though it were an encrypted
+            # chat message, hiding the reaction from the notification.
+            token_data["nativeGroupEnrichment"] = (
+                str(token_data.get("type") or "").upper() != "CHITTHI_REACTION"
+                and int(row_value(row, "notification_schema") or 0) >= 3
+            )
         enqueue_mobile_pushes(
             [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or ""))],
             title,
