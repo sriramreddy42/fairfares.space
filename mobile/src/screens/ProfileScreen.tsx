@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
@@ -54,6 +54,7 @@ export function ProfileScreen({
   const [phone, setPhone] = useState(user?.phone || "");
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
+  const [profilePhotoDirty, setProfilePhotoDirty] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [profileDirty, setProfileDirty] = useState(false);
@@ -64,7 +65,6 @@ export function ProfileScreen({
   const [historySection, setHistorySection] = useState<AccountHistorySection | null>(null);
   const [carpoolHistoryView, setCarpoolHistoryView] = useState<CarpoolHistoryView>("listings");
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
-  const [phoneDiscoverable, setPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportTopic, setSupportTopic] = useState(SUPPORT_TOPICS[0]);
   const [supportMessage, setSupportMessage] = useState("");
@@ -80,7 +80,7 @@ export function ProfileScreen({
     setPhone(user?.phone || "");
     setDateOfBirth(user?.dateOfBirth || "");
     setProfilePhoto(user?.profilePhotoUrl || "");
-    setPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
+    setProfilePhotoDirty(false);
     setCurrentPassword("");
     setProfileDirty(false);
   }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.profilePhotoUrl]);
@@ -237,6 +237,7 @@ export function ProfileScreen({
       const picked = await pickCompressedImages(1, 720, 0.7);
       if (picked[0]) {
         setProfilePhoto(picked[0]);
+        setProfilePhotoDirty(true);
         setProfileDirty(true);
       }
     } catch (error) {
@@ -252,13 +253,21 @@ export function ProfileScreen({
     setSaving(true);
     try {
       const phoneChanged = phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "");
-      const payload = await updateMobileProfile({ name, email, phone, dateOfBirth, profilePhoto, currentPassword });
+      const payload = await updateMobileProfile({
+        name,
+        email,
+        phone,
+        dateOfBirth,
+        currentPassword,
+        ...(profilePhotoDirty ? { profilePhoto } : {}),
+      });
       draftUserIdRef.current = payload.user?.id ?? user.id;
       setName(payload.user?.name || "");
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
       setDateOfBirth(payload.user?.dateOfBirth || "");
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
+      setProfilePhotoDirty(false);
       onProfileUpdated(payload.user);
       setProfileDirty(false);
       void AsyncStorage.removeItem(profileDraftKey(user.id));
@@ -276,17 +285,6 @@ export function ProfileScreen({
       Alert.alert("Profile not saved", error instanceof Error ? error.message : "Could not save your profile.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function changePhoneDiscovery(enabled: boolean) {
-    setPhoneDiscoverable(enabled);
-    try {
-      await setChatPhoneDiscoverability(enabled);
-      if (user) onProfileUpdated({ ...user, chatPhoneDiscoverable: enabled });
-    } catch (error) {
-      setPhoneDiscoverable(!enabled);
-      Alert.alert("Chat privacy not changed", error instanceof Error ? error.message : "Could not update phone discovery.");
     }
   }
 
@@ -385,13 +383,6 @@ export function ProfileScreen({
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
                 <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
               </TouchableOpacity>
-            </View>
-            <View style={styles.privacyRow}>
-              <View style={styles.privacyCopy}>
-                <Text style={styles.label}>Find me by exact phone number</Text>
-                <Text style={styles.cardCopy}>Control whether contacts who already have your exact number can find you. Your number is never displayed.</Text>
-              </View>
-              <Switch value={phoneDiscoverable} onValueChange={(value) => void changePhoneDiscovery(value)} />
             </View>
           </> : null}
         </View>

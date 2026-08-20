@@ -22972,8 +22972,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             matches = con.execute(
                 """
                 SELECT id, name, phone FROM users
-                WHERE chat_phone_discoverable = 1
-                  AND is_verified = 1
+                WHERE is_verified = 1
                   AND guest_account = 0
                   AND id != ?
                 """,
@@ -23002,7 +23001,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             candidates = con.execute(
                 """SELECT id, name, phone, profile_photo_url FROM users
-                   WHERE chat_phone_discoverable = 1 AND is_verified = 1
+                   WHERE is_verified = 1
                      AND guest_account = 0 AND id != ?""",
                 (int(user["id"]),),
             ).fetchall()
@@ -25768,6 +25767,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             password_hash = ?,
                             is_verified = 0,
                             guest_account = 0,
+                            chat_phone_discoverable = 1,
                             consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ?
                         WHERE id = ?
                         """,
@@ -25776,7 +25776,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     user_id = guest["id"]
                 else:
                     con.execute(
-                        "INSERT INTO users (name, email, phone, password_hash, is_verified, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                        "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, ?)",
                         (name, email, phone, hash_password(password), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                     )
                     user_id = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
@@ -32611,7 +32611,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if photo.startswith("data:image/svg xml"):
                 photo = photo.replace("data:image/svg xml", "data:image/svg+xml", 1)
             if photo:
-                if photo.startswith("data:image/"):
+                parsed_photo = urllib.parse.urlparse(photo)
+                delivery_query = urllib.parse.parse_qs(parsed_photo.query)
+                is_current_avatar_delivery_url = (
+                    parsed_photo.path == "/api/chat/notification-avatar"
+                    and str(delivery_query.get("user", [""])[0]).isdigit()
+                    and int(delivery_query.get("user", ["0"])[0]) == int(row_value(user, "id") or 0)
+                )
+                # Mobile clients receive a delivery URL, never the private R2
+                # reference. Treat that URL as "photo unchanged" so an older
+                # client cannot replace the durable reference with an expiring
+                # or versioned download URL when saving another profile field.
+                if is_current_avatar_delivery_url:
+                    photo = None
+                elif photo.startswith("data:image/"):
                     if ";base64," not in photo or len(photo) > MAX_PROFILE_PHOTO_DATA_URL_LENGTH:
                         self.send_json({"ok": False, "error": "Use a smaller JPG, PNG, or WebP profile image."}, 400)
                         return

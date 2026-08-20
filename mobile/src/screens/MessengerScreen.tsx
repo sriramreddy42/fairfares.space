@@ -3839,8 +3839,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setContactPickerOpen(true);
       }
       else Alert.alert(
-        "No discoverable FairFares contacts",
-        "A saved contact appears only after that person enables Profile → Account details → Find me by exact phone number. Existing accounts may still have this privacy setting turned off."
+        "No FairFares contacts found",
+        "Make sure FairFares can access that contact and that the saved phone number matches the verified number on their FairFares account."
       );
     } catch (error) {
       Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");

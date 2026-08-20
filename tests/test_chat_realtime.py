@@ -237,7 +237,7 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
-    def test_contact_discovery_matches_only_opted_in_hashes(self):
+    def test_contact_discovery_matches_every_verified_member_with_an_exact_saved_number(self):
         with app.db() as con:
             con.execute(
                 "UPDATE users SET phone = '+1 (937) 555-0199', chat_phone_discoverable = 1 WHERE id = ?",
@@ -258,9 +258,27 @@ class ChatRealtimeTest(unittest.TestCase):
             )
             with urllib.request.urlopen(request, timeout=3) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-            self.assertEqual([person["name"] for person in payload["people"]], ["Recipient"])
+            self.assertEqual([person["name"] for person in payload["people"]], ["Recipient", "Private Person"])
             self.assertEqual(payload["people"][0]["phoneHash"], discoverable_hash)
+            self.assertEqual(payload["people"][1]["phoneHash"], private_hash)
             self.assertNotIn("phone", payload["people"][0])
+
+            # The legacy flag must not prevent an exact saved-contact match.
+            # Neither member needs prior Chitthi activity for discovery.
+            with app.db() as con:
+                con.execute(
+                    "UPDATE users SET chat_phone_discoverable = 0 WHERE id = ?",
+                    (self.recipient_id,),
+                )
+            legacy_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [discoverable_hash, private_hash]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(legacy_request, timeout=3) as response:
+                legacy_payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual([person["name"] for person in legacy_payload["people"]], ["Recipient", "Private Person"])
 
             national_hash = hashlib.sha256(b"9375550199").hexdigest()
             national_request = urllib.request.Request(

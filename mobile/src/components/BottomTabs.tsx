@@ -1,5 +1,6 @@
 import React from "react";
 import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { FairFaresUser } from "../types";
@@ -44,6 +45,7 @@ function visibleActiveTab(active: TabKey): VisibleTabKey {
 
 export function BottomTabs({ active, unreadCount, user, onChange, hidden = false }: Props) {
   const layout = useResponsiveLayout();
+  const safeAreaInsets = useSafeAreaInsets();
   if (hidden) return null;
 
   const selected = visibleActiveTab(active);
@@ -52,7 +54,10 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
     <View
       style={[
         styles.card,
-        { bottom: layout.navBottomInset },
+        {
+          bottom: layout.navBottomInset - safeAreaInsets.bottom,
+          height: BOTTOM_NAV_HEIGHT + safeAreaInsets.bottom,
+        },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
           : { left: 0, right: 0 }
@@ -70,7 +75,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         <View style={styles.glassTopHighlight} />
         <View style={styles.glassBottomShade} />
       </View>
-      <View style={styles.itemsRow}>
+      <View style={[styles.itemsRow, { paddingBottom: safeAreaInsets.bottom }]}>
         {navigationItems.map((item) => {
           const isSelected = selected === item.key;
           return (
@@ -125,7 +130,6 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
 const styles = StyleSheet.create({
   card: {
     position: "absolute",
-    height: BOTTOM_NAV_HEIGHT,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.18)",
     backgroundColor: "transparent",

@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import os
 import tempfile
@@ -165,6 +167,91 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_newly_activated_member_is_discoverable_without_any_chat_history(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Contact Owner", "owner@example.com", "+13035550101", app.hash_password("OwnerPassword123!")),
+            )
+            owner_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("contact-owner-token", owner_id))
+
+        server, thread = self.start_server()
+        try:
+            with mock.patch.object(app, "send_activation_email", return_value=(Path(self.temp_dir.name) / "activation.txt", "sent through test provider")):
+                status, _signup = self.post_json(server, "/api/mobile/signup", {
+                    "name": "New Contact",
+                    "email": "new-contact@example.com",
+                    "phone": "937-555-0144",
+                    "countryCode": "+1",
+                    "password": "NewContactPassword123!",
+                    "consentAccepted": True,
+                })
+            self.assertEqual(status, 201)
+
+            with app.db() as con:
+                member = con.execute("SELECT * FROM users WHERE email = ?", ("new-contact@example.com",)).fetchone()
+                verification = con.execute(
+                    "SELECT token FROM email_verifications WHERE user_id = ? AND purpose = 'ACCOUNT' ORDER BY datetime(created_at) DESC LIMIT 1",
+                    (int(member["id"]),),
+                ).fetchone()
+                participant_count = con.execute(
+                    "SELECT COUNT(*) AS count FROM chat_participants WHERE user_id = ?",
+                    (int(member["id"]),),
+                ).fetchone()["count"]
+            self.assertEqual(int(member["chat_phone_discoverable"]), 1)
+            self.assertEqual(int(participant_count), 0)
+
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/activate?token={verification['token']}", timeout=5
+            ) as response:
+                self.assertEqual(response.status, 200)
+
+            phone_hash = hashlib.sha256(b"19375550144").hexdigest()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [phone_hash]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer contact-owner-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(response.status, 200)
+            self.assertEqual([person["name"] for person in payload["people"]], ["New Contact"])
+
+            with app.db() as con:
+                participant_count = con.execute(
+                    "SELECT COUNT(*) AS count FROM chat_participants WHERE user_id = ?",
+                    (int(member["id"]),),
+                ).fetchone()["count"]
+            self.assertEqual(int(participant_count), 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_web_signup_also_enables_contact_discovery(self):
+        server, thread = self.start_server()
+        try:
+            with mock.patch.object(app, "send_activation_email", return_value=(Path(self.temp_dir.name) / "web-activation.txt", "sent through test provider")):
+                status, _body = self.post_form(server, "/signup", {
+                    "name": "Web Contact",
+                    "email": "web-contact@example.com",
+                    "phone": "+1 937 555 0166",
+                    "password": "WebContactPassword123!",
+                    "consent_accepted": "1",
+                })
+            self.assertEqual(status, 200)
+            with app.db() as con:
+                member = con.execute("SELECT * FROM users WHERE email = ?", ("web-contact@example.com",)).fetchone()
+            self.assertIsNotNone(member)
+            self.assertEqual(int(member["chat_phone_discoverable"]), 1)
+            self.assertEqual(int(member["is_verified"]), 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_rejects_missing_policy_consent(self):
         server, thread = self.start_server()
         try:
@@ -249,6 +336,100 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(cleared["user"]["dateOfBirth"], "")
             with app.db() as con:
                 self.assertIsNone(con.execute("SELECT date_of_birth FROM users WHERE email = 'birthday@example.com'").fetchone()["date_of_birth"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_profile_save_preserves_durable_avatar_when_client_returns_delivery_url(self):
+        stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/persistent-avatar.png"
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified, profile_photo_url) VALUES (?, ?, ?, ?, 1, ?)",
+                ("Avatar Member", "avatar@example.com", "+13035550111", app.hash_password("AvatarPassword123!"), stored_photo),
+            )
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "avatar@example.com",
+                "password": "AvatarPassword123!",
+            })
+            delivery_url = login["user"]["profilePhotoUrl"]
+            self.assertTrue(delivery_url.startswith("/api/chat/notification-avatar?"))
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({
+                    "name": "Avatar Member Updated",
+                    "email": "avatar@example.com",
+                    "phone": "+13035550111",
+                    "profilePhoto": delivery_url,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                saved = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(saved["user"]["name"], "Avatar Member Updated")
+            self.assertEqual(saved["user"]["email"], "avatar@example.com")
+            self.assertEqual(saved["user"]["profilePhotoUrl"], delivery_url)
+            with app.db() as con:
+                persisted = con.execute(
+                    "SELECT name, email, profile_photo_url FROM users WHERE email = ?",
+                    ("avatar@example.com",),
+                ).fetchone()
+            self.assertEqual(persisted["name"], "Avatar Member Updated")
+            self.assertEqual(persisted["email"], "avatar@example.com")
+            self.assertEqual(persisted["profile_photo_url"], stored_photo)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_uploaded_profile_photo_and_email_survive_fresh_login(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Persistent Member", "persistent@example.com", "+13035550112", app.hash_password("PersistentPassword123!")),
+            )
+        # A valid 1x1 PNG keeps this test on the same upload path as the app
+        # without introducing a fixture file.
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        data_url = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "persistent@example.com",
+                "password": "PersistentPassword123!",
+            })
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({
+                    "name": "Persistent Member",
+                    "email": "persistent@example.com",
+                    "phone": "+13035550112",
+                    "profilePhoto": data_url,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                saved = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(saved["user"]["email"], "persistent@example.com")
+            self.assertTrue(saved["user"]["profilePhotoUrl"])
+            with app.db() as con:
+                persisted = con.execute(
+                    "SELECT email, profile_photo_url FROM users WHERE email = ?",
+                    ("persistent@example.com",),
+                ).fetchone()
+            self.assertEqual(persisted["email"], "persistent@example.com")
+            self.assertTrue(persisted["profile_photo_url"].startswith(("local://uploads/", f"r2://{app.R2_BUCKET_NAME}/")))
+
+            _repeat_status, repeat_login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "persistent@example.com",
+                "password": "PersistentPassword123!",
+            })
+            self.assertEqual(repeat_login["user"]["email"], "persistent@example.com")
+            self.assertTrue(repeat_login["user"]["profilePhotoUrl"])
         finally:
             server.shutdown()
             server.server_close()

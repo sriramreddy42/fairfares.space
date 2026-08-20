@@ -8,7 +8,7 @@ import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
@@ -253,7 +253,6 @@ function FairFaresApp() {
   const [signupPhone, setSignupPhone] = useState("");
   const [signupCallingCode, setSignupCallingCode] = useState("+1");
   const [signupCountryOpen, setSignupCountryOpen] = useState(false);
-  const [signupPhoneDiscoverable, setSignupPhoneDiscoverable] = useState(true);
   const [signupConsentAccepted, setSignupConsentAccepted] = useState(false);
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
@@ -1780,7 +1779,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupPhoneDiscoverable, signupCallingCode, signupConsentAccepted);
+      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, true, signupCallingCode, signupConsentAccepted);
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
@@ -2243,13 +2242,7 @@ function FairFaresApp() {
                   />
                 </View>
                 <Text style={styles.authHint}>Saved securely as {signupCallingCode} followed by your mobile number so Chitthi can match contacts across countries.</Text>
-                <View style={styles.signupDiscoveryRow}>
-                  <View style={styles.signupDiscoveryCopy}>
-                    <Text style={styles.signupDiscoveryTitle}>Let contacts find me</Text>
-                    <Text style={styles.signupDiscoveryText}>People who already have your exact number can find you in Chitthi. Your number is never displayed.</Text>
-                  </View>
-                  <Switch value={signupPhoneDiscoverable} onValueChange={setSignupPhoneDiscoverable} accessibilityLabel="Let contacts find me by exact phone number" />
-                </View>
+                <Text style={styles.authHint}>People who already saved your exact number can find you in Chitthi after activation. Your phone number is never displayed.</Text>
               </>
             ) : null}
             <TextInput
@@ -2976,10 +2969,6 @@ const styles = StyleSheet.create({
   authDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.line },
   authDividerText: { color: theme.colors.muted, fontSize: 11, fontWeight: "600" },
   socialPhoneCard: { width: "100%", maxWidth: 520, alignSelf: "center", backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line },
-  signupDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
-  signupDiscoveryCopy: { flex: 1, minWidth: 0 },
-  signupDiscoveryTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
-  signupDiscoveryText: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   signupConsentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4, paddingVertical: 4 },
   signupConsentBox: { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center", marginTop: 1 },
   signupConsentBoxChecked: { backgroundColor: theme.colors.green, borderColor: theme.colors.green },
