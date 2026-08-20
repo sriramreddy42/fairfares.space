@@ -323,7 +323,7 @@ class SecurityHardeningTest(unittest.TestCase):
                 self.assertEqual(payload["status"], "healthy")
                 self.assertEqual(payload["database"], "available")
                 self.assertEqual(payload["service"], "fairfares-api")
-            self.assertEqual(payload["release"], "chitthi-reaction-avatars-v8")
+            self.assertEqual(payload["release"], "chitthi-group-reaction-avatar-v9")
         finally:
             server.shutdown()
             server.server_close()

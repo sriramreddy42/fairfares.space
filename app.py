@@ -206,7 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-reaction-avatars-v8"
+BACKEND_RELEASE = "chitthi-group-reaction-avatar-v9"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -19478,7 +19478,13 @@ def send_mobile_push_for_users(
     for row in rows:
         token_data = dict(data or {})
         if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
-            token_data["nativeGroupEnrichment"] = int(row_value(row, "notification_schema") or 0) >= 3
+            # Reaction enrichment has been supported since the first native
+            # reaction build. Do not let a stale per-token schema suppress the
+            # group avatar; retain schema gating for ordinary group messages.
+            token_data["nativeGroupEnrichment"] = (
+                str(token_data.get("type") or "").upper() == "CHITTHI_REACTION"
+                or int(row_value(row, "notification_schema") or 0) >= 3
+            )
         enqueue_mobile_pushes(
             [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or ""))],
             title,

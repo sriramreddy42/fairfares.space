@@ -517,6 +517,31 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(row["body"], "reacted ❤️ to your message")
         self.assertTrue(json.loads(row["data_json"])["nativeGroupEnrichment"])
 
+    def test_group_reaction_avatar_is_not_blocked_by_stale_device_schema(self):
+        token = "ExpoPushToken[group-reaction-stale-schema-device]"
+        self.add_token(token, notification_schema=0)
+        payload = {
+            "type": "CHITTHI_REACTION",
+            "messageId": 903,
+            "conversationId": "FFC-GROUP-903",
+            "conversationName": "DU Housing Board",
+            "groupAvatarUrl": "https://www.fairfare.space/group.jpg",
+            "isGroup": True,
+            "reaction": "😂",
+        }
+
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users(
+                [self.user_id], "Marisa", "reacted 😂 to your message", payload,
+            )
+
+        with app.db() as con:
+            row = con.execute(
+                "SELECT data_json FROM mobile_push_outbox WHERE token = ?",
+                (token,),
+            ).fetchone()
+        self.assertTrue(json.loads(row["data_json"])["nativeGroupEnrichment"])
+
     def test_legacy_fchat_payload_stays_on_chitthi_message_channel(self):
         token = "ExponentPushToken[chitthi-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-chat"}]})
