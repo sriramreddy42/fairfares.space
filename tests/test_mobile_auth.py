@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import io
 import json
 import os
 import tempfile
@@ -78,7 +79,7 @@ class MobileAuthTest(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, response.read().decode("utf-8")
 
-    def test_published_housing_testimonial_avatar_is_signed_for_guests(self):
+    def test_published_housing_testimonial_avatar_uses_stable_public_delivery_path(self):
         stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/public-testimonial.png"
         with app.db() as con:
             con.execute(
@@ -96,18 +97,84 @@ class MobileAuthTest(unittest.TestCase):
         parsed = urllib.parse.urlparse(testimonial["photoUrl"])
         query = urllib.parse.parse_qs(parsed.query)
 
-        self.assertEqual(f"{parsed.scheme}://{parsed.netloc}", origin)
+        self.assertEqual(parsed.scheme, "")
+        self.assertEqual(parsed.netloc, "")
         self.assertEqual(parsed.path, "/api/chat/notification-avatar")
         self.assertEqual(query["user"], [str(user_id)])
-        self.assertTrue(query.get("expires"))
-        self.assertTrue(query.get("signature"))
+        self.assertTrue(query.get("v"))
+        self.assertFalse(query.get("expires"))
+        self.assertFalse(query.get("signature"))
         self.assertNotIn("public-testimonial.png", testimonial["photoUrl"])
 
-        expires_at = int(query["expires"][0])
-        self.assertEqual(
-            query["signature"][0],
-            app.chat_notification_avatar_signature(user_id, expires_at),
-        )
+    def test_published_testimonial_avatar_is_available_without_login(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        stored_photo = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, profile_photo_url) VALUES (?, ?, ?, 1, ?)",
+                ("Public Avatar", "public-avatar@example.com", "unused", stored_photo),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, 'Denver, CO', 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
+                (user_id, "This public testimonial has a durable profile avatar."),
+            )
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/notification-avatar?user={user_id}"
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = response.read()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "image/png")
+            self.assertEqual(payload, png)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_r2_profile_avatar_is_streamed_by_fairfares_without_cross_host_redirect(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        object_key = "fairfares/profiles/stable-avatar.png"
+        stored_photo = f"r2://{app.R2_BUCKET_NAME}/{object_key}"
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, profile_photo_url) VALUES (?, ?, ?, 1, ?)",
+                ("R2 Avatar", "r2-avatar@example.com", "unused", stored_photo),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, 'Denver, CO', 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
+                (user_id, "This testimonial verifies the stable R2 avatar delivery path."),
+            )
+        client = mock.Mock()
+        client.get_object.return_value = {
+            "Body": io.BytesIO(png),
+            "ContentLength": len(png),
+            "ContentType": "image/png",
+        }
+        with mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            server, thread = self.start_server()
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/notification-avatar?user={user_id}"
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    payload = response.read()
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.geturl(), request.full_url)
+                    self.assertEqual(response.headers.get_content_type(), "image/png")
+                self.assertEqual(payload, png)
+                client.get_object.assert_called_once_with(Bucket=app.R2_BUCKET_NAME, Key=object_key)
+                client.generate_presigned_url.assert_not_called()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
 
     def test_mobile_signup_activation_and_login_complete_end_to_end(self):
         server, thread = self.start_server()

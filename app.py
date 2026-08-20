@@ -11691,14 +11691,11 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6, public_origi
     for row in rows:
         user_id = int(row_value(row, "user_id") or 0)
         stored_photo = str(row_value(row, "profile_photo_url") or "").strip()
-        # Published testimonials are visible before login, so their avatars
-        # need a narrowly scoped, expiring URL. Other profile-photo payloads
-        # continue using the authenticated endpoint.
-        photo_url = (
-            chat_notification_avatar_url(public_origin, user_id)
-            if public_origin and user_id > 0 and stored_photo.startswith(f"r2://{R2_BUCKET_NAME}/")
-            else avatar_delivery_path(stored_photo, user_id)
-        )
+        # Published testimonials and their avatars are public. Keep the same
+        # versioned application URL used everywhere else; the avatar endpoint
+        # independently verifies that this user has a published testimonial.
+        # This avoids an expiring URL disappearing from a cached housing page.
+        photo_url = avatar_delivery_path(stored_photo, user_id)
         testimonials.append(
             {
                 "id": int(row_value(row, "id") or 0),
@@ -24600,7 +24597,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # housing, rides, account, and Chitthi—not only after a direct
                 # conversation exists. The object key remains private in R2.
                 authenticated_request_allowed = True
-            if not signed_request_valid and not authenticated_request_allowed:
+            public_testimonial_allowed = False
+            if user_id > 0:
+                public_testimonial_allowed = con.execute(
+                    """SELECT 1 FROM testimonials
+                       WHERE user_id = ? AND status = 'PUBLISHED'
+                         AND rating BETWEEN 4 AND 5
+                         AND LENGTH(TRIM(message)) >= 8
+                       LIMIT 1""",
+                    (user_id,),
+                ).fetchone() is not None
+            if not signed_request_valid and not authenticated_request_allowed and not public_testimonial_allowed:
                 self.send_error(404)
                 return
             avatar_row = (
@@ -24614,19 +24621,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             object_key = photo.removeprefix(f"r2://{R2_BUCKET_NAME}/")
             client = r2_storage_client()
             if object_key and client is not None:
-                location = client.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": R2_BUCKET_NAME, "Key": object_key},
-                    ExpiresIn=10 * 60,
-                )
-                self.send_response(302)
-                self.send_header("Location", location)
-                # Versioned application URLs invalidate immediately after an
-                # avatar replacement. Cache each private redirect briefly so a
-                # 100-row list does not repeat DB authorization and R2 signing.
-                self.send_header("Cache-Control", "private, max-age=300")
-                self.end_headers()
-                return
+                try:
+                    response = client.get_object(Bucket=R2_BUCKET_NAME, Key=object_key)
+                    body = response.get("Body")
+                    payload = body.read(2_000_001) if body is not None else b""
+                    if hasattr(body, "close"):
+                        body.close()
+                    content_type = str(response.get("ContentType") or mimetypes.guess_type(object_key)[0] or "").lower()
+                except Exception:
+                    payload = b""
+                    content_type = ""
+                if payload and len(payload) <= 2_000_000 and content_type in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "public, max-age=300" if public_testimonial_allowed else "private, max-age=300")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
         avatar_data = chat_avatar_data_url_parts(photo)
         if avatar_data:
             mime_type, payload = avatar_data
