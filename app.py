@@ -206,7 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-group-plain-fallback-v4"
+BACKEND_RELEASE = "chitthi-group-plain-layout-v5"
 CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED = str(
     os.environ.get("FAIRFARES_CHITTHI_GROUP_NATIVE_ENRICHMENT", "0")
 ).strip().lower() in {"1", "true", "yes", "on"}
@@ -19115,12 +19115,7 @@ def chitthi_notification_copy(sender_name: object, preview: object, conversation
     group = clean_text_value(conversation_name, 120)
     if is_group:
         group = group or "Chitthi group"
-        # The Notification Service Extension normally promotes this into
-        # Apple's communication layout and removes this transport fallback.
-        # If iOS skips or terminates the extension, the original APNs alert
-        # must still identify the group instead of looking like a direct chat.
-        fallback_prefix = f"{group}\n"
-        return sender, message if message.startswith(fallback_prefix) else f"{fallback_prefix}{message}", group
+        return sender, message, group
     return sender, message, ""
 
 

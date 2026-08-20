@@ -90,7 +90,7 @@ class PushNotificationTest(unittest.TestCase):
                 "DU Housing Board",
                 is_group=True,
             ),
-            ("Marisa", "DU Housing Board\nAre you available?", "DU Housing Board"),
+            ("Marisa", "Are you available?", "DU Housing Board"),
         )
 
     def test_chitthi_group_notification_keeps_message_text_unmodified(self):
@@ -101,24 +101,13 @@ class PushNotificationTest(unittest.TestCase):
                 "DU Housing Board",
                 is_group=True,
             ),
-            ("Marisa", "DU Housing Board\nA message with Marisa: inside remains unchanged", "DU Housing Board"),
-        )
-
-    def test_chitthi_group_transport_fallback_is_idempotent(self):
-        self.assertEqual(
-            app.chitthi_notification_copy(
-                "Marisa",
-                "DU Housing Board\nAre you available?",
-                "DU Housing Board",
-                is_group=True,
-            ),
-            ("Marisa", "DU Housing Board\nAre you available?", "DU Housing Board"),
+            ("Marisa", "A message with Marisa: inside remains unchanged", "DU Housing Board"),
         )
 
     def test_chitthi_notification_has_deterministic_missing_data_fallbacks(self):
         self.assertEqual(
             app.chitthi_notification_copy("", "", "", is_group=True),
-            ("FairFares member", "Chitthi group\nNew Chitthi letter", "Chitthi group"),
+            ("FairFares member", "New Chitthi letter", "Chitthi group"),
         )
 
     def test_group_notification_context_refetches_canonical_conversation(self):
@@ -166,7 +155,7 @@ class PushNotificationTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual((title, body), ("Marisa", "DU Housing Board\nHello group"))
+        self.assertEqual((title, body), ("Marisa", "Hello group"))
         self.assertTrue(data["isGroup"])
         self.assertEqual(data["conversationName"], "DU Housing Board")
         self.assertEqual(data["subtitle"], "DU Housing Board")
@@ -335,7 +324,7 @@ class PushNotificationTest(unittest.TestCase):
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
         self.assertEqual(message["title"], "Marisa")
         self.assertEqual(message["subtitle"], "DU Housing Board")
-        self.assertEqual(message["body"], "DU Housing Board\nAre you available?")
+        self.assertEqual(message["body"], "Are you available?")
         self.assertEqual(message["sound"], "default")
         self.assertEqual(message["channelId"], "chitthi-messages-v2")
         self.assertNotIn("mutableContent", message)
@@ -386,7 +375,7 @@ class PushNotificationTest(unittest.TestCase):
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
         self.assertEqual(message["title"], "Marisa")
         self.assertEqual(message["subtitle"], "DU Housing Board")
-        self.assertEqual(message["body"], "DU Housing Board\nreacted 👍 to your message")
+        self.assertEqual(message["body"], "reacted 👍 to your message")
         self.assertEqual(message["data"]["type"], "CHITTHI_REACTION")
         self.assertTrue(message["data"]["isGroup"])
         self.assertNotIn("mutableContent", message)
