@@ -19119,7 +19119,9 @@ def chat_notification_conversation_context(
     canonical = con.execute(
         """SELECT conversations.conversation_type, conversations.community_id,
                   conversations.subject, communities.kind AS community_kind,
-                  communities.name AS community_name
+                  communities.name AS community_name,
+                  (SELECT COUNT(*) FROM chat_participants participants
+                   WHERE participants.conversation_id = conversations.id) AS participant_count
            FROM chat_conversations conversations
            LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
            WHERE conversations.id = ? LIMIT 1""",
@@ -19129,7 +19131,13 @@ def chat_notification_conversation_context(
     community_id = int(row_value(source, "community_id") or 0)
     conversation_type = str(row_value(source, "conversation_type") or "").upper()
     community_kind = str(row_value(source, "community_kind") or "").upper()
-    is_group = community_id > 0 or conversation_type == "GROUP" or community_kind in {"GROUP", "COMMUNITY"}
+    participant_count = int(row_value(source, "participant_count") or 0)
+    is_group = (
+        community_id > 0
+        or conversation_type in {"GROUP", "COMMUNITY"}
+        or community_kind in {"GROUP", "COMMUNITY"}
+        or participant_count > 2
+    )
     conversation_name = ""
     if is_group:
         conversation_name = str(
@@ -19165,7 +19173,9 @@ def refresh_queued_chitthi_notification(
                 """SELECT conversations.id, conversations.conversation_type,
                           conversations.community_id, conversations.subject,
                           communities.kind AS community_kind,
-                          communities.name AS community_name
+                          communities.name AS community_name,
+                          (SELECT COUNT(*) FROM chat_participants participants
+                           WHERE participants.conversation_id = conversations.id) AS participant_count
                    FROM chat_conversations conversations
                    LEFT JOIN chat_communities communities
                      ON communities.id = conversations.community_id

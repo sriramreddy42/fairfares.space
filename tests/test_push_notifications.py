@@ -161,6 +161,31 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(data["subtitle"], "DU Housing Board")
         self.assertEqual(data["notificationSchema"], 2)
 
+    def test_legacy_multi_member_conversation_is_never_notified_as_direct(self):
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, subject)
+                   VALUES ('FFC-LEGACY-MULTI', 'DIRECT', 'Legacy housing group')"""
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            for index in range(3):
+                con.execute(
+                    "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'unused', 1)",
+                    (f"Legacy member {index}", f"legacy-member-{index}@example.com"),
+                )
+                member_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                con.execute(
+                    "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                    (conversation_id, member_id),
+                )
+
+            is_group, name, _community_id = app.chat_notification_conversation_context(
+                con, {"id": conversation_id, "conversation_type": "DIRECT"},
+            )
+
+        self.assertTrue(is_group)
+        self.assertEqual(name, "Legacy housing group")
+
     def test_queued_direct_push_clears_stale_group_metadata(self):
         with app.db() as con:
             con.execute(
