@@ -17879,6 +17879,21 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
                    last_seen_at = CURRENT_TIMESTAMP, revoked_at = NULL""",
             (user_id, device_id, public_key, signing_public_key),
         )
+        # Builds predating notification-preview encryption registered the Expo
+        # token without a Chitthi device ID. If this account has exactly one
+        # active encryption identity, the association is unambiguous and can
+        # be repaired here. Never guess for multi-device accounts.
+        active_device_count = int(con.execute(
+            "SELECT COUNT(*) AS count FROM chat_device_keys WHERE user_id = ? AND revoked_at IS NULL",
+            (user_id,),
+        ).fetchone()["count"] or 0)
+        if active_device_count == 1:
+            con.execute(
+                """UPDATE mobile_push_tokens
+                   SET device_id = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE user_id = ? AND enabled = 1 AND TRIM(COALESCE(device_id, '')) = ''""",
+                (device_id, user_id),
+            )
     return ""
 
 
@@ -19090,6 +19105,98 @@ def chitthi_notification_copy(sender_name: object, preview: object, conversation
     return sender, message, ""
 
 
+def chat_notification_conversation_context(
+    con: sqlite3.Connection,
+    conversation: sqlite3.Row | dict[str, object],
+) -> tuple[bool, str, int]:
+    """Resolve push group metadata from the canonical conversation record.
+
+    Notification callers historically supplied different projections of the
+    same conversation. Refetching by the stable database ID prevents a joined
+    or legacy row from silently turning a group push into a direct push.
+    """
+    conversation_id = int(row_value(conversation, "id") or 0)
+    canonical = con.execute(
+        """SELECT conversations.conversation_type, conversations.community_id,
+                  conversations.subject, communities.kind AS community_kind,
+                  communities.name AS community_name
+           FROM chat_conversations conversations
+           LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
+           WHERE conversations.id = ? LIMIT 1""",
+        (conversation_id,),
+    ).fetchone() if conversation_id else None
+    source = canonical or conversation
+    community_id = int(row_value(source, "community_id") or 0)
+    conversation_type = str(row_value(source, "conversation_type") or "").upper()
+    community_kind = str(row_value(source, "community_kind") or "").upper()
+    is_group = community_id > 0 or conversation_type == "GROUP" or community_kind in {"GROUP", "COMMUNITY"}
+    conversation_name = ""
+    if is_group:
+        conversation_name = str(
+            row_value(source, "community_name")
+            or row_value(source, "subject")
+            or row_value(conversation, "community_name")
+            or row_value(conversation, "subject")
+            or "Chitthi group"
+        )
+    return is_group, conversation_name, community_id
+
+
+def refresh_queued_chitthi_notification(
+    title: object,
+    body: object,
+    data: dict[str, object],
+) -> tuple[str, str, dict[str, object]]:
+    """Rebuild conversation metadata immediately before push delivery.
+
+    Outbox rows can remain pending across a deployment.  Refreshing them here
+    prevents a payload queued by an older server from retaining an incorrect
+    direct/group classification after the notification code has been fixed.
+    """
+    notification_type = str(data.get("type") or "").upper()
+    if notification_type not in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"}:
+        return str(title or ""), str(body or ""), data
+
+    conversation_public_id = clean_text_value(data.get("conversationId"), 80)
+    conversation = None
+    if conversation_public_id:
+        with db() as con:
+            conversation = con.execute(
+                """SELECT conversations.id, conversations.conversation_type,
+                          conversations.community_id, conversations.subject,
+                          communities.kind AS community_kind,
+                          communities.name AS community_name
+                   FROM chat_conversations conversations
+                   LEFT JOIN chat_communities communities
+                     ON communities.id = conversations.community_id
+                   WHERE conversations.public_id = ? LIMIT 1""",
+                (conversation_public_id,),
+            ).fetchone()
+            if conversation is not None:
+                is_group, conversation_name, _community_id = chat_notification_conversation_context(con, conversation)
+            else:
+                is_group = bool(data.get("isGroup"))
+                conversation_name = clean_text_value(data.get("conversationName"), 120) if is_group else ""
+    else:
+        is_group = bool(data.get("isGroup"))
+        conversation_name = clean_text_value(data.get("conversationName"), 120) if is_group else ""
+
+    refreshed = dict(data)
+    refreshed["isGroup"] = is_group
+    refreshed["conversationName"] = conversation_name if is_group else ""
+    refreshed["subtitle"] = conversation_name if is_group else ""
+    if not is_group:
+        refreshed["groupAvatarUrl"] = ""
+    refreshed["notificationSchema"] = 2
+    canonical_title, canonical_body, _subtitle = chitthi_notification_copy(
+        refreshed.get("senderName") or title,
+        body,
+        conversation_name,
+        is_group=is_group,
+    )
+    return canonical_title, canonical_body, refreshed
+
+
 def push_idempotency_key(data: dict[str, object], title: str, body: str) -> str:
     notification_type = str(data.get("type") or "GENERIC")
     stable_id = next((str(data.get(key) or "").strip() for key in (
@@ -19202,7 +19309,10 @@ def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
                 notification_data = json.loads(str(row_value(row, "data_json") or "{}"))
             except json.JSONDecodeError:
                 notification_data = {}
-            delivery = send_expo_push([token], str(row_value(row, "title") or ""), str(row_value(row, "body") or ""), notification_data).get(token, {})
+            notification_title, notification_body, notification_data = refresh_queued_chitthi_notification(
+                row_value(row, "title"), row_value(row, "body"), notification_data,
+            )
+            delivery = send_expo_push([token], notification_title, notification_body, notification_data).get(token, {})
             status = str(delivery.get("status") or "RETRY")
             attempt_count = int(row_value(row, "attempt_count") or 0) + 1
             if status == "ACCEPTED":
@@ -22134,8 +22244,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         deep_link = f"fairfares://group?group_invite={urllib.parse.quote(token)}" if token else f"fairfares://group?community_id={urllib.parse.quote(community_id)}"
         safe_deep_link = html.escape(deep_link, quote=True)
+        app_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+        safe_app_store_url = html.escape(app_store_url, quote=True)
         body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Open Chitthi group</title></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside Chitthi.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares</a><p style=\"color:#8995a8;font-size:13px\">Install or update FairFares if the app does not open.</p></main><script>setTimeout(function(){{location.href={json.dumps(deep_link)}}},120);</script></body></html>"""
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares app</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install FairFares from the App Store</a></main><script>(function(){{var fallback=setTimeout(function(){{if(!document.hidden)location.replace({json.dumps(app_store_url)})}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.href={json.dumps(deep_link)}}})()</script></body></html>"""
         self.send_text(body, "text/html; charset=utf-8")
 
     def healthz(self) -> None:
@@ -23431,9 +23543,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     }))
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
-            is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
-            conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
-            community_id = int(row_value(conversation, "community_id") or 0)
+            is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
             notification_sender_avatar_url = chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
             notification_group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
             sender_display_name = row_value(sender, "name") or "FairFares member"
@@ -23991,10 +24101,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (int(conversation["id"]), notification_target_id),
                 ).fetchone()
                 if target_participant and not row_value(target_participant, "muted_at"):
-                    is_group = str(row_value(conversation, "conversation_type") or "").upper() == "GROUP" or bool(row_value(conversation, "community_id"))
+                    is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
                     reactor_name = str(row_value(user, "name") or "FairFares member")
-                    conversation_name = str(row_value(conversation, "subject") or "Chitthi group") if is_group else ""
-                    community_id = int(row_value(conversation, "community_id") or 0)
                     sender_avatar_url = chat_notification_avatar_url(self.public_origin(), current_user_id)
                     group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
                     # Match normal Chitthi notification conventions: the acting

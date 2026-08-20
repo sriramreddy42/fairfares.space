@@ -43,12 +43,19 @@ final class NotificationService: UNNotificationServiceExtension {
             : stringValue(payload["senderId"])
         let conversationId = stringValue(payload["conversationId"])
         let conversationName = stringValue(payload["conversationName"])
+        let groupAvatarValue = stringValue(payload["groupAvatarUrl"])
+        // Older/out-of-order push rows can omit the boolean even though their
+        // canonical group name or avatar is present. Treat those durable group
+        // signals as authoritative so a group letter never renders as direct.
         let isGroup = boolValue(payload["isGroup"])
+            || !conversationName.isEmpty
+            || !groupAvatarValue.isEmpty
         // Direct chats display the sender. Group chats display the group image,
         // matching the native communication-notification hierarchy.
-        let avatarUrl = URL(string: stringValue(
-            payload[isGroup ? "groupAvatarUrl" : "senderAvatarUrl"]
-        ))
+        let avatarUrl = URL(string: isGroup
+            ? groupAvatarValue
+            : stringValue(payload["senderAvatarUrl"])
+        )
         let avatarFallbackName = isGroup
             ? (conversationName.isEmpty ? "Chitthi group" : conversationName)
             : senderName

@@ -1064,6 +1064,43 @@ function QuotedReply({ target, mine }: { target: ChatMessage | null; mine: boole
   );
 }
 
+type PrivateReplyContext = NonNullable<NonNullable<ChatMessage["metadata"]>["privateReply"]>;
+
+function decodePrivateReply(clearText: string): { text: string; context: PrivateReplyContext | null } {
+  if (!clearText.startsWith("FFPRIVATE:")) return { text: clearText, context: null };
+  try {
+    const payload = JSON.parse(clearText.slice(10)) as { text?: unknown; context?: Partial<PrivateReplyContext> };
+    const context = payload.context;
+    if (!context || typeof context.senderName !== "string" || typeof context.text !== "string") {
+      return { text: String(payload.text || ""), context: null };
+    }
+    return {
+      text: String(payload.text || ""),
+      context: {
+        senderName: context.senderName,
+        text: context.text,
+        messageType: String(context.messageType || "TEXT"),
+        groupName: String(context.groupName || "Group")
+      }
+    };
+  } catch {
+    return { text: clearText, context: null };
+  }
+}
+
+function PrivateReplyCard({ context, mine }: { context: PrivateReplyContext; mine: boolean }) {
+  return (
+    <View style={[styles.quotedReply, mine ? styles.myQuotedReply : styles.theirQuotedReply]}>
+      <View style={styles.quotedReplyCopy}>
+        <Text style={styles.quotedReplyName}>{`Private reply · ${context.groupName}`}</Text>
+        <Text style={[styles.quotedReplyText, mine ? styles.myQuotedReplyText : styles.theirQuotedReplyText]} numberOfLines={2}>
+          {`${context.senderName}: ${context.text}`}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
   const [playbackError, setPlaybackError] = useState("");
   const player = useVideoPlayer({ uri, contentType: "progressive" }, (instance) => {
@@ -1402,6 +1439,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }));
   }, [currentUserId, activeConversationId]);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [privateReplyContext, setPrivateReplyContext] = useState<PrivateReplyContext | null>(null);
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
   const [forwardPickerOpen, setForwardPickerOpen] = useState(false);
   const [selectedForwardConversationIds, setSelectedForwardConversationIds] = useState<string[]>([]);
@@ -1908,6 +1946,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setSelectedMessageIds([]);
       setActionMessage(null);
       setReplyingTo(null);
+      setPrivateReplyContext(null);
       deviceRegistration.current = null;
       deviceRegistrationPromise.current = null;
       setDeviceIdentity(null);
@@ -2144,16 +2183,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function queuedMessage(item: EncryptedOutboxItem, identity: DeviceIdentity): ChatMessage {
     const ownEnvelope = item.envelopes.find((envelope) => envelope.recipientDeviceId === identity.deviceId);
-    const text = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "Encrypted message waiting to send";
+    const encodedText = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "Encrypted message waiting to send";
+    const decoded = decodePrivateReply(encodedText);
     return {
       id: item.localMessageId,
       senderId: Number(data?.user?.id || 0),
       senderName: data?.user?.name || "You",
       mine: true,
       type: "TEXT",
-      text: text || "Encrypted message waiting to send",
+      text: decoded.text || "Encrypted message waiting to send",
       attachmentUrl: "",
-      metadata: { encrypted: true },
+      metadata: { encrypted: true, privateReply: decoded.context || undefined },
       createdAt: item.createdAt,
       deliveredAt: "",
       readAt: "",
@@ -2193,7 +2233,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setMessages((current) => {
               const withoutServerDuplicate = current.filter((message) => message.id !== response.message.id || message.localClientMessageId === item.clientMessageId);
               const hasLocal = withoutServerDuplicate.some((message) => message.localClientMessageId === item.clientMessageId);
-              const sentMessage = { ...response.message, text: clearText, canEdit: response.message.canEdit, metadata: { ...response.message.metadata, encrypted: true } };
+              const decoded = decodePrivateReply(clearText);
+              const sentMessage = { ...response.message, text: decoded.text, canEdit: Boolean(response.message.canEdit && !decoded.context), metadata: { ...response.message.metadata, encrypted: true, privateReply: decoded.context || undefined } };
               return hasLocal
                 ? withoutServerDuplicate.map((message) => message.localClientMessageId === item.clientMessageId ? sentMessage : message)
                 : [...withoutServerDuplicate, sentMessage];
@@ -2289,7 +2330,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
             return { ...message, type: rich.type, text: "", canEdit: false, metadata: { ...rich.metadata, encrypted: true } };
           }
-          return { ...message, text: clearText, canEdit: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
+          const privateReply = decodePrivateReply(clearText);
+          return { ...message, text: privateReply.text, canEdit: Boolean(message.mine && message.canEdit && !privateReply.context), metadata: { ...message.metadata, encrypted: true, privateReply: privateReply.context || undefined } };
         } catch {
           // A corrupt, expired, or old-device envelope must affect only that
           // message. Previously it rejected Promise.all and exposed encrypted
@@ -3435,7 +3477,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     // press in that interval used to create a new clientMessageId and therefore
     // a genuinely separate server message. Group key lookup can make that
     // interval more noticeable, especially while media jobs are active.
-    const textSendKey = `${operationUserId}:${operationConversationId}:${editingMessageId || 0}:${replyingTo?.id || 0}:${cleanMessage}`;
+    const privateReplySnapshot = privateReplyContext;
+    const textSendKey = `${operationUserId}:${operationConversationId}:${editingMessageId || 0}:${replyingTo?.id || 0}:${privateReplySnapshot ? `${privateReplySnapshot.groupName}:${privateReplySnapshot.senderName}:${privateReplySnapshot.text}` : ""}:${cleanMessage}`;
     if (activeTextSendKeysRef.current.has(textSendKey)) return;
     activeTextSendKeysRef.current.add(textSendKey);
     setThreadLoading(true);
@@ -3455,6 +3498,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       } else if (activeConversationId) {
         const replySnapshot = replyingTo;
         const replyToMessageId = replySnapshot?.id || 0;
+        const encryptedText = privateReplySnapshot
+          ? `FFPRIVATE:${JSON.stringify({ text: cleanMessage, context: privateReplySnapshot })}`
+          : cleanMessage;
         const localMessageId = -Date.now();
         const clientMessageId = createOutboxClientMessageId("sending");
         const createdAt = new Date().toISOString();
@@ -3466,7 +3512,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           type: "TEXT",
           text: cleanMessage,
           attachmentUrl: "",
-          metadata: { encrypted: true },
+          metadata: { encrypted: true, privateReply: privateReplySnapshot || undefined },
           createdAt,
           deliveredAt: "",
           readAt: "",
@@ -3480,6 +3526,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setMessages((current) => [...current, optimisticMessage]);
         setMessageText("");
         setReplyingTo(null);
+        setPrivateReplyContext(null);
         scrollThreadToLatest(false);
         let pendingIdentity: DeviceIdentity | null = null;
         let pendingEnvelopes: EncryptedOutboxItem["envelopes"] = [];
@@ -3489,7 +3536,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ensureSendContext();
           if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
           setEncryptionReady(true);
-          const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
+          const envelopes = encryptForDevices(encryptedText, identity, keyPayload.keys, cleanMessage);
           pendingIdentity = identity;
           pendingEnvelopes = envelopes;
           const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "");
@@ -3497,8 +3544,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const sentMessage: ChatMessage = {
             ...response.message,
             text: cleanMessage,
-            canEdit: response.message.canEdit,
-            metadata: { ...response.message.metadata, encrypted: true }
+            canEdit: Boolean(response.message.canEdit && !privateReplySnapshot),
+            metadata: { ...response.message.metadata, encrypted: true, privateReply: privateReplySnapshot || undefined }
           };
           setMessages((current) => {
             // A realtime group event can insert the accepted server message
@@ -3520,12 +3567,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setMessages((current) => current.filter((item) => item.localClientMessageId !== clientMessageId));
             setMessageText(cleanMessage);
             setReplyingTo(replySnapshot);
+            setPrivateReplyContext(privateReplySnapshot);
             throw error;
           }
           if (!pendingIdentity || !pendingEnvelopes.length) {
             setMessages((current) => current.filter((item) => item.localClientMessageId !== clientMessageId));
             setMessageText(cleanMessage);
             setReplyingTo(replySnapshot);
+            setPrivateReplyContext(privateReplySnapshot);
             throw error;
           }
           const identityForQueue = pendingIdentity;
@@ -3749,7 +3798,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
-  async function openContactChat(person: { id: number; name: string }, privateReplyDraft = "") {
+  async function openContactChat(person: { id: number; name: string }, privateReply: PrivateReplyContext | null = null) {
     setContactPickerOpen(false);
     setLoading(true);
     try {
@@ -3764,10 +3813,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
-      if (privateReplyDraft) {
+      if (privateReply) {
         setReplyingTo(null);
         setEditingMessageId(null);
-        setMessageText(privateReplyDraft);
+        setMessageText("");
+        setPrivateReplyContext(privateReply);
       }
       await refreshMessenger();
     } catch (error) {
@@ -3884,7 +3934,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   async function invitePhoneContact(contact: { name: string; phone: string }) {
-    const message = `Join me on FairFares and send private letters with Chitthi: https://www.fairfare.space`;
+    const message = `Join me on FairFares and send private letters with Chitthi: https://apps.apple.com/us/app/fairfares-ltd/id6797162820`;
     const separator = Platform.OS === "ios" ? "&" : "?";
     const smsUrl = `sms:${contact.phone.replace(/[^+\d]/g, "")}${separator}body=${encodeURIComponent(message)}`;
     try {
@@ -4739,6 +4789,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function beginReply(message: ChatMessage) {
     if (["pending", "relayed", "failed"].includes(message.status)) return;
     setReplyingTo(message);
+    setPrivateReplyContext(null);
     setActionMessage(null);
   }
 
@@ -4826,7 +4877,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setActionMessage(null);
     await openContactChat(
       { id: senderId, name: senderName },
-      `Private reply to ${senderName}: “${quotedMessage}”\n`
+      {
+        senderName,
+        text: quotedMessage,
+        messageType: message.type || "TEXT",
+        groupName: activeConversation.otherName || activeSubject || "Group"
+      }
     );
   }
 
@@ -5309,6 +5365,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
                 {message.metadata?.forwarded ? <View style={styles.forwardedLabel}><Text style={[styles.forwardedLabelText, message.mine && styles.myForwardedLabelText]}>↪ Forwarded</Text></View> : null}
+                {message.metadata?.privateReply ? <PrivateReplyCard context={message.metadata.privateReply} mine={message.mine} /> : null}
                 {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
@@ -5726,6 +5783,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.composerDock}>
+          {privateReplyContext ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{`Private reply · ${privateReplyContext.groupName}`}</Text><Text style={styles.replyComposerText} numberOfLines={2}>{`${privateReplyContext.senderName}: ${privateReplyContext.text}`}</Text></View><TouchableOpacity onPress={() => setPrivateReplyContext(null)} accessibilityLabel="Cancel private reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
           {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyMediaKind(replyingTo) || shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View>{replyMediaKind(replyingTo) ? <ReplyMediaPreview message={replyingTo} /> : null}<TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
           <View style={styles.composer}>
           {editingMessageId ? (

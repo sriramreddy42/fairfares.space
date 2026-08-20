@@ -138,6 +138,12 @@ export type ChatMessage = {
     mediaExpired?: boolean;
     expiredAt?: string;
     deletedFromStorage?: boolean;
+    privateReply?: {
+      senderName: string;
+      text: string;
+      messageType: string;
+      groupName: string;
+    };
     retentionDays?: number;
   };
   contextType?: "HOUSING" | "CARPOOL" | string;

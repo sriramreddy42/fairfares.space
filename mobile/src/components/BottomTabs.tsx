@@ -6,7 +6,7 @@ import { FairFaresUser } from "../types";
 import { AdaptiveGlassView } from "./AdaptiveGlassView";
 import { UserAvatar } from "./UserAvatar";
 import {
-  BOTTOM_NAV_HEIGHT,
+  BOTTOM_NAV_HORIZONTAL_MARGIN,
   useResponsiveLayout,
 } from "../utils/layout";
 
@@ -23,11 +23,11 @@ type NavigationItem = {
 };
 
 const navigationItems: NavigationItem[] = [
-  { key: "home", label: "Home", icon: appAssets.navHome, width: 26, height: 26 },
-  { key: "services", label: "Services", icon: appAssets.navServices, width: 26, height: 26 },
-  { key: "activity", label: "Activity", icon: appAssets.navActivity, width: 26, height: 26 },
-  { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, width: 29, height: 31 },
-  { key: "profile", label: "Account", icon: appAssets.profile, width: 26, height: 26 },
+  { key: "home", label: "Home", icon: appAssets.navHome, width: 25, height: 25 },
+  { key: "services", label: "Services", icon: appAssets.navServices, width: 25, height: 25 },
+  { key: "activity", label: "Activity", icon: appAssets.navActivity, width: 25, height: 25 },
+  { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, width: 31, height: 35 },
+  { key: "profile", label: "Account", icon: appAssets.profile, width: 25, height: 25 },
 ];
 
 type Props = {
@@ -55,7 +55,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         { bottom: layout.navBottomInset },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
-          : { left: 0, right: 0 }
+          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
       ]}
       accessibilityRole="tablist"
     >
@@ -81,7 +81,6 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
               accessibilityState={{ selected: isSelected }}
               activeOpacity={0.72}
               onPress={() => onChange(item.key)}
-              hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
               style={styles.touchTarget}
             >
               <View style={[styles.itemContent, isSelected && styles.selectedItem]}>
@@ -125,42 +124,53 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
 const styles = StyleSheet.create({
   card: {
     position: "absolute",
-    height: BOTTOM_NAV_HEIGHT,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.18)",
+    height: 70,
+    borderRadius: 35,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
     backgroundColor: "transparent",
-    elevation: 12,
+    shadowColor: "#000000",
+    shadowOpacity: 0.42,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 14,
   },
   glassClip: {
     ...StyleSheet.absoluteFillObject,
+    borderRadius: 35,
     overflow: "hidden",
     // Native blur/liquid-glass can produce its first sampled frame only after
     // the underlying scroll view invalidates. Paint the stable material color
     // immediately so launch never exposes page content through an empty glass
     // surface; the native effect then enhances this base when ready.
-    backgroundColor: "rgba(14,18,17,0.97)",
+    backgroundColor: "rgba(20,21,21,0.94)",
   },
   glassTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(7,12,10,0.34)",
+    backgroundColor: "rgba(11,15,14,0.44)",
   },
   glassTopHighlight: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
+    top: 1,
+    left: 22,
+    right: 22,
     height: StyleSheet.hairlineWidth,
     backgroundColor: "rgba(255,255,255,0.34)",
   },
   glassBottomShade: {
-    display: "none",
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 0,
+    height: 20,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.14)",
   },
   itemsRow: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 0,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
   },
   touchTarget: {
     flex: 1,
@@ -168,26 +178,33 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 0,
   },
   itemContent: {
-    width: "100%",
-    height: "100%",
+    width: 54,
+    height: 56,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
   },
   selectedItem: {
-    backgroundColor: "transparent",
+    backgroundColor: "#111715",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(236,190,103,0.72)",
+    shadowColor: "#F0C671",
+    shadowOpacity: 0.2,
+    shadowRadius: 9,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
   },
   iconFrame: {
     width: 38,
-    height: 31,
+    height: 27,
     alignItems: "center",
     justifyContent: "center",
   },
   chitthiIconFrame: {
-    height: 31,
+    height: 33,
   },
   icon: {
     opacity: 1,
@@ -217,8 +234,8 @@ const styles = StyleSheet.create({
   },
   label: {
     color: "#A8A8A8",
-    fontSize: 10.5,
-    lineHeight: 13,
+    fontSize: 9.5,
+    lineHeight: 12,
     fontWeight: "800",
     textAlign: "center",
   },

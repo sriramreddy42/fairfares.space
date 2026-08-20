@@ -110,6 +110,136 @@ class PushNotificationTest(unittest.TestCase):
             ("FairFares member", "New Chitthi letter", "Chitthi group"),
         )
 
+    def test_group_notification_context_refetches_canonical_conversation(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-PUSH', 'GROUP', 'DU Housing Board')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject)
+                   VALUES ('FFC-PUSH-GROUP', 'GROUP', ?, 'Stale subject')""",
+                (community_id,),
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            is_group, name, resolved_community_id = app.chat_notification_conversation_context(
+                con, {"id": conversation_id, "conversation_type": "DIRECT"},
+            )
+
+        self.assertTrue(is_group)
+        self.assertEqual(name, "DU Housing Board")
+        self.assertEqual(resolved_community_id, community_id)
+
+    def test_queued_group_push_is_refreshed_from_canonical_conversation(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-QUEUED', 'GROUP', 'DU Housing Board')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject)
+                   VALUES ('FFC-QUEUED-GROUP', 'GROUP', ?, 'Stale subject')""",
+                (community_id,),
+            )
+
+        title, body, data = app.refresh_queued_chitthi_notification(
+            "Marisa",
+            "Hello group",
+            {
+                "type": "CHITTHI_MESSAGE",
+                "conversationId": "FFC-QUEUED-GROUP",
+                "senderName": "Marisa",
+                "isGroup": False,
+                "conversationName": "",
+                "subtitle": "",
+            },
+        )
+
+        self.assertEqual((title, body), ("Marisa", "Hello group"))
+        self.assertTrue(data["isGroup"])
+        self.assertEqual(data["conversationName"], "DU Housing Board")
+        self.assertEqual(data["subtitle"], "DU Housing Board")
+        self.assertEqual(data["notificationSchema"], 2)
+
+    def test_queued_direct_push_clears_stale_group_metadata(self):
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, subject)
+                   VALUES ('FFC-QUEUED-DIRECT', 'DIRECT', 'Private chat')"""
+            )
+
+        title, body, data = app.refresh_queued_chitthi_notification(
+            "Gopal",
+            "Hello",
+            {
+                "type": "CHITTHI_MESSAGE",
+                "conversationId": "FFC-QUEUED-DIRECT",
+                "senderName": "Gopal",
+                "isGroup": True,
+                "conversationName": "Wrong group",
+                "groupAvatarUrl": "https://fairfare.space/wrong.jpg",
+                "subtitle": "Wrong group",
+            },
+        )
+
+        self.assertEqual((title, body), ("Gopal", "Hello"))
+        self.assertFalse(data["isGroup"])
+        self.assertEqual(data["conversationName"], "")
+        self.assertEqual(data["groupAvatarUrl"], "")
+        self.assertEqual(data["subtitle"], "")
+
+    def test_first_chat_device_key_backfills_legacy_push_token_device_id(self):
+        token = "ExpoPushToken[legacy-preview-device]"
+        self.add_token(token)
+        public_key = app.base64.b64encode(b"A" * 32).decode("ascii")
+
+        self.assertFalse(app.register_chat_device_key(self.user_id, "device-preview-01", public_key))
+
+        with app.db() as con:
+            row = con.execute("SELECT device_id FROM mobile_push_tokens WHERE token = ?", (token,)).fetchone()
+        self.assertEqual(row["device_id"], "device-preview-01")
+
+    def test_multi_device_account_does_not_guess_legacy_push_token_device_id(self):
+        first_key = app.base64.b64encode(b"A" * 32).decode("ascii")
+        second_key = app.base64.b64encode(b"B" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.user_id, "device-preview-01", first_key))
+        self.assertFalse(app.register_chat_device_key(self.user_id, "device-preview-02", second_key))
+        token = "ExpoPushToken[ambiguous-preview-device]"
+        self.add_token(token)
+
+        self.assertFalse(app.register_chat_device_key(self.user_id, "device-preview-01", first_key))
+
+        with app.db() as con:
+            row = con.execute("SELECT device_id FROM mobile_push_tokens WHERE token = ?", (token,)).fetchone()
+        self.assertEqual(row["device_id"], "")
+
+    def test_chitthi_direct_layout_survives_expo_transport(self):
+        token = "ExpoPushToken[direct-layout-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-direct-layout"}]})
+        title, body, subtitle = app.chitthi_notification_copy("Marisa", "Are you available?")
+        data = {
+            "type": "CHITTHI_MESSAGE",
+            "conversationId": "FFC-DIRECT-1",
+            "senderName": "Marisa",
+            "senderAvatarUrl": "https://fairfare.space/sender.jpg",
+            "conversationName": "",
+            "groupAvatarUrl": "",
+            "isGroup": False,
+            "subtitle": subtitle,
+        }
+
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], title, body, data)
+
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertNotIn("subtitle", message)
+        self.assertEqual(message["body"], "Are you available?")
+        self.assertFalse(message["data"]["isGroup"])
+        self.assertEqual(message["data"]["conversationName"], "")
+        self.assertEqual(message["data"]["groupAvatarUrl"], "")
+        self.assertTrue(message["mutableContent"])
+
     def test_chitthi_group_layout_survives_expo_transport(self):
         token = "ExpoPushToken[group-layout-device]"
         self.add_token(token)
@@ -141,6 +271,35 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
         self.assertEqual(message["data"]["groupAvatarUrl"], "https://fairfare.space/group.jpg")
         self.assertTrue(message["data"]["isGroup"])
+
+    def test_chitthi_group_reaction_layout_survives_expo_transport(self):
+        token = "ExpoPushToken[group-reaction-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-group-reaction"}]})
+        title, body, subtitle = app.chitthi_notification_copy(
+            "Marisa", "reacted 👍 to your message", "DU Housing Board", is_group=True,
+        )
+        data = {
+            "type": "CHITTHI_REACTION",
+            "conversationId": "FFC-GROUP-1",
+            "messageId": 42,
+            "senderName": "Marisa",
+            "conversationName": "DU Housing Board",
+            "groupAvatarUrl": "https://fairfare.space/group.jpg",
+            "isGroup": True,
+            "subtitle": subtitle,
+            "reaction": "👍",
+        }
+
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], title, body, data)
+
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertEqual(message["subtitle"], "DU Housing Board")
+        self.assertEqual(message["body"], "reacted 👍 to your message")
+        self.assertEqual(message["data"]["type"], "CHITTHI_REACTION")
+        self.assertTrue(message["data"]["isGroup"])
+        self.assertTrue(message["mutableContent"])
 
     def test_every_chitthi_push_type_requests_message_sound(self):
         token = "ExpoPushToken[chitthi-sound-device]"
