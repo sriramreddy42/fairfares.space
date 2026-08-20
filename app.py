@@ -19022,6 +19022,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     )
     allow_native_enrichment = (
         is_chitthi_notification
+        and notification_type != "CHITTHI_REACTION"
         and (not is_group_notification or bool(notification_data.get("nativeGroupEnrichment")))
     )
     image_url = str(notification_data.get("imageUrl") or "").strip()

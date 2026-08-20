@@ -396,8 +396,32 @@ class PushNotificationTest(unittest.TestCase):
                 message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
                 self.assertEqual(message["sound"], "default")
                 self.assertEqual(message["channelId"], "chitthi-messages-v2")
-                self.assertTrue(message["mutableContent"])
                 self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
+                if notification_type == "CHITTHI_REACTION":
+                    self.assertNotIn("mutableContent", message)
+                else:
+                    self.assertTrue(message["mutableContent"])
+
+    def test_direct_reaction_bypasses_native_message_rewrite(self):
+        token = "ExpoPushToken[direct-reaction-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-direct-reaction"}]})
+
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push(
+                [token],
+                "Marisa",
+                "Reacted 🎉 to your message",
+                {
+                    "type": "CHITTHI_REACTION",
+                    "conversationId": "FFC-DIRECT-REACTION",
+                    "reaction": "🎉",
+                },
+            )
+
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["body"], "Reacted 🎉 to your message")
+        self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
+        self.assertNotIn("mutableContent", message)
 
     def test_carpool_payload_uses_carpool_channel_and_disables_unregistered_token(self):
         good_token = "ExpoPushToken[good-device]"
