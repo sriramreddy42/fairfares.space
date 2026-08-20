@@ -338,10 +338,29 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["body"], "DU Housing Board\nAre you available?")
         self.assertEqual(message["sound"], "default")
         self.assertEqual(message["channelId"], "chitthi-messages-v2")
-        self.assertTrue(message["mutableContent"])
+        self.assertNotIn("mutableContent", message)
         self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
         self.assertEqual(message["data"]["groupAvatarUrl"], "https://fairfare.space/group.jpg")
         self.assertTrue(message["data"]["isGroup"])
+
+    def test_group_native_enrichment_can_be_enabled_after_fixed_build_rollout(self):
+        token = "ExpoPushToken[group-native-v2-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-group-native-v2"}]})
+        data = {
+            "type": "CHITTHI_MESSAGE",
+            "conversationId": "FFC-GROUP-V2",
+            "conversationName": "DU Housing Board",
+            "isGroup": True,
+            "subtitle": "DU Housing Board",
+        }
+
+        with patch.object(app, "CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED", True), \
+             patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], "Marisa", "DU Housing Board\nHello", data)
+
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertTrue(message["mutableContent"])
+        self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
 
     def test_chitthi_group_reaction_layout_survives_expo_transport(self):
         token = "ExpoPushToken[group-reaction-device]"
@@ -370,7 +389,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["body"], "DU Housing Board\nreacted 👍 to your message")
         self.assertEqual(message["data"]["type"], "CHITTHI_REACTION")
         self.assertTrue(message["data"]["isGroup"])
-        self.assertTrue(message["mutableContent"])
+        self.assertNotIn("mutableContent", message)
 
     def test_every_chitthi_push_type_requests_message_sound(self):
         token = "ExpoPushToken[chitthi-sound-device]"

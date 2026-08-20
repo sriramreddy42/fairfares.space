@@ -45,7 +45,15 @@ final class NotificationService: UNNotificationServiceExtension {
             ? senderName
             : stringValue(payload["senderId"])
         let conversationId = stringValue(payload["conversationId"])
-        let conversationName = stringValue(payload["conversationName"])
+        let payloadConversationName = stringValue(payload["conversationName"])
+        // `subtitle` comes from aps.alert and is defined by Apple/Expo as
+        // standard presentation data. It remains available even if a provider
+        // changes how the custom `data` object is wrapped. Direct Chitthi
+        // pushes never set a subtitle, so a non-empty value is authoritative
+        // group context and must never be cleared by custom-payload parsing.
+        let conversationName = payloadConversationName.isEmpty
+            ? content.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            : payloadConversationName
         let groupAvatarValue = stringValue(payload["groupAvatarUrl"])
         // Older/out-of-order push rows can omit the boolean even though their
         // canonical group name or avatar is present. Treat those durable group

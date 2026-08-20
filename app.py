@@ -207,6 +207,9 @@ POST_RETURN_FEE_RULES = (
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
 BACKEND_RELEASE = "chitthi-group-fallback-v3"
+CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED = str(
+    os.environ.get("FAIRFARES_CHITTHI_GROUP_NATIVE_ENRICHMENT", "0")
+).strip().lower() in {"1", "true", "yes", "on"}
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -19014,6 +19017,14 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     results: dict[str, dict[str, str]] = {}
     notification_data = data or {}
     notification_type = str(notification_data.get("type") or "")
+    is_chitthi_notification = notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"}
+    is_group_notification = bool(notification_data.get("isGroup")) or bool(
+        str(notification_data.get("conversationName") or "").strip()
+    )
+    allow_native_enrichment = (
+        is_chitthi_notification
+        and (not is_group_notification or CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED)
+    )
     image_url = str(notification_data.get("imageUrl") or "").strip()
     subtitle = str(notification_data.get("subtitle") or "").strip()
     rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
@@ -19034,7 +19045,8 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "data": notification_data,
                 "channelId": channel_id,
                 **({"badge": badge_count} if badge_count else {}),
-                **({"mutableContent": True, "categoryId": "CHITTHI_MESSAGE"} if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"} else {}),
+                **({"categoryId": "CHITTHI_MESSAGE"} if is_chitthi_notification else {}),
+                **({"mutableContent": True} if allow_native_enrichment else {}),
                 **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
             }
             for token in token_batch
